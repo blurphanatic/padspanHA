@@ -1,99 +1,85 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
-from .coordinator import PadSpanCoordinator
+from .const import DATA_COORDINATOR, DATA_STORE, DOMAIN
 
 
-SENSOR_KEYS = [
-    "scanner_count_all",
-    "scanner_count_connectable",
-    "devices_seen_total",
-    "devices_active",
-    "map_count",
-    "anchor_count_active_map",
-]
+@dataclass(frozen=True, kw_only=True)
+class PadSpanSensorDescription(SensorEntityDescription):
+    value_fn: Callable[[dict[str, Any], Any], Any]
 
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    coordinator: PadSpanCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+SENSORS: tuple[PadSpanSensorDescription, ...] = (
+    PadSpanSensorDescription(
+        key="active_now",
+        name="Active BLE devices",
+        icon="mdi:bluetooth-connect",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data, store: data.get("active_now"),
+    ),
+    PadSpanSensorDescription(
+        key="seen_ever",
+        name="Seen BLE devices (ever)",
+        icon="mdi:bluetooth",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data, store: data.get("seen_ever"),
+    ),
+    PadSpanSensorDescription(
+        key="scanner_count_all",
+        name="Scanners (all)",
+        icon="mdi:access-point-network",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data, store: data.get("scanner_count_all"),
+    ),
+    PadSpanSensorDescription(
+        key="scanner_count_connectable",
+        name="Scanners (connectable)",
+        icon="mdi:access-point-network",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data, store: data.get("scanner_count_connectable"),
+    ),
+    PadSpanSensorDescription(
+        key="map_count",
+        name="Maps configured",
+        icon="mdi:map",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data, store: len(store.maps),
+    ),
+)
 
-    entities = [PadSpanStatSensor(coordinator, entry, key) for key in SENSOR_KEYS]
-    entities.append(PadSpanModeSensor(coordinator, entry))
-    entities.append(PadSpanMapCatalogSensor(coordinator, entry))
-    async_add_entities(entities)
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+    domain_data = hass.data[DOMAIN][entry.entry_id]
+    coordinator = domain_data[DATA_COORDINATOR]
+    store = domain_data[DATA_STORE]
+
+    async_add_entities(
+        [PadSpanSensorEntity(coordinator, store, entry, desc) for desc in SENSORS],
+        update_before_add=True,
+    )
 
 
-class PadSpanBaseSensor(CoordinatorEntity[PadSpanCoordinator], SensorEntity):
-    _attr_should_poll = False
+class PadSpanSensorEntity(CoordinatorEntity, SensorEntity):
+    """PadSpan sensor entity."""
 
-    def __init__(self, coordinator: PadSpanCoordinator, entry: ConfigEntry) -> None:
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, store, entry: ConfigEntry, description: PadSpanSensorDescription) -> None:
         super().__init__(coordinator)
-        self._entry = entry
-        self._attr_has_entity_name = True
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-
-
-class PadSpanStatSensor(PadSpanBaseSensor):
-    def __init__(self, coordinator: PadSpanCoordinator, entry: ConfigEntry, key: str) -> None:
-        super().__init__(coordinator, entry)
-        self._key = key
-        self._attr_unique_id = f"{entry.entry_id}_{key}"
-        self._attr_name = key.replace("_", " ").title()
+        self.entity_description = description
+        self._store = store
+        self._attr_unique_id = f"{entry.entry_id}_{description.key}"
 
     @property
-    def native_value(self) -> int | None:
-        return (self.coordinator.data or {}).get("stats", {}).get(self._key)
-
-
-class PadSpanModeSensor(PadSpanBaseSensor):
-    def __init__(self, coordinator: PadSpanCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_mode"
-        self._attr_name = "BLE Mode"
-
-    @property
-    def native_value(self) -> str:
-        stats = (self.coordinator.data or {}).get("stats", {})
-        return "passive+connectable" if stats.get("include_passive") else "connectable-only"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        stats = (self.coordinator.data or {}).get("stats", {})
-        return {
-            "hub_sources_filter": stats.get("hub_sources_filter", []),
-            "active_map_id": stats.get("active_map_id"),
-            "device_timeout": stats.get("device_timeout"),
-        }
-
-
-class PadSpanMapCatalogSensor(PadSpanBaseSensor):
-    def __init__(self, coordinator: PadSpanCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_map_catalog"
-        self._attr_name = "Map Catalog"
-
-    @property
-    def native_value(self) -> str:
-        stats = (self.coordinator.data or {}).get("stats", {})
-        return stats.get("active_map_id", "default")
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        data = self.coordinator.data or {}
-        return {
-            "maps": data.get("maps", {}),
-            "stats": data.get("stats", {}),
-        }
+    def native_value(self) -> Any:
+        return self.entity_description.value_fn(self.coordinator.data or {}, self._store)

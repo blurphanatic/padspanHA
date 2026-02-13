@@ -1,1 +1,5 @@
-"""Service logic is registered in __init__.py for this integration."""
+"""Service module placeholder.
+
+Service registration is implemented in __init__.py to keep validation available
+even before entries load.
+"""

@@ -4,14 +4,12 @@
     "step": {
       "user": {
         "title": "Set up PadSpan HA",
-        "description": "Configure BLE ingest and map defaults.",
+        "description": "Configure BLE behavior and update cadence.",
         "data": {
-          "name": "Name",
-          "map_id": "Default map id",
           "include_passive": "Include passive/non-connectable BLE",
-          "bootstrap_cache": "Bootstrap from discovered BLE cache",
-          "device_timeout": "Device timeout (seconds)",
-          "hub_sources_csv": "Hub source filter (comma-separated, optional)"
+          "update_interval": "Update interval (seconds)",
+          "seen_timeout": "Presence timeout (seconds)",
+          "enable_sidebar": "Enable advanced sidebar panel"
         }
       }
     }
@@ -20,22 +18,13 @@
     "step": {
       "init": {
         "title": "PadSpan HA options",
-        "description": "Adjust BLE options and optionally import a map image.",
         "data": {
-          "name": "Name",
-          "map_id": "Default map id",
           "include_passive": "Include passive/non-connectable BLE",
-          "bootstrap_cache": "Bootstrap from discovered BLE cache",
-          "device_timeout": "Device timeout (seconds)",
-          "hub_sources_csv": "Hub source filter (comma-separated, optional)",
-          "map_id_import": "Map id to import (optional)",
-          "map_source_path": "Map source path under /config (optional)",
-          "overwrite_map": "Overwrite existing map file"
+          "update_interval": "Update interval (seconds)",
+          "seen_timeout": "Presence timeout (seconds)",
+          "enable_sidebar": "Enable advanced sidebar panel"
         }
       }
-    },
-    "error": {
-      "map_import_failed": "Map import failed. Check path and permissions."
     }
   }
 }

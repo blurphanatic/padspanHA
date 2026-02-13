@@ -1,24 +1,35 @@
-# 1) Import map
+# 1) Import a map image from /config path
 service: padspan_ha.import_map_image
 data:
   map_id: main_floor
   source_path: www/maps/main_floor.png
-  overwrite: true
+  name: Main Floor
+  activate: true
 
-# 2) Add anchors (scanner source id -> map point)
+---
+# 2) Place scanner anchors for that map
+service: padspan_ha.set_map_anchor
+data:
+  map_id: main_floor
+  source_id: bermuda_living_room
+  x: 420
+  y: 180
+  z: 0
+  weight: 1.0
+  label: Living Room Proxy
+
 ---
 service: padspan_ha.set_map_anchor
 data:
   map_id: main_floor
-  anchor_id: bermuda_office
-  source_id: AA:BB:CC:DD:EE:FF
-  x: 390
-  y: 145
+  source_id: bermuda_office
+  x: 160
+  y: 310
   z: 0
   weight: 1.0
-  name: Office
+  label: Office Proxy
 
-# 3) Reload BLE cache
 ---
+# 3) Force immediate refresh
 service: padspan_ha.reload_ble_cache
 data: {}

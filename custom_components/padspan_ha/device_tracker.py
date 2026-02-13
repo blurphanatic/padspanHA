@@ -1,91 +1,109 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from homeassistant.components.device_tracker.config_entry import ScannerEntity
+from homeassistant.components.device_tracker import SourceType
+from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
-from .coordinator import PadSpanCoordinator
+from .const import DATA_COORDINATOR, DOMAIN
 
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    coordinator: PadSpanCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-
-    known: set[str] = set()
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+    coordinator = hass.data[DOMAIN][entry.entry_id][DATA_COORDINATOR]
+    entities: dict[str, PadSpanTrackerEntity] = {}
 
     @callback
-    def _async_add_new_entities() -> None:
-        data = coordinator.data or {}
-        devices = data.get("devices", {})
-        new_entities = []
-        for address in devices:
-            if address in known:
+    def _sync_entities() -> None:
+        new_entities: list[PadSpanTrackerEntity] = []
+        for address in coordinator.get_devices():
+            if address in entities:
                 continue
-            known.add(address)
-            new_entities.append(PadSpanBleDeviceTracker(coordinator, entry, address))
+            ent = PadSpanTrackerEntity(coordinator, entry, address)
+            entities[address] = ent
+            new_entities.append(ent)
         if new_entities:
             async_add_entities(new_entities)
 
-    _async_add_new_entities()
-    entry.async_on_unload(coordinator.async_add_listener(_async_add_new_entities))
+    _sync_entities()
+    entry.async_on_unload(coordinator.async_add_listener(_sync_entities))
 
 
-class PadSpanBleDeviceTracker(CoordinatorEntity[PadSpanCoordinator], ScannerEntity):
-    _attr_should_poll = False
+class PadSpanTrackerEntity(CoordinatorEntity, TrackerEntity):
+    """Dynamic BLE tracker entity."""
 
-    def __init__(self, coordinator: PadSpanCoordinator, entry: ConfigEntry, address: str) -> None:
+    _attr_has_entity_name = True
+    _attr_source_type = SourceType.BLUETOOTH
+    _attr_icon = "mdi:bluetooth"
+
+    def __init__(self, coordinator, entry: ConfigEntry, address: str) -> None:
         super().__init__(coordinator)
-        self._entry = entry
         self._address = address
-        self._attr_unique_id = f"{entry.entry_id}_{address.replace(':', '').lower()}"
-        self._attr_name = f"PadSpan {address[-5:].replace(':','')}"
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{address.lower().replace(':', '')}"
 
     @property
-    def available(self) -> bool:
-        dev = self._device()
-        return dev is not None
-
-    def _device(self) -> dict[str, Any] | None:
-        data = self.coordinator.data or {}
-        return data.get("devices", {}).get(self._address)
+    def name(self) -> str:
+        rec = self.coordinator.get_device(self._address) or {}
+        return rec.get("name") or f"BLE {self._address}"
 
     @property
     def is_connected(self) -> bool:
-        dev = self._device()
-        return bool(dev and dev.get("active"))
-
-    @property
-    def mac_address(self) -> str | None:
-        return self._address
-
-    @property
-    def hostname(self) -> str | None:
-        dev = self._device()
-        if not dev:
-            return None
-        return dev.get("name")
+        rec = self.coordinator.get_device(self._address) or {}
+        last_seen = rec.get("last_seen")
+        if not isinstance(last_seen, datetime):
+            return False
+        timeout = timedelta(seconds=self.coordinator.seen_timeout)
+        return datetime.now(UTC) - last_seen <= timeout
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        dev = self._device() or {}
+        rec = self.coordinator.get_device(self._address) or {}
+        sources = []
+        for source_id, src in (rec.get("sources") or {}).items():
+            ts = src.get("last_seen")
+            sources.append(
+                {
+                    "source_id": source_id,
+                    "rssi": src.get("rssi"),
+                    "last_seen": ts.isoformat() if isinstance(ts, datetime) else None,
+                }
+            )
+        sources.sort(key=lambda r: r["source_id"])
+        first_seen = rec.get("first_seen")
+        last_seen = rec.get("last_seen")
         return {
             "address": self._address,
-            "name": dev.get("name"),
-            "last_rssi": dev.get("last_rssi"),
-            "last_seen": dev.get("last_seen"),
-            "sources": dev.get("sources", {}),
-            "connectable": dev.get("connectable"),
-            "map_id": dev.get("map_id"),
-            "map_x": dev.get("x"),
-            "map_y": dev.get("y"),
-            "confidence": dev.get("confidence"),
-            "unavailable": dev.get("unavailable"),
+            "first_seen": first_seen.isoformat() if isinstance(first_seen, datetime) else None,
+            "last_seen": last_seen.isoformat() if isinstance(last_seen, datetime) else None,
+            "seen_count": rec.get("seen_count", 0),
+            "map_x": rec.get("map_x"),
+            "map_y": rec.get("map_y"),
+            "map_confidence": rec.get("map_confidence", 0.0),
+            "sources": sources,
+        }
+
+    @property
+    def latitude(self):
+        return None
+
+    @property
+    def longitude(self):
+        return None
+
+    @property
+    def battery_level(self):
+        return None
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._address)},
+            "name": self.name,
+            "manufacturer": "BLE",
+            "model": "Advertisement",
         }

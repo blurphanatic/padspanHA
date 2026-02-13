@@ -1,31 +1,32 @@
 import_map_image:
   name: Import map image
-  description: Copy a map image into /config/www and register it for PadSpan.
+  description: Import an image from /config path into PadSpan local map storage.
   fields:
     entry_id:
       required: false
-      example: "abcd1234"
       selector:
         text:
     map_id:
       required: true
-      example: "main_floor"
       selector:
         text:
     source_path:
       required: true
-      example: "www/maps/main_floor.png"
       selector:
         text:
-    overwrite:
+    name:
       required: false
-      default: false
+      selector:
+        text:
+    activate:
+      required: false
+      default: true
       selector:
         boolean:
 
 set_map_anchor:
   name: Set map anchor
-  description: Set/update an anchor (scanner/hub coordinate) on a map.
+  description: Set or update scanner anchor coordinates on a map.
   fields:
     entry_id:
       required: false
@@ -35,54 +36,36 @@ set_map_anchor:
       required: true
       selector:
         text:
-    anchor_id:
-      required: true
-      selector:
-        text:
     source_id:
       required: true
-      description: Scanner source id (e.g. Bermuda source / adapter MAC)
       selector:
         text:
     x:
       required: true
       selector:
         number:
-          min: -100000
-          max: 100000
-          mode: box
     y:
       required: true
       selector:
         number:
-          min: -100000
-          max: 100000
-          mode: box
     z:
       required: false
       default: 0
       selector:
         number:
-          min: -10000
-          max: 10000
-          mode: box
     weight:
       required: false
-      default: 1.0
+      default: 1
       selector:
         number:
-          min: 0.01
-          max: 100
-          step: 0.01
-          mode: box
-    name:
+    label:
       required: false
       selector:
         text:
 
-remove_map_anchor:
-  name: Remove map anchor
-  description: Remove an anchor from a map.
+delete_map_anchor:
+  name: Delete map anchor
+  description: Delete a scanner anchor from a map.
   fields:
     entry_id:
       required: false
@@ -92,14 +75,14 @@ remove_map_anchor:
       required: true
       selector:
         text:
-    anchor_id:
+    source_id:
       required: true
       selector:
         text:
 
 set_active_map:
   name: Set active map
-  description: Set which map is currently used for position estimation.
+  description: Set active map used for positioning.
   fields:
     entry_id:
       required: false
@@ -112,7 +95,7 @@ set_active_map:
 
 reload_ble_cache:
   name: Reload BLE cache
-  description: Pull all currently discovered BLE devices from Home Assistant cache.
+  description: Force immediate BLE refresh.
   fields:
     entry_id:
       required: false
