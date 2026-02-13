@@ -1,29 +1,41 @@
 {
+  "title": "PadSpan HA",
   "config": {
     "step": {
       "user": {
-        "title": "PadSpan HA",
-        "description": "Set up PadSpan BLE map + presence integration."
+        "title": "Set up PadSpan HA",
+        "description": "Configure BLE ingest and map defaults.",
+        "data": {
+          "name": "Name",
+          "map_id": "Default map id",
+          "include_passive": "Include passive/non-connectable BLE",
+          "bootstrap_cache": "Bootstrap from discovered BLE cache",
+          "device_timeout": "Device timeout (seconds)",
+          "hub_sources_csv": "Hub source filter (comma-separated, optional)"
+        }
       }
-    },
-    "abort": {
-      "single_instance_allowed": "Only one PadSpan HA instance is allowed."
     }
   },
-  "entity": {
-    "sensor": {
-      "scanner_count_all": {
-        "name": "Scanner Count (All)"
-      },
-      "scanner_count_connectable": {
-        "name": "Scanner Count (Connectable)"
-      },
-      "seen_ever": {
-        "name": "BLE Devices Seen (Ever)"
-      },
-      "active_now": {
-        "name": "BLE Devices Active (Now)"
+  "options": {
+    "step": {
+      "init": {
+        "title": "PadSpan HA options",
+        "description": "Adjust BLE options and optionally import a map image.",
+        "data": {
+          "name": "Name",
+          "map_id": "Default map id",
+          "include_passive": "Include passive/non-connectable BLE",
+          "bootstrap_cache": "Bootstrap from discovered BLE cache",
+          "device_timeout": "Device timeout (seconds)",
+          "hub_sources_csv": "Hub source filter (comma-separated, optional)",
+          "map_id_import": "Map id to import (optional)",
+          "map_source_path": "Map source path under /config (optional)",
+          "overwrite_map": "Overwrite existing map file"
+        }
       }
+    },
+    "error": {
+      "map_import_failed": "Map import failed. Check path and permissions."
     }
   }
 }

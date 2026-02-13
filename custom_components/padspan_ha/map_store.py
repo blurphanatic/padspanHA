@@ -1,119 +1,143 @@
-"""Persistent storage and file operations for map assets and anchors."""
 from __future__ import annotations
 
-from copy import deepcopy
-import logging
+from dataclasses import dataclass
 from pathlib import Path
+import os
 import shutil
 from typing import Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
 
-_LOGGER = logging.getLogger(__name__)
 
-STORAGE_VERSION = 1
-STORAGE_KEY_PREFIX = f"{DOMAIN}_maps"
+@dataclass
+class MapImportResult:
+    map_id: str
+    image_path: str
+    image_url: str
 
 
 class MapStore:
-    """Store and manage map images + BLE anchor coordinates."""
-
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         self.hass = hass
         self.entry_id = entry_id
-        self._store = Store[dict[str, Any]](hass, STORAGE_VERSION, f"{STORAGE_KEY_PREFIX}_{entry_id}")
-        self.data: dict[str, Any] = {"maps": {}}
+        self._store = Store(hass, 1, f"{DOMAIN}_{entry_id}_maps")
+        self.data: dict[str, Any] = {
+            "active_map_id": "default",
+            "maps": {},
+        }
 
     async def async_load(self) -> None:
-        """Load persisted data."""
         loaded = await self._store.async_load()
         if isinstance(loaded, dict):
-            self.data = loaded
-        else:
-            self.data = {"maps": {}}
+            self.data = {
+                "active_map_id": loaded.get("active_map_id", "default"),
+                "maps": loaded.get("maps", {}),
+            }
 
     async def async_save(self) -> None:
-        """Persist current data."""
         await self._store.async_save(self.data)
 
-    def as_dict(self) -> dict[str, Any]:
-        """Return deep-copied state."""
-        return deepcopy(self.data)
-
-    async def async_import_image(self, map_id: str, source_path: str, overwrite: bool = False) -> dict[str, Any]:
-        """Copy source image from /config into /config/www/padspan_ha/<entry_id>/."""
-        if not map_id:
-            raise HomeAssistantError("map_id is required")
-        if not source_path:
-            raise HomeAssistantError("source_path is required")
-
-        src = Path(source_path)
-        if not src.is_absolute():
-            src = Path(self.hass.config.path(source_path))
-
-        config_root = Path(self.hass.config.config_dir).resolve()
-        try:
-            src_resolved = src.resolve(strict=True)
-        except FileNotFoundError as err:
-            raise HomeAssistantError(f"source_path not found: {source_path}") from err
-
-        if config_root not in src_resolved.parents and src_resolved != config_root:
-            raise HomeAssistantError("source_path must be inside /config")
-
-        if src_resolved.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".svg"}:
-            raise HomeAssistantError("source_path must be an image file (.png/.jpg/.jpeg/.webp/.svg)")
-
-        dest_dir = Path(self.hass.config.path("www", DOMAIN, self.entry_id))
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        filename = f"{map_id}{src_resolved.suffix.lower()}"
-        dest = dest_dir / filename
-
-        if dest.exists() and not overwrite:
-            raise HomeAssistantError(
-                f"Destination exists: {dest}. Set overwrite: true to replace it."
-            )
-
-        shutil.copy2(src_resolved, dest)
-        local_url = f"/local/{DOMAIN}/{self.entry_id}/{filename}"
-
-        map_obj = self.data.setdefault("maps", {}).setdefault(map_id, {})
-        map_obj["image_file"] = str(dest)
-        map_obj["image_local_url"] = local_url
-        map_obj.setdefault("anchors", {})
-
+    async def async_set_active_map(self, map_id: str) -> None:
+        self.data["active_map_id"] = map_id
+        self.data.setdefault("maps", {}).setdefault(map_id, {"anchors": {}})
         await self.async_save()
 
-        _LOGGER.debug("Imported map image %s -> %s", src_resolved, dest)
-        return deepcopy(map_obj)
+    def get_active_map_id(self) -> str:
+        return self.data.get("active_map_id", "default")
+
+    def get_maps(self) -> dict[str, Any]:
+        return self.data.get("maps", {})
+
+    def get_anchors(self, map_id: str | None = None) -> dict[str, dict]:
+        active = map_id or self.get_active_map_id()
+        maps = self.get_maps()
+        return maps.get(active, {}).get("anchors", {})
+
+    async def async_set_map_image(self, map_id: str, image_path: str, image_url: str) -> None:
+        maps = self.data.setdefault("maps", {})
+        map_obj = maps.setdefault(map_id, {})
+        map_obj["image_path"] = image_path
+        map_obj["image_url"] = image_url
+        map_obj.setdefault("anchors", {})
+        if not self.data.get("active_map_id"):
+            self.data["active_map_id"] = map_id
+        await self.async_save()
 
     async def async_set_anchor(
         self,
         map_id: str,
         anchor_id: str,
+        source_id: str,
         x: float,
         y: float,
         z: float = 0.0,
         weight: float = 1.0,
-    ) -> dict[str, Any]:
-        """Set or update a map anchor."""
-        if not map_id:
-            raise HomeAssistantError("map_id is required")
-        if not anchor_id:
-            raise HomeAssistantError("anchor_id is required")
-
-        map_obj = self.data.setdefault("maps", {}).setdefault(map_id, {})
-        map_obj.setdefault("anchors", {})
-        map_obj["anchors"][anchor_id] = {
-            "x": float(x),
-            "y": float(y),
-            "z": float(z),
-            "weight": float(weight),
+        name: str | None = None,
+    ) -> None:
+        maps = self.data.setdefault("maps", {})
+        map_obj = maps.setdefault(map_id, {})
+        anchors = map_obj.setdefault("anchors", {})
+        anchors[anchor_id] = {
+            "anchor_id": anchor_id,
+            "source_id": source_id,
+            "x": x,
+            "y": y,
+            "z": z,
+            "weight": weight,
+            "name": name or anchor_id,
         }
-
+        if not self.data.get("active_map_id"):
+            self.data["active_map_id"] = map_id
         await self.async_save()
-        return deepcopy(map_obj["anchors"][anchor_id])
+
+    async def async_remove_anchor(self, map_id: str, anchor_id: str) -> None:
+        anchors = self.data.setdefault("maps", {}).setdefault(map_id, {}).setdefault("anchors", {})
+        anchors.pop(anchor_id, None)
+        await self.async_save()
+
+    def find_anchor_by_source(self, source_id: str, map_id: str | None = None) -> dict[str, Any] | None:
+        anchors = self.get_anchors(map_id=map_id)
+        for anchor in anchors.values():
+            if str(anchor.get("source_id", "")).upper() == str(source_id).upper():
+                return anchor
+        return None
+
+
+def _resolve_source_path(hass: HomeAssistant, source_path: str) -> Path:
+    p = Path(source_path)
+    if p.is_absolute():
+        return p
+    # relative to config dir
+    return Path(hass.config.path(source_path))
+
+
+async def import_map_image_file(
+    hass: HomeAssistant,
+    entry_id: str,
+    map_store: MapStore,
+    map_id: str,
+    source_path: str,
+    overwrite: bool = False,
+) -> dict[str, str]:
+    src = _resolve_source_path(hass, source_path)
+    if not await hass.async_add_executor_job(src.exists):
+        raise FileNotFoundError(f"Map source file not found: {src}")
+
+    file_name = src.name
+    dest_dir = Path(hass.config.path("www", "padspan_ha", entry_id, map_id))
+    await hass.async_add_executor_job(lambda: dest_dir.mkdir(parents=True, exist_ok=True))
+
+    dest = dest_dir / file_name
+    if (not overwrite) and await hass.async_add_executor_job(dest.exists):
+        raise FileExistsError(f"Destination exists: {dest}")
+
+    await hass.async_add_executor_job(shutil.copy2, src, dest)
+
+    image_url = f"/local/padspan_ha/{entry_id}/{map_id}/{file_name}"
+    await map_store.async_set_map_image(map_id=map_id, image_path=str(dest), image_url=image_url)
+    await map_store.async_set_active_map(map_id)
+
+    return {"map_id": map_id, "image_path": str(dest), "image_url": image_url}

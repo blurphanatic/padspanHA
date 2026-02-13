@@ -1,59 +1,15 @@
-"""Device tracker platform for PadSpan HA BLE discoveries."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from typing import Any
 
-from homeassistant.components.device_tracker import SourceType
-from homeassistant.components.device_tracker.config_entry import TrackerEntity
+from homeassistant.components.device_tracker.config_entry import ScannerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DATA_COORDINATOR, DOMAIN
-
-
-class PadSpanBleTracker(CoordinatorEntity, TrackerEntity):
-    """Track discovered BLE devices as device_tracker entities."""
-
-    _attr_should_poll = False
-    _attr_has_entity_name = True
-
-    def __init__(self, coordinator, entry: ConfigEntry, address: str) -> None:
-        super().__init__(coordinator)
-        self._address = address
-        self._attr_unique_id = f"{entry.entry_id}_{address.lower().replace(':', '')}"
-        self._attr_name = f"BLE {address[-5:]}"
-        self._attr_source_type = SourceType.BLUETOOTH_LE
-
-    @property
-    def _device_data(self) -> dict:
-        return self.coordinator.data.get("devices", {}).get(self._address, {})
-
-    @property
-    def is_connected(self) -> bool:
-        data = self._device_data
-        last_seen_unix = data.get("last_seen_unix")
-        if last_seen_unix is None:
-            return False
-        now_unix = datetime.now(UTC).timestamp()
-        return (now_unix - float(last_seen_unix)) <= self.coordinator.active_window_seconds
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        data = self._device_data
-        return {
-            "address": data.get("address"),
-            "name": data.get("name"),
-            "rssi": data.get("rssi"),
-            "source": data.get("source"),
-            "connectable": data.get("connectable"),
-            "last_seen": data.get("last_seen"),
-            "seen_count": data.get("seen_count"),
-            "service_uuids": data.get("service_uuids"),
-            "manufacturer_keys": data.get("manufacturer_keys"),
-            "service_data_keys": data.get("service_data_keys"),
-        }
+from .const import DOMAIN
+from .coordinator import PadSpanCoordinator
 
 
 async def async_setup_entry(
@@ -61,25 +17,75 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up tracker entities for every discovered BLE device."""
-    coordinator = hass.data[DOMAIN][entry.entry_id][DATA_COORDINATOR]
-    known: dict[str, PadSpanBleTracker] = {}
+    coordinator: PadSpanCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+
+    known: set[str] = set()
 
     @callback
-    def _sync_entities() -> None:
-        new_entities: list[PadSpanBleTracker] = []
-        devices = coordinator.data.get("devices", {})
+    def _async_add_new_entities() -> None:
+        data = coordinator.data or {}
+        devices = data.get("devices", {})
+        new_entities = []
         for address in devices:
             if address in known:
-                known[address].async_write_ha_state()
                 continue
-
-            ent = PadSpanBleTracker(coordinator, entry, address)
-            known[address] = ent
-            new_entities.append(ent)
-
+            known.add(address)
+            new_entities.append(PadSpanBleDeviceTracker(coordinator, entry, address))
         if new_entities:
             async_add_entities(new_entities)
 
-    _sync_entities()
-    entry.async_on_unload(coordinator.async_add_listener(_sync_entities))
+    _async_add_new_entities()
+    entry.async_on_unload(coordinator.async_add_listener(_async_add_new_entities))
+
+
+class PadSpanBleDeviceTracker(CoordinatorEntity[PadSpanCoordinator], ScannerEntity):
+    _attr_should_poll = False
+
+    def __init__(self, coordinator: PadSpanCoordinator, entry: ConfigEntry, address: str) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._address = address
+        self._attr_unique_id = f"{entry.entry_id}_{address.replace(':', '').lower()}"
+        self._attr_name = f"PadSpan {address[-5:].replace(':','')}"
+
+    @property
+    def available(self) -> bool:
+        dev = self._device()
+        return dev is not None
+
+    def _device(self) -> dict[str, Any] | None:
+        data = self.coordinator.data or {}
+        return data.get("devices", {}).get(self._address)
+
+    @property
+    def is_connected(self) -> bool:
+        dev = self._device()
+        return bool(dev and dev.get("active"))
+
+    @property
+    def mac_address(self) -> str | None:
+        return self._address
+
+    @property
+    def hostname(self) -> str | None:
+        dev = self._device()
+        if not dev:
+            return None
+        return dev.get("name")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        dev = self._device() or {}
+        return {
+            "address": self._address,
+            "name": dev.get("name"),
+            "last_rssi": dev.get("last_rssi"),
+            "last_seen": dev.get("last_seen"),
+            "sources": dev.get("sources", {}),
+            "connectable": dev.get("connectable"),
+            "map_id": dev.get("map_id"),
+            "map_x": dev.get("x"),
+            "map_y": dev.get("y"),
+            "confidence": dev.get("confidence"),
+            "unavailable": dev.get("unavailable"),
+        }

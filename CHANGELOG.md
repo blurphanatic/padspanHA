@@ -1,9 +1,11 @@
 # Changelog
 
-## 0.2.6
-- Added passive BLE ingestion path to include non-connectable discoveries.
-- Added startup BLE cache bootstrap and reload service.
-- Added scanner/device diagnostics sensors.
-- Added map image import service.
-- Added map anchor set/update service.
-- Added BLE `device_tracker` entities.
+## 0.2.7
+- Fix: robust config flow/options flow (prevents common 500 load failures from broken flow scaffolding).
+- Fix: allow multiple config entries (removed single-entry behavior).
+- Fix: improved BLE ingest with passive mode option and cache bootstrap.
+- Feature: map image import service.
+- Feature: map anchor service with source mapping (multi-hub/scanner).
+- Feature: dynamic device tracker entities with estimated map x/y attributes.
+- Feature: diagnostics sensors (scanner counts, active devices, map/anchor counts).
+- Feature: `reload_ble_cache` service.

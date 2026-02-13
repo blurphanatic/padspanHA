@@ -1,19 +1,24 @@
-# PadSpan HA quick start service calls
+# 1) Import map
+service: padspan_ha.import_map_image
+data:
+  map_id: main_floor
+  source_path: www/maps/main_floor.png
+  overwrite: true
 
-- service: padspan_ha.reload_ble_cache
-  data: {}
+# 2) Add anchors (scanner source id -> map point)
+---
+service: padspan_ha.set_map_anchor
+data:
+  map_id: main_floor
+  anchor_id: bermuda_office
+  source_id: AA:BB:CC:DD:EE:FF
+  x: 390
+  y: 145
+  z: 0
+  weight: 1.0
+  name: Office
 
-- service: padspan_ha.import_map_image
-  data:
-    map_id: main_floor
-    source_path: www/maps/main_floor.png
-    overwrite: true
-
-- service: padspan_ha.set_map_anchor
-  data:
-    map_id: main_floor
-    anchor_id: bermuda_office
-    x: 390
-    y: 145
-    z: 0
-    weight: 1.0
+# 3) Reload BLE cache
+---
+service: padspan_ha.reload_ble_cache
+data: {}

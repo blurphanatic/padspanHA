@@ -1,89 +1,120 @@
-reload_ble_cache:
-  name: Reload BLE cache
-  description: Force PadSpan HA to reload Home Assistant's discovered BLE cache.
-  fields:
-    entry_id:
-      name: Entry ID
-      description: Optional config entry ID if multiple PadSpan HA entries exist.
-      required: false
-      selector:
-        text:
-
 import_map_image:
   name: Import map image
-  description: Import a floor/map image from /config into /config/www/padspan_ha/<entry_id>/.
+  description: Copy a map image into /config/www and register it for PadSpan.
   fields:
+    entry_id:
+      required: false
+      example: "abcd1234"
+      selector:
+        text:
     map_id:
-      name: Map ID
-      description: Unique map ID, for example "main_floor".
       required: true
+      example: "main_floor"
       selector:
         text:
     source_path:
-      name: Source path
-      description: Image path relative to /config, for example "www/maps/main_floor.png".
       required: true
+      example: "www/maps/main_floor.png"
       selector:
         text:
     overwrite:
-      name: Overwrite
-      description: Replace existing map image if one already exists for this map_id.
       required: false
       default: false
       selector:
         boolean:
-    entry_id:
-      name: Entry ID
-      description: Optional config entry ID if multiple PadSpan HA entries exist.
-      required: false
-      selector:
-        text:
 
 set_map_anchor:
   name: Set map anchor
-  description: Set or update BLE anchor coordinates for a map.
+  description: Set/update an anchor (scanner/hub coordinate) on a map.
   fields:
+    entry_id:
+      required: false
+      selector:
+        text:
     map_id:
-      name: Map ID
-      description: Target map ID.
       required: true
       selector:
         text:
     anchor_id:
-      name: Anchor ID
-      description: Logical anchor name, e.g. "bermuda_office".
       required: true
       selector:
         text:
+    source_id:
+      required: true
+      description: Scanner source id (e.g. Bermuda source / adapter MAC)
+      selector:
+        text:
     x:
-      name: X
-      description: X pixel coordinate on the map.
       required: true
       selector:
         number:
+          min: -100000
+          max: 100000
+          mode: box
     y:
-      name: Y
-      description: Y pixel coordinate on the map.
       required: true
       selector:
         number:
+          min: -100000
+          max: 100000
+          mode: box
     z:
-      name: Z
-      description: Optional Z coordinate (elevation/floor offset).
       required: false
       default: 0
       selector:
         number:
+          min: -10000
+          max: 10000
+          mode: box
     weight:
-      name: Weight
-      description: Optional anchor confidence weight (default 1.0).
       required: false
       default: 1.0
       selector:
         number:
+          min: 0.01
+          max: 100
+          step: 0.01
+          mode: box
+    name:
+      required: false
+      selector:
+        text:
+
+remove_map_anchor:
+  name: Remove map anchor
+  description: Remove an anchor from a map.
+  fields:
     entry_id:
-      name: Entry ID
-      description: Optional config entry ID if multiple PadSpan HA entries exist.
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+    anchor_id:
+      required: true
+      selector:
+        text:
+
+set_active_map:
+  name: Set active map
+  description: Set which map is currently used for position estimation.
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+
+reload_ble_cache:
+  name: Reload BLE cache
+  description: Pull all currently discovered BLE devices from Home Assistant cache.
+  fields:
+    entry_id:
       required: false
       selector:
         text:

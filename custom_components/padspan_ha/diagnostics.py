@@ -1,49 +1,34 @@
-"""Diagnostics support for PadSpan HA."""
 from __future__ import annotations
-
-from hashlib import sha256
-from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import async_entries_for_config_entry, async_get as async_get_device_registry
+from homeassistant.components.diagnostics import async_redact_data
 
-from .const import DATA_COORDINATOR, DATA_STORE, DOMAIN
+from .const import DOMAIN
 
-
-def _hash_address(address: str) -> str:
-    return sha256(address.encode("utf-8")).hexdigest()[:12]
+TO_REDACT = {"entry_id"}
 
 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
-) -> dict[str, Any]:
-    """Return diagnostics for a config entry."""
-    entry_data = hass.data[DOMAIN][entry.entry_id]
-    coordinator = entry_data[DATA_COORDINATOR]
-    store = entry_data[DATA_STORE]
+) -> dict:
+    domain_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    coordinator = domain_data.get("coordinator")
+    map_store = domain_data.get("map_store")
 
-    devices = coordinator.data.get("devices", {})
-    sample = []
-    for _, data in list(devices.items())[:50]:
-        sample.append(
-            {
-                "address_hash": _hash_address(data.get("address", "")),
-                "name": data.get("name"),
-                "rssi": data.get("rssi"),
-                "source": data.get("source"),
-                "connectable": data.get("connectable"),
-                "last_seen": data.get("last_seen"),
-                "seen_count": data.get("seen_count"),
-                "service_uuids": data.get("service_uuids"),
-            }
-        )
+    device_registry = async_get_device_registry(hass)
+    devices = async_entries_for_config_entry(device_registry, entry.entry_id)
 
-    return {
-        "entry_id": entry.entry_id,
-        "entry_title": entry.title,
-        "options": dict(entry.options),
-        "metrics": coordinator.data.get("metrics", {}),
-        "scanners": coordinator.data.get("scanners", {}),
-        "devices_sample": sample,
-        "map_store": store.as_dict(),
+    payload = {
+        "entry": {
+            "title": entry.title,
+            "data": dict(entry.data),
+            "options": dict(entry.options),
+        },
+        "stats": (coordinator.data or {}).get("stats") if coordinator else {},
+        "maps": map_store.get_maps() if map_store else {},
+        "devices_count": len((coordinator.data or {}).get("devices", {})) if coordinator and coordinator.data else 0,
+        "device_registry_count": len(devices),
     }
+    return async_redact_data(payload, TO_REDACT)

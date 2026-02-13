@@ -1,61 +1,26 @@
-# PadSpan HA (v0.2.6)
+# PadSpan HA
 
-Home Assistant custom integration for BLE discovery diagnostics + map image anchoring (PadSpan HA track).
+PadSpan HA is a Home Assistant custom integration for BLE presence + map anchoring.
 
-## What this version includes
+## Features (v0.2.7)
+- Passive BLE ingest support (works with Bermuda-style proxy setups).
+- Bootstrap from HA Bluetooth cache.
+- Multiple hubs/scanners supported.
+- Dynamic BLE device tracker entities (home/not_home).
+- Map image import service (`import_map_image`).
+- Map anchor service (`set_map_anchor`) to pin scanner/hub coordinates.
+- Position estimation (weighted centroid from RSSI and anchors).
+- Diagnostics sensors for scanner/device visibility.
 
-- Passive BLE ingestion (`connectable: false`) so devices visible via Bermuda/proxies are included.
-- BLE cache bootstrap + manual service to reload cache.
-- Diagnostic metrics:
-  - Scanner Count (All)
-  - Scanner Count (Connectable)
-  - BLE Devices Seen (Ever)
-  - BLE Devices Active (Now)
-- `device_tracker` entities for discovered BLE devices.
-- Map image import and anchor placement services:
-  - `padspan_ha.import_map_image`
-  - `padspan_ha.set_map_anchor`
-
----
-
-## HACS install (Custom repository)
-
+## HACS install
 1. Push this repo to GitHub.
-2. In Home Assistant:
-   - **HACS → Integrations → ⋮ (menu) → Custom repositories**
-   - Repository: `https://github.com/<your-user>/padspanHA`
-   - Category: **Integration**
-3. Find **PadSpan HA** in HACS and install.
-4. Restart Home Assistant.
-5. Go to **Settings → Devices & Services → Add Integration** and add **PadSpan HA**.
+2. HACS → Integrations → ⋮ → Custom repositories
+3. Add your repo URL as **Integration**.
+4. Install **PadSpan HA**, restart Home Assistant.
+5. Add integration in **Settings → Devices & Services**.
 
----
-
-## Required repository layout
-
-This package is already structured correctly:
-
-```
-<repo root>/
-  custom_components/
-    padspan_ha/
-      manifest.json
-      ...
-  hacs.json
-  README.md
-```
-
----
-
-## Initial service calls
-
-### 1) Reload BLE cache
-```yaml
-service: padspan_ha.reload_ble_cache
-data: {}
-```
-
-### 2) Import a floor/map image
+## Quick start
+### 1) Import a map image
 ```yaml
 service: padspan_ha.import_map_image
 data:
@@ -64,24 +29,31 @@ data:
   overwrite: true
 ```
 
-### 3) Add/update anchor coordinates
+### 2) Add scanner/hub anchors
+(Use your scanner source id, e.g. Bermuda proxy source/MAC)
 ```yaml
 service: padspan_ha.set_map_anchor
 data:
   map_id: main_floor
   anchor_id: bermuda_office
+  source_id: AA:BB:CC:DD:EE:FF
   x: 390
   y: 145
   z: 0
   weight: 1.0
+  name: Office Bermuda
 ```
 
----
+### 3) Optional BLE cache reload
+```yaml
+service: padspan_ha.reload_ble_cache
+data: {}
+```
+
+## Why passive mode?
+If your BLE feed comes from non-connectable proxies (common for Bermuda), `connectable: false` is required to receive all advertisements.
 
 ## Notes
-
-- Imported map images are copied to:
-  `/config/www/padspan_ha/<entry_id>/...`
-- They become available to dashboards as:
-  `/local/padspan_ha/<entry_id>/...`
-- Replace the placeholder GitHub links in `manifest.json` with your real repository URL before publishing.
+- The map file is copied into `/config/www/padspan_ha/<entry_id>/...`
+- The public URL will be `/local/padspan_ha/<entry_id>/...`
+- Use that URL in a Picture card / floorplan card.

@@ -1,224 +1,269 @@
-"""Data coordinator for PadSpan HA BLE aggregation."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 import logging
+import math
 import time
-from typing import Any, Callable
+from typing import Any
 
 from homeassistant.components import bluetooth
+from homeassistant.components.bluetooth import BluetoothChange, BluetoothScanningMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.util import dt as dt_util
 
-from .const import CONF_ACTIVE_WINDOW_SECONDS, DEFAULT_ACTIVE_WINDOW_SECONDS, DOMAIN
+from .const import (
+    CONF_BOOTSTRAP_CACHE,
+    CONF_DEVICE_TIMEOUT,
+    CONF_HUB_SOURCES,
+    CONF_INCLUDE_PASSIVE,
+    DEFAULT_BOOTSTRAP_CACHE,
+    DEFAULT_DEVICE_TIMEOUT,
+    DEFAULT_INCLUDE_PASSIVE,
+    DOMAIN,
+)
+from .map_store import MapStore
 
 _LOGGER = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
-class DeviceSnapshot:
-    """Mutable device snapshot kept in memory."""
-
+@dataclass
+class DeviceState:
     address: str
-    name: str
-    rssi: int | None
-    source: str
-    connectable: bool
-    first_seen_unix: float
-    last_seen_unix: float
-    last_seen: str
-    seen_count: int
-    tx_power: int | None
-    service_uuids: list[str]
-    manufacturer_keys: list[int]
-    service_data_keys: list[str]
+    name: str | None = None
+    connectable: bool | None = None
+    last_seen: float = 0.0
+    last_rssi: int | None = None
+    sources: dict[str, int] = field(default_factory=dict)
+    unavailable: bool = False
+    map_id: str | None = None
+    x: float | None = None
+    y: float | None = None
+    confidence: float | None = None
+
+    def is_active(self, timeout: int, now_ts: float) -> bool:
+        if self.unavailable:
+            return False
+        return (now_ts - self.last_seen) <= timeout
 
 
 class PadSpanCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Coordinate BLE scanner and device state for PadSpan HA."""
-
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, map_store: MapStore) -> None:
         self.hass = hass
         self.entry = entry
-        self.active_window_seconds: int = int(
-            entry.options.get(CONF_ACTIVE_WINDOW_SECONDS, DEFAULT_ACTIVE_WINDOW_SECONDS)
-        )
-        self.devices: dict[str, DeviceSnapshot] = {}
-        self.scanners_all: set[str] = set()
-        self.scanners_connectable: set[str] = set()
-        self._unsub_ble: Callable[[], None] | None = None
+        self.map_store = map_store
+
+        self._cancel_bt_callback = None
+        self._unavailable_unsubs: dict[str, Any] = {}
+        self._devices: dict[str, DeviceState] = {}
+
+        self.include_passive = bool(entry.options.get(CONF_INCLUDE_PASSIVE, DEFAULT_INCLUDE_PASSIVE))
+        self.bootstrap_cache = bool(entry.options.get(CONF_BOOTSTRAP_CACHE, DEFAULT_BOOTSTRAP_CACHE))
+        self.device_timeout = int(entry.options.get(CONF_DEVICE_TIMEOUT, DEFAULT_DEVICE_TIMEOUT))
+        self.hub_sources = set(str(v).upper() for v in entry.options.get(CONF_HUB_SOURCES, []) if str(v).strip())
 
         super().__init__(
             hass,
             _LOGGER,
             name=f"{DOMAIN}_{entry.entry_id}",
-            update_interval=timedelta(seconds=30),
+            update_interval=timedelta(seconds=15),
         )
 
-    async def _async_update_data(self) -> dict[str, Any]:
-        """Periodic refresh hook for coordinator."""
-        await self.async_reload_cache()
-        if self._unsub_ble is None:
-            self._subscribe_ble_callbacks()
-        return self._snapshot()
+    async def async_setup(self) -> None:
+        await self._async_register_ble_callbacks()
+        if self.bootstrap_cache:
+            await self.async_reload_cache()
+        await self.async_refresh()
 
-    async def async_stop(self) -> None:
-        """Stop listeners."""
-        if self._unsub_ble:
-            self._unsub_ble()
-            self._unsub_ble = None
+    async def async_shutdown(self) -> None:
+        if self._cancel_bt_callback:
+            self._cancel_bt_callback()
+            self._cancel_bt_callback = None
+
+        for cancel in list(self._unavailable_unsubs.values()):
+            cancel()
+        self._unavailable_unsubs.clear()
 
     async def async_reload_cache(self) -> None:
-        """Load currently known BLE discoveries from HA cache."""
-        infos = self._get_discovered_service_info(connectable=False)
-        for info in infos:
-            self._ingest_service_info(info)
+        connectable = not self.include_passive
+        service_infos = bluetooth.async_discovered_service_info(self.hass, connectable=connectable)
+        for info in service_infos:
+            self._upsert_service_info(info)
+        self.async_set_updated_data(self._build_data())
 
-        infos_connectable = self._get_discovered_service_info(connectable=True)
-        for info in infos_connectable:
-            self._ingest_service_info(info)
-
-        self.async_set_updated_data(self._snapshot())
-
-    def _get_discovered_service_info(self, connectable: bool) -> list[Any]:
-        """Safely read discovered service info across HA versions."""
-        getter = getattr(bluetooth, "async_discovered_service_info", None)
-        if getter is None:
-            _LOGGER.warning("Bluetooth cache API unavailable on this HA version")
-            return []
-
-        try:
-            infos = getter(self.hass, connectable=connectable)
-        except TypeError:
-            try:
-                infos = getter(self.hass, connectable)
-            except Exception:
-                return []
-        except Exception:
-            return []
-
-        return list(infos or [])
-
-    def _subscribe_ble_callbacks(self) -> None:
-        """Subscribe to passive BLE callbacks to include non-connectable devices."""
+    async def _async_register_ble_callbacks(self) -> None:
+        connectable = not self.include_passive
+        matcher = {"connectable": connectable}
 
         @callback
-        def _on_ble(service_info: Any, _change: Any) -> None:
-            self._ingest_service_info(service_info)
-            self.async_set_updated_data(self._snapshot())
+        def _async_discovered(
+            service_info: bluetooth.BluetoothServiceInfoBleak,
+            change: BluetoothChange,
+        ) -> None:
+            self._upsert_service_info(service_info)
+            self.async_set_updated_data(self._build_data())
 
-        matcher = bluetooth.BluetoothCallbackMatcher()
-        mode = bluetooth.BluetoothScanningMode.PASSIVE
-        self._unsub_ble = bluetooth.async_register_callback(
+        self._cancel_bt_callback = bluetooth.async_register_callback(
             self.hass,
-            _on_ble,
+            _async_discovered,
             matcher,
-            mode,
+            BluetoothScanningMode.ACTIVE,
         )
-        _LOGGER.debug("Registered passive BLE callback for PadSpan HA")
 
-    def _ingest_service_info(self, service_info: Any) -> None:
-        """Update in-memory device inventory from BLE service info."""
-        address = (getattr(service_info, "address", "") or "").upper()
-        if not address:
+    def _allowed_source(self, source: str | None) -> bool:
+        if not self.hub_sources:
+            return True
+        if not source:
+            return False
+        return str(source).upper() in self.hub_sources
+
+    def _register_unavailable(self, address: str) -> None:
+        if address in self._unavailable_unsubs:
             return
 
-        device_obj = getattr(service_info, "device", None)
-        source = str(getattr(service_info, "source", "unknown"))
-        connectable = bool(getattr(service_info, "connectable", False))
-        rssi = getattr(service_info, "rssi", None)
-        tx_power = getattr(service_info, "tx_power", None)
+        connectable = not self.include_passive
 
-        name = (
-            getattr(service_info, "name", None)
-            or getattr(device_obj, "name", None)
-            or address
+        @callback
+        def _async_unavailable(service_info: bluetooth.BluetoothServiceInfoBleak) -> None:
+            dev = self._devices.get(address)
+            if not dev:
+                return
+            dev.unavailable = True
+            self.async_set_updated_data(self._build_data())
+
+        cancel = bluetooth.async_track_unavailable(
+            self.hass,
+            _async_unavailable,
+            address,
+            connectable=connectable,
         )
+        self._unavailable_unsubs[address] = cancel
 
-        now_unix = time.time()
-        now_iso = dt_util.utcnow().isoformat()
+    def _upsert_service_info(self, service_info: bluetooth.BluetoothServiceInfoBleak) -> None:
+        address = str(service_info.address).upper()
+        source = str(getattr(service_info, "source", "") or "").upper()
+        if not self._allowed_source(source):
+            return
 
-        service_uuids = list(getattr(service_info, "service_uuids", []) or [])
-        manufacturer_data = getattr(service_info, "manufacturer_data", {}) or {}
-        service_data = getattr(service_info, "service_data", {}) or {}
+        dev = self._devices.get(address)
+        if dev is None:
+            dev = DeviceState(address=address)
+            self._devices[address] = dev
+            self._register_unavailable(address)
 
-        if source:
-            self.scanners_all.add(source)
-            if connectable:
-                self.scanners_connectable.add(source)
+        dev.name = service_info.name or dev.name or address
+        dev.last_seen = time.time()
+        dev.last_rssi = getattr(service_info, "rssi", dev.last_rssi)
+        dev.connectable = getattr(service_info, "connectable", dev.connectable)
+        dev.unavailable = False
 
-        existing = self.devices.get(address)
-        if existing is None:
-            self.devices[address] = DeviceSnapshot(
-                address=address,
-                name=str(name),
-                rssi=rssi,
-                source=source,
-                connectable=connectable,
-                first_seen_unix=now_unix,
-                last_seen_unix=now_unix,
-                last_seen=now_iso,
-                seen_count=1,
-                tx_power=tx_power,
-                service_uuids=service_uuids,
-                manufacturer_keys=[int(k) for k in manufacturer_data.keys()],
-                service_data_keys=[str(k) for k in service_data.keys()],
-            )
-        else:
-            existing.name = str(name) or existing.name
-            existing.rssi = rssi
-            existing.source = source or existing.source
-            existing.connectable = connectable
-            existing.last_seen_unix = now_unix
-            existing.last_seen = now_iso
-            existing.seen_count += 1
-            existing.tx_power = tx_power
-            existing.service_uuids = service_uuids or existing.service_uuids
-            existing.manufacturer_keys = [int(k) for k in manufacturer_data.keys()]
-            existing.service_data_keys = [str(k) for k in service_data.keys()]
+        if source and dev.last_rssi is not None:
+            dev.sources[source] = int(dev.last_rssi)
 
-    def _snapshot(self) -> dict[str, Any]:
-        """Build coordinator snapshot consumed by entities and diagnostics."""
-        now_unix = time.time()
-        active_now = 0
+        self._estimate_position(dev)
 
-        devices: dict[str, Any] = {}
-        for address, dev in self.devices.items():
-            is_active = (now_unix - dev.last_seen_unix) <= self.active_window_seconds
-            if is_active:
-                active_now += 1
+    def _estimate_position(self, dev: DeviceState) -> None:
+        map_id = self.map_store.get_active_map_id()
+        anchors = self.map_store.get_anchors(map_id)
 
-            devices[address] = {
-                "address": dev.address,
-                "name": dev.name,
-                "rssi": dev.rssi,
-                "source": dev.source,
+        if not anchors or not dev.sources:
+            dev.map_id = map_id
+            dev.x = None
+            dev.y = None
+            dev.confidence = None
+            return
+
+        # RSSI -> distance approximation
+        tx_power = -59.0
+        path_loss = 2.2
+
+        sum_w = 0.0
+        sum_x = 0.0
+        sum_y = 0.0
+
+        for source_id, rssi in dev.sources.items():
+            anchor = None
+            for a in anchors.values():
+                if str(a.get("source_id", "")).upper() == source_id.upper():
+                    anchor = a
+                    break
+            if not anchor:
+                continue
+
+            # Distance estimate (meters-ish)
+            distance = 10 ** ((tx_power - float(rssi)) / (10 * path_loss))
+            distance = max(distance, 0.5)
+
+            base_weight = float(anchor.get("weight", 1.0))
+            w = base_weight / (distance * distance)
+
+            ax = float(anchor.get("x", 0.0))
+            ay = float(anchor.get("y", 0.0))
+
+            sum_w += w
+            sum_x += ax * w
+            sum_y += ay * w
+
+        if sum_w <= 0:
+            dev.map_id = map_id
+            dev.x = None
+            dev.y = None
+            dev.confidence = None
+            return
+
+        dev.map_id = map_id
+        dev.x = sum_x / sum_w
+        dev.y = sum_y / sum_w
+        dev.confidence = min(1.0, max(0.0, math.log10(1.0 + sum_w)))
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        return self._build_data()
+
+    def _build_data(self) -> dict[str, Any]:
+        now_ts = time.time()
+        active_count = 0
+
+        devices_payload: dict[str, dict[str, Any]] = {}
+        for address, dev in self._devices.items():
+            active = dev.is_active(self.device_timeout, now_ts)
+            if active:
+                active_count += 1
+
+            devices_payload[address] = {
+                "address": address,
+                "name": dev.name or address,
                 "connectable": dev.connectable,
-                "first_seen_unix": dev.first_seen_unix,
-                "last_seen_unix": dev.last_seen_unix,
                 "last_seen": dev.last_seen,
-                "seen_count": dev.seen_count,
-                "tx_power": dev.tx_power,
-                "service_uuids": dev.service_uuids,
-                "manufacturer_keys": dev.manufacturer_keys,
-                "service_data_keys": dev.service_data_keys,
-                "active_now": is_active,
+                "last_rssi": dev.last_rssi,
+                "sources": dict(dev.sources),
+                "unavailable": dev.unavailable,
+                "active": active,
+                "map_id": dev.map_id,
+                "x": dev.x,
+                "y": dev.y,
+                "confidence": dev.confidence,
             }
 
+        maps = self.map_store.get_maps()
+        active_map_id = self.map_store.get_active_map_id()
+        anchor_count = len(self.map_store.get_anchors(active_map_id))
+
+        stats = {
+            "include_passive": self.include_passive,
+            "scanner_count_all": bluetooth.async_scanner_count(self.hass, connectable=False),
+            "scanner_count_connectable": bluetooth.async_scanner_count(self.hass, connectable=True),
+            "devices_seen_total": len(self._devices),
+            "devices_active": active_count,
+            "map_count": len(maps),
+            "anchor_count_active_map": anchor_count,
+            "active_map_id": active_map_id,
+            "hub_sources_filter": sorted(list(self.hub_sources)),
+            "device_timeout": self.device_timeout,
+        }
+
         return {
-            "metrics": {
-                "scanner_count_all": len(self.scanners_all),
-                "scanner_count_connectable": len(self.scanners_connectable),
-                "seen_ever": len(self.devices),
-                "active_now": active_now,
-                "active_window_seconds": self.active_window_seconds,
-            },
-            "scanners": {
-                "all": sorted(self.scanners_all),
-                "connectable": sorted(self.scanners_connectable),
-            },
-            "devices": devices,
+            "devices": devices_payload,
+            "stats": stats,
+            "maps": maps,
         }

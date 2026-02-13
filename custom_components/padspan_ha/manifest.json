@@ -1,17 +1,21 @@
 {
   "domain": "padspan_ha",
   "name": "PadSpan HA",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "documentation": "https://github.com/YOUR_GITHUB_USER/padspanHA",
   "issue_tracker": "https://github.com/YOUR_GITHUB_USER/padspanHA/issues",
-  "config_flow": true,
-  "iot_class": "local_push",
   "codeowners": [
     "@YOUR_GITHUB_USER"
   ],
-  "requirements": [],
+  "config_flow": true,
+  "integration_type": "hub",
+  "iot_class": "local_push",
   "dependencies": [
-    "bluetooth"
+    "bluetooth",
+    "http"
+  ],
+  "after_dependencies": [
+    "bluetooth_adapters"
   ],
   "loggers": [
     "custom_components.padspan_ha"

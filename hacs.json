@@ -1,9 +1,10 @@
 {
   "name": "PadSpan HA",
-  "domains": [
-    "padspan_ha"
+  "country": [
+    "CA",
+    "US"
   ],
-  "content_in_root": false,
+  "homeassistant": "2024.8.0",
   "render_readme": true,
-  "homeassistant": "2025.1.0"
+  "content_in_root": false
 }
