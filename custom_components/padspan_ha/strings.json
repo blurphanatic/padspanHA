@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PadSpan HA",
+        "description": "Set up PadSpan BLE map + presence integration."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only one PadSpan HA instance is allowed."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "scanner_count_all": {
+        "name": "Scanner Count (All)"
+      },
+      "scanner_count_connectable": {
+        "name": "Scanner Count (Connectable)"
+      },
+      "seen_ever": {
+        "name": "BLE Devices Seen (Ever)"
+      },
+      "active_now": {
+        "name": "BLE Devices Active (Now)"
+      }
+    }
+  }
+}

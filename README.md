@@ -1,23 +1,87 @@
-# PadSpan HA (Custom Integration)
+# PadSpan HA (v0.2.6)
 
-PadSpan is a Home Assistant custom integration that listens to Bluetooth advertisements via Home Assistant's
-Bluetooth stack and exposes live diagnostics sensors (rolling packets and unique devices).
+Home Assistant custom integration for BLE discovery diagnostics + map image anchoring (PadSpan HA track).
 
-## Install (manual)
-1. Copy `custom_components/padspan` into `/config/custom_components/padspan`
-2. Restart Home Assistant
-3. Settings → Devices & Services → Add Integration → **PadSpan**
+## What this version includes
 
-## Install (HACS custom repository)
-1. HACS → Integrations → ⋮ → Custom repositories
-2. Add your repo URL and category **Integration**
-3. Install and restart Home Assistant
+- Passive BLE ingestion (`connectable: false`) so devices visible via Bermuda/proxies are included.
+- BLE cache bootstrap + manual service to reload cache.
+- Diagnostic metrics:
+  - Scanner Count (All)
+  - Scanner Count (Connectable)
+  - BLE Devices Seen (Ever)
+  - BLE Devices Active (Now)
+- `device_tracker` entities for discovered BLE devices.
+- Map image import and anchor placement services:
+  - `padspan_ha.import_map_image`
+  - `padspan_ha.set_map_anchor`
 
-## Entities
-- Packets last 60s
-- Unique devices last 60s
-- Packets last 5m
-- Unique devices last 5m
-- Packets today
-- Unique devices today
-- Last seen
+---
+
+## HACS install (Custom repository)
+
+1. Push this repo to GitHub.
+2. In Home Assistant:
+   - **HACS → Integrations → ⋮ (menu) → Custom repositories**
+   - Repository: `https://github.com/<your-user>/padspanHA`
+   - Category: **Integration**
+3. Find **PadSpan HA** in HACS and install.
+4. Restart Home Assistant.
+5. Go to **Settings → Devices & Services → Add Integration** and add **PadSpan HA**.
+
+---
+
+## Required repository layout
+
+This package is already structured correctly:
+
+```
+<repo root>/
+  custom_components/
+    padspan_ha/
+      manifest.json
+      ...
+  hacs.json
+  README.md
+```
+
+---
+
+## Initial service calls
+
+### 1) Reload BLE cache
+```yaml
+service: padspan_ha.reload_ble_cache
+data: {}
+```
+
+### 2) Import a floor/map image
+```yaml
+service: padspan_ha.import_map_image
+data:
+  map_id: main_floor
+  source_path: www/maps/main_floor.png
+  overwrite: true
+```
+
+### 3) Add/update anchor coordinates
+```yaml
+service: padspan_ha.set_map_anchor
+data:
+  map_id: main_floor
+  anchor_id: bermuda_office
+  x: 390
+  y: 145
+  z: 0
+  weight: 1.0
+```
+
+---
+
+## Notes
+
+- Imported map images are copied to:
+  `/config/www/padspan_ha/<entry_id>/...`
+- They become available to dashboards as:
+  `/local/padspan_ha/<entry_id>/...`
+- Replace the placeholder GitHub links in `manifest.json` with your real repository URL before publishing.

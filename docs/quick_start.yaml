@@ -1,0 +1,19 @@
+# PadSpan HA quick start service calls
+
+- service: padspan_ha.reload_ble_cache
+  data: {}
+
+- service: padspan_ha.import_map_image
+  data:
+    map_id: main_floor
+    source_path: www/maps/main_floor.png
+    overwrite: true
+
+- service: padspan_ha.set_map_anchor
+  data:
+    map_id: main_floor
+    anchor_id: bermuda_office
+    x: 390
+    y: 145
+    z: 0
+    weight: 1.0
