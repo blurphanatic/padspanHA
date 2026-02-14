@@ -1,35 +1,46 @@
-# 1) Import a map image from /config path
+# Example service calls after installation
+
+# Import map from an existing path inside /config
 service: padspan_ha.import_map_image
 data:
   map_id: main_floor
   source_path: www/maps/main_floor.png
   name: Main Floor
-  activate: true
+  overwrite: true
 
 ---
-# 2) Place scanner anchors for that map
-service: padspan_ha.set_map_anchor
+service: padspan_ha.set_active_map
 data:
   map_id: main_floor
-  source_id: bermuda_living_room
-  x: 420
-  y: 180
-  z: 0
-  weight: 1.0
-  label: Living Room Proxy
 
 ---
 service: padspan_ha.set_map_anchor
 data:
   map_id: main_floor
   source_id: bermuda_office
-  x: 160
-  y: 310
+  label: Office Scanner
+  x: 450
+  y: 230
   z: 0
   weight: 1.0
-  label: Office Proxy
 
 ---
-# 3) Force immediate refresh
-service: padspan_ha.reload_ble_cache
-data: {}
+service: padspan_ha.set_room_polygon
+data:
+  map_id: main_floor
+  room_id: living
+  name: Living Room
+  points:
+    - x: 120
+      y: 140
+    - x: 360
+      y: 140
+    - x: 360
+      y: 310
+    - x: 120
+      y: 310
+
+---
+service: padspan_ha.start_calibration
+data:
+  map_id: main_floor

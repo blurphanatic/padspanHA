@@ -1,16 +1,9 @@
 {
-  "title": "PadSpan HA",
   "config": {
     "step": {
       "user": {
-        "title": "Set up PadSpan HA",
-        "description": "Configure BLE behavior and update cadence.",
-        "data": {
-          "include_passive": "Include passive/non-connectable BLE",
-          "update_interval": "Update interval (seconds)",
-          "seen_timeout": "Presence timeout (seconds)",
-          "enable_sidebar": "Enable advanced sidebar panel"
-        }
+        "title": "PadSpan HA",
+        "description": "Create a PadSpan HA instance."
       }
     }
   },
@@ -19,10 +12,11 @@
       "init": {
         "title": "PadSpan HA options",
         "data": {
-          "include_passive": "Include passive/non-connectable BLE",
-          "update_interval": "Update interval (seconds)",
-          "seen_timeout": "Presence timeout (seconds)",
-          "enable_sidebar": "Enable advanced sidebar panel"
+          "include_passive": "Include passive BLE advertisements",
+          "stale_seconds": "Device stale timeout (seconds)",
+          "tx_power": "TX power reference (dBm)",
+          "path_loss": "Path loss exponent",
+          "smoothing_alpha": "RSSI smoothing alpha (0..1)"
         }
       }
     }

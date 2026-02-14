@@ -1,6 +1,6 @@
 import_map_image:
   name: Import map image
-  description: Import an image from /config path into PadSpan local map storage.
+  description: Import a map image from a path inside /config.
   fields:
     entry_id:
       required: false
@@ -12,21 +12,32 @@ import_map_image:
         text:
     source_path:
       required: true
+      description: Example: www/maps/main_floor.png
       selector:
         text:
     name:
       required: false
       selector:
         text:
-    activate:
+    overwrite:
       required: false
-      default: true
       selector:
         boolean:
 
+set_active_map:
+  name: Set active map
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+
 set_map_anchor:
   name: Set map anchor
-  description: Set or update scanner anchor coordinates on a map.
   fields:
     entry_id:
       required: false
@@ -38,6 +49,10 @@ set_map_anchor:
         text:
     source_id:
       required: true
+      selector:
+        text:
+    label:
+      required: false
       selector:
         text:
     x:
@@ -50,22 +65,15 @@ set_map_anchor:
         number:
     z:
       required: false
-      default: 0
       selector:
         number:
     weight:
       required: false
-      default: 1
       selector:
         number:
-    label:
-      required: false
-      selector:
-        text:
 
 delete_map_anchor:
   name: Delete map anchor
-  description: Delete a scanner anchor from a map.
   fields:
     entry_id:
       required: false
@@ -80,9 +88,87 @@ delete_map_anchor:
       selector:
         text:
 
-set_active_map:
-  name: Set active map
-  description: Set active map used for positioning.
+set_room_polygon:
+  name: Set room polygon
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+    room_id:
+      required: true
+      selector:
+        text:
+    name:
+      required: true
+      selector:
+        text:
+    points:
+      required: true
+      description: List of points [{x:1,y:2}, ...]
+
+delete_room:
+  name: Delete room
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+    room_id:
+      required: true
+      selector:
+        text:
+
+start_calibration:
+  name: Start calibration
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+
+capture_calibration_point:
+  name: Capture calibration point
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+    image_x:
+      required: true
+      selector:
+        number:
+    image_y:
+      required: true
+      selector:
+        number:
+    real_x:
+      required: true
+      selector:
+        number:
+    real_y:
+      required: true
+      selector:
+        number:
+
+finish_calibration:
+  name: Finish calibration
   fields:
     entry_id:
       required: false
@@ -95,7 +181,6 @@ set_active_map:
 
 reload_ble_cache:
   name: Reload BLE cache
-  description: Force immediate BLE refresh.
   fields:
     entry_id:
       required: false

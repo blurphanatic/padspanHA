@@ -1,75 +1,76 @@
 from __future__ import annotations
 
 from typing import Any
-
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.core import callback
+from homeassistant.helpers import config_validation as cv
 
 from .const import (
-    CONF_ENABLE_SIDEBAR,
-    CONF_INCLUDE_PASSIVE,
-    CONF_SEEN_TIMEOUT,
-    CONF_UPDATE_INTERVAL,
-    DEFAULT_ENABLE_SIDEBAR,
-    DEFAULT_INCLUDE_PASSIVE,
-    DEFAULT_SEEN_TIMEOUT,
-    DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
+    CONF_INCLUDE_PASSIVE,
+    CONF_STALE_SECONDS,
+    CONF_TX_POWER,
+    CONF_PATH_LOSS,
+    CONF_SMOOTHING,
+    DEFAULT_INCLUDE_PASSIVE,
+    DEFAULT_STALE_SECONDS,
+    DEFAULT_TX_POWER,
+    DEFAULT_PATH_LOSS,
+    DEFAULT_SMOOTHING,
 )
 
 
-def _options_schema(defaults: dict[str, Any]) -> vol.Schema:
-    return vol.Schema(
-        {
-            vol.Required(
-                CONF_INCLUDE_PASSIVE,
-                default=defaults.get(CONF_INCLUDE_PASSIVE, DEFAULT_INCLUDE_PASSIVE),
-            ): bool,
-            vol.Required(
-                CONF_UPDATE_INTERVAL,
-                default=defaults.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
-            ): vol.All(int, vol.Range(min=2, max=120)),
-            vol.Required(
-                CONF_SEEN_TIMEOUT,
-                default=defaults.get(CONF_SEEN_TIMEOUT, DEFAULT_SEEN_TIMEOUT),
-            ): vol.All(int, vol.Range(min=5, max=600)),
-            vol.Required(
-                CONF_ENABLE_SIDEBAR,
-                default=defaults.get(CONF_ENABLE_SIDEBAR, DEFAULT_ENABLE_SIDEBAR),
-            ): bool,
-        }
-    )
-
-
 class PadSpanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for PadSpan HA."""
-
     VERSION = 1
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
-            return self.async_create_entry(title="PadSpan HA", data=user_input)
-
-        schema = _options_schema({})
+            title = user_input.get("name", "PadSpan HA")
+            return self.async_create_entry(title=title, data={})
+        schema = vol.Schema({
+            vol.Optional("name", default="PadSpan HA"): str,
+        })
         return self.async_show_form(step_id="user", data_schema=schema)
 
     @staticmethod
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry):
         return PadSpanOptionsFlow(config_entry)
 
 
 class PadSpanOptionsFlow(config_entries.OptionsFlow):
-    """PadSpan HA options flow."""
-
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self._entry = config_entry
+        self.config_entry = config_entry
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        defaults = dict(self._entry.data)
-        defaults.update(self._entry.options)
-        return self.async_show_form(step_id="init", data_schema=_options_schema(defaults))
+        opts = self.config_entry.options
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_INCLUDE_PASSIVE,
+                    default=opts.get(CONF_INCLUDE_PASSIVE, DEFAULT_INCLUDE_PASSIVE),
+                ): cv.boolean,
+                vol.Optional(
+                    CONF_STALE_SECONDS,
+                    default=opts.get(CONF_STALE_SECONDS, DEFAULT_STALE_SECONDS),
+                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=600)),
+                vol.Optional(
+                    CONF_TX_POWER,
+                    default=opts.get(CONF_TX_POWER, DEFAULT_TX_POWER),
+                ): vol.All(vol.Coerce(int), vol.Range(min=-120, max=0)),
+                vol.Optional(
+                    CONF_PATH_LOSS,
+                    default=opts.get(CONF_PATH_LOSS, DEFAULT_PATH_LOSS),
+                ): vol.All(vol.Coerce(float), vol.Range(min=1.2, max=6.0)),
+                vol.Optional(
+                    CONF_SMOOTHING,
+                    default=opts.get(CONF_SMOOTHING, DEFAULT_SMOOTHING),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0)),
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)
