@@ -1,0 +1,17 @@
+{
+  "domain": "padspan_ha",
+  "name": "PadSpan HA",
+  "version": "0.3.0",
+  "documentation": "https://github.com/YOUR_GITHUB_USER/padspanHA",
+  "issue_tracker": "https://github.com/YOUR_GITHUB_USER/padspanHA/issues",
+  "codeowners": [
+    "@YOUR_GITHUB_USER"
+  ],
+  "config_flow": true,
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "requirements": [],
+  "loggers": [
+    "custom_components.padspan_ha"
+  ]
+}

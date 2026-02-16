@@ -1,0 +1,6 @@
+{
+  "name": "PadSpan HA",
+  "render_readme": true,
+  "filename": "custom_components/padspan_ha/manifest.json",
+  "country": ["CA", "US"]
+}

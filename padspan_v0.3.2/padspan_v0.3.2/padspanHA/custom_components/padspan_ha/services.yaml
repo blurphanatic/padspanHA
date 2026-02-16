@@ -1,0 +1,25 @@
+import_map_image:
+  name: Import map image
+  description: Import a floorplan image to the active map profile.
+  fields:
+    map_name:
+      required: true
+      example: "main_floor"
+
+set_map_anchor:
+  name: Set map anchor
+  description: Upsert an anchor with x/y location in map coordinates.
+  fields:
+    anchor_id:
+      required: true
+      example: "anchor_a"
+    x:
+      required: true
+      example: 2.1
+    y:
+      required: true
+      example: 3.8
+
+reload_ble_cache:
+  name: Reload BLE cache
+  description: Refresh BLE snapshot data source.

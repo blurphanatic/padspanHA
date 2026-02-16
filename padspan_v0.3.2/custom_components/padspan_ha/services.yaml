@@ -1,0 +1,188 @@
+import_map_image:
+  name: Import map image
+  description: Import a map image from a path inside /config.
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+    source_path:
+      required: true
+      description: Example: www/maps/main_floor.png
+      selector:
+        text:
+    name:
+      required: false
+      selector:
+        text:
+    overwrite:
+      required: false
+      selector:
+        boolean:
+
+set_active_map:
+  name: Set active map
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+
+set_map_anchor:
+  name: Set map anchor
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+    source_id:
+      required: true
+      selector:
+        text:
+    label:
+      required: false
+      selector:
+        text:
+    x:
+      required: true
+      selector:
+        number:
+    y:
+      required: true
+      selector:
+        number:
+    z:
+      required: false
+      selector:
+        number:
+    weight:
+      required: false
+      selector:
+        number:
+
+delete_map_anchor:
+  name: Delete map anchor
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+    source_id:
+      required: true
+      selector:
+        text:
+
+set_room_polygon:
+  name: Set room polygon
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+    room_id:
+      required: true
+      selector:
+        text:
+    name:
+      required: true
+      selector:
+        text:
+    points:
+      required: true
+      description: List of points [{x:1,y:2}, ...]
+
+delete_room:
+  name: Delete room
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+    room_id:
+      required: true
+      selector:
+        text:
+
+start_calibration:
+  name: Start calibration
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+
+capture_calibration_point:
+  name: Capture calibration point
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+    image_x:
+      required: true
+      selector:
+        number:
+    image_y:
+      required: true
+      selector:
+        number:
+    real_x:
+      required: true
+      selector:
+        number:
+    real_y:
+      required: true
+      selector:
+        number:
+
+finish_calibration:
+  name: Finish calibration
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    map_id:
+      required: true
+      selector:
+        text:
+
+reload_ble_cache:
+  name: Reload BLE cache
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:

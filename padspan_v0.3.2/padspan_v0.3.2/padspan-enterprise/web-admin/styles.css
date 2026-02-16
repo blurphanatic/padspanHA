@@ -1,0 +1,30 @@
+:root{--bg:#0e1117;--p:#161c26;--p2:#1c2532;--t:#e7edf8;--m:#98a8bf;--b:#2a3546;--a:#4ba1ff}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--t);font-family:Inter,Arial,sans-serif}
+.layout{display:grid;grid-template-columns:280px 1fr;min-height:100vh;transition:grid-template-columns .18s ease}
+.layout.c{grid-template-columns:70px 1fr}
+.side{background:var(--p);border-right:1px solid var(--b);display:flex;flex-direction:column}
+.head{display:flex;justify-content:space-between;align-items:center;padding:12px;border-bottom:1px solid var(--b)}
+#btnToggle,#btnMenu{border:1px solid var(--b);background:var(--p2);color:var(--t);border-radius:8px;padding:6px 10px;cursor:pointer}
+.item{display:block;margin:8px 10px;padding:10px;border-radius:10px;text-decoration:none;color:var(--m);border:1px solid transparent}
+.item:hover{background:var(--p2);color:var(--t);border-color:var(--b)}
+.item.active{background:color-mix(in oklab,var(--a) 18%, transparent);border-color:color-mix(in oklab,var(--a) 45%, transparent);color:var(--t)}
+.ver{margin-top:auto;padding:12px;border-top:1px solid var(--b);color:var(--m)}
+main header{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--p);border-bottom:1px solid var(--b)}
+#btnMenu{display:none}
+#view{padding:18px}
+.card{background:var(--p);border:1px solid var(--b);padding:14px;border-radius:12px}
+
+.layout.c .head strong,.layout.c .ver,.layout.c .item{font-size:0}
+.layout.c .item::before{font-size:1rem}
+.layout.c .item[data-route="ops"]::before{content:"⌂"}
+.layout.c .item[data-route="sites"]::before{content:"▦"}
+.layout.c .item[data-route="receivers"]::before{content:"◉"}
+.layout.c .item[data-route="map"]::before{content:"⌖"}
+.layout.c .item[data-route="settings"]::before{content:"⚙"}
+
+@media (max-width:900px){
+  .layout{grid-template-columns:1fr}
+  .side{position:fixed;left:-300px;top:0;bottom:0;width:280px;z-index:5;transition:left .18s ease}
+  .layout.mo .side{left:0}
+  #btnMenu{display:inline-block}
+}
