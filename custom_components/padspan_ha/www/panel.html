@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>PadSpan HA</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#0f1117; --panel:#171a23; --muted:#8e98b3; --txt:#e9eefc; --accent:#46a0ff; --ok:#2bd48f; --warn:#ffba49;
+      --danger:#ff5f6d;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--txt)}
+    .wrap{display:grid;grid-template-columns:360px 1fr;height:100vh}
+    .left{background:var(--panel);padding:14px;overflow:auto;border-right:1px solid #23283a}
+    .right{position:relative;overflow:hidden}
+    h1{font-size:18px;margin:0 0 10px}
+    h2{font-size:13px;color:var(--muted);margin:14px 0 8px;text-transform:uppercase;letter-spacing:.08em}
+    .row{display:flex;gap:8px;align-items:center;margin:6px 0}
+    .row > *{flex:1}
+    input,select,button,textarea{width:100%;padding:8px 10px;background:#111624;color:var(--txt);border:1px solid #2a3150;border-radius:8px}
+    button{cursor:pointer;background:#1e2942}
+    button:hover{border-color:#3a4a77}
+    button.primary{background:#244f87;border-color:#3d7bc9}
+    button.good{background:#1a5a42;border-color:#2ea370}
+    button.warn{background:#5f491f;border-color:#b98e32}
+    button.danger{background:#632a33;border-color:#a74c5a}
+    .small{font-size:12px;color:var(--muted)}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #2a3150;color:var(--muted);font-size:11px}
+    .status{font-size:12px;color:#b9c6e8;padding-top:8px;white-space:pre-wrap}
+    .toolbar{position:absolute;top:10px;left:10px;z-index:10;display:flex;gap:8px;flex-wrap:wrap}
+    .toolbar button{width:auto;padding:8px 12px}
+    canvas{position:absolute;inset:0;background:#0a0c12}
+    .legend{position:absolute;right:12px;top:12px;background:rgba(12,16,24,.85);border:1px solid #2a3150;border-radius:10px;padding:10px;font-size:12px}
+    .legend .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+    .points{max-height:130px;overflow:auto;border:1px solid #2a3150;padding:8px;border-radius:8px;background:#111624}
+    .pt{font-size:12px;color:#c7d3f5;margin:2px 0}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="left">
+    <h1>PadSpan HA <span class="pill">v0.3.0</span></h1>
+    <div class="small">Advanced map builder, calibration wizard, and BLE visualization.</div>
+
+    <h2>Instance</h2>
+    <div class="row">
+      <select id="entryId"></select>
+      <button id="refresh" class="primary">Refresh</button>
+    </div>
+
+    <h2>Map upload</h2>
+    <div class="row"><input id="mapId" placeholder="map_id e.g. main_floor"/></div>
+    <div class="row"><input id="mapName" placeholder="Map name (optional)"/></div>
+    <div class="row"><input id="mapFile" type="file" accept="image/*"/></div>
+    <div class="row"><button id="uploadMap" class="good">Upload map image</button></div>
+
+    <h2>Map selection</h2>
+    <div class="row">
+      <select id="activeMap"></select>
+      <button id="setActive">Set active</button>
+    </div>
+
+    <h2>Anchor tools</h2>
+    <div class="row">
+      <select id="sourceId"></select>
+      <input id="anchorLabel" placeholder="Anchor label"/>
+    </div>
+    <div class="small">Click map to place selected source. Drag existing anchors to move.</div>
+    <div class="row">
+      <button id="modeAnchor" class="primary">Anchor mode</button>
+      <button id="deleteAnchor" class="danger">Delete selected anchor</button>
+    </div>
+
+    <h2>Room polygons</h2>
+    <div class="row">
+      <input id="roomId" placeholder="room_id"/>
+      <input id="roomName" placeholder="Room name"/>
+    </div>
+    <div class="row">
+      <button id="modeRoom" class="warn">Room draw mode</button>
+      <button id="saveRoom" class="good">Save room polygon</button>
+    </div>
+    <div class="row">
+      <button id="clearRoom">Clear draft</button>
+      <button id="deleteRoom" class="danger">Delete room</button>
+    </div>
+    <div class="small">In room mode, click to add points. Double click to close polygon.</div>
+
+    <h2>Calibration wizard</h2>
+    <div class="row">
+      <button id="startCal" class="warn">Start calibration</button>
+      <button id="finishCal" class="good">Finish calibration</button>
+    </div>
+    <div class="row"><button id="modeCal" class="primary">Capture points mode</button></div>
+    <div class="small">In calibration mode, click map and enter real-world X/Y when prompted.</div>
+    <div class="points" id="calPoints"></div>
+
+    <h2>BLE tools</h2>
+    <div class="row"><button id="reloadBle">Reload BLE cache</button></div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="right">
+    <div class="toolbar">
+      <button id="zoomIn">Zoom +</button>
+      <button id="zoomOut">Zoom -</button>
+      <button id="zoomReset">Reset</button>
+      <span class="pill" id="modePill">Mode: anchor</span>
+    </div>
+    <div class="legend">
+      <div><span class="dot" style="background:#4ea1ff"></span>Scanner anchors (draggable)</div>
+      <div><span class="dot" style="background:#27d28d"></span>BLE devices</div>
+      <div><span class="dot" style="background:rgba(39,210,141,.2)"></span>Confidence heat circles</div>
+      <div><span class="dot" style="background:#ffb049"></span>Room polygons</div>
+      <div><span class="dot" style="background:#ff6d7a"></span>Calibration points</div>
+    </div>
+    <canvas id="mapCanvas"></canvas>
+  </div>
+</div>
+
+<script src="./panel.js"></script>
+</body>
+</html>
