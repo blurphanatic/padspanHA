@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.7 - 2026-02-16
+- Version label alignment build: package files report v0.3.7.
+
 ## 0.3.8 - 2026-02-16
 - Hotfix for `Invalid handler specified` during config flow load.
 - Simplified `config_flow.py` and `const.py` to reduce import-time failures.

@@ -1,0 +1,6 @@
+This build is intentionally labeled as v0.3.7 in:
+- custom_components/padspan_ha/manifest.json
+- custom_components/padspan_ha/const.py
+- panel visible version label
+
+Purpose: match Home Assistant/version display expectations.
