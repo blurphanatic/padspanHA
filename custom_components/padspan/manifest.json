@@ -1,15 +1,15 @@
 {
-  "domain": "padspan_ha",
-  "name": "PadSpan",
+  "domain": "padspan",
+  "name": "PadSpan Legacy (disabled)",
   "version": "0.3.10",
   "documentation": "https://github.com/gbroeckling/padspanHA",
   "issue_tracker": "https://github.com/gbroeckling/padspanHA/issues",
   "codeowners": [
-    "@padspan"
+    "@gbroeckling"
   ],
-  "config_flow": true,
   "iot_class": "local_polling",
+  "integration_type": "hub",
+  "config_flow": false,
   "requirements": [],
-  "dependencies": [],
-  "single_config_entry": true
+  "dependencies": []
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.10 - 2026-02-16
+- Auto-diagnostics added to panel + websocket backend.
+- Version updated to 0.3.10.
+- Added legacy `padspan` tombstone (config_flow disabled) to avoid duplicate integration listings.
+
 ## 0.3.7 - 2026-02-16
 - Version label alignment build: package files report v0.3.7.
 

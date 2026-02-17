@@ -45,13 +45,16 @@ button, select { background:#1d2d4f; color:#e2e8f0; border:1px solid #355284; bo
 .item small { color:#90a4c3; margin-left:auto; }
 
 .diag { white-space:pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; background:#0d1628; border:1px solid #22304a; border-radius:12px; padding:12px; overflow:auto; }
+.check-pass { color:#4ade80; }
+.check-fail { color:#f59e0b; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 </style>
 
 <div class="app">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
       <img src="/padspan_ha_static/padspan-ha/assets/padspan-mark.svg" alt="PadSpan">
-      <div class="t">PadSpan HA</div>
+      <div class="t">PadSpan</div>
     </div>
 
     <div class="row">
@@ -78,7 +81,7 @@ button, select { background:#1d2d4f; color:#e2e8f0; border:1px solid #355284; bo
     <div class="toolbar">
       <button id="toggle">Toggle Sidebar [</button>
       <button id="refresh">Refresh</button>
-      <span class="muted">PadSpan v0.3.7 • local-first</span>
+      <span class="muted">PadSpan v0.3.10 • local-first</span>
     </div>
 
     <section id="view-overview">
@@ -118,9 +121,16 @@ button, select { background:#1d2d4f; color:#e2e8f0; border:1px solid #355284; bo
     <section id="view-diagnostics" class="hidden">
       <div class="card">
         <div class="row">
-          <div><div style="font-weight:600;">Diagnostics</div><div class="muted">Live integration snapshot</div></div>
-          <button id="diag-refresh">Refresh diagnostics</button>
+          <div>
+            <div style="font-weight:600;">Diagnostics</div>
+            <div class="muted">Live integration snapshot + auto diagnostics</div>
+          </div>
+          <div class="toolbar" style="margin:0;">
+            <button id="diag-auto">Run auto diagnostics</button>
+            <button id="diag-refresh">Refresh diagnostics</button>
+          </div>
         </div>
+        <div id="diag-summary" class="cards" style="margin-top:10px;"></div>
         <div id="diag" class="diag" style="margin-top:10px;">Loading…</div>
       </div>
     </section>
@@ -128,12 +138,13 @@ button, select { background:#1d2d4f; color:#e2e8f0; border:1px solid #355284; bo
 </div>
 `;
 
-class PadSpanHAPanel extends HTMLElement {
+class PadSpanPanel extends HTMLElement {
   constructor() {
     super();
     this._status = {};
     this._roomTagMap = {};
     this._selectedRooms = new Set();
+    this._autoDiag = null;
   }
 
   set hass(hass) {
@@ -159,17 +170,20 @@ class PadSpanHAPanel extends HTMLElement {
     this.$('#refresh').addEventListener('click', () => this._refreshAll());
     this.$('#reconnect').addEventListener('click', () => this._reconnect());
     this.$('#diag-refresh').addEventListener('click', () => this._refreshAll());
+    this.$('#diag-auto').addEventListener('click', () => this._fetchAutoDiagnostics(true));
 
     this.$('#mode').addEventListener('change', () => this._renderTags());
     this.$('#rooms-all').addEventListener('click', () => {
       Object.keys(this._roomTagMap).forEach((r) => this._selectedRooms.add(r));
       this._renderRooms();
       this._renderTags();
+      this._renderDiagnostics();
     });
     this.$('#rooms-none').addEventListener('click', () => {
       this._selectedRooms.clear();
       this._renderRooms();
       this._renderTags();
+      this._renderDiagnostics();
     });
 
     this.$$('.nav button').forEach((btn) => btn.addEventListener('click', () => this._showView(btn.dataset.view)));
@@ -187,9 +201,18 @@ class PadSpanHAPanel extends HTMLElement {
     this.$('#view-diagnostics').classList.toggle('hidden', view !== 'diagnostics');
   }
 
+  _esc(v) {
+    return String(v)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
   async _refreshAll() {
     if (!this._hass || !this.shadowRoot) return;
-    await Promise.all([this._fetchStatus(), this._fetchRoomTags()]);
+    await Promise.all([this._fetchStatus(), this._fetchRoomTags(), this._fetchAutoDiagnostics(false)]);
     this._renderDiagnostics();
   }
 
@@ -272,8 +295,23 @@ class PadSpanHAPanel extends HTMLElement {
       this._renderRooms();
       this._renderTags();
     } catch (err) {
-      this.$('#tags-list').innerHTML = `<div class="item">Failed to load room/tag map: ${String(err)}</div>`;
+      this.$('#tags-list').innerHTML = `<div class="item">Failed to load room/tag map: ${this._esc(String(err))}</div>`;
     }
+  }
+
+  async _fetchAutoDiagnostics(forceRender) {
+    try {
+      this._autoDiag = await this._hass.callWS({ type: "padspan_ha/auto_diagnostics" });
+    } catch (err) {
+      this._autoDiag = {
+        generated_at: new Date().toISOString(),
+        summary: { passed: 0, failed: 1, total: 1 },
+        checks: [{ name: "auto_diagnostics_ws", ok: false, detail: String(err), level: "warn" }],
+        recommendations: ["WebSocket auto-diagnostics call failed. Check HA logs for websocket_api errors."],
+      };
+    }
+    this._renderAutoDiagSummary();
+    if (forceRender) this._renderDiagnostics();
   }
 
   _renderRooms() {
@@ -291,7 +329,7 @@ class PadSpanHAPanel extends HTMLElement {
       row.className = "item";
       row.innerHTML = `
         <input type="checkbox" ${this._selectedRooms.has(room) ? "checked" : ""} />
-        <span>${room}</span>
+        <span>${this._esc(room)}</span>
         <small>${tagCount} tags</small>
       `;
       const cb = row.querySelector("input");
@@ -339,9 +377,29 @@ class PadSpanHAPanel extends HTMLElement {
     tags.forEach((tag) => {
       const row = document.createElement("label");
       row.className = "item";
-      row.innerHTML = `<input type="checkbox" /><span>${tag}</span>`;
+      row.innerHTML = `<input type="checkbox" /><span>${this._esc(tag)}</span>`;
       wrap.appendChild(row);
     });
+  }
+
+  _renderAutoDiagSummary() {
+    const wrap = this.$('#diag-summary');
+    if (!wrap) return;
+    const d = this._autoDiag || {};
+    const s = d.summary || {};
+    const recs = Array.isArray(d.recommendations) ? d.recommendations : [];
+    const checks = Array.isArray(d.checks) ? d.checks : [];
+    const passed = Number(s.passed || 0);
+    const failed = Number(s.failed || 0);
+    const total = Number(s.total || checks.length || 0);
+
+    const topRec = recs[0] ? this._esc(recs[0]) : "No recommendations.";
+    wrap.innerHTML = `
+      <div class="card"><div class="muted">Auto-diagnostics</div><div class="${failed ? "check-fail" : "check-pass"}">${failed ? "Attention needed" : "All checks passed"}</div></div>
+      <div class="card"><div class="muted">Checks</div><div class="mono">${passed}/${total} passed</div></div>
+      <div class="card"><div class="muted">Failed</div><div class="mono">${failed}</div></div>
+      <div class="card"><div class="muted">Top recommendation</div><div>${topRec}</div></div>
+    `;
   }
 
   _renderDiagnostics() {
@@ -349,11 +407,12 @@ class PadSpanHAPanel extends HTMLElement {
       generated_at: new Date().toISOString(),
       status: this._status,
       selected_rooms: [...this._selectedRooms].sort(),
-      mode: this.$('#mode')?.value || 'all',
+      mode: this.$('#mode') ? this.$('#mode').value : 'all',
       room_tag_map: this._roomTagMap,
       computed_tags: this._computeTags(),
+      auto_diagnostics: this._autoDiag,
     };
     this.$('#diag').textContent = JSON.stringify(payload, null, 2);
   }
 }
-customElements.define('padspan-ha-panel', PadSpanHAPanel);
+customElements.define('padspan-ha-panel', PadSpanPanel);

@@ -1,8 +1,8 @@
-# PadSpan HA (v0.3.7)
+# PadSpan HA (v0.3.10)
 
 This package is a **local-first** Home Assistant custom integration for PadSpan.
 
-## Highlights in v0.3.8
+## Highlights in v0.3.10
 
 - Cloud/API remains optional.
 - Sidebar badges for cloud + integration health.
@@ -30,3 +30,10 @@ A brands PR starter asset folder is included in `docs/brands/...`.
 ## 0.3.7 hotfix
 - Fix for Home Assistant error: `Config flow could not be loaded: {"message":"Invalid handler specified"}`.
 - Simplified config flow imports and constants for broader HA compatibility.
+
+
+## v0.3.10
+- Added **Auto Diagnostics** in the Diagnostics page.
+- Added backend WebSocket endpoint: `padspan_ha/auto_diagnostics`.
+- Kept local-first startup, with compatibility-safe config flow.
+- Added legacy `padspan` tombstone to reduce duplicate integration entries.

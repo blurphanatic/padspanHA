@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up PadSpan HA",
+        "title": "Set up PadSpan",
         "description": "Cloud/API is optional. Local-only mode starts immediately.",
         "data": {
           "enable_cloud": "Enable cloud hub connection",
