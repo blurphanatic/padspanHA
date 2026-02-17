@@ -1,4 +1,5 @@
-padspanHA_v0.3.7/
+padspanHA_v0.3.8_hotfix/
+  FILE_TREE.txt
   LICENSE
   README.md
   hacs.json
@@ -38,6 +39,7 @@ docs/
   BRANDS_README.md
   CHANGELOG.md
   ROOM_TAG_CHECKLIST.md
+  TROUBLESHOOTING_INVALID_HANDLER.md
   brands/
     custom_integrations/
       padspan_ha/

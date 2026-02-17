@@ -1,8 +1,8 @@
-# PadSpan HA (v0.3.7)
+# PadSpan HA (v0.3.8)
 
 This package is a **local-first** Home Assistant custom integration for PadSpan.
 
-## Highlights in v0.3.7
+## Highlights in v0.3.8
 
 - Cloud/API remains optional.
 - Sidebar badges for cloud + integration health.
@@ -25,3 +25,8 @@ This package is a **local-first** Home Assistant custom integration for PadSpan.
 Home Assistant integration card logos are served from the official `home-assistant/brands` repo.
 Bundling icons in this zip does not override that card automatically.
 A brands PR starter asset folder is included in `docs/brands/...`.
+
+
+## 0.3.8 hotfix
+- Fix for Home Assistant error: `Config flow could not be loaded: {"message":"Invalid handler specified"}`.
+- Simplified config flow imports and constants for broader HA compatibility.
