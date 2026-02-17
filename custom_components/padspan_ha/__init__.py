@@ -4,24 +4,14 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
-from .api import PadSpanApiClient
 from .const import (
-    CONF_API_KEY,
-    CONF_ENABLE_CLOUD,
-    CONF_HUB_URL,
-    CONF_SCAN_INTERVAL,
     DATA_CLIENT,
     DATA_COORDINATOR,
     DOMAIN,
     PLATFORMS,
 )
-from .coordinator import PadSpanCoordinator
-from .panel import async_setup_panel
-from .services import async_setup_services, async_unload_services
-from .websocket_api import async_setup_websocket_api
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,12 +19,30 @@ LOGGER = logging.getLogger(__name__)
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["logger"] = LOGGER
+
+    # Local imports keep config-flow loading resilient on older Python/HA stacks
+    from .services import async_setup_services
+    from .websocket_api import async_setup_websocket_api
+
     await async_setup_services(hass)
     await async_setup_websocket_api(hass)
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    from .api import PadSpanApiClient
+    from .coordinator import PadSpanCoordinator
+    from .panel import async_setup_panel
+    from .services import async_unload_services
+    from .const import (
+        CONF_API_KEY,
+        CONF_ENABLE_CLOUD,
+        CONF_HUB_URL,
+        CONF_SCAN_INTERVAL,
+    )
+
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["logger"] = LOGGER
 
@@ -76,6 +84,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    from .services import async_unload_services
+
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if ok:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)

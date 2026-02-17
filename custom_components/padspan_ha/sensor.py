@@ -50,7 +50,7 @@ class PadSpanLastSuccessSensor(PadSpanCoordinatorEntity, SensorEntity):
     _attr_icon = "mdi:clock-check-outline"
 
     @property
-    def native_value(self) -> str | None:
+    def native_value(self):
         return (self.coordinator.data or {}).get("last_success")
 
 

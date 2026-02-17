@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Optional
 
 import aiohttp
 from yarl import URL
@@ -15,8 +15,8 @@ class PadSpanApiClient:
     def __init__(
         self,
         session: aiohttp.ClientSession,
-        hub_url: str | None,
-        api_key: str | None,
+        hub_url: Optional[str],
+        api_key: Optional[str],
         enabled: bool,
     ) -> None:
         self._session = session

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict, Optional
 
 import voluptuous as vol
 from homeassistant import config_entries
@@ -24,7 +24,7 @@ class PadSpanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None):
+    async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None):
         if user_input is not None:
             data = dict(user_input)
 
@@ -63,7 +63,7 @@ class PadSpanOptionsFlow(config_entries.OptionsFlow):
     def __init__(self, config_entry):
         self.config_entry = config_entry
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None):
+    async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 

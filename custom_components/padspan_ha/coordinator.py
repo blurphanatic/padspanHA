@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta, datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -76,8 +76,8 @@ class PadSpanCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.client = client
         self._test_presence = False
-        self._last_success_iso: str | None = None
-        self._last_error: str | None = None
+        self._last_success_iso = None  # type: Optional[str]
+        self._last_error = None  # type: Optional[str]
         self._room_tag_map: dict[str, list[str]] = _sample_room_tag_map()
 
     def set_test_presence(self, is_home: bool) -> None:
