@@ -1,0 +1,9 @@
+set_test_presence:
+  name: Set test presence
+  description: Sets test presence state used by PadSpan test tracker.
+  fields:
+    is_home:
+      required: true
+      example: true
+      selector:
+        boolean:

@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up PadSpan",
+        "description": "Optional cloud hub connection (local-first startup).",
+        "data": {
+          "enable_cloud": "Enable cloud/hub",
+          "hub_url": "Hub URL",
+          "api_key": "API key (optional)",
+          "scan_interval": "Scan interval (seconds)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PadSpan options",
+        "data": {
+          "enable_cloud": "Enable cloud/hub",
+          "hub_url": "Hub URL",
+          "api_key": "API key (optional)",
+          "scan_interval": "Scan interval (seconds)"
+        }
+      }
+    }
+  }
+}
