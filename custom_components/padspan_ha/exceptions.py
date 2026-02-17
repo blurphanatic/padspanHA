@@ -1,6 +1,8 @@
-class PadSpanApiError(Exception):
-    """Base PadSpan API error."""
+class PadSpanError(Exception):
+    """Base exception for PadSpan integration."""
 
+class PadSpanApiError(PadSpanError):
+    """PadSpan API returned an error."""
 
 class PadSpanApiConnectionError(PadSpanApiError):
-    """Connectivity error to PadSpan hub/cloud."""
+    """PadSpan API connection failed."""

@@ -10,8 +10,7 @@ STATIC_URL = "/padspan_ha_static"
 
 
 async def _register_static_compat(hass: HomeAssistant, static_dir: Path) -> None:
-    """Register static files with compatibility across HA versions."""
-    # Newer HA style
+    # Newer HA
     try:
         from homeassistant.components.http import StaticPathConfig  # type: ignore
         await hass.http.async_register_static_paths([StaticPathConfig(STATIC_URL, str(static_dir), False)])
@@ -19,14 +18,14 @@ async def _register_static_compat(hass: HomeAssistant, static_dir: Path) -> None
     except Exception:
         pass
 
-    # Older async style
+    # Older HA async
     try:
         await hass.http.async_register_static_path(STATIC_URL, str(static_dir), False)
         return
     except Exception:
         pass
 
-    # Older sync style
+    # Older HA sync
     try:
         hass.http.register_static_path(STATIC_URL, str(static_dir), False)
         return
@@ -35,7 +34,6 @@ async def _register_static_compat(hass: HomeAssistant, static_dir: Path) -> None
 
 
 async def async_setup_panel(hass: HomeAssistant) -> None:
-    """Register static files and panel in a fail-safe way."""
     static_dir = Path(__file__).parent / "www"
 
     try:
@@ -49,11 +47,14 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
             hass=hass,
             webcomponent_name="padspan-ha-panel",
             frontend_url_path="padspan-ha",
-            module_url="%s/padspan-ha/panel.js" % STATIC_URL,
+            module_url=f"{STATIC_URL}/padspan-ha/panel.js",
             sidebar_title="PadSpan",
             sidebar_icon="mdi:radar",
             require_admin=False,
-            config={"title": "PadSpan", "icon": "%s/padspan-ha/assets/padspan-mark.svg" % STATIC_URL},
+            config={
+                "title": "PadSpan HA",
+                "icon": f"{STATIC_URL}/padspan-ha/assets/padspan-mark.svg",
+            },
         )
     except Exception as err:
         _LOGGER.debug("Panel registration skipped/failed: %s", err)

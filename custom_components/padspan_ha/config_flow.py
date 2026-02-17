@@ -20,7 +20,7 @@ from .const import (
 
 
 class PadSpanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle config flow for PadSpan."""
+    """Handle a config flow for PadSpan HA."""
 
     VERSION = 1
 
@@ -44,9 +44,9 @@ class PadSpanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_ENABLE_CLOUD, default=DEFAULT_ENABLE_CLOUD): bool,
                 vol.Optional(CONF_HUB_URL, default=DEFAULT_HUB_URL): str,
                 vol.Optional(CONF_API_KEY, default=""): str,
-                vol.Required(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
-                    vol.Coerce(int), vol.Range(min=5, max=3600)
-                ),
+                vol.Required(
+                    CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
+                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema)
@@ -72,12 +72,22 @@ class PadSpanOptionsFlow(config_entries.OptionsFlow):
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_ENABLE_CLOUD, default=defaults.get(CONF_ENABLE_CLOUD, DEFAULT_ENABLE_CLOUD)): bool,
-                vol.Optional(CONF_HUB_URL, default=defaults.get(CONF_HUB_URL, DEFAULT_HUB_URL)): str,
-                vol.Optional(CONF_API_KEY, default=defaults.get(CONF_API_KEY, "")): str,
-                vol.Required(CONF_SCAN_INTERVAL, default=int(defaults.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))): vol.All(
-                    vol.Coerce(int), vol.Range(min=5, max=3600)
-                ),
+                vol.Required(
+                    CONF_ENABLE_CLOUD,
+                    default=defaults.get(CONF_ENABLE_CLOUD, DEFAULT_ENABLE_CLOUD),
+                ): bool,
+                vol.Optional(
+                    CONF_HUB_URL,
+                    default=defaults.get(CONF_HUB_URL, DEFAULT_HUB_URL),
+                ): str,
+                vol.Optional(
+                    CONF_API_KEY,
+                    default=defaults.get(CONF_API_KEY, ""),
+                ): str,
+                vol.Required(
+                    CONF_SCAN_INTERVAL,
+                    default=int(defaults.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
+                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

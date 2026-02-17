@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 DOMAIN = "padspan_ha"
-NAME = "PadSpan"
-VERSION = "0.3.12"
+NAME = "PadSpan HA"
+VERSION = "0.3.13"
 
 CONF_ENABLE_CLOUD = "enable_cloud"
 CONF_HUB_URL = "hub_url"
@@ -16,6 +16,7 @@ DEFAULT_SCAN_INTERVAL = 30
 DATA_CLIENT = "client"
 DATA_COORDINATOR = "coordinator"
 
+# Use plain strings for max compatibility across HA versions
 PLATFORMS = [
     "sensor",
     "binary_sensor",

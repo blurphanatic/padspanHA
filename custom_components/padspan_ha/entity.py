@@ -3,7 +3,7 @@ from __future__ import annotations
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, NAME, VERSION
+from .const import DOMAIN, NAME
 
 
 class PadSpanCoordinatorEntity(CoordinatorEntity):
@@ -18,5 +18,5 @@ class PadSpanCoordinatorEntity(CoordinatorEntity):
             name=NAME,
             manufacturer="PadSpan",
             model="Virtual Presence Hub",
-            sw_version=VERSION,
+            sw_version="0.3.7",
         )

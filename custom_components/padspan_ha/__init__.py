@@ -24,11 +24,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["logger"] = LOGGER
 
-    from .services import async_setup_services
-    from .websocket_api import async_setup_websocket_api
+    # Optional startup pieces should not block integration load
+    try:
+        from .services import async_setup_services
+        await async_setup_services(hass)
+    except Exception:
+        LOGGER.exception("PadSpan services setup failed (non-fatal)")
 
-    await async_setup_services(hass)
-    await async_setup_websocket_api(hass)
+    try:
+        from .websocket_api import async_setup_websocket_api
+        await async_setup_websocket_api(hass)
+    except Exception:
+        LOGGER.exception("PadSpan websocket setup failed (non-fatal)")
+
     return True
 
 
@@ -58,11 +66,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         scan_interval=int(data.get(CONF_SCAN_INTERVAL, 30)),
     )
 
-    # Best-effort initial refresh (do not hard-fail)
+    # Non-fatal first refresh
     try:
         await coordinator.async_config_entry_first_refresh()
-    except Exception as err:
-        LOGGER.warning("First refresh failed; starting local-only: %s", err)
+    except Exception:
+        LOGGER.exception("First refresh failed; continuing in local-only mode")
         coordinator.async_set_updated_data(
             {
                 "status": "local_only",
@@ -73,7 +81,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "room_tag_map": {},
                 "test_presence": False,
                 "last_success": None,
-                "last_error": str(err),
+                "last_error": "first_refresh_failed",
             }
         )
 
@@ -83,23 +91,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
     }
 
-    # Sidebar panel (optional)
+    # Panel is optional
     try:
         from .panel import async_setup_panel
         await async_setup_panel(hass)
-    except Exception as err:
-        LOGGER.debug("Panel setup skipped/failed: %s", err)
+    except Exception:
+        LOGGER.exception("Panel setup failed (non-fatal)")
 
-    # Platform forwarding with compatibility fallback
+    # Forward stable platforms; failures are logged but non-fatal
     try:
         if hasattr(hass.config_entries, "async_forward_entry_setups"):
             await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         else:
             for platform in PLATFORMS:
                 await hass.config_entries.async_forward_entry_setup(entry, platform)
-    except Exception as err:
-        LOGGER.exception("Platform setup failed: %s", err)
-        return False
+    except Exception:
+        LOGGER.exception("Platform setup failed (continuing without one or more platforms)")
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     return True
@@ -108,20 +115,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .services import async_unload_services
 
+    ok = True
     try:
         if hasattr(hass.config_entries, "async_unload_platforms"):
             ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         else:
-            ok = True
             for platform in PLATFORMS:
                 ok = ok and await hass.config_entries.async_forward_entry_unload(entry, platform)
     except Exception:
+        LOGGER.exception("Platform unload failed")
         ok = False
 
     if ok:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-        if len([k for k in hass.data.get(DOMAIN, {}).keys() if k != "logger"]) == 0:
-            await async_unload_services(hass)
+        try:
+            if len([k for k in hass.data.get(DOMAIN, {}).keys() if k != "logger"]) == 0:
+                await async_unload_services(hass)
+        except Exception:
+            LOGGER.exception("Service unload failed")
+
     return ok
 
 

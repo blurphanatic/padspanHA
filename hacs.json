@@ -1,8 +1,13 @@
 {
-  "name": "PadSpan",
-  "content_in_root": false,
+  "name": "PadSpan HA",
+  "country": "CA",
+  "homeassistant": "2024.4.0",
   "render_readme": true,
   "domains": [
-    "padspan_ha"
-  ]
+    "sensor",
+    "binary_sensor",
+    "device_tracker",
+    "button"
+  ],
+  "iot_class": "local_polling"
 }

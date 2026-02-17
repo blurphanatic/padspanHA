@@ -37,7 +37,6 @@ class PadSpanStatusSensor(PadSpanCoordinatorEntity, SensorEntity):
 class PadSpanCloudDevicesSensor(PadSpanCoordinatorEntity, SensorEntity):
     _attr_name = "Cloud Devices"
     _attr_unique_id = "padspan_cloud_devices"
-    _attr_icon = "mdi:devices"
 
     @property
     def native_value(self) -> int:
@@ -46,8 +45,8 @@ class PadSpanCloudDevicesSensor(PadSpanCoordinatorEntity, SensorEntity):
 
 
 class PadSpanLastSuccessSensor(PadSpanCoordinatorEntity, SensorEntity):
-    _attr_name = "Last Success"
-    _attr_unique_id = "padspan_last_success"
+    _attr_name = "Last Cloud Success"
+    _attr_unique_id = "padspan_last_cloud_success"
     _attr_icon = "mdi:clock-check-outline"
 
     @property
@@ -56,8 +55,8 @@ class PadSpanLastSuccessSensor(PadSpanCoordinatorEntity, SensorEntity):
 
 
 class PadSpanRoomCountSensor(PadSpanCoordinatorEntity, SensorEntity):
-    _attr_name = "Room Count"
-    _attr_unique_id = "padspan_room_count"
+    _attr_name = "Rooms Count"
+    _attr_unique_id = "padspan_rooms_count"
     _attr_icon = "mdi:floor-plan"
 
     @property

@@ -1,19 +1,32 @@
-# PadSpan (Home Assistant) v0.3.12 clean single-domain build
+# PadSpan HA (v0.3.13)
 
-This package intentionally includes only the required files for a stable custom integration load.
+This package is a **local-first** Home Assistant custom integration for PadSpan.
 
-## Install path (exact)
-`/config/custom_components/padspan_ha/manifest.json`
+## Highlights in v0.3.13
 
-## Clean install
-1. Stop Home Assistant
-2. Delete old folders if they exist:
-   - `/config/custom_components/padspan`
-   - `/config/custom_components/padspan_ha`
-3. Copy this package's `custom_components/padspan_ha` into `/config/custom_components/`
-4. Start Home Assistant
-5. Browser hard refresh (Ctrl+F5)
+- Cloud/API remains optional.
+- Sidebar badges for cloud + integration health.
+- Sidebar action: **Reconnect cloud now**.
+- Diagnostics view in panel.
+- New **Objects by Rooms** checklist:
+  - Select rooms (checkboxes)
+  - Object tags update from selected rooms
+  - Mode switch: **ALL selected rooms** (intersection) or **ANY selected room** (union)
 
-## Notes
-- Integration card branding icon in HA is domain-brand based and may not use local files immediately.
-- Panel/sidebar logos are bundled under `www/padspan-ha/assets`.
+## Install
+
+1. Copy `custom_components/padspan_ha` into your HA config `custom_components/`.
+2. Restart Home Assistant.
+3. Add integration: **Settings → Devices & Services → Add Integration → PadSpan HA**
+4. Keep **Enable cloud hub connection** OFF for API-free startup (recommended first run).
+
+## Integration card icon note
+
+Home Assistant integration card logos are served from the official `home-assistant/brands` repo.
+Bundling icons in this zip does not override that card automatically.
+A brands PR starter asset folder is included in `docs/brands/...`.
+
+
+## 0.3.7 hotfix
+- Fix for Home Assistant error: `Config flow could not be loaded: {"message":"Invalid handler specified"}`.
+- Simplified config flow imports and constants for broader HA compatibility.
