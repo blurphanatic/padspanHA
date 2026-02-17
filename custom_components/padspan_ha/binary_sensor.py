@@ -1,21 +1,28 @@
-from homeassistant.components.binary_sensor import BinarySensorEntity
+from __future__ import annotations
 
-from .const import DOMAIN
+from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .const import DATA_COORDINATOR, DOMAIN
 from .entity import PadSpanCoordinatorEntity
 
-async def async_setup_entry(hass, entry, async_add_entities):
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    async_add_entities([CalibrationProblemSensor(coordinator)])
 
-class CalibrationProblemSensor(PadSpanCoordinatorEntity, BinarySensorEntity):
-    _attr_device_class = "problem"
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    coordinator = hass.data[DOMAIN][entry.entry_id][DATA_COORDINATOR]
+    async_add_entities([PadSpanCloudReachableBinarySensor(coordinator)])
 
-    def __init__(self, coordinator):
-        super().__init__(coordinator, "calibration_problem", "Calibration Problem")
+
+class PadSpanCloudReachableBinarySensor(PadSpanCoordinatorEntity, BinarySensorEntity):
+    _attr_name = "Cloud Reachable"
+    _attr_unique_id = "padspan_cloud_reachable"
+    _attr_icon = "mdi:cloud-check-outline"
 
     @property
-    def is_on(self):
-        valid = (self.coordinator.data or {}).get("summary", {}).get("calibration_valid")
-        if valid is None:
-            return None
-        return not bool(valid)
+    def is_on(self) -> bool:
+        return bool((self.coordinator.data or {}).get("cloud_reachable", False))

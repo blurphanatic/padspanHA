@@ -1,14 +1,16 @@
-from copy import deepcopy
+from __future__ import annotations
 
-from homeassistant.components.diagnostics import async_redact_data
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 
-TO_REDACT = {"api_key"}
+from .const import DOMAIN
 
-async def async_get_config_entry_diagnostics(hass, entry):
-    payload = hass.data["padspan_ha"].get(entry.entry_id, {})
-    coordinator = payload.get("coordinator")
-    return {
-        "entry": async_redact_data(dict(entry.data), TO_REDACT),
-        "options": dict(entry.options),
-        "coordinator_data": deepcopy(coordinator.data if coordinator else {}),
-    }
+
+async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigEntry) -> dict:
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    coordinator = bucket["coordinator"]
+    data = dict(coordinator.data or {})
+    redacted = dict(entry.data)
+    if "api_key" in redacted and redacted["api_key"]:
+        redacted["api_key"] = "***redacted***"
+    return {"entry_data": redacted, "coordinator_data": data}

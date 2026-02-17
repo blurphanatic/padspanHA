@@ -1,5 +1,7 @@
 {
   "services": {
-    "rescan": "mdi:radar"
+    "set_test_presence": {
+      "service": "mdi:home-import-outline"
+    }
   }
 }

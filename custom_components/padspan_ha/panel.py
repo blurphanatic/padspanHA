@@ -1,23 +1,42 @@
+from __future__ import annotations
+
+import logging
 from pathlib import Path
 
-from homeassistant.components import panel_custom
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.core import HomeAssistant
 
-STATIC_URL_BASE = "/padspan_ha_static"
+_LOGGER = logging.getLogger(__name__)
 
-async def async_register_panel(hass, entry_id: str) -> None:
-    root = Path(__file__).parent / "www" / "padspan-ha"
-    await hass.http.async_register_static_paths(
-        [StaticPathConfig(STATIC_URL_BASE, str(root), False)]
-    )
+STATIC_URL = "/padspan_ha_static"
 
-    panel_custom.async_register_panel(
-        hass,
-        webcomponent_name="padspan-ha-panel",
-        frontend_url_path="padspan-ha",
-        module_url=f"{STATIC_URL_BASE}/panel.js",
-        sidebar_title="PadSpan",
-        sidebar_icon="mdi:map-marker-radius",
-        require_admin=False,
-        config={"entry_id": entry_id},
-    )
+
+async def async_setup_panel(hass: HomeAssistant) -> None:
+    """Register static files and panel in a fail-safe way."""
+    static_dir = Path(__file__).parent / "www"
+
+    try:
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(STATIC_URL, str(static_dir), False)]
+        )
+    except Exception as err:  # pragma: no cover
+        _LOGGER.debug("Static path registration skipped/failed: %s", err)
+
+    try:
+        from homeassistant.components import panel_custom
+
+        panel_custom.async_register_panel(
+            hass=hass,
+            webcomponent_name="padspan-ha-panel",
+            frontend_url_path="padspan-ha",
+            module_url=f"{STATIC_URL}/padspan-ha/panel.js",
+            sidebar_title="PadSpan",
+            sidebar_icon="mdi:radar",
+            require_admin=False,
+            config={
+                "title": "PadSpan HA",
+                "icon": f"{STATIC_URL}/padspan-ha/assets/padspan-mark.svg",
+            },
+        )
+    except Exception as err:  # pragma: no cover
+        _LOGGER.debug("Panel registration skipped/failed: %s", err)

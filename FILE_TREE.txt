@@ -1,31 +1,47 @@
-.gitignore
-LICENSE
-README.md
-custom_components/padspan_ha/__init__.py
-custom_components/padspan_ha/api.py
-custom_components/padspan_ha/binary_sensor.py
-custom_components/padspan_ha/button.py
-custom_components/padspan_ha/config_flow.py
-custom_components/padspan_ha/const.py
-custom_components/padspan_ha/coordinator.py
-custom_components/padspan_ha/device_tracker.py
-custom_components/padspan_ha/diagnostics.py
-custom_components/padspan_ha/entity.py
-custom_components/padspan_ha/exceptions.py
-custom_components/padspan_ha/icons.json
-custom_components/padspan_ha/manifest.json
-custom_components/padspan_ha/panel.py
-custom_components/padspan_ha/sensor.py
-custom_components/padspan_ha/services.py
-custom_components/padspan_ha/services.yaml
-custom_components/padspan_ha/strings.json
-custom_components/padspan_ha/system_health.py
-custom_components/padspan_ha/translations/en.json
-custom_components/padspan_ha/websocket_api.py
-custom_components/padspan_ha/www/padspan-ha/assets/favicon.svg
-custom_components/padspan_ha/www/padspan-ha/assets/padspan-logo.svg
-custom_components/padspan_ha/www/padspan-ha/assets/padspan-mark.svg
-custom_components/padspan_ha/www/padspan-ha/index.html
-custom_components/padspan_ha/www/padspan-ha/panel.js
-docs/sidebar_variation_test_report_v3.3.3.md
-hacs.json
+padspanHA_v0.3.7/
+  LICENSE
+  README.md
+  hacs.json
+custom_components/
+  padspan_ha/
+    __init__.py
+    api.py
+    binary_sensor.py
+    button.py
+    config_flow.py
+    const.py
+    coordinator.py
+    device_tracker.py
+    diagnostics.py
+    entity.py
+    exceptions.py
+    icons.json
+    manifest.json
+    panel.py
+    sensor.py
+    services.py
+    services.yaml
+    strings.json
+    system_health.py
+    websocket_api.py
+    www/
+      padspan-ha/
+        index.html
+        panel.js
+        assets/
+          favicon.svg
+          padspan-logo.svg
+          padspan-mark.svg
+    translations/
+      en.json
+docs/
+  BRANDS_README.md
+  CHANGELOG.md
+  ROOM_TAG_CHECKLIST.md
+  brands/
+    custom_integrations/
+      padspan_ha/
+        icon.png
+        icon@2x.png
+        logo.png
+        logo@2x.png

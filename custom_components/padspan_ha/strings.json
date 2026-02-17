@@ -2,24 +2,29 @@
   "config": {
     "step": {
       "user": {
-        "title": "PadSpan HA",
-        "description": "Configure PadSpan settings.",
+        "title": "Set up PadSpan HA",
+        "description": "Cloud/API is optional. Local-only mode starts immediately.",
         "data": {
-          "demo_mode": "Demo mode",
-          "api_base": "API base URL",
-          "api_key": "API key",
-          "enable_sidebar": "Enable sidebar panel"
+          "enable_cloud": "Enable cloud hub connection",
+          "hub_url": "Hub URL (optional)",
+          "api_key": "Cloud API key (optional)",
+          "scan_interval": "Update interval (seconds)"
         }
       }
+    },
+    "abort": {
+      "already_configured": "PadSpan is already configured."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "PadSpan HA options",
+        "title": "PadSpan options",
         "data": {
-          "refresh_seconds": "Refresh interval (seconds)",
-          "enable_sidebar": "Enable sidebar panel"
+          "enable_cloud": "Enable cloud hub connection",
+          "hub_url": "Hub URL (optional)",
+          "api_key": "Cloud API key (optional)",
+          "scan_interval": "Update interval (seconds)"
         }
       }
     }

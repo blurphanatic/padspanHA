@@ -1,64 +1,89 @@
 from __future__ import annotations
 
+import logging
+
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.typing import ConfigType
 
 from .api import PadSpanApiClient
 from .const import (
-    CONF_API_BASE,
     CONF_API_KEY,
-    CONF_DEMO_MODE,
-    DEFAULT_API_BASE,
-    DEFAULT_DEMO_MODE,
-    DEFAULT_ENABLE_SIDEBAR,
+    CONF_ENABLE_CLOUD,
+    CONF_HUB_URL,
+    CONF_SCAN_INTERVAL,
+    DATA_CLIENT,
+    DATA_COORDINATOR,
     DOMAIN,
-    OPTION_ENABLE_SIDEBAR,
     PLATFORMS,
 )
 from .coordinator import PadSpanCoordinator
-from .panel import async_register_panel
-from .services import async_register_services
-from .websocket_api import async_setup as async_setup_ws
+from .panel import async_setup_panel
+from .services import async_setup_services, async_unload_services
+from .websocket_api import async_setup_websocket_api
 
-async def async_setup(hass, config):
+LOGGER = logging.getLogger(__name__)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.data.setdefault(DOMAIN, {})
-    await async_register_services(hass)
-    await async_setup_ws(hass)
+    hass.data[DOMAIN]["logger"] = LOGGER
+    await async_setup_services(hass)
+    await async_setup_websocket_api(hass)
     return True
 
-async def async_setup_entry(hass, entry: ConfigEntry):
-    merged = dict(entry.data)
-    merged.update(entry.options)
 
-    api = PadSpanApiClient(
-        hass,
-        str(merged.get(CONF_API_BASE, DEFAULT_API_BASE)),
-        str(merged.get(CONF_API_KEY, "")),
-        bool(merged.get(CONF_DEMO_MODE, DEFAULT_DEMO_MODE)),
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN]["logger"] = LOGGER
+
+    data = dict(entry.data)
+    if entry.options:
+        data.update(entry.options)
+
+    client = PadSpanApiClient(
+        session=async_get_clientsession(hass),
+        hub_url=data.get(CONF_HUB_URL),
+        api_key=data.get(CONF_API_KEY),
+        enabled=bool(data.get(CONF_ENABLE_CLOUD, False)),
     )
-    coordinator = PadSpanCoordinator(hass, entry, api)
+
+    coordinator = PadSpanCoordinator(
+        hass=hass,
+        client=client,
+        scan_interval=int(data.get(CONF_SCAN_INTERVAL, 30)),
+    )
+
+    # Non-fatal first refresh
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data[DOMAIN][entry.entry_id] = {"api": api, "coordinator": coordinator}
+    hass.data[DOMAIN][entry.entry_id] = {
+        DATA_CLIENT: client,
+        DATA_COORDINATOR: coordinator,
+        "coordinator": coordinator,
+    }
 
-    enable_sidebar = bool(
-        entry.options.get(
-            OPTION_ENABLE_SIDEBAR,
-            entry.data.get(OPTION_ENABLE_SIDEBAR, DEFAULT_ENABLE_SIDEBAR),
-        )
-    )
-    if enable_sidebar:
-        await async_register_panel(hass, entry.entry_id)
+    # Sidebar panel best-effort
+    try:
+        await async_setup_panel(hass)
+    except Exception as err:  # pragma: no cover
+        LOGGER.debug("Panel setup skipped/failed: %s", err)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     return True
 
-async def async_unload_entry(hass, entry: ConfigEntry):
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        if len([k for k in hass.data.get(DOMAIN, {}).keys() if k != "logger"]) == 0:
+            await async_unload_services(hass)
     return ok
 
-async def async_reload_entry(hass, entry: ConfigEntry):
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await async_unload_entry(hass, entry)
     await async_setup_entry(hass, entry)

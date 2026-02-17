@@ -1,23 +1,65 @@
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from __future__ import annotations
 
-from .const import DOMAIN
+from homeassistant.components.sensor import SensorEntity
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .const import DATA_COORDINATOR, DOMAIN
 from .entity import PadSpanCoordinatorEntity
 
-async def async_setup_entry(hass, entry, async_add_entities):
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    async_add_entities([
-        SummarySensor(coordinator, "devices_seen", "Devices Seen"),
-        SummarySensor(coordinator, "rooms_covered", "Rooms Covered"),
-        SummarySensor(coordinator, "last_scan_age_s", "Last Scan Age", "s", SensorStateClass.MEASUREMENT),
-    ])
 
-class SummarySensor(PadSpanCoordinatorEntity, SensorEntity):
-    def __init__(self, coordinator, key: str, name: str, unit: str | None = None, state_class=None):
-        super().__init__(coordinator, f"summary_{key}", name)
-        self._key = key
-        self._attr_native_unit_of_measurement = unit
-        self._attr_state_class = state_class
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    coordinator = hass.data[DOMAIN][entry.entry_id][DATA_COORDINATOR]
+    async_add_entities(
+        [
+            PadSpanStatusSensor(coordinator),
+            PadSpanCloudDevicesSensor(coordinator),
+            PadSpanLastSuccessSensor(coordinator),
+            PadSpanRoomCountSensor(coordinator),
+        ]
+    )
+
+
+class PadSpanStatusSensor(PadSpanCoordinatorEntity, SensorEntity):
+    _attr_name = "Status"
+    _attr_unique_id = "padspan_status"
 
     @property
-    def native_value(self):
-        return (self.coordinator.data or {}).get("summary", {}).get(self._key)
+    def native_value(self) -> str:
+        return str((self.coordinator.data or {}).get("status", "unknown"))
+
+
+class PadSpanCloudDevicesSensor(PadSpanCoordinatorEntity, SensorEntity):
+    _attr_name = "Cloud Devices"
+    _attr_unique_id = "padspan_cloud_devices"
+
+    @property
+    def native_value(self) -> int:
+        devices = (self.coordinator.data or {}).get("devices", [])
+        return len(devices) if isinstance(devices, list) else 0
+
+
+class PadSpanLastSuccessSensor(PadSpanCoordinatorEntity, SensorEntity):
+    _attr_name = "Last Cloud Success"
+    _attr_unique_id = "padspan_last_cloud_success"
+    _attr_icon = "mdi:clock-check-outline"
+
+    @property
+    def native_value(self) -> str | None:
+        return (self.coordinator.data or {}).get("last_success")
+
+
+class PadSpanRoomCountSensor(PadSpanCoordinatorEntity, SensorEntity):
+    _attr_name = "Rooms Count"
+    _attr_unique_id = "padspan_rooms_count"
+    _attr_icon = "mdi:floor-plan"
+
+    @property
+    def native_value(self) -> int:
+        room_map = (self.coordinator.data or {}).get("room_tag_map", {})
+        return len(room_map) if isinstance(room_map, dict) else 0
