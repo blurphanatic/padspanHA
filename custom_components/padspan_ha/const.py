@@ -2,7 +2,7 @@ from __future__ import annotations
 
 DOMAIN = "padspan_ha"
 NAME = "PadSpan HA"
-VERSION = "0.3.13"
+VERSION = "0.3.14"
 
 CONF_ENABLE_CLOUD = "enable_cloud"
 CONF_HUB_URL = "hub_url"
@@ -21,6 +21,7 @@ PLATFORMS = [
     "sensor",
     "binary_sensor",
     "button",
+    "device_tracker",
 ]
 
 SERVICE_SET_TEST_PRESENCE = "set_test_presence"

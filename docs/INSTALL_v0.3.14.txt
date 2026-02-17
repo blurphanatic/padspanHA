@@ -1,0 +1,23 @@
+PadSpan HA v0.3.14 install notes
+
+1) Stop Home Assistant
+2) Remove old folders:
+   - /config/custom_components/padspan
+   - /config/custom_components/padspan_ha
+3) Copy this package's /custom_components/padspan_ha to /config/custom_components/
+4) Start Home Assistant
+5) Hard refresh browser (Ctrl+F5)
+
+If config-flow still shows 500:
+- Remove stale entries in Settings -> Devices & Services (delete disabled PadSpan legacy entries)
+- Restart HA once
+- Then add integration again
+
+Temporary logging for diagnosis:
+logger:
+  default: info
+  logs:
+    custom_components.padspan_ha: debug
+    homeassistant.loader: debug
+    homeassistant.config_entries: debug
+    homeassistant.helpers.translation: debug

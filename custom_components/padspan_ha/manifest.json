@@ -1,7 +1,7 @@
 {
   "domain": "padspan_ha",
   "name": "PadSpan HA",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "documentation": "https://github.com/padspan/padspanHA",
   "issue_tracker": "https://github.com/padspan/padspanHA/issues",
   "codeowners": [

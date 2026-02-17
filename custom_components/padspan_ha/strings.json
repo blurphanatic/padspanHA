@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Set up PadSpan HA",
-        "description": "Cloud/API is optional. Local-only mode starts immediately.",
+        "description": "Cloud/API is optional. You can run local-only.",
         "data": {
           "enable_cloud": "Enable cloud hub connection",
           "hub_url": "Hub URL (optional)",
@@ -13,13 +13,13 @@
       }
     },
     "abort": {
-      "already_configured": "PadSpan is already configured."
+      "already_configured": "PadSpan HA is already configured."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "PadSpan options",
+        "title": "PadSpan HA options",
         "data": {
           "enable_cloud": "Enable cloud hub connection",
           "hub_url": "Hub URL (optional)",

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.core import callback
 
 from .const import (
     CONF_API_KEY,
@@ -19,40 +18,42 @@ from .const import (
 )
 
 
+USER_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_ENABLE_CLOUD, default=DEFAULT_ENABLE_CLOUD): bool,
+        vol.Optional(CONF_HUB_URL, default=DEFAULT_HUB_URL): str,
+        vol.Optional(CONF_API_KEY, default=""): str,
+        vol.Required(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
+            vol.Coerce(int), vol.Range(min=5, max=3600)
+        ),
+    }
+)
+
+
 class PadSpanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for PadSpan HA."""
+    """Handle config flow for PadSpan HA."""
 
     VERSION = 1
 
-    async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None):
-        if user_input is not None:
-            data = dict(user_input)
+    async def async_step_user(self, user_input: dict[str, Any] | None = None):
+        if user_input is None:
+            return self.async_show_form(step_id="user", data_schema=USER_SCHEMA)
 
-            if not data.get(CONF_ENABLE_CLOUD, False):
-                data[CONF_HUB_URL] = ""
-                data[CONF_API_KEY] = ""
+        data = dict(user_input)
+        if not data.get(CONF_ENABLE_CLOUD, False):
+            data[CONF_HUB_URL] = ""
+            data[CONF_API_KEY] = ""
 
-            data[CONF_HUB_URL] = (data.get(CONF_HUB_URL) or "").strip()
-            data[CONF_API_KEY] = (data.get(CONF_API_KEY) or "").strip()
+        data[CONF_HUB_URL] = (data.get(CONF_HUB_URL) or "").strip()
+        data[CONF_API_KEY] = (data.get(CONF_API_KEY) or "").strip()
 
-            await self.async_set_unique_id("padspan_singleton")
-            self._abort_if_unique_id_configured()
-            return self.async_create_entry(title=NAME, data=data)
+        # Singleton integration entry
+        await self.async_set_unique_id("padspan_singleton")
+        self._abort_if_unique_id_configured()
 
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_ENABLE_CLOUD, default=DEFAULT_ENABLE_CLOUD): bool,
-                vol.Optional(CONF_HUB_URL, default=DEFAULT_HUB_URL): str,
-                vol.Optional(CONF_API_KEY, default=""): str,
-                vol.Required(
-                    CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
-                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
-            }
-        )
-        return self.async_show_form(step_id="user", data_schema=schema)
+        return self.async_create_entry(title=NAME, data=data)
 
     @staticmethod
-    @callback
     def async_get_options_flow(config_entry):
         return PadSpanOptionsFlow(config_entry)
 
@@ -60,10 +61,10 @@ class PadSpanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class PadSpanOptionsFlow(config_entries.OptionsFlow):
     """PadSpan options flow."""
 
-    def __init__(self, config_entry):
+    def __init__(self, config_entry) -> None:
         self.config_entry = config_entry
 
-    async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None):
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 

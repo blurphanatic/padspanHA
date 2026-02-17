@@ -1,8 +1,8 @@
-# PadSpan HA (v0.3.13)
+# PadSpan HA (v0.3.14)
 
 This package is a **local-first** Home Assistant custom integration for PadSpan.
 
-## Highlights in v0.3.13
+## Highlights in v0.3.14
 
 - Cloud/API remains optional.
 - Sidebar badges for cloud + integration health.

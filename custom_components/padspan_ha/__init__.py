@@ -24,18 +24,25 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["logger"] = LOGGER
 
-    # Optional startup pieces should not block integration load
+    # Services + WS + Sidebar registration should be non-fatal
     try:
         from .services import async_setup_services
         await async_setup_services(hass)
     except Exception:
-        LOGGER.exception("PadSpan services setup failed (non-fatal)")
+        LOGGER.exception("PadSpan services setup failed")
 
     try:
         from .websocket_api import async_setup_websocket_api
         await async_setup_websocket_api(hass)
     except Exception:
-        LOGGER.exception("PadSpan websocket setup failed (non-fatal)")
+        LOGGER.exception("PadSpan websocket API setup failed")
+
+    # Sidebar registration early (before entry) so menu appears reliably
+    try:
+        from .panel import async_setup_panel
+        await async_setup_panel(hass)
+    except Exception:
+        LOGGER.exception("PadSpan panel setup failed during async_setup")
 
     return True
 
@@ -66,11 +73,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         scan_interval=int(data.get(CONF_SCAN_INTERVAL, 30)),
     )
 
-    # Non-fatal first refresh
+    # Non-fatal first refresh keeps config entry alive
     try:
         await coordinator.async_config_entry_first_refresh()
     except Exception:
-        LOGGER.exception("First refresh failed; continuing in local-only mode")
+        LOGGER.exception("First refresh failed; continuing local-only")
         coordinator.async_set_updated_data(
             {
                 "status": "local_only",
@@ -91,14 +98,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
     }
 
-    # Panel is optional
+    # Re-run panel registration (safe + helps after reload)
     try:
         from .panel import async_setup_panel
         await async_setup_panel(hass)
     except Exception:
-        LOGGER.exception("Panel setup failed (non-fatal)")
+        LOGGER.exception("PadSpan panel setup failed during entry setup")
 
-    # Forward stable platforms; failures are logged but non-fatal
+    # Forward all full-feature platforms
     try:
         if hasattr(hass.config_entries, "async_forward_entry_setups"):
             await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -106,7 +113,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for platform in PLATFORMS:
                 await hass.config_entries.async_forward_entry_setup(entry, platform)
     except Exception:
-        LOGGER.exception("Platform setup failed (continuing without one or more platforms)")
+        LOGGER.exception("Platform setup encountered errors")
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     return True
@@ -128,11 +135,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if ok:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-        try:
-            if len([k for k in hass.data.get(DOMAIN, {}).keys() if k != "logger"]) == 0:
+        # only remove services when no entries remain
+        if len([k for k in hass.data.get(DOMAIN, {}).keys() if k not in ("logger", "_ws_registered", "_panel_registered")]) == 0:
+            try:
                 await async_unload_services(hass)
-        except Exception:
-            LOGGER.exception("Service unload failed")
+            except Exception:
+                LOGGER.exception("Service unload failed")
 
     return ok
 
