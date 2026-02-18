@@ -1,6 +1,4 @@
-Current version: 0.3.28
-
-# PadSpan HA – Repo Logic Overview (v0.3.28)
+# PadSpan HA – Repo Logic Overview (v0.4.0)
 
 This file is a **“why + how” memory dump** so future-you (or another maintainer) can open the repository in a year and immediately understand:
 

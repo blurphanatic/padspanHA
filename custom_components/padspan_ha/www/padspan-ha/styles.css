@@ -46,3 +46,16 @@
 /* Sidebar scroll polish */
 .left::-webkit-scrollbar{width:10px}
 .left::-webkit-scrollbar-thumb{background:rgba(122,162,255,.28);border-radius:999px;border:2px solid rgba(17,26,45,.9)}
+
+
+/* --- v0.4.0 additions --- */
+.toast{position:sticky;top:0;z-index:50;margin:0 0 10px 0;padding:10px 12px;border-radius:12px;background:rgba(94,234,212,.12);border:1px solid rgba(94,234,212,.35);color:var(--text)}
+.toast.error{background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.35)}
+.toast.hidden{display:none}
+
+/* Mobile nav helper */
+@media (max-width: 900px){
+  .app{grid-template-columns:1fr}
+  .left{position:fixed;inset:0 auto 0 0;width:320px;transform:translateX(-100%);transition:transform .2s ease;z-index:60}
+  .app.mobile-open .left{transform:translateX(0)}
+}

@@ -1,10 +1,10 @@
 # PadSpan HA (Home Assistant Custom Integration)
 
-Version: **0.3.24**
+Version: **0.4.0**
 
 ## What’s in this zip
 - Full Home Assistant custom integration: `custom_components/padspan_ha`
-- Sidebar panel (single HA sidebar entry "PadSpan") with internal menu
+- Sidebar panel (single HA sidebar entry "PadSpan HA") with internal menu
 - WebSocket endpoints used by the panel:
   - `padspan_ha/status`
   - `padspan_ha/room_tags`
@@ -28,7 +28,7 @@ Version: **0.3.24**
 5. Hard refresh the browser (Ctrl+F5)
 
 ## Diagnostics (copy/paste)
-Open **PadSpan** in the sidebar → open **Diagnostics** view → copy the JSON blob.
+Open **PadSpan HA** in the sidebar → open **Diagnostics** view → copy the JSON blob.
 
 ## Notes
 Cloud is optional and disabled by default. This build is **local-first**.
@@ -76,3 +76,10 @@ Receiver positions are stored as x/y in [0..1] relative to image width/height, s
 ### Common gotcha: caching
 If UI changes do not appear after install, hard refresh the browser.
 
+
+
+## Proving you are on the right build
+Open **Diagnostics** inside the panel. It shows:
+- UI: v0.4.0 • build <ID>
+- Backend: version + build_id
+If those are not v0.4.0, you still have an old install or cached JS.

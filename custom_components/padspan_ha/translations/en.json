@@ -4,21 +4,23 @@
     "step": {
       "user": {
         "title": "Set up PadSpan HA",
-        "description": "Configure PadSpan HA. You can use Sample data while you verify the UI, then switch to Live data in the PadSpan panel.",
+        "description": "Local-first setup (no API required).",
         "data": {
-          "enable_cloud": "Enable cloud (optional)",
-          "hub_url": "Hub URL (optional)",
-          "scan_interval": "Scan interval (seconds)",
-          "api_key": "API key (optional)"
+          "scan_interval": "Update interval (seconds)"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure PadSpan HA",
+        "description": "Update scan interval.",
+        "data": {
+          "scan_interval": "Update interval (seconds)"
         }
       }
     },
-    "error": {
-      "cannot_connect": "Cannot connect",
-      "unknown": "Unexpected error"
-    },
     "abort": {
-      "already_configured": "Already configured"
+      "already_configured": "PadSpan HA is already configured.",
+      "reconfigure_successful": "Saved.",
+      "unknown": "An unexpected error occurred. Check Home Assistant logs."
     }
   },
   "options": {
@@ -26,10 +28,7 @@
       "init": {
         "title": "PadSpan HA options",
         "data": {
-          "scan_interval": "Scan interval (seconds)",
-          "enable_cloud": "Enable cloud (optional)",
-          "hub_url": "Hub URL (optional)",
-          "api_key": "API key (optional)"
+          "scan_interval": "Update interval (seconds)"
         }
       }
     }

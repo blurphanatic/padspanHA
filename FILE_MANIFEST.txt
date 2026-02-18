@@ -1,91 +1,78 @@
-# PadSpan HA File Manifest
-# Generated: 2026-02-18T19:09:29.603702
-# Version: 0.3.28
-# Files: 86
-
-488734568edcac284418a12fd0108a98ffde3864c0e5025f0ffa9475d786cf66        459  .github/ISSUE_TEMPLATE/bug_report.yml
-300c2ec3d1c0ae64adc51f428fb96ff7a2fd2812aade0ab9835887450dc32f7b        263  .github/ISSUE_TEMPLATE/feature_request.yml
-504edf5675f00667480ebbc72554fa0009f116f86e5720739978aaa6681a42a6        185  .github/PULL_REQUEST_TEMPLATE.md
-aab50ee7058cbb94ba6005203db1351f2531a05b0e282f52990ba3389e86b33b        380  .github/workflows/validate.yml
-60c9bdd905fcf45ac485c680d32e9773962cf061b6f041dcddd033911558a672         29  .gitignore
-52142a95352ede2284886d2d748219a984395dbb5af9208d3116dac4c10c82ce        343  CHANGELOG.md
-a8e885e217316f7de3c4e3f8fb7084d73f5fd7567325c3d03bf2d7270bf6fb3e        451  CONTRIBUTING.md
-6c6a8b484eeff01512f3c94076fdfe293ff7e93aa22ee94f35a401525d7b26bd       2740  custom_components/padspan_ha/__init__.py
-9d9f2cc91d124e1c4a995d0c99dfa67fda7fa98b6b9ab972c18e6c36dd3de7d2         14  custom_components/padspan_ha/api.py
-9d9f2cc91d124e1c4a995d0c99dfa67fda7fa98b6b9ab972c18e6c36dd3de7d2         14  custom_components/padspan_ha/binary_sensor.py
-9d9f2cc91d124e1c4a995d0c99dfa67fda7fa98b6b9ab972c18e6c36dd3de7d2         14  custom_components/padspan_ha/cloud.py
-9d9f2cc91d124e1c4a995d0c99dfa67fda7fa98b6b9ab972c18e6c36dd3de7d2         14  custom_components/padspan_ha/config.py
-f5984be8d5fac2193e85b8a49d9a62729ba6f9381c049c1e7238ca3716b5bc18       4395  custom_components/padspan_ha/config_flow.py
-f74d6c7e7f4461b3fbbd51545b78f68f0897694cbd75a172c17dfd0a4f7489ae        443  custom_components/padspan_ha/const.py
-38017b708cde22194de4e5e3dcb0aaa7854f9ff2ecb48ff6ef892835fe7ed844       2077  custom_components/padspan_ha/coordinator.py
-9d9f2cc91d124e1c4a995d0c99dfa67fda7fa98b6b9ab972c18e6c36dd3de7d2         14  custom_components/padspan_ha/device_tracker.py
-68d18e9385c1fe5c2725d49f00eba4ee7f6ecb1be127312ade98ea807598d918        732  custom_components/padspan_ha/diagnostics.py
-173de4f621fa0f46424fee167ebbc72b37d76bbc74920ba39604a3816e3ba003       6843  custom_components/padspan_ha/icon.png
-7ca05040c1169af38a7aef66655bdf4b7ab5b42ce178c9f0d482ef5361a3fc50      22805  custom_components/padspan_ha/logo.png
-b025aaa8324fd70db4c6028cbe3272ae6b6b429a5940da0dcbb5eb2761973e0c        480  custom_components/padspan_ha/manifest.json
-06a007ade989c3af1bfaa5912887d11f973c7794178a276b820037f36310a2c4       5154  custom_components/padspan_ha/maps_store.py
-9d9f2cc91d124e1c4a995d0c99dfa67fda7fa98b6b9ab972c18e6c36dd3de7d2         14  custom_components/padspan_ha/migrations.py
-eb71f5980c17bbeb1ba7a7a426bbe5efdbff5f29f47bc90e6009246966f80e9f       2222  custom_components/padspan_ha/panel.py
-9d9f2cc91d124e1c4a995d0c99dfa67fda7fa98b6b9ab972c18e6c36dd3de7d2         14  custom_components/padspan_ha/sensor.py
-2a83760ce98362ea511fcaaf57f583a0e1cf249a5322c55da80047eac8b4a5ee        191  custom_components/padspan_ha/services.yaml
-8d9cd630bd51fa2a7d1645670844ad0f2ce5eeaf277b9b902e5bb3362c80cfad       1356  custom_components/padspan_ha/settings_store.py
-fc1228f427d58780f5825fe1fdc97f92301191a721b07fe8a0d1477263030888        986  custom_components/padspan_ha/strings.json
-425b78ba8bef1b717153645c96dbff5f65f9555fe02ea954c88377001c2349c6        872  custom_components/padspan_ha/translations/da.json
-425b78ba8bef1b717153645c96dbff5f65f9555fe02ea954c88377001c2349c6        872  custom_components/padspan_ha/translations/de.json
-fc1228f427d58780f5825fe1fdc97f92301191a721b07fe8a0d1477263030888        986  custom_components/padspan_ha/translations/en.json
-425b78ba8bef1b717153645c96dbff5f65f9555fe02ea954c88377001c2349c6        872  custom_components/padspan_ha/translations/es.json
-425b78ba8bef1b717153645c96dbff5f65f9555fe02ea954c88377001c2349c6        872  custom_components/padspan_ha/translations/fi.json
-425b78ba8bef1b717153645c96dbff5f65f9555fe02ea954c88377001c2349c6        872  custom_components/padspan_ha/translations/fr.json
-425b78ba8bef1b717153645c96dbff5f65f9555fe02ea954c88377001c2349c6        872  custom_components/padspan_ha/translations/it.json
-425b78ba8bef1b717153645c96dbff5f65f9555fe02ea954c88377001c2349c6        872  custom_components/padspan_ha/translations/nl.json
-425b78ba8bef1b717153645c96dbff5f65f9555fe02ea954c88377001c2349c6        872  custom_components/padspan_ha/translations/no.json
-425b78ba8bef1b717153645c96dbff5f65f9555fe02ea954c88377001c2349c6        872  custom_components/padspan_ha/translations/pt.json
-425b78ba8bef1b717153645c96dbff5f65f9555fe02ea954c88377001c2349c6        872  custom_components/padspan_ha/translations/sv.json
-9d9f2cc91d124e1c4a995d0c99dfa67fda7fa98b6b9ab972c18e6c36dd3de7d2         14  custom_components/padspan_ha/util.py
-0afcdb35d15266eb0caae158d4da1bddc13adebaf6d165b227b410a6b3224c8b      11461  custom_components/padspan_ha/websocket.py
-173de4f621fa0f46424fee167ebbc72b37d76bbc74920ba39604a3816e3ba003       6843  custom_components/padspan_ha/www/padspan-ha/assets/logo-icon.png
-7ca05040c1169af38a7aef66655bdf4b7ab5b42ce178c9f0d482ef5361a3fc50      22805  custom_components/padspan_ha/www/padspan-ha/assets/logo-wordmark.png
-9569bcf7f73acf6365ce2f15a0056dc7c3c7f5431b415174a529f84c166cce33        740  custom_components/padspan_ha/www/padspan-ha/assets/padspan-logo.svg
-3796c231ba929154a300d7fb79bb5601c0d52d43d61b149d62fa2b86ba6e9fc3        509  custom_components/padspan_ha/www/padspan-ha/assets/padspan-mark.svg
-6a7a6947939f96a11fe22999ada7dac263638838b3e83c0d45d6e7a6075cd427      14500  custom_components/padspan_ha/www/padspan-ha/panel.js
-1ce5b0731872fe1be745744d55bc773ed89c4e5b524d23d0e2ff5924dd8bdc62       3895  custom_components/padspan_ha/www/padspan-ha/styles.css
-379da88622b3f6b08dfe80f52eed3eb19835ab7a20b42bc36ff4799952a8d992        343  custom_components/padspan_ha/www/padspan-ha/views/debug.js
-a84f8c21f23fdbb3050ac391b761771e77ac95a80815da219d8fb5c030fac13a       1126  custom_components/padspan_ha/www/padspan-ha/views/devices.js
-35360f033740e04ac560a0cd0a877058221f28a1f620ce68ddc21deeede0aa42        442  custom_components/padspan_ha/www/padspan-ha/views/diagnostics.js
-fc890315c054a7720c6eb32348df27241ff9b608973a60a64a89eed0e2777275        356  custom_components/padspan_ha/www/padspan-ha/views/events.js
-37d033ed942d2e411787034cd8c4c5826a45db03084c0bc13024d52827640853       1134  custom_components/padspan_ha/www/padspan-ha/views/health.js
-db87064ba63c0ef7867e6775fdb135d22d003d25a5bf9606bb6c4b773caaf41d        357  custom_components/padspan_ha/www/padspan-ha/views/history.js
-2bfe1a8196fc117d3f18d5c74ae0050eac721fa54eca755ea28c71bffbe2547b       1180  custom_components/padspan_ha/www/padspan-ha/views/insights.js
-86d766ae250580fafd8f70eba0e68149e7019006c43ff257e921953e9c6eec2b      14790  custom_components/padspan_ha/www/padspan-ha/views/maps.js
-0c4eff4c777787f501786b2499b624a9b61e93375d4c47b6b586c261cdac2e8b        494  custom_components/padspan_ha/www/padspan-ha/views/monitor.js
-5c58e917b39cbf75a73322605a823940069697a71af6e110f1b29865688cbded       2735  custom_components/padspan_ha/www/padspan-ha/views/objects.js
-5a05eaaa8242baa03de01ab2130bdfe33e4dbe36a4747ba5cb8f163a7688b490       3774  custom_components/padspan_ha/www/padspan-ha/views/overview.js
-4b37c2a2590de520e4e97f2b142917e6cfa45389e245314a7e8753a04204f5f1       1260  custom_components/padspan_ha/www/padspan-ha/views/presence.js
-4a03e3cc2f9c3f8f84157027fac16c10fd343afac5bd4ee3ea2ce43d1e372544        420  custom_components/padspan_ha/www/padspan-ha/views/qa.js
-2fb7f06c30af9dca8e7a8b253db31f777941b85cfac0f5d5e4b64bc8686c7764        413  custom_components/padspan_ha/www/padspan-ha/views/sandbox.js
-4edcae850b0fac14b8d5107ea71c0861bf0a1d7cdfb6a934165b1266b859a3c4        427  custom_components/padspan_ha/www/padspan-ha/views/settings.js
-e55362af8bd652240613486a96b6c6c5b83b9054da9127c6fed1f9dfb35727fb        517  custom_components/padspan_ha/www/padspan-ha/views/zones.js
-f87e0893488999a0dbfa04f3462081601e8bb1bb306353c06d887da34f7a639a       5319  docs/00_REPO_LOGIC_OVERVIEW.md
-8c2842a642701e31c738ec05f3a53f679f30d6f64dcd0408fbbc87c88fe40ed1       1523  docs/01_ARCHITECTURE.md
-caa9b700952f0a008194679d602965009e60e708e6889716147ae7799bf58664       1009  docs/02_WEBSOCKET_API.md
-18100068112c39d7396714b46a81f27500c82a66d1837dafc457b0378beecc4f        665  docs/03_MAPPING_SUITE.md
-5eda12f2f132d673d2d9c664d2fd2ca18e8eeb58d0661ddfc59e21895eb22174       1090  docs/04_LIVE_DISCOVERY.md
-2b5cd5b072c17a3e18d2e0f55fc2adf6b5d0e4fdf9e3e6955c8d8f988c1f2465        959  docs/90_TROUBLESHOOTING.md
-5de43e6e3b04e69952cf21dbb6304a7f75452e7a920f8a77c11df21f0760c146         33  docs/ARCHITECTURE.md
-2134217d6c58a065f8b1684dd720b25d442fd69243c70f195b5135f748fe915f         30  docs/CHANGELOG.md
-89d295ea0466737c98e80a50fb23cc739352a8b6394e38f9f85782be1342caf1         33  docs/CONTRIBUTING.md
-c2262c6bd8f97a51a647f37fc85e50b91faf5a292605f091d897dd55965317ca         31  docs/DATA_MODEL.md
-b37ffb883d7a15e54b8d9e117ab793ecb26b77c3f7e05be6b8e0638f6ae57e41         32  docs/DEVELOPMENT.md
-48c31fe6ee6d4d9e6a84539a332b7d975c8978c03351991c8891b2728e2eef09         76  docs/INSTALL.md
-77077e372293205517b0148ded0aa37630aa5b64dfcedf34ce7111636cdf7d98         28  docs/RELEASE.md
-8909ffd37786fad2fe776b47c845a91f0b4e6729e7221611310f6f8e52a795a7         28  docs/ROADMAP.md
-7b4653bddc1e82bb509cde018374daaaeb2cd9760a40b12eac22e302df3def60         28  docs/TESTING.md
-33ac2aa8ffce76e3db1a74f30ebd3b1793b7f54cb6d4a9924ee31db0a62cc4ae         50  docs/TROUBLESHOOTING.md
-cfcfa5b360e20f6818344f51d5f905afb554e2bfedf76da3ad82b74752081066         29  docs/UI_NOTES.md
-92c47cf911cf593173805bcd070bcf9224341644c4c2571ec3da36747f052ba7         27  docs/WS_API.md
-1467dec9843d3e9c4bedb6b577f483db80f4d65cab1e4fc955979a66681b590c      10075  FILE_MANIFEST.txt
-e585c1fdd8b67589ba994f57ce9b2508592f22d51d7afaebc44eb063a4ea544a         97  hacs.json
-77d7c46f1bb189665f48bb557a8880ce371d9b744372b78f1e8347b98c0bfdc6        604  INSTALLATION.md
-81b82faedbae9627333c5ce2023e3052e6a994649b7eeee70662b54b5357f85a         26  LICENSE
-b3343c1fd9935d6030398b619bf209ef523272110d292860af3a03aa4b22a37a       2706  README.md
-b4cc8bfe4381f1f6a4a501dc6e9a42163be4e97ab33bc43e6c859cb3e7d8655e         63  REPO_NAME.txt
+.gitignore
+FILE_MANIFEST.txt
+LICENSE
+README.md
+custom_components/padspan_ha/__init__.py
+custom_components/padspan_ha/api.py
+custom_components/padspan_ha/binary_sensor.py
+custom_components/padspan_ha/cloud.py
+custom_components/padspan_ha/config.py
+custom_components/padspan_ha/config_flow.py
+custom_components/padspan_ha/const.py
+custom_components/padspan_ha/coordinator.py
+custom_components/padspan_ha/device_tracker.py
+custom_components/padspan_ha/diagnostics.py
+custom_components/padspan_ha/icon.png
+custom_components/padspan_ha/logo.png
+custom_components/padspan_ha/manifest.json
+custom_components/padspan_ha/maps_store.py
+custom_components/padspan_ha/migrations.py
+custom_components/padspan_ha/panel.py
+custom_components/padspan_ha/sensor.py
+custom_components/padspan_ha/services.yaml
+custom_components/padspan_ha/settings_store.py
+custom_components/padspan_ha/strings.json
+custom_components/padspan_ha/translations/da.json
+custom_components/padspan_ha/translations/de.json
+custom_components/padspan_ha/translations/en.json
+custom_components/padspan_ha/translations/es.json
+custom_components/padspan_ha/translations/fi.json
+custom_components/padspan_ha/translations/fr.json
+custom_components/padspan_ha/translations/it.json
+custom_components/padspan_ha/translations/nl.json
+custom_components/padspan_ha/translations/no.json
+custom_components/padspan_ha/translations/pt.json
+custom_components/padspan_ha/translations/sv.json
+custom_components/padspan_ha/util.py
+custom_components/padspan_ha/websocket.py
+custom_components/padspan_ha/www/padspan-ha/assets/logo-icon.png
+custom_components/padspan_ha/www/padspan-ha/assets/logo-wordmark.png
+custom_components/padspan_ha/www/padspan-ha/assets/padspan-logo.svg
+custom_components/padspan_ha/www/padspan-ha/assets/padspan-mark.svg
+custom_components/padspan_ha/www/padspan-ha/panel.js
+custom_components/padspan_ha/www/padspan-ha/styles.css
+custom_components/padspan_ha/www/padspan-ha/views/debug.js
+custom_components/padspan_ha/www/padspan-ha/views/devices.js
+custom_components/padspan_ha/www/padspan-ha/views/diagnostics.js
+custom_components/padspan_ha/www/padspan-ha/views/events.js
+custom_components/padspan_ha/www/padspan-ha/views/health.js
+custom_components/padspan_ha/www/padspan-ha/views/history.js
+custom_components/padspan_ha/www/padspan-ha/views/insights.js
+custom_components/padspan_ha/www/padspan-ha/views/maps.js
+custom_components/padspan_ha/www/padspan-ha/views/monitor.js
+custom_components/padspan_ha/www/padspan-ha/views/objects.js
+custom_components/padspan_ha/www/padspan-ha/views/overview.js
+custom_components/padspan_ha/www/padspan-ha/views/presence.js
+custom_components/padspan_ha/www/padspan-ha/views/qa.js
+custom_components/padspan_ha/www/padspan-ha/views/sandbox.js
+custom_components/padspan_ha/www/padspan-ha/views/settings.js
+custom_components/padspan_ha/www/padspan-ha/views/zones.js
+docs/00_REPO_LOGIC_OVERVIEW.md
+docs/01_ARCHITECTURE.md
+docs/02_WEBSOCKET_API.md
+docs/03_MAPPING_SUITE.md
+docs/04_LIVE_DISCOVERY.md
+docs/90_TROUBLESHOOTING.md
+docs/ARCHITECTURE.md
+docs/CHANGELOG.md
+docs/CONTRIBUTING.md
+docs/DATA_MODEL.md
+docs/DEVELOPMENT.md
+docs/INSTALL.md
+docs/RELEASE.md
+docs/ROADMAP.md
+docs/TESTING.md
+docs/TROUBLESHOOTING.md
+docs/UI_NOTES.md
+docs/WS_API.md
+hacs.json

@@ -10,6 +10,7 @@ Entry point. Initializes coordinator, stores, websockets, and registers the sing
 import logging
 
 import voluptuous as vol
+from .build_info import BUILD_ID, BUILD_VERSION
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
@@ -37,6 +38,8 @@ SERVICE_SCHEMA = vol.Schema({vol.Required("room_tag_map"): dict})
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
+    _LOGGER.info("PadSpan HA starting v%s (build %s)", BUILD_VERSION, BUILD_ID)
+
     # Websockets for the panel
     try:
         async_register_websockets(hass)
@@ -63,6 +66,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
+
+    _LOGGER.info("PadSpan HA starting v%s (build %s)", BUILD_VERSION, BUILD_ID)
 
     coord: PadSpanCoordinator | None = hass.data[DOMAIN].get("coordinator")
     if coord is None:
