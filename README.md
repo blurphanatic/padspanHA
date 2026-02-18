@@ -1,6 +1,6 @@
 # PadSpan HA (Home Assistant Custom Integration)
 
-Version: **0.4.0**
+Version: **0.4.1**
 
 ## What’s in this zip
 - Full Home Assistant custom integration: `custom_components/padspan_ha`
@@ -80,6 +80,6 @@ If UI changes do not appear after install, hard refresh the browser.
 
 ## Proving you are on the right build
 Open **Diagnostics** inside the panel. It shows:
-- UI: v0.4.0 • build <ID>
+- UI: v0.4.1 • build <ID>
 - Backend: version + build_id
-If those are not v0.4.0, you still have an old install or cached JS.
+If those are not v0.4.1, you still have an old install or cached JS.
