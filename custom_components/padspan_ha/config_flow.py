@@ -66,35 +66,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.exception("ConfigFlow user crashed (v%s): %s", VERSION, err)
             return self.async_abort(reason="unknown")
 
-    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None):
-        try:
-            entry = None
-            entry_id = self.context.get("entry_id")
-            if entry_id:
-                entry = self.hass.config_entries.async_get_entry(entry_id)
-            if entry is None:
-                entries = self.hass.config_entries.async_entries(DOMAIN)
-                entry = entries[0] if entries else None
-
-            default_interval = DEFAULT_SCAN_INTERVAL
-            if entry:
-                default_interval = _clamp_interval(entry.options.get(CONF_SCAN_INTERVAL, entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)))
-
-            if user_input is None:
-                return self.async_show_form(step_id="reconfigure", data_schema=_schema(default_interval))
-
-            interval = _clamp_interval(user_input.get(CONF_SCAN_INTERVAL))
-            if entry:
-                options = dict(entry.options)
-                options[CONF_SCAN_INTERVAL] = interval
-                self.hass.config_entries.async_update_entry(entry, options=options)
-                await self.hass.config_entries.async_reload(entry.entry_id)
-                return self.async_abort(reason="reconfigure_successful")
-
-            return self.async_abort(reason="unknown")
-        except Exception as err:
-            _LOGGER.exception("ConfigFlow reconfigure crashed (v%s): %s", VERSION, err)
-            return self.async_abort(reason="unknown")
 
     @staticmethod
     @callback

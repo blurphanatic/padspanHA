@@ -30,8 +30,8 @@ import * as Diagnostics from "./views/diagnostics.js";
 import * as QA from "./views/qa.js";
 import * as Sandbox from "./views/sandbox.js";
 
-const APP_VERSION = "0.4.0";
-const BUILD_ID = "20260218T203128Z";
+const APP_VERSION = "0.4.1";
+const BUILD_ID = "20260218T211256Z";
 
 const VIEWS = {
   overview: Overview,

@@ -8,9 +8,11 @@ Defines the websocket surface consumed by the panel. This is the preferred integ
 
 
 import logging
+from typing import Any
 from homeassistant.components import websocket_api
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers import area_registry, device_registry, entity_registry
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS
 from .build_info import BUILD_ID, BUILD_VERSION
@@ -109,146 +111,167 @@ def _get_settings(hass: HomeAssistant) -> dict:
     return {"data_mode": "sample"}
 
 async def _live_snapshot(hass: HomeAssistant) -> dict:
-    """Best-effort live discovery of rooms, radios, and tags.
+    """Best-effort read of REAL data from Home Assistant.
 
-    Strategy (industry-style "progressive enhancement"):
-      1) Prefer Bermuda when present (it is receiver-centric and already maintains tag->area info).
-      2) Fall back to generic HA registries and state heuristics (never crash if Bermuda isn't installed).
-      3) Always return a structured snapshot so the UI can render even with partial data.
+    What we try to discover:
+      - receivers/radios (typically Bermuda gateways / BLE receivers)
+      - rooms (from Areas + entity registry area assignments)
+      - tags (device_tracker/sensor/binary_sensor entities tied to Bermuda or bluetooth-ish)
 
-    IMPORTANT: We do not assume a specific Bermuda entity naming scheme; we look at:
-      - config entry ownership (entity_registry.config_entry_id)
-      - current entity state matching an HA Area name
-      - device metadata (names containing proxy/receiver/ble/bluetooth)
+    We stay defensive and never raise — the panel must keep rendering even if we can't
+    find any live data.
     """
-    ar = area_registry.async_get(hass)
-    dr = device_registry.async_get(hass)
-    er = entity_registry.async_get(hass)
+    snapshot: dict[str, Any] = {
+        "source": "live",
+        "generated_at": dt_util.utcnow().isoformat(),
+        "rooms_discovered": [],
+        "receivers": [],
+        "tags": [],
+        "room_tag_map": {},
+        "raw_counts": {},
+    }
 
-    # Rooms (areas)
-    rooms: list[dict] = []
-    area_name_by_id: dict[str, str] = {}
-    for a in ar.async_list_areas():
-        rooms.append({"id": a.id, "name": a.name})
-        area_name_by_id[a.id] = a.name
-    room_names = set(r["name"] for r in rooms)
+    # --- Areas (rooms) ---
+    area_by_id: dict[str, str] = {}
+    try:
+        ar = area_registry.async_get(hass)
+        area_by_id = {a.id: a.name for a in ar.async_list_areas()}
+        snapshot["rooms_discovered"] = sorted(area_by_id.values())
+    except Exception:
+        pass
 
-    # Bermuda config entries (if installed)
+    # --- Find Bermuda config entries (if installed) ---
     bermuda_entry_ids: set[str] = set()
     try:
-        for ce in hass.config_entries.async_entries("bermuda"):
-            bermuda_entry_ids.add(ce.entry_id)
+        for ent in hass.config_entries.async_entries():
+            if ent.domain == "bermuda":
+                bermuda_entry_ids.add(ent.entry_id)
     except Exception:
         bermuda_entry_ids = set()
 
-    # Radios: Bermuda-owned devices first; else proxy-ish devices by heuristic
-    radios: list[dict] = []
-    seen_radio_ids: set[str] = set()
+    # --- Receivers (devices belonging to Bermuda entries) ---
+    try:
+        dr = device_registry.async_get(hass)
+        receivers: list[dict[str, Any]] = []
+        for dev in dr.devices.values():
+            if bermuda_entry_ids and any(entry_id in bermuda_entry_ids for entry_id in dev.config_entries):
+                receivers.append(
+                    {
+                        "id": dev.id,
+                        "name": dev.name_by_user or dev.name or dev.model or "Receiver",
+                        "manufacturer": dev.manufacturer or "",
+                        "model": dev.model or "",
+                        "sw_version": dev.sw_version or "",
+                    }
+                )
+        snapshot["receivers"] = sorted(receivers, key=lambda d: (d.get("name") or "").lower())
+    except Exception:
+        snapshot["receivers"] = []
 
-    # Bermuda devices
-    if bermuda_entry_ids:
-        for eid in bermuda_entry_ids:
-            for dev in dr.async_entries_for_config_entry(eid):
-                if dev.id in seen_radio_ids:
-                    continue
-                seen_radio_ids.add(dev.id)
-                name = (dev.name_by_user or dev.name or dev.id).strip()
-                radios.append({
-                    "id": dev.id,
-                    "name": name,
-                    "model": (dev.model or "").strip(),
-                    "manufacturer": (dev.manufacturer or "").strip(),
-                    "area": area_name_by_id.get(dev.area_id) if dev.area_id else None,
-                    "source": "bermuda",
-                })
+    # --- Tag candidates + mapping ---
+    er = entity_registry.async_get(hass)
 
-    # Heuristic devices (ESPHOME proxies, BLE receivers)
-    for dev in dr.devices.values():
-        if dev.id in seen_radio_ids:
-            continue
-        name = (dev.name_by_user or dev.name or "").strip()
-        model = (dev.model or "").strip()
-        mfg = (dev.manufacturer or "").strip()
-        area = area_name_by_id.get(dev.area_id) if dev.area_id else None
-        hay = f"{name} {model} {mfg}".lower()
-        is_proxyish = any(k in hay for k in ["proxy", "bluetooth", "ble", "receiver", "scanner", "bermuda"])
-        if is_proxyish:
-            seen_radio_ids.add(dev.id)
-            radios.append({
-                "id": dev.id,
-                "name": name or dev.id,
-                "model": model,
-                "manufacturer": mfg,
-                "area": area,
-                "source": "heuristic",
-            })
+    def _norm(s: str) -> str:
+        return (s or "").strip().casefold()
 
-    # Tags: entities whose state matches a room name
-    tags: list[dict] = []
-    room_tag_map: dict[str, list[str]] = {}
+    known_rooms = {_norm(r): r for r in snapshot.get("rooms_discovered", [])}
 
-    def add(room: str, tag_id: str):
-        room_tag_map.setdefault(room, [])
-        if tag_id not in room_tag_map[room]:
-            room_tag_map[room].append(tag_id)
+    def _room_from_state(entity_id: str, st: State) -> str | None:
+        # 1) state string equals a room name
+        room = known_rooms.get(_norm(st.state))
+        if room:
+            return room
 
-    # Determine Bermuda entities by ownership (most reliable)
-    bermuda_entities: set[str] = set()
-    if bermuda_entry_ids:
-        for ent in er.entities.values():
-            if ent.config_entry_id in bermuda_entry_ids:
-                bermuda_entities.add(ent.entity_id)
+        # 2) explicit attribute hints
+        for key in ("room", "area", "area_name"):
+            v = st.attributes.get(key)
+            if isinstance(v, str):
+                room = known_rooms.get(_norm(v))
+                if room:
+                    return room
 
-    # Walk current states (fast; no IO)
-    for st in hass.states.async_all():
-        eid = st.entity_id
-        dom = eid.split(".", 1)[0]
-        s = (st.state or "").strip()
-        if s in ("unknown", "unavailable", ""):
-            continue
-        if s not in room_names:
-            continue
+        # 3) entity registry area assignment
+        ent = er.async_get(entity_id)
+        if ent and ent.area_id and ent.area_id in area_by_id:
+            return area_by_id[ent.area_id]
 
-        # Identify likely "tag presence" publishers
-        is_bermuda = eid in bermuda_entities
-        fname = str(st.attributes.get("friendly_name", "")).lower()
-        looks_like_tag = (
-            dom in ("device_tracker", "sensor", "binary_sensor")
-            and any(k in (eid.lower() + " " + fname) for k in ["tag", "tracker", "ble", "beacon", "phone", "keys", "wallet"])
+        # 4) attribute area_id
+        aid = st.attributes.get("area_id")
+        if isinstance(aid, str) and aid in area_by_id:
+            return area_by_id[aid]
+
+        return None
+
+    def _is_candidate(entity_id: str, st: State) -> bool:
+        ent = er.async_get(entity_id)
+        if ent and ent.config_entry_id in bermuda_entry_ids:
+            return True
+
+        dom = entity_id.split(".", 1)[0]
+        if dom not in ("device_tracker", "sensor", "binary_sensor"):
+            return False
+
+        n = _norm(getattr(st, "name", "") or st.attributes.get("friendly_name", ""))
+        eidn = _norm(entity_id)
+
+        # bluetooth-ish heuristics
+        return any(k in eidn for k in ("ble", "bluetooth", "bermuda", "tag", "beacon")) or any(
+            k in n for k in ("ble", "bluetooth", "bermuda", "tag", "beacon")
         )
 
-        if is_bermuda or looks_like_tag:
-            tag_id = eid  # keep REAL entity_id for live mode
-            add(s, tag_id)
-            tags.append({
-                "id": tag_id,
-                "entity_id": eid,
-                "room": s,
-                "friendly_name": st.attributes.get("friendly_name"),
-                "source": "bermuda" if is_bermuda else "heuristic",
-            })
+    tags: list[dict[str, Any]] = []
+    room_tag_map: dict[str, list[str]] = {}
 
-    # Stable sorting
-    for r in list(room_tag_map.keys()):
-        room_tag_map[r] = sorted(room_tag_map[r])
-    radios = sorted(radios, key=lambda x: ((x.get("area") or ""), (x.get("name") or "")))
-    rooms = sorted(rooms, key=lambda x: x["name"].lower())
-    tags = sorted(tags, key=lambda x: ((x.get("room") or ""), (x.get("id") or "")))
+    cand = 0
+    mapped = 0
 
-    return {
-        "rooms": rooms,
-        "radios": radios,
-        "tags": tags,
-        "room_tag_map": room_tag_map,
-        "sources": {
-            "areas": len(rooms),
-            "radios": len(radios),
-            "tags": len(tags),
-            "bermuda_entry_ids": len(bermuda_entry_ids),
-            "bermuda_entities_seen": len(bermuda_entities),
-        },
+    try:
+        for st in hass.states.async_all():
+            entity_id = st.entity_id
+            if not _is_candidate(entity_id, st):
+                continue
+            cand += 1
+
+            room = _room_from_state(entity_id, st)
+            if not room:
+                continue
+
+            tag_label = st.attributes.get("friendly_name") or entity_id.split(".", 1)[-1]
+            tags.append(
+                {
+                    "entity_id": entity_id,
+                    "name": str(tag_label),
+                    "room": room,
+                    "state": st.state,
+                }
+            )
+
+            room_tag_map.setdefault(room, []).append(entity_id)
+            mapped += 1
+    except Exception:
+        # If anything weird happens, keep the UI alive with whatever we collected.
+        pass
+
+    # De-dupe tags by entity_id while keeping first occurrence
+    seen = set()
+    deduped: list[dict[str, Any]] = []
+    for t in tags:
+        eid = t.get("entity_id")
+        if eid in seen:
+            continue
+        seen.add(eid)
+        deduped.append(t)
+
+    snapshot["tags"] = deduped
+    snapshot["room_tag_map"] = room_tag_map
+    snapshot["raw_counts"] = {
+        "areas": len(snapshot.get("rooms_discovered") or []),
+        "receivers": len(snapshot.get("receivers") or []),
+        "candidate_entities": cand,
+        "mapped_entities": mapped,
     }
 
+    return snapshot
 
 @websocket_api.websocket_command({"type": "padspan_ha/settings_get"})
 

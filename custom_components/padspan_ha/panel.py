@@ -15,6 +15,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN, VERSION, DATA_PANEL_REGISTERED
+from .build_info import BUILD_ID
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
         hass=hass,
         webcomponent_name=WEB_COMPONENT,
         frontend_url_path="padspan-ha",
-        sidebar_title="PadSpan",
+        sidebar_title="PadSpan HA",
         sidebar_icon="mdi:radar",
         require_admin=False,
         module_url=f"{STATIC_URL}/padspan-ha/panel.js?v={VERSION}&cb=full",
