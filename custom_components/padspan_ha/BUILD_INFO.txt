@@ -1,0 +1,2 @@
+PadSpan HA build 0.3.21
+If you can read this file on disk, the update copied correctly.

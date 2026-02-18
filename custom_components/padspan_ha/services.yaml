@@ -1,0 +1,8 @@
+set_test_presence:
+  name: Set test presence
+  description: Set the built-in test presence state (home/away) without any API.
+  fields:
+    is_home:
+      required: true
+      selector:
+        boolean:
