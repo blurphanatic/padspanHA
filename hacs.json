@@ -1,5 +1,6 @@
 {
   "name": "PadSpan HA",
   "domain": "padspan_ha",
-  "render_readme": true
+  "render_readme": true,
+  "country": "CA"
 }

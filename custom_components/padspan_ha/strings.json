@@ -1,0 +1,37 @@
+{
+  "title": "PadSpan HA",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up PadSpan HA",
+        "description": "Configure PadSpan HA. You can use Sample data while you verify the UI, then switch to Live data in the PadSpan panel.",
+        "data": {
+          "enable_cloud": "Enable cloud (optional)",
+          "hub_url": "Hub URL (optional)",
+          "scan_interval": "Scan interval (seconds)",
+          "api_key": "API key (optional)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PadSpan HA options",
+        "data": {
+          "scan_interval": "Scan interval (seconds)",
+          "enable_cloud": "Enable cloud (optional)",
+          "hub_url": "Hub URL (optional)",
+          "api_key": "API key (optional)"
+        }
+      }
+    }
+  }
+}

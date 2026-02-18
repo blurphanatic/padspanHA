@@ -10,6 +10,13 @@ Version: **0.3.24**
   - `padspan_ha/room_tags`
   - `padspan_ha/auto_diagnostics`
   - `padspan_ha/version`
+  - `padspan_ha/settings_get`
+  - `padspan_ha/settings_set`
+  - `padspan_ha/live_snapshot`
+  - `padspan_ha/maps_list`
+  - `padspan_ha/maps_upload`
+  - `padspan_ha/maps_update`
+  - `padspan_ha/maps_delete`
 
 ## Install (HA OS)
 1. Stop Home Assistant
@@ -26,27 +33,46 @@ Open **PadSpan** in the sidebar → open **Diagnostics** view → copy the JSON 
 ## Notes
 Cloud is optional and disabled by default. This build is **local-first**.
 
-## Maps (Mapping suite – 0.3.24)
-Open **PadSpan → Maps**.
+## Live vs Sample data switch
+- Top-right of the PadSpan panel header: **Data: Sample / Live**
+- **Sample** uses built-in demo data so you can validate UI quickly.
+- **Live** runs a best-effort discovery pass against your HA Areas/Devices/Entities (Bermuda-first heuristics) and populates:
+  - Rooms (HA Areas)
+  - Radios/Receivers (Bluetooth/Proxy/Bermuda/ESP32 heuristic)
+  - Tags seen (entities whose state matches a room/area)
 
-Features:
-- Upload a floorplan image (PNG/JPG/WEBP/GIF) → auto-resized working PNG
-- Map library (Open / Download PNG / Download JSON / Delete)
-- Map editor:
-  - Zoom/pan
-  - Drop BLE receivers on the map (double-click)
-  - Drag receivers to reposition
-  - Delete receiver (right click)
-  - Save receiver placements (normalized coordinates)
-  - Optional grid and snap
-  - Calibration tool (px-per-meter) via 2-point reference line
+## Mapping suite
+Open **Maps** in the internal menu:
+- **Upload**: accept any image type; auto-resize to max dimension (default 1600) and store as PNG.
+- **Edit**: double-click to add receivers; drag to reposition; save.
+- **Export**: download PNG + JSON (receiver layout + metadata)
 
-Storage:
-- Images: `/config/www/padspan_ha/maps/<id>.png` (served as `/local/padspan_ha/maps/<id>.png`)
-- Metadata: `.storage/padspan_ha.maps`
+Where files are stored:
+- Map PNGs are saved to: `/config/www/padspan_ha/maps/`
+- They are served by HA at: `/local/padspan_ha/maps/<map_id>.png`
 
-Auth API endpoints:
-- `GET/POST /api/padspan_ha/maps`
-- `GET/PUT /api/padspan_ha/maps/<id>/meta`
-- `GET /api/padspan_ha/maps/<id>/file`
-- `DELETE /api/padspan_ha/maps/<id>`
+---
+
+## Repository logic (maintainer notes)
+
+This repo contains a **full logic trail** so it’s understandable after long breaks.
+
+Start here:
+- `docs/00_REPO_LOGIC_OVERVIEW.md`
+
+Then:
+- `docs/01_ARCHITECTURE.md`
+- `docs/02_WEBSOCKET_API.md`
+- `docs/03_MAPPING_SUITE.md`
+- `docs/04_LIVE_DISCOVERY.md`
+- `docs/90_TROUBLESHOOTING.md`
+
+### Why we bias toward websockets
+We use `hass.callWS(...)` as the primary UI API because it is stable across Home Assistant releases and avoids auth/cors issues.
+
+### Why receiver coordinates are normalized
+Receiver positions are stored as x/y in [0..1] relative to image width/height, so resizing does not break placement.
+
+### Common gotcha: caching
+If UI changes do not appear after install, hard refresh the browser.
+
