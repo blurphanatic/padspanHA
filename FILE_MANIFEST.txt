@@ -1,4 +1,5 @@
 .gitignore
+FILE_MANIFEST.txt
 LICENSE
 README.md
 custom_components/padspan_ha/__init__.py
@@ -11,7 +12,9 @@ custom_components/padspan_ha/const.py
 custom_components/padspan_ha/coordinator.py
 custom_components/padspan_ha/device_tracker.py
 custom_components/padspan_ha/diagnostics.py
+custom_components/padspan_ha/http_views.py
 custom_components/padspan_ha/manifest.json
+custom_components/padspan_ha/map_store.py
 custom_components/padspan_ha/migrations.py
 custom_components/padspan_ha/panel.py
 custom_components/padspan_ha/sensor.py
@@ -41,6 +44,7 @@ custom_components/padspan_ha/www/padspan-ha/views/events.js
 custom_components/padspan_ha/www/padspan-ha/views/health.js
 custom_components/padspan_ha/www/padspan-ha/views/history.js
 custom_components/padspan_ha/www/padspan-ha/views/insights.js
+custom_components/padspan_ha/www/padspan-ha/views/maps.js
 custom_components/padspan_ha/www/padspan-ha/views/monitor.js
 custom_components/padspan_ha/www/padspan-ha/views/objects.js
 custom_components/padspan_ha/www/padspan-ha/views/overview.js
@@ -50,11 +54,13 @@ custom_components/padspan_ha/www/padspan-ha/views/sandbox.js
 custom_components/padspan_ha/www/padspan-ha/views/settings.js
 custom_components/padspan_ha/www/padspan-ha/views/zones.js
 docs/ARCHITECTURE.md
+docs/CALIBRATION.md
 docs/CHANGELOG.md
 docs/CONTRIBUTING.md
 docs/DATA_MODEL.md
 docs/DEVELOPMENT.md
 docs/INSTALL.md
+docs/MAPS.md
 docs/RELEASE.md
 docs/ROADMAP.md
 docs/TESTING.md

@@ -4,7 +4,7 @@ import logging
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
-from .const import DOMAIN, VERSION
+from .const import DOMAIN, VERSION, DATA_MAP_STORE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -14,6 +14,10 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_room_tags)
     websocket_api.async_register_command(hass, ws_auto_diagnostics)
     websocket_api.async_register_command(hass, ws_version)
+    websocket_api.async_register_command(hass, ws_maps_list)
+    websocket_api.async_register_command(hass, ws_maps_get_meta)
+    websocket_api.async_register_command(hass, ws_maps_update_meta)
+
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -58,6 +62,16 @@ async def ws_auto_diagnostics(hass: HomeAssistant, connection, msg) -> None:
             ok = False
         else:
             checks.append({"name": "last_error", "ok": True, "detail": "No errors recorded"})
+    # Map store checks
+    ms = hass.data.get(DOMAIN, {}).get(DATA_MAP_STORE)
+    if not ms:
+        ok = False
+        checks.append({"name": "map_store", "ok": False, "detail": "MapStore not initialized"})
+        recs.append("Restart HA after updating the integration so MapStore can initialize.")
+    else:
+        maps = ms.list_maps()
+        checks.append({"name": "map_store", "ok": True, "detail": f"{len(maps)} map(s) loaded"})
+
 
     summary = {
         "total": len(checks),
@@ -77,3 +91,35 @@ async def ws_auto_diagnostics(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.async_response
 async def ws_version(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], {"version": VERSION})
+
+@websocket_api.websocket_command({"type": "padspan_ha/maps_list"})
+@websocket_api.async_response
+async def ws_maps_list(hass: HomeAssistant, connection, msg) -> None:
+    store = hass.data.get(DOMAIN, {}).get(DATA_MAP_STORE)
+    maps = store.list_maps() if store else []
+    connection.send_result(msg["id"], {"maps": maps})
+
+@websocket_api.websocket_command({"type": "padspan_ha/maps_get_meta", "map_id": str})
+@websocket_api.async_response
+async def ws_maps_get_meta(hass: HomeAssistant, connection, msg) -> None:
+    store = hass.data.get(DOMAIN, {}).get(DATA_MAP_STORE)
+    m = store.get_map(msg["map_id"]) if store else None
+    if not m:
+        connection.send_error(msg["id"], "not_found", "Map not found")
+        return
+    connection.send_result(msg["id"], {"map": m})
+
+@websocket_api.websocket_command({"type": "padspan_ha/maps_update_meta", "map_id": str, "meta": dict})
+@websocket_api.async_response
+async def ws_maps_update_meta(hass: HomeAssistant, connection, msg) -> None:
+    store = hass.data.get(DOMAIN, {}).get(DATA_MAP_STORE)
+    if not store:
+        connection.send_error(msg["id"], "store_missing", "MapStore not initialized")
+        return
+    try:
+        m = await store.async_update_meta(msg["map_id"], msg.get("meta") or {})
+        connection.send_result(msg["id"], {"map": m})
+    except KeyError:
+        connection.send_error(msg["id"], "not_found", "Map not found")
+    except Exception as err:
+        connection.send_error(msg["id"], "bad_request", str(err))

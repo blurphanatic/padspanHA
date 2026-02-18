@@ -14,6 +14,7 @@ import * as Debug from "./views/debug.js";
 import * as Diagnostics from "./views/diagnostics.js";
 import * as QA from "./views/qa.js";
 import * as Sandbox from "./views/sandbox.js";
+import * as Maps from "./views/maps.js";
 
 const VIEWS = {
   overview: Overview,
@@ -31,6 +32,7 @@ const VIEWS = {
   diagnostics: Diagnostics,
   qa: QA,
   sandbox: Sandbox,
+  maps: Maps,
 };
 
 function esc(s){
@@ -73,6 +75,11 @@ class PadSpanHaApp extends HTMLElement {
       wsCounts: {},
       timing: { lastRefreshMs: null, lastDiagMs: null },
       sandbox: null,
+      maps: [],
+      activeMapId: null,
+      activeMap: null,
+      mapUi: { zoom: 1, panX: 0, panY: 0, snap: false, showGrid: false },
+      mapDraft: { receivers: [], calibration: { mode:"none", px_per_meter:null, reference_points: [] }, notes:"" },
     };
   }
 
@@ -125,6 +132,7 @@ class PadSpanHaApp extends HTMLElement {
 
     this._renderNav();
     this._renderAllViews();
+    this.mapsRefresh().then(()=>this._renderAllViews());
   }
 
   _wsCount(type){
@@ -135,6 +143,113 @@ class PadSpanHaApp extends HTMLElement {
     this._wsCount(payload.type);
     return await this._hass.callWS(payload);
   }
+
+async _apiJson(method, path, body=null){
+  if (this._hass?.callApi){
+    return await this._hass.callApi(method, path, body || undefined);
+  }
+  if (this._hass?.fetchWithAuth){
+    const res = await this._hass.fetchWithAuth(path, {
+      method,
+      headers: {"Content-Type":"application/json"},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    return await res.json();
+  }
+  throw new Error("No callApi/fetchWithAuth available on hass");
+}
+
+async _apiBlob(path){
+  if (this._hass?.fetchWithAuth){
+    const res = await this._hass.fetchWithAuth(path, { method:"GET" });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    return await res.blob();
+  }
+  throw new Error("fetchWithAuth not available");
+}
+
+async _downloadBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+
+async mapsRefresh(){
+  try{
+    const res = await this._callWS({ type:"padspan_ha/maps_list" });
+    this.state.maps = res.maps || [];
+    if (this.state.activeMapId){
+      const m = this.state.maps.find(x=>x.id===this.state.activeMapId);
+      if (!m) { this.state.activeMapId = null; this.state.activeMap = null; }
+    }
+    this._log("info","Maps refreshed",{count:this.state.maps.length});
+  } catch(e){
+    this._log("error","Maps refresh failed",{error:String(e)});
+  }
+}
+
+async mapsSelect(mapId){
+  this.state.activeMapId = mapId;
+  try{
+    const res = await this._callWS({ type:"padspan_ha/maps_get_meta", map_id: mapId });
+    this.state.activeMap = res.map || null;
+    this.state.mapDraft = {
+      receivers: (this.state.activeMap?.receivers || []).map(r=>({...r})),
+      calibration: this.state.activeMap?.calibration || { mode:"none", px_per_meter:null, reference_points: [] },
+      notes: this.state.activeMap?.notes || "",
+    };
+    this._log("info","Map selected",{mapId});
+  } catch(e){
+    this._log("error","Map select failed",{error:String(e), mapId});
+  }
+  this._renderAllViews();
+}
+
+async mapsUpload(info){
+  const created = await this._apiJson("POST", "/api/padspan_ha/maps", info);
+  await this.mapsRefresh();
+  await this.mapsSelect(created.id);
+  return created;
+}
+
+async mapsDelete(mapId){
+  await this._apiJson("DELETE", `/api/padspan_ha/maps/${mapId}`);
+  await this.mapsRefresh();
+  if (this.state.activeMapId === mapId){
+    this.state.activeMapId = null;
+    this.state.activeMap = null;
+  }
+  this._renderAllViews();
+}
+
+async mapsSaveMeta(mapId, meta){
+  const res = await this._callWS({ type:"padspan_ha/maps_update_meta", map_id: mapId, meta });
+  this.state.activeMap = res.map || this.state.activeMap;
+  await this.mapsRefresh();
+  this._renderAllViews();
+  return res.map;
+}
+
+mapLocalImageUrl(map){
+  const sha = map?.image?.sha256 ? map.image.sha256.slice(0,12) : "x";
+  return `/local/padspan_ha/maps/${map?.id}.png?v=${sha}`;
+}
+
+async mapsDownloadPng(map){
+  const blob = await this._apiBlob(`/api/padspan_ha/maps/${map.id}/file`);
+  await this._downloadBlob(blob, `${map.name || map.id}.png`);
+}
+
+async mapsDownloadJson(map){
+  const blob = new Blob([JSON.stringify(map, null, 2)], { type:"application/json" });
+  await this._downloadBlob(blob, `${map.name || map.id}.json`);
+}
 
   async _refreshAll(userAction=false){
     if(!this._hass || !this.shadowRoot) return;
@@ -198,6 +313,7 @@ class PadSpanHaApp extends HTMLElement {
     const items = [
       ["overview","Overview"],
       ["objects","Objects by Rooms"],
+      ["maps","Maps"],
       ["devices","Devices / Objects"],
       ["presence","Presence"],
       ["zones","Zones"],
@@ -316,6 +432,7 @@ class PadSpanHaApp extends HTMLElement {
 
     const ctx = {
       root: this.$content,
+      host: this,
       state: this.state,
       helpers: this._helpers(),
       actions: this.actions(),

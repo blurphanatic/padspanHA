@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    DATA_MAP_STORE,
     DOMAIN,
     CONF_ENABLE_CLOUD,
     CONF_HUB_URL,
@@ -17,6 +18,8 @@ from .const import (
 )
 from .coordinator import PadSpanCoordinator
 from .panel import async_setup_panel
+from .map_store import MapStore
+from .http_views import PadSpanMapsView, PadSpanMapMetaView, PadSpanMapFileView, PadSpanMapDeleteView
 from .websocket import async_register_websockets
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,6 +41,18 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         await async_setup_panel(hass)
     except Exception as err:
         _LOGGER.exception("Panel registration failed: %s", err)
+
+    # Map storage + HTTP API (authenticated)
+    try:
+        ms = MapStore(hass)
+        await ms.async_setup()
+        hass.data[DOMAIN][DATA_MAP_STORE] = ms
+        hass.http.register_view(PadSpanMapsView)
+        hass.http.register_view(PadSpanMapMetaView)
+        hass.http.register_view(PadSpanMapFileView)
+        hass.http.register_view(PadSpanMapDeleteView)
+    except Exception as err:
+        _LOGGER.exception("Map store/API setup failed: %s", err)
 
     async def _set_map(call: ServiceCall) -> None:
         coord: PadSpanCoordinator | None = hass.data.get(DOMAIN, {}).get("coordinator")
