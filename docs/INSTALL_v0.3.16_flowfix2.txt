@@ -1,0 +1,13 @@
+PadSpan HA v0.3.16 flow-fix2
+
+Includes:
+- Hardened Config Flow for HA 2026.2.x
+- Sidebar registration path updated to support both sync and async panel APIs
+- Cache-busted frontend module URL (?v=0.3.16)
+
+Install clean:
+1) Stop Home Assistant
+2) Remove /config/custom_components/padspan and /config/custom_components/padspan_ha
+3) Copy this custom_components/padspan_ha into /config/custom_components/
+4) Start HA and hard refresh browser (Ctrl+F5)
+5) Re-add PadSpan HA or open Configure

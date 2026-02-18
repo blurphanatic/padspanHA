@@ -24,7 +24,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["logger"] = LOGGER
 
-    # Services + WS + Sidebar registration should be non-fatal
+    # Register panel + WS + services early. Non-fatal.
+    try:
+        from .panel import async_setup_panel
+        await async_setup_panel(hass)
+    except Exception:
+        LOGGER.exception("PadSpan panel setup failed during async_setup")
+
     try:
         from .services import async_setup_services
         await async_setup_services(hass)
@@ -37,13 +43,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     except Exception:
         LOGGER.exception("PadSpan websocket API setup failed")
 
-    # Sidebar registration early (before entry) so menu appears reliably
-    try:
-        from .panel import async_setup_panel
-        await async_setup_panel(hass)
-    except Exception:
-        LOGGER.exception("PadSpan panel setup failed during async_setup")
-
     return True
 
 
@@ -55,6 +54,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["logger"] = LOGGER
+
+    # Re-register panel in entry setup (safe idempotent)
+    try:
+        from .panel import async_setup_panel
+        await async_setup_panel(hass)
+    except Exception:
+        LOGGER.exception("PadSpan panel setup failed during entry setup")
 
     data = dict(entry.data)
     if entry.options:
@@ -98,13 +104,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
     }
 
-    # Re-run panel registration (safe + helps after reload)
-    try:
-        from .panel import async_setup_panel
-        await async_setup_panel(hass)
-    except Exception:
-        LOGGER.exception("PadSpan panel setup failed during entry setup")
-
     # Forward all full-feature platforms
     try:
         if hasattr(hass.config_entries, "async_forward_entry_setups"):
@@ -135,7 +134,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if ok:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-        # only remove services when no entries remain
         if len([k for k in hass.data.get(DOMAIN, {}).keys() if k not in ("logger", "_ws_registered", "_panel_registered")]) == 0:
             try:
                 await async_unload_services(hass)

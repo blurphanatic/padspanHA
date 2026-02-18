@@ -1,0 +1,23 @@
+PadSpan HA v0.3.18
+
+Targeted fixes:
+1) 500 error when pressing setup/configure icon:
+   - Added explicit async_step_reconfigure for HA's reconfigure flow path.
+   - Updated options flow to modern pattern (do not set self.config_entry manually).
+
+2) Sidebar missing:
+   - Register panel at start of async_setup_entry.
+   - Added panel_custom signature compatibility (module_url/js_url variants).
+   - Kept all sidebar feature variations and controls.
+
+Still local-first:
+- No API required
+- Cloud disabled by default
+
+Clean install:
+1. Stop HA
+2. Remove /config/custom_components/padspan and /config/custom_components/padspan_ha
+3. Copy this /custom_components/padspan_ha into /config/custom_components/
+4. Start HA
+5. Hard refresh browser (Ctrl+F5)
+6. Restart once more if sidebar doesn't appear immediately (frontend cache).

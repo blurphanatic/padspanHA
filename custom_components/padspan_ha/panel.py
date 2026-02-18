@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from pathlib import Path
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 
@@ -10,7 +12,6 @@ STATIC_URL = "/padspan_ha_static"
 
 
 async def _register_static(hass: HomeAssistant, static_dir: Path) -> None:
-    # Modern HA
     try:
         from homeassistant.components.http import StaticPathConfig  # type: ignore
         await hass.http.async_register_static_paths(
@@ -20,7 +21,6 @@ async def _register_static(hass: HomeAssistant, static_dir: Path) -> None:
     except Exception:
         pass
 
-    # Fallbacks
     try:
         await hass.http.async_register_static_path(STATIC_URL, str(static_dir), False)
         return
@@ -34,6 +34,35 @@ async def _register_static(hass: HomeAssistant, static_dir: Path) -> None:
         _LOGGER.debug("Static path registration failed: %s", err)
 
 
+async def _call_register(panel_custom, kwargs: dict[str, Any]) -> None:
+    sig = inspect.signature(panel_custom.async_register_panel)
+    params = set(sig.parameters.keys())
+
+    attempts = []
+    # main attempt with module_url
+    attempts.append(dict(kwargs))
+    # fallback for APIs that use js_url
+    if "module_url" in kwargs:
+        alt = dict(kwargs)
+        alt["js_url"] = alt.pop("module_url")
+        attempts.append(alt)
+
+    last_err: Exception | None = None
+    for payload in attempts:
+        # strip unknown kwargs for this HA version
+        safe = {k: v for k, v in payload.items() if k in params}
+        try:
+            ret = panel_custom.async_register_panel(**safe)
+            if inspect.isawaitable(ret):
+                await ret
+            return
+        except Exception as err:  # try next variant
+            last_err = err
+
+    if last_err:
+        raise last_err
+
+
 async def async_setup_panel(hass: HomeAssistant) -> None:
     hass.data.setdefault("padspan_ha", {})
     if hass.data["padspan_ha"].get("_panel_registered"):
@@ -44,31 +73,40 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
 
     from homeassistant.components import panel_custom
 
-    # Primary panel
-    panel_custom.async_register_panel(
-        hass=hass,
-        webcomponent_name="padspan-ha-panel",
-        frontend_url_path="padspan-ha",
-        module_url=f"{STATIC_URL}/padspan-ha/panel.js?v=0.3.14",
-        sidebar_title="PadSpan",
-        sidebar_icon="mdi:radar",
-        require_admin=False,
-        config={
-            "title": "PadSpan HA",
-            "icon": f"{STATIC_URL}/padspan-ha/assets/padspan-mark.svg",
-            "logo": f"{STATIC_URL}/padspan-ha/assets/padspan-logo.svg",
+    panel_base_kwargs = {
+        "hass": hass,
+        "webcomponent_name": "padspan-ha-panel",
+        "module_url": f"{STATIC_URL}/padspan-ha/panel.js?v=0.3.19",
+        "require_admin": False,
+    }
+
+    await _call_register(
+        panel_custom,
+        {
+            **panel_base_kwargs,
+            "frontend_url_path": "padspan-ha",
+            "sidebar_title": "PadSpan HA",
+            "sidebar_icon": "mdi:radar",
+            "config": {
+                "title": "PadSpan HA",
+                "icon": f"{STATIC_URL}/padspan-ha/assets/padspan-mark.svg",
+                "logo": f"{STATIC_URL}/padspan-ha/assets/padspan-logo.svg",
+                "view": "padspan-ha",
+            },
         },
     )
 
-    # Extra sidebar variations for testing (requested)
     variations = [
         ("padspan-ha-overview", "PadSpan Overview", "mdi:view-dashboard"),
         ("padspan-ha-live-map", "PadSpan Live Map", "mdi:map-marker-radius"),
-        ("padspan-ha-objects", "PadSpan Objects", "mdi:tag-multiple"),
-        ("padspan-ha-rooms", "PadSpan Rooms", "mdi:floor-plan"),
-        ("padspan-ha-zones", "PadSpan Zones", "mdi:map"),
+        ("padspan-ha-room-tags", "PadSpan Room Tags", "mdi:tag-multiple"),
+        ("padspan-ha-objects", "PadSpan Objects", "mdi:cube-outline"),
+        ("padspan-ha-presence", "PadSpan Presence", "mdi:motion-sensor"),
+        ("padspan-ha-devices", "PadSpan Devices", "mdi:bluetooth"),
+        ("padspan-ha-zones", "PadSpan Zones", "mdi:home-map-marker"),
+        ("padspan-ha-insights", "PadSpan Insights", "mdi:chart-line"),
+        ("padspan-ha-history", "PadSpan History", "mdi:history"),
         ("padspan-ha-diagnostics", "PadSpan Diagnostics", "mdi:stethoscope"),
-        ("padspan-ha-health", "PadSpan Health", "mdi:heart-pulse"),
         ("padspan-ha-debug", "PadSpan Debug", "mdi:bug"),
         ("padspan-ha-events", "PadSpan Events", "mdi:timeline-clock"),
         ("padspan-ha-settings", "PadSpan Settings", "mdi:cog"),
@@ -78,20 +116,21 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
         ("padspan-ha-sandbox", "PadSpan Sandbox", "mdi:beaker-outline"),
         ("padspan-ha-monitor", "PadSpan Monitor", "mdi:monitor-dashboard"),
     ]
+
     for path, title, icon in variations:
-        panel_custom.async_register_panel(
-            hass=hass,
-            webcomponent_name="padspan-ha-panel",
-            frontend_url_path=path,
-            module_url=f"{STATIC_URL}/padspan-ha/panel.js?v=0.3.14",
-            sidebar_title=title,
-            sidebar_icon=icon,
-            require_admin=False,
-            config={
-                "title": title,
-                "icon": f"{STATIC_URL}/padspan-ha/assets/padspan-mark.svg",
-                "logo": f"{STATIC_URL}/padspan-ha/assets/padspan-logo.svg",
-                "view": path,
+        await _call_register(
+            panel_custom,
+            {
+                **panel_base_kwargs,
+                "frontend_url_path": path,
+                "sidebar_title": title,
+                "sidebar_icon": icon,
+                "config": {
+                    "title": title,
+                    "icon": f"{STATIC_URL}/padspan-ha/assets/padspan-mark.svg",
+                    "logo": f"{STATIC_URL}/padspan-ha/assets/padspan-logo.svg",
+                    "view": path,
+                },
             },
         )
 
