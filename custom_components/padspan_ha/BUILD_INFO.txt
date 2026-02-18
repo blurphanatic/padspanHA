@@ -1,2 +1,2 @@
-PadSpan HA build: 0.3.19
-Purpose: full file-set update with options/reconfigure flow compatibility and sidebar restore.
+PadSpan HA build 0.3.21
+If you can read this file on disk, the update copied correctly.

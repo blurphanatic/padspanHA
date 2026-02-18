@@ -57,7 +57,7 @@
           <div class="label">PadSpan HA</div>
         </div>
 
-        <div class="muted">v0.3.20 • single HA sidebar entry</div>
+        <div class="muted">v0.3.21 • single HA sidebar entry</div>
         <div class="muted" style="margin-top:6px">
           Keys: <span class="kbd">[</span> toggle • <span class="kbd">Shift+[</span> layout • <span class="kbd">Esc</span> close
         </div>
@@ -790,6 +790,6 @@ Last diagnostics: ${t.lastDiagMs ?? "—"} ms`;
       }
     }
 
-    if (!customElements.get("padspan-ha-panel")) {
-      customElements.define("padspan-ha-panel", PadSpanHaPanel);
+    if (!customElements.get("padspan-ha-app")) {
+      customElements.define("padspan-ha-app", PadSpanHaPanel);
     }
