@@ -4,7 +4,6 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
 
 from .const import (
@@ -36,19 +35,14 @@ def _schema(default_interval: int) -> vol.Schema:
     )
 
 
-# Compatibility: newer HA has OptionsFlowWithConfigEntry; older uses OptionsFlow(config_entry passed in __init__)
-_OptionsBase = getattr(config_entries, "OptionsFlowWithConfigEntry", config_entries.OptionsFlow)
-_HAS_WITH_CONFIG_ENTRY = _OptionsBase is not config_entries.OptionsFlow
-
-
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle config flow for PadSpan HA."""
+    """Handle config flow for PadSpan HA (local-first)."""
 
     VERSION = 1
-    MINOR_VERSION = 2
+    MINOR_VERSION = 3
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
-        """Initial setup (local-first)."""
+        # Singleton integration
         if self.hass.config_entries.async_entries(DOMAIN):
             return self.async_abort(reason="already_configured")
 
@@ -61,6 +55,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         interval = _clamp_interval(user_input.get(CONF_SCAN_INTERVAL))
         data = {
+            # Local-first: keep cloud disabled unless you add it later intentionally
             CONF_ENABLE_CLOUD: False,
             CONF_HUB_URL: "",
             CONF_API_KEY: "",
@@ -69,9 +64,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(title=NAME, data=data)
 
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None):
-        """Handle UI 'Configure' action safely."""
+        """Handle UI 'Configure' action safely (HA 2026.x)."""
         entry_id = self.context.get("entry_id")
         entry = self.hass.config_entries.async_get_entry(entry_id) if entry_id else None
+
         default_interval = DEFAULT_SCAN_INTERVAL
         if entry:
             default_interval = _clamp_interval(
@@ -87,16 +83,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         interval = _clamp_interval(user_input.get(CONF_SCAN_INTERVAL))
         if entry:
-            data = dict(entry.data)
-            data[CONF_SCAN_INTERVAL] = interval
-            data.setdefault(CONF_ENABLE_CLOUD, False)
-            data.setdefault(CONF_HUB_URL, "")
-            data.setdefault(CONF_API_KEY, "")
-            self.hass.config_entries.async_update_entry(entry, data=data)
+            # Update options (preferred) and reload
+            options = dict(entry.options)
+            options[CONF_SCAN_INTERVAL] = interval
+            self.hass.config_entries.async_update_entry(entry, options=options)
             await self.hass.config_entries.async_reload(entry.entry_id)
             return self.async_abort(reason="reconfigure_successful")
 
-        # Fallback when no entry context exists
+        # No entry context: fall back to creating
         return self.async_create_entry(
             title=NAME,
             data={
@@ -109,22 +103,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry):
-        """Return options flow with compatibility across HA versions."""
-        if _HAS_WITH_CONFIG_ENTRY:
-            return OptionsFlowHandler()
+    def async_get_options_flow(config_entry):
         return OptionsFlowHandler(config_entry)
 
 
-class OptionsFlowHandler(_OptionsBase):
-    """PadSpan options flow."""
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """PadSpan HA options flow (HA 2026.x compatible)."""
 
-    def __init__(self, config_entry: ConfigEntry | None = None) -> None:
-        # Old HA path
-        if not _HAS_WITH_CONFIG_ENTRY:
-            self.config_entry = config_entry  # type: ignore[assignment]
-        else:
-            super().__init__()
+    def __init__(self, config_entry) -> None:
+        self.config_entry = config_entry
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:

@@ -11,7 +11,7 @@
       },
       "reconfigure": {
         "title": "Reconfigure PadSpan HA",
-        "description": "Update core setup values.",
+        "description": "Update scan interval.",
         "data": {
           "scan_interval": "Update interval (seconds)"
         }
@@ -19,10 +19,7 @@
     },
     "abort": {
       "already_configured": "PadSpan HA is already configured.",
-      "reconfigure_successful": "PadSpan HA was reconfigured."
-    },
-    "error": {
-      "unknown": "Unexpected error."
+      "reconfigure_successful": "Reconfiguration saved."
     }
   },
   "options": {
