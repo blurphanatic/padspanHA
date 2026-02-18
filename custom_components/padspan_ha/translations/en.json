@@ -19,8 +19,8 @@
     },
     "abort": {
       "already_configured": "PadSpan HA is already configured.",
-      "reconfigure_successful": "Reconfiguration saved.",
-      "unknown": "An unexpected error occurred. Check the Home Assistant logs for the traceback."
+      "reconfigure_successful": "Saved.",
+      "unknown": "An unexpected error occurred. Check Home Assistant logs."
     }
   },
   "options": {

@@ -1,23 +1,27 @@
+# PadSpan HA (Home Assistant Custom Integration)
 
-# PadSpan HA v0.3.22
+Version: **0.3.23**
 
-## Purpose
-Diagnostic build to resolve:
-- blank sidebar panel
-- config flow 500 error
-- caching issues
+## What’s in this zip
+- Full Home Assistant custom integration: `custom_components/padspan_ha`
+- Sidebar panel (single HA sidebar entry "PadSpan") with internal menu
+- WebSocket endpoints used by the panel:
+  - `padspan_ha/status`
+  - `padspan_ha/room_tags`
+  - `padspan_ha/auto_diagnostics`
+  - `padspan_ha/version`
 
-## After installing
-Open PadSpan from sidebar and copy the diagnostics block.
+## Install (HA OS)
+1. Stop Home Assistant
+2. Remove any old folders:
+   - `/config/custom_components/padspan`
+   - `/config/custom_components/padspan_ha`
+3. Copy `custom_components/padspan_ha` into `/config/custom_components/`
+4. Start Home Assistant
+5. Hard refresh the browser (Ctrl+F5)
 
-## If gear icon fails
-Enable logging:
+## Diagnostics (copy/paste)
+Open **PadSpan** in the sidebar → open **Diagnostics** view → copy the JSON blob.
 
-```
-logger:
-  default: info
-  logs:
-    custom_components.padspan_ha: debug
-```
-
-Then retry and paste logs.
+## Notes
+Cloud is optional and disabled by default. This build is **local-first**.

@@ -1,3 +1,3 @@
-# CHANGELOG
+# UI_NOTES
 
 Placeholder doc.

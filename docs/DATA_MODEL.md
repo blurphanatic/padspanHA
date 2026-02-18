@@ -1,3 +1,3 @@
-# CHANGELOG
+# DATA_MODEL
 
 Placeholder doc.

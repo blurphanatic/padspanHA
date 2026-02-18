@@ -1,3 +1,3 @@
-# CHANGELOG
+# WS_API
 
 Placeholder doc.

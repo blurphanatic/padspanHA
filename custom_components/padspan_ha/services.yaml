@@ -1,8 +1,8 @@
-set_test_presence:
-  name: Set test presence
-  description: Set the built-in test presence state (home/away) without any API.
+set_room_tag_map:
+  name: Set Room→Tag Map
+  description: Replace the in-memory room_tag_map (for testing).
   fields:
-    is_home:
+    room_tag_map:
       required: true
       selector:
-        boolean:
+        object:

@@ -1,7 +1,7 @@
 {
   "domain": "padspan_ha",
   "name": "PadSpan HA",
-  "version": "0.3.22",
+  "version": "0.3.23",
   "documentation": "https://github.com/padspan/padspanHA",
   "issue_tracker": "https://github.com/padspan/padspanHA/issues",
   "codeowners": [
@@ -14,6 +14,8 @@
   "after_dependencies": [
     "frontend",
     "http",
-    "panel_custom"
-  ]
+    "panel_custom",
+    "websocket_api"
+  ],
+  "single_config_entry": true
 }
