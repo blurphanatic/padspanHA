@@ -1,8 +1,0 @@
-set_room_tag_map:
-  name: Set Room→Tag Map
-  description: Replace the in-memory room_tag_map (for testing).
-  fields:
-    room_tag_map:
-      required: true
-      selector:
-        object:
