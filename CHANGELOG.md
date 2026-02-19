@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.16 (2026-02-19)
+- Fix: release asset + UI version/build stamp aligned for HACS updates.
+
+
 ## 0.4.15
 
 - Packaging cleanup for HACS (icons, install path, consistent cache-busting)

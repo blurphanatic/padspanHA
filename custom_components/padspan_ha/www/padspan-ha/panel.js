@@ -13,27 +13,27 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import * as Overview from "./views/overview.js?b=20260220T002500Z";
-import * as Objects from "./views/objects.js?b=20260220T002500Z";
-import * as Devices from "./views/devices.js?b=20260220T002500Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260220T002500Z";
-import * as Presence from "./views/presence.js?b=20260220T002500Z";
-import * as Zones from "./views/zones.js?b=20260220T002500Z";
-import * as Insights from "./views/insights.js?b=20260220T002500Z";
-import * as History from "./views/history.js?b=20260220T002500Z";
-import * as Monitor from "./views/monitor.js?b=20260220T002500Z";
-import * as Maps from "./views/maps.js?b=20260220T002500Z";
-import * as Events from "./views/events.js?b=20260220T002500Z";
-import * as Health from "./views/health.js?b=20260220T002500Z";
-import * as Settings from "./views/settings.js?b=20260220T002500Z";
-import * as Debug from "./views/debug.js?b=20260220T002500Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260220T002500Z";
-import * as QA from "./views/qa.js?b=20260220T002500Z";
-import * as Sandbox from "./views/sandbox.js?b=20260220T002500Z";
+import * as Overview from "./views/overviewP260219T233756Z";
+import * as Objects from "./views/objectsP260219T233756Z";
+import * as Devices from "./views/devicesP260219T233756Z";
+import * as Bluetooth from "./views/bluetoothP260219T233756Z";
+import * as Presence from "./views/presenceP260219T233756Z";
+import * as Zones from "./views/zonesP260219T233756Z";
+import * as Insights from "./views/insightsP260219T233756Z";
+import * as History from "./views/historyP260219T233756Z";
+import * as Monitor from "./views/monitorP260219T233756Z";
+import * as Maps from "./views/mapsP260219T233756Z";
+import * as Events from "./views/eventsP260219T233756Z";
+import * as Health from "./views/healthP260219T233756Z";
+import * as Settings from "./views/settingsP260219T233756Z";
+import * as Debug from "./views/debugP260219T233756Z";
+import * as Diagnostics from "./views/diagnosticsP260219T233756Z";
+import * as QA from "./views/qaP260219T233756Z";
+import * as Sandbox from "./views/sandboxP260219T233756Z";
 
-const APP_VERSION = "0.4.12";
+const APP_VERSION = "0.4.16";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260220T002500Z";
+const BUILD_ID = "20260219T233756Z";
 
 const VIEWS = {
   overview: Overview,
