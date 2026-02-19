@@ -1,5 +1,5 @@
 {
-  "domain": "padspan_ha",
   "name": "PadSpan HA",
-  "render_readme": true
+  "render_readme": true,
+  "zip_release": true
 }
