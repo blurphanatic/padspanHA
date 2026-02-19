@@ -35,7 +35,6 @@ from .model_store import ModelStore
 from .panel import async_setup_panel
 from .settings_store import SettingsStore
 from .websocket import async_register_websockets
-from .bluetooth_live import async_setup_bluetooth_live
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,6 +90,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     except Exception as err:
         _LOGGER.exception("Panel registration failed: %s", err)
 
+    # Live Bluetooth feed (scanners + advertisements)
+    try:
+        from .bluetooth_live import async_setup_bluetooth_live
+        await async_setup_bluetooth_live(hass)
+    except Exception as err:
+        _LOGGER.debug("Bluetooth live setup skipped: %s", err)
+
     async def _set_map(call: ServiceCall) -> None:
         coord: PadSpanCoordinator | None = hass.data.get(DOMAIN, {}).get("coordinator")
         if not coord:
@@ -134,15 +140,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coord.mark_success()
 
-    # Live Bluetooth advertisements cache (powers "Radios" + "Tags" lists)
-    # Safe even if Bluetooth integration isn't active; it will stay empty.
-    try:
-        if "bluetooth_live" not in hass.data[DOMAIN]:
-            hass.data[DOMAIN]["bluetooth_live"] = await async_setup_bluetooth_live(hass)
-            _LOGGER.debug("Bluetooth live cache enabled")
-    except Exception as err:
-        _LOGGER.debug("Bluetooth live cache unavailable: %s", err)
-
     # Forward platforms (safe even if they don't create entities yet)
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -153,14 +150,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    # Stop BLE cache if we started it
+    unload_ok = True
     try:
-        unload = hass.data.get(DOMAIN, {}).pop("bluetooth_live", None)
-        if callable(unload):
-            unload()
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    except Exception:
+        unload_ok = True
+
+    # Stop BLE callbacks/cache
+    try:
+        from .bluetooth_live import get_bluetooth_live, DATA_KEY
+        bl = get_bluetooth_live(hass)
+        if bl:
+            bl.unload()
+        hass.data.get(DOMAIN, {}).pop(DATA_KEY, None)
     except Exception:
         pass
-    try:
-        return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    except Exception:
-        return True
+
+    return unload_ok

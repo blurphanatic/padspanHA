@@ -458,30 +458,16 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         "saved_entities_missing": saved_missing if 'saved_missing' in locals() else 0,
     }
 
-    # ---- Bluetooth "Radios" + "Tags" (Advertisements) ----
-    # Mirrors data shown in HA UI:
-    # Settings → Devices & Services → Bluetooth → Advertisements
-    ble_payload: dict[str, Any] = {"radios": [], "advertisements": []}
+
+    # BLE radios + advertisements (from HA Bluetooth stack)
     try:
-        from homeassistant.components import bluetooth
-
-        scanners = bluetooth.async_current_scanners(hass) or []
-        radios: list[dict[str, Any]] = []
-        for sc in scanners:
-            src = getattr(sc, "source", None)
-            if not src:
-                continue
-            radios.append({"source": src, "name": getattr(sc, "name", None) or src})
-        radios.sort(key=lambda r: (r.get("name") or "", r.get("source") or ""))
-        ble_payload["radios"] = radios
-
-        live = get_bluetooth_live(hass)
-        if live is not None:
-            ble_payload.update(live.snapshot())
+        bl = get_bluetooth_live(hass)
+        if bl is not None:
+            snapshot["ble"] = bl.get_snapshot()
+        else:
+            snapshot["ble"] = {"radios": [], "advertisements": []}
     except Exception:
-        pass
-
-    snapshot["ble"] = ble_payload
+        snapshot["ble"] = {"radios": [], "advertisements": []}
 
     return snapshot
 

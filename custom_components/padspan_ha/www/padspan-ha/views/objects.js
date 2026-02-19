@@ -1,4 +1,5 @@
 export function renderTags(ctx, tagsList) {
+  const { el } = ctx.helpers;
   const { mode, tagFilter } = ctx.state;
 
   const isLive = ctx.state.dataMode === "live";
@@ -149,73 +150,6 @@ export function render(ctx){
 
   const root = el("section",{id:"objects"});
   root.className = ctx.state.view==="objects" ? "" : "hidden";
-
-  // --- Live Bluetooth (Radios + Advertisements) ---
-  if (ctx.state.dataMode === "live") {
-    const ble = ctx.state?.live?.snapshot?.ble;
-    if (ble) {
-      const radios = Array.isArray(ble.radios) ? ble.radios : [];
-      const ads = Array.isArray(ble.advertisements) ? ble.advertisements : [];
-
-      const fmtAge = (ageS) => {
-        const s = Math.max(0, Math.floor(Number(ageS) || 0));
-        if (!s) return "";
-        if (s < 60) return `${s}s ago`;
-        const m = Math.floor(s / 60);
-        if (m < 60) return `${m}m ago`;
-        const h = Math.floor(m / 60);
-        return `${h}h ago`;
-      };
-
-      const radioName = new Map();
-      for (const r of radios) radioName.set(r.source, r.name || r.source);
-
-      const bleCard = el("div", { class: "card" });
-      bleCard.appendChild(el("div", { class: "muted" }, "Bluetooth (live advertisements)"));
-
-      const row = el("div", { class: "grid", style: "grid-template-columns: 1fr 2fr; gap: 12px; margin-top: 8px" });
-
-      const radiosBox = el("div", {});
-      radiosBox.appendChild(el("div", { class: "muted" }, `Radios (${radios.length})`));
-      if (!radios.length) {
-        radiosBox.appendChild(el("div", { class: "item" }, "No radios detected yet."));
-      } else {
-        for (const r of radios) {
-          const it = el("div", { class: "item" });
-          it.appendChild(el("div", {}, esc(r.name || r.source)));
-          it.appendChild(el("div", { class: "muted" }, esc(r.source)));
-          radiosBox.appendChild(it);
-        }
-      }
-
-      const adsBox = el("div", {});
-      adsBox.appendChild(el("div", { class: "muted" }, `Tags / devices seen (${ads.length})`));
-      if (!ads.length) {
-        adsBox.appendChild(el("div", { class: "item" }, "No advertisements seen yet."));
-      } else {
-        const max = 60;
-        for (const a of ads.slice(0, max)) {
-          const it = el("div", { class: "item" });
-          it.appendChild(el("div", {}, esc(a.name || a.address)));
-          const sub = [
-            a.address,
-            radioName.get(a.source) || a.source,
-            (a.rssi !== undefined && a.rssi !== null) ? `RSSI ${a.rssi}` : "",
-            a.age_s ? fmtAge(a.age_s) : "",
-          ].filter(Boolean).join(" • ");
-          it.appendChild(el("div", { class: "muted" }, esc(sub)));
-          adsBox.appendChild(it);
-        }
-        if (ads.length > max) adsBox.appendChild(el("div", { class: "muted", style: "padding:6px 2px" }, `Showing first ${max} (newest).`));
-      }
-
-      row.appendChild(radiosBox);
-      row.appendChild(adsBox);
-      bleCard.appendChild(row);
-
-      root.appendChild(bleCard);
-    }
-  }
 
   const roomsList = el("div",{class:"rooms", id:"rooms"});
   const tagsList = el("div",{class:"tags", id:"tags"});

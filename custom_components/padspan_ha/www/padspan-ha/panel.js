@@ -13,31 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import * as Overview from "./views/overview.js?b=20260219T052345Z";
-import * as Objects from "./views/objects.js?b=20260219T052345Z";
-import * as Devices from "./views/devices.js?b=20260219T052345Z";
-import * as Presence from "./views/presence.js?b=20260219T052345Z";
-import * as Zones from "./views/zones.js?b=20260219T052345Z";
-import * as Insights from "./views/insights.js?b=20260219T052345Z";
-import * as History from "./views/history.js?b=20260219T052345Z";
-import * as Monitor from "./views/monitor.js?b=20260219T052345Z";
-import * as Maps from "./views/maps.js?b=20260219T052345Z";
-import * as Events from "./views/events.js?b=20260219T052345Z";
-import * as Health from "./views/health.js?b=20260219T052345Z";
-import * as Settings from "./views/settings.js?b=20260219T052345Z";
-import * as Debug from "./views/debug.js?b=20260219T052345Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260219T052345Z";
-import * as QA from "./views/qa.js?b=20260219T052345Z";
-import * as Sandbox from "./views/sandbox.js?b=20260219T052345Z";
+import * as Overview from "./views/overview.js?b=20260219T234200Z";
+import * as Objects from "./views/objects.js?b=20260219T234200Z";
+import * as Devices from "./views/devices.js?b=20260219T234200Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260219T234200Z";
+import * as Presence from "./views/presence.js?b=20260219T234200Z";
+import * as Zones from "./views/zones.js?b=20260219T234200Z";
+import * as Insights from "./views/insights.js?b=20260219T234200Z";
+import * as History from "./views/history.js?b=20260219T234200Z";
+import * as Monitor from "./views/monitor.js?b=20260219T234200Z";
+import * as Maps from "./views/maps.js?b=20260219T234200Z";
+import * as Events from "./views/events.js?b=20260219T234200Z";
+import * as Health from "./views/health.js?b=20260219T234200Z";
+import * as Settings from "./views/settings.js?b=20260219T234200Z";
+import * as Debug from "./views/debug.js?b=20260219T234200Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260219T234200Z";
+import * as QA from "./views/qa.js?b=20260219T234200Z";
+import * as Sandbox from "./views/sandbox.js?b=20260219T234200Z";
 
-const APP_VERSION = "0.4.7";
+const APP_VERSION = "0.4.9";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260219T052345Z";
+const BUILD_ID = "20260219T234200Z";
 
 const VIEWS = {
   overview: Overview,
   objects: Objects,
   devices: Devices,
+  bluetooth: Bluetooth,
   presence: Presence,
   zones: Zones,
   insights: Insights,
@@ -57,6 +59,7 @@ const MENU = [
   ["overview","Overview","mdi:view-dashboard-outline"],
   ["objects","Objects","mdi:tag-multiple-outline"],
   ["devices","Devices","mdi:devices"],
+  ["bluetooth","Bluetooth","mdi:bluetooth"],
   ["presence","Presence","mdi:map-marker-radius-outline"],
   ["zones","Zones","mdi:vector-square"],
   ["insights","Insights","mdi:chart-line"],
@@ -76,6 +79,7 @@ const MENU_COLORS = {
   overview: "#7aa2ff",
   objects: "#ff8a65",
   devices: "#4db6ac",
+  bluetooth: "#0066cc",
   presence: "#ba68c8",
   zones: "#81c784",
   insights: "#ffd54f",

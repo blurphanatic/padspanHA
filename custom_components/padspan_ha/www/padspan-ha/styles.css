@@ -92,3 +92,18 @@
 .nav button.navbtn.active{outline:2px solid var(--navcolor,#7aa2ff)}
 .nav button.navbtn:hover{border-color:var(--navcolor,#7aa2ff)}
 .navdot{display:inline-block;width:8px;height:8px;border-radius:999px;background:var(--navcolor,#7aa2ff);margin-right:10px;vertical-align:middle}
+
+/* --- Added for Bluetooth view --- */
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:900px){.grid-2{grid-template-columns:1fr}}
+
+.input,.select{
+  width:100%;
+  padding:8px 10px;
+  border:1px solid rgba(255,255,255,0.18);
+  border-radius:10px;
+  background:rgba(255,255,255,0.06);
+  color:inherit;
+  outline:none;
+}
+.input::placeholder{color:rgba(255,255,255,0.55)}
