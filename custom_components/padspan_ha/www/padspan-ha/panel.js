@@ -30,9 +30,9 @@ import * as Diagnostics from "./views/diagnostics.js";
 import * as QA from "./views/qa.js";
 import * as Sandbox from "./views/sandbox.js";
 
-const APP_VERSION = "0.4.4";
+const APP_VERSION = "0.4.5";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260219T034433Z";
+const BUILD_ID = "20260219T042614Z";
 
 const VIEWS = {
   overview: Overview,
@@ -145,6 +145,7 @@ class PadSpanHaApp extends HTMLElement {
       dataMode: "sample",          // sample | live
       status: {},
       roomTagMap: {},
+      savedRoomTagMap: {},
       model: { floors: [], room_meta: {} },
       live: { snapshot: null, sources: null, error: null },
       maps: { list: [], lastError: null },
@@ -342,9 +343,21 @@ class PadSpanHaApp extends HTMLElement {
     this.state.status = entry;
   }
 
+  _recomputeDerived(){
+    // Keep the saved map separate from the effective map the UI should use.
+    const saved = this.state.savedRoomTagMap || {};
+    const snap = this.state.live?.snapshot;
+    if(this.state.dataMode === "live" && snap && snap.room_tag_map){
+      this.state.roomTagMap = snap.room_tag_map || {};
+    } else {
+      this.state.roomTagMap = saved || {};
+    }
+  }
+
   async _getRoomTags(){
     const res = await this._callWS({ type: "padspan_ha/room_tags" });
-    this.state.roomTagMap = res?.room_tag_map || {};
+    this.state.savedRoomTagMap = res?.room_tag_map || {};
+    this._recomputeDerived();
     if(res?.sources) this.state.live.sources = res.sources;
   }
 
@@ -356,6 +369,7 @@ class PadSpanHaApp extends HTMLElement {
     const res = await this._callWS({ type: "padspan_ha/live_snapshot" });
     this.state.live.snapshot = res?.snapshot || null;
     this.state.live.error = null;
+    this._recomputeDerived();
   }
 
   async _getMapsList(){
@@ -409,6 +423,7 @@ class PadSpanHaApp extends HTMLElement {
       this._getModel(),
       this._runAutoDiag(false),
     ]);
+    this._recomputeDerived();
     this.state.timing.lastRefreshMs = Math.round(performance.now() - t0);
     this._updateBadges();
     this._renderCurrentView();

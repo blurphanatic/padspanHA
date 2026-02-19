@@ -277,12 +277,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         )
 
     tags: list[dict[str, Any]] = []
-    room_tag_map: dict[str, list[str]] = {}
+    room_tag_map: dict[str, list[str]] = {r: [] for r in (snapshot.get("rooms_discovered") or [])}
 
     # --- Saved (configured) room→tag map (from coordinator) ---
     # In many setups, you curate your rooms/tags here. We treat these as the
     # canonical list of tags and attempt to pull their current HA state.
-    saved_room_tag_map: dict[str, list[str]] = {}
+    saved_room_tag_map: dict[str, list[str]] = {r: [] for r in (snapshot.get("rooms_discovered") or [])}
     try:
         coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
         if coord and getattr(coord, "room_tag_map", None):

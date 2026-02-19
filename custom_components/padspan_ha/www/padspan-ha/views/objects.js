@@ -5,7 +5,9 @@ export function renderTags(ctx, tagsList){
   if(!tagsList) return;
   tagsList.innerHTML = "";
 
-  const rooms = Object.keys(roomTagMap||{}).sort((a,b)=>a.localeCompare(b));
+  const rooms = (ctx.state.dataMode==="live" && ctx.state.live?.snapshot?.rooms_discovered?.length)
+    ? [...ctx.state.live.snapshot.rooms_discovered].sort((a,b)=>a.localeCompare(b))
+    : Object.keys(roomTagMap||{}).sort((a,b)=>a.localeCompare(b));
 
   // On first visit only, auto-select all rooms so the right pane isn't empty.
   if(!ctx.state._roomsInit && rooms.length && selectedRooms.size===0){
@@ -61,7 +63,9 @@ export function render(ctx){
   const roomsList = el("div",{class:"rooms", id:"rooms"});
   const tagsList = el("div",{class:"tags", id:"tags"});
 
-  const rooms = Object.keys(roomTagMap||{}).sort((a,b)=>a.localeCompare(b));
+  const rooms = (ctx.state.dataMode==="live" && ctx.state.live?.snapshot?.rooms_discovered?.length)
+    ? [...ctx.state.live.snapshot.rooms_discovered].sort((a,b)=>a.localeCompare(b))
+    : Object.keys(roomTagMap||{}).sort((a,b)=>a.localeCompare(b));
   if(!rooms.length){
     roomsList.appendChild(el("div",{class:"item"},"No room data yet."));
   } else {

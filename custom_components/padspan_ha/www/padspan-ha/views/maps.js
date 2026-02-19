@@ -92,7 +92,7 @@ function _library(ctx, maps, activeId){
     ]);
 
     const actions = el("div",{style:"display:flex;gap:8px;align-items:center"},[
-      el("button",{class:"btn inline", onclick:()=>{ ctx.actions.mapsSetActive(m.id); }}, "Open"),
+      el("button",{class:"btn inline", onclick:()=>{ ctx.actions.mapsSetActive(m.id); ctx.actions.setMapsTab('edit'); }}, "Open"),
       el("button",{class:"btn inline danger", onclick:async ()=>{ if(confirm(`Delete map "${m.name||m.id}"?`)){ await ctx.actions.mapsDelete(m.id); } }}, "Delete"),
     ]);
 

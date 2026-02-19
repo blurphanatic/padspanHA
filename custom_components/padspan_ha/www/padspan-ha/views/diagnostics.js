@@ -52,17 +52,26 @@ export function render(ctx){
       await navigator.clipboard.writeText(text);
       ctx.toast("Copied diagnostics.");
       return;
-    } catch (e) {
-      // Fall back to execCommand (works on more local installs)
-      try {
-        selectAll();
-        const ok = document.execCommand && document.execCommand("copy");
-        if (ok) {
-          ctx.toast("Copied diagnostics.");
-          return;
-        }
-      } catch (e2) {}
-    }
+    } catch (e) {}
+
+    // Robust fallback: temp textarea attached to document.body (outside shadow DOM)
+    try {
+      const tmp = document.createElement("textarea");
+      tmp.value = text;
+      tmp.setAttribute("readonly", "");
+      tmp.style.position = "fixed";
+      tmp.style.left = "-9999px";
+      tmp.style.top = "0";
+      document.body.appendChild(tmp);
+      tmp.focus();
+      tmp.select();
+      const ok = document.execCommand && document.execCommand("copy");
+      document.body.removeChild(tmp);
+      if (ok) {
+        ctx.toast("Copied diagnostics.");
+        return;
+      }
+    } catch (e2) {}
 
     // Final fallback: manual
     selectAll();
