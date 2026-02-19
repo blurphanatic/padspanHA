@@ -574,6 +574,35 @@ function _edit(ctx, map){
         const hasPoly = ctx.state.maps._draftRoomBounds && ctx.state.maps._draftRoomBounds[r] && ctx.state.maps._draftRoomBounds[r].type==="poly";
         const hint = hasPoly ? "Boundary saved. You can re-draw to replace it." : "No boundary yet. If a receiver is assigned to this room, you will see a dashed auto-circle until you draw a polygon.";
         right.appendChild(el("div",{class:"muted", style:"margin-top:10px;font-size:12px"}, hint));
+        // Tags list for the selected room (LIVE detected + configured-missing)
+        const snap = ctx.state.live && ctx.state.live.snapshot;
+        const liveTags = (snap && Array.isArray(snap.tags)) ? snap.tags.filter(t => t && t.room === r && !t.missing) : [];
+        const missing = (snap && snap.room_tag_map_missing && snap.room_tag_map_missing[r]) ? snap.room_tag_map_missing[r] : [];
+
+        const tagBox = el("div", { style: "margin-top:10px" });
+        tagBox.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:4px" }, "Tags in this room (live):"));
+
+        if (liveTags.length) {
+          const list = el("div", { class: "list" });
+          for (const t of liveTags) {
+            const item = el("div", { class: "item" });
+            const tw = el("div", { style: "display:flex;flex-direction:column;gap:2px;flex:1" });
+            tw.appendChild(el("span", {}, String(t.name || t.entity_id)));
+            tw.appendChild(el("span", { class: "muted" }, `${t.entity_id} • ${t.state}`));
+            item.appendChild(tw);
+            list.appendChild(item);
+          }
+          tagBox.appendChild(list);
+        } else {
+          tagBox.appendChild(el("div", { class: "muted", style: "font-size:12px" }, "No live tags detected for this room."));
+        }
+
+        if (missing && missing.length) {
+          tagBox.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-top:6px" }, `Configured (missing): ${missing.length}`));
+        }
+
+        right.appendChild(tagBox);
+
       }
     }
 

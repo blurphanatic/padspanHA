@@ -185,6 +185,9 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         "receivers": [],
         "tags": [],
         "room_tag_map": {},
+        "room_tag_map_live": {},
+        "room_tag_map_missing": {},
+        "room_tag_map_saved": {},
         "raw_counts": {},
     }
 
@@ -264,32 +267,55 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         if ent and ent.config_entry_id in bermuda_entry_ids:
             return True
 
-        dom = entity_id.split(".", 1)[0]
-        if dom not in ("device_tracker", "sensor", "binary_sensor", "tag", "text_sensor"):
+        dom = entity_id.split('.', 1)[0]
+        if dom not in ('device_tracker', 'sensor', 'binary_sensor', 'tag', 'text_sensor'):
             return False
 
-        n = _norm(getattr(st, "name", "") or st.attributes.get("friendly_name", ""))
+        n = _norm(getattr(st, 'name', '') or st.attributes.get('friendly_name', ''))
         eidn = _norm(entity_id)
 
-        # bluetooth-ish heuristics
-        return any(k in eidn for k in ("ble", "bluetooth", "bermuda", "tag", "beacon")) or any(
-            k in n for k in ("ble", "bluetooth", "bermuda", "tag", "beacon")
+        # Strong patterns for 'current room/area' entities (Bermuda-style and similar).
+        if any(p in eidn for p in ('_area_last_seen', 'area_last_seen', '_room_last_seen', 'room_last_seen', 'nearest_area', 'nearest_room')):
+            return True
+        if 'last_seen' in eidn and ('area' in eidn or 'room' in eidn):
+            return True
+
+        # Attribute hints (many BLE/RTLS integrations expose receiver/rssi fields).
+        for k in ('nearest_receiver', 'receiver', 'receivers', 'rssi', 'distance', 'gateway', 'bermuda'):
+            if k in (st.attributes or {}):
+                return True
+
+        # Bluetooth-ish heuristics (fallback).
+        return any(k in eidn for k in ('ble', 'bluetooth', 'bermuda', 'tag', 'beacon')) or any(
+            k in n for k in ('ble', 'bluetooth', 'bermuda', 'tag', 'beacon')
         )
 
+    def _looks_like_room_tracker(entity_id: str, st: State) -> bool:
+        """Safety net for live mode: accept entities whose id/attrs look like location trackers."""
+        eidn = _norm(entity_id)
+        if any(p in eidn for p in ('_area_last_seen', 'area_last_seen', '_room_last_seen', 'room_last_seen', 'nearest_area', 'nearest_room')):
+            return True
+        if 'last_seen' in eidn and ('area' in eidn or 'room' in eidn):
+            return True
+        for k in ('nearest_receiver', 'receiver', 'receivers', 'rssi', 'distance', 'gateway'):
+            if k in (st.attributes or {}):
+                return True
+        return False
+
     tags: list[dict[str, Any]] = []
-    room_tag_map: dict[str, list[str]] = {r: [] for r in (snapshot.get("rooms_discovered") or [])}
+    room_tag_map_live: dict[str, list[str]] = {r: [] for r in (snapshot.get('rooms_discovered') or [])}
+    room_tag_map_missing: dict[str, list[str]] = {r: [] for r in (snapshot.get('rooms_discovered') or [])}
 
     # --- Saved (configured) room→tag map (from coordinator) ---
-    # In many setups, you curate your rooms/tags here. We treat these as the
-    # canonical list of tags and attempt to pull their current HA state.
-    saved_room_tag_map: dict[str, list[str]] = {r: [] for r in (snapshot.get("rooms_discovered") or [])}
+    # In many setups, you curate your rooms/tags here. We keep this separately
+    # from live-discovered tags so 'live' views don't get polluted by placeholders.
+    saved_room_tag_map: dict[str, list[str]] = {r: [] for r in (snapshot.get('rooms_discovered') or [])}
     try:
         coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
-        if coord and getattr(coord, "room_tag_map", None):
+        if coord and getattr(coord, 'room_tag_map', None):
             saved_room_tag_map = {str(k): list(v) for k, v in (coord.room_tag_map or {}).items() if isinstance(v, (list, tuple))}
     except Exception:
         saved_room_tag_map = {}
-
     def _resolve_saved_entity_id(tag_id: str) -> str:
         """If coordinator uses tag.* placeholders, try to find a real HA entity."""
         if hass.states.get(tag_id):
@@ -328,25 +354,33 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     try:
         for st in hass.states.async_all():
             entity_id = st.entity_id
-            if not _is_candidate(entity_id, st):
-                continue
-            cand += 1
 
+            # Determine room/area first (state often contains the room name).
             room = _room_from_state(entity_id, st)
             if not room:
                 continue
 
-            tag_label = st.attributes.get("friendly_name") or entity_id.split(".", 1)[-1]
-            tags.append(
-                {
-                    "entity_id": entity_id,
-                    "name": str(tag_label),
-                    "room": room,
-                    "state": st.state,
-                }
-            )
+            # Candidate filter: accept Bermuda (by config_entry), common '*_area_last_seen' patterns, or receiver/rssi hints.
+            if not (_is_candidate(entity_id, st) or _looks_like_room_tracker(entity_id, st)):
+                continue
+            cand += 1
 
-            room_tag_map.setdefault(room, []).append(entity_id)
+            tag_label = st.attributes.get('friendly_name') or entity_id.split('.', 1)[-1]
+
+            extra: dict[str, Any] = {}
+            for k in ('nearest_receiver', 'receiver', 'rssi', 'distance', 'gateway'):
+                if k in (st.attributes or {}):
+                    extra[k] = st.attributes.get(k)
+
+            tags.append({
+                'entity_id': entity_id,
+                'name': str(tag_label),
+                'room': room,
+                'state': st.state,
+                **extra,
+            })
+
+            room_tag_map_live.setdefault(room, []).append(entity_id)
             mapped += 1
     except Exception:
         # If anything weird happens, keep the UI alive with whatever we collected.
@@ -378,7 +412,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                             "source": "saved_map",
                         }
                     )
-                    room_tag_map.setdefault(room, []).append(resolved)
+                    room_tag_map_missing.setdefault(room, []).append(resolved)
                     mapped += 1
                     continue
 
@@ -393,7 +427,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         "source": "saved_map",
                     }
                 )
-                room_tag_map.setdefault(room, []).append(resolved)
+                room_tag_map_live.setdefault(room, []).append(resolved)
                 mapped += 1
     except Exception:
         pass
@@ -409,7 +443,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         deduped.append(t)
 
     snapshot["tags"] = deduped
-    snapshot["room_tag_map"] = room_tag_map
+    snapshot["room_tag_map_saved"] = saved_room_tag_map
+    snapshot["room_tag_map_missing"] = room_tag_map_missing
+    snapshot["room_tag_map_live"] = room_tag_map_live
+    snapshot["room_tag_map"] = room_tag_map_live
     snapshot["raw_counts"] = {
         "areas": len(snapshot.get("rooms_discovered") or []),
         "receivers": len(snapshot.get("receivers") or []),

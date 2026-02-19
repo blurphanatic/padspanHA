@@ -348,7 +348,9 @@ class PadSpanHaApp extends HTMLElement {
     const saved = this.state.savedRoomTagMap || {};
     const snap = this.state.live?.snapshot;
     if(this.state.dataMode === "live" && snap && snap.room_tag_map){
-      this.state.roomTagMap = snap.room_tag_map || {};
+      this.state.roomTagMap = (snap.room_tag_map_live || snap.room_tag_map) || {};
+      this.state.missingRoomTagMap = snap.room_tag_map_missing || {};
+      this.state.savedRoomTagMap = snap.room_tag_map_saved || {};
     } else {
       this.state.roomTagMap = saved || {};
     }
