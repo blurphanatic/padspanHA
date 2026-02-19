@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.15
+
+- Packaging cleanup for HACS (icons, install path, consistent cache-busting)
+- No functional changes to BLE/object UI in this bump
+
 ## 0.4.14 — 2026-02-19
 
 - Overview: every metric links to a list modal (Rooms, Objects, Unidentified, Radios).
