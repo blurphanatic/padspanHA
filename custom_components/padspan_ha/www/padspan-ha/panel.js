@@ -31,7 +31,7 @@ import * as Diagnostics from "./views/diagnostics.js?b=20260220T001000Z";
 import * as QA from "./views/qa.js?b=20260220T001000Z";
 import * as Sandbox from "./views/sandbox.js?b=20260220T001000Z";
 
-const APP_VERSION = "0.4.9";
+const APP_VERSION = "0.4.10";
 // Build stamp used for cache-busting and Diagnostics.
 const BUILD_ID = "20260220T001000Z";
 
@@ -494,6 +494,18 @@ class PadSpanHaApp extends HTMLElement {
     if(!this.$content) return;
     const v = this.state.view;
     const mod = VIEWS[v];
+
+    // Preserve scroll positions for common scroll containers so periodic live refreshes
+    // don't make the UI "jump" while the user is reading.
+    const selectors = [".rooms",".tags",".list-scroll",".bt-adv-list",".bt-list"];
+    const scrollState = [];
+    try {
+      for(const sel of selectors){
+        const nodes = this.$content.querySelectorAll(sel);
+        nodes.forEach((n,i)=>{ scrollState.push({ sel, i, top: n.scrollTop }); });
+      }
+    } catch(e) { /* ignore */ }
+
     this.$content.innerHTML = "";
     if(!mod || typeof mod.render !== "function") {
       this.$content.appendChild(el("div",{class:"card"}, `View missing: ${v}`));
@@ -502,6 +514,17 @@ class PadSpanHaApp extends HTMLElement {
     try {
       const node = mod.render(this._ctx());
       this.$content.appendChild(node);
+
+      // Restore scroll after DOM paint
+      requestAnimationFrame(()=> {
+        try {
+          for(const s of scrollState){
+            const nodes = this.$content.querySelectorAll(s.sel);
+            const n = nodes && nodes[s.i];
+            if(n) n.scrollTop = s.top;
+          }
+        } catch(e) { /* ignore */ }
+      });
     } catch (e) {
       console.error(e);
       this.$content.appendChild(el("div",{class:"card"},[
@@ -511,6 +534,7 @@ class PadSpanHaApp extends HTMLElement {
       ]));
     }
   }
+
 
   _toast(msg, isErr=false){
     const t = this.$("#toast");

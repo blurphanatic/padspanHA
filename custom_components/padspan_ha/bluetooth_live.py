@@ -158,20 +158,49 @@ class BluetoothLive:
             _LOGGER.debug("BLE seed failed: %s", e)
 
     def get_snapshot(self, max_ads: int = 300, max_age_s: int = 120) -> Dict[str, Any]:
+        """Return a lightweight BLE snapshot for the UI.
+
+        radios: active scanners/adapters (local + remote proxies)
+        advertisements: recently seen advertisements with RSSI + metadata
+
+        We include a small diagnostics object so the UI can surface why BLE might look empty.
+        """
+        diag: Dict[str, Any] = {
+            "ok": True,
+            "seeded": False,
+            "adv_cache_size": len(self._seen_by_addr),
+            "errors": [],
+        }
+
         try:
             from homeassistant.components import bluetooth  # type: ignore
-            radios: List[Dict[str, str]] = []
+
+            radios: List[Dict[str, Any]] = []
             try:
                 scanners_fn = getattr(bluetooth, "async_current_scanners", None)
                 if scanners_fn is not None:
                     scanners = scanners_fn(self.hass)
+
+                    # Some HA versions return dict-like containers.
+                    if isinstance(scanners, dict):
+                        scanners = scanners.values()
+
                     for s in scanners:
                         src = getattr(s, "source", None)
                         name = getattr(s, "name", None)
-                        radios.append({
-                            "source": _coerce_source(src) or "",
-                            "name": str(name or ""),
-                        })
+                        connectable = getattr(s, "connectable", None)
+                        scanning = getattr(s, "scanning", None)
+                        adapter = getattr(s, "adapter", None)
+
+                        radios.append(
+                            {
+                                "source": _coerce_source(src) or "",
+                                "name": str(name or ""),
+                                "connectable": bool(connectable) if connectable is not None else None,
+                                "scanning": bool(scanning) if scanning is not None else None,
+                                "adapter": str(adapter or "") if adapter is not None else "",
+                            }
+                        )
                 else:
                     # Older HA: we may not be able to list scanners individually.
                     count = None
@@ -182,16 +211,28 @@ class BluetoothLive:
                         except TypeError:
                             count = count_fn(self.hass)
                     if isinstance(count, int):
-                        radios.append({
-                            "source": "",
-                            "name": f"Scanners active: {count} (upgrade HA for per-scanner list)",
-                        })
-            except Exception:
+                        radios.append(
+                            {
+                                "source": "",
+                                "name": f"Scanners active: {count} (upgrade HA for per-scanner list)",
+                                "connectable": None,
+                                "scanning": None,
+                                "adapter": "",
+                            }
+                        )
+            except Exception as e:
+                diag["ok"] = False
+                diag["errors"].append(f"scanner_list_failed: {e!s}")
                 radios = []
 
-            # If callbacks haven't filled anything yet, try seeding from HA
+            # If callbacks haven't filled anything yet, try seeding from HA.
             if not self._seen_by_addr:
-                self._seed_from_discovered()
+                try:
+                    self._seed_from_discovered()
+                    diag["seeded"] = True
+                except Exception as e:
+                    diag["ok"] = False
+                    diag["errors"].append(f"seed_failed: {e!s}")
 
             now = _now()
             ads: List[Dict[str, Any]] = []
@@ -208,15 +249,16 @@ class BluetoothLive:
             if max_ads and len(ads) > max_ads:
                 ads = ads[:max_ads]
 
+            diag["adv_cache_size"] = len(self._seen_by_addr)
+
             return {
                 "radios": radios,
                 "advertisements": ads,
+                "diag": diag,
             }
         except Exception as e:
             _LOGGER.debug("BLE snapshot failed: %s", e)
-            return {"radios": [], "advertisements": []}
-
-
+            return {"radios": [], "advertisements": [], "diag": {"ok": False, "errors": [str(e)]}}
 DATA_KEY = "bluetooth_live"
 
 

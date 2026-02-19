@@ -107,3 +107,63 @@
   outline:none;
 }
 .input::placeholder{color:rgba(255,255,255,0.55)}
+
+/* --- Bluetooth + Devices UI upgrades (v0.4.10) --- */
+.tabs{display:flex;gap:8px;margin:10px 0 12px 0}
+.tab{background:transparent;border:1px solid var(--line);color:var(--text);padding:8px 10px;border-radius:10px;cursor:pointer}
+.tab:hover{border-color:#3b537e}
+.tab.active{background:rgba(122,162,255,.14);border-color:rgba(122,162,255,.55)}
+.bt-controls{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+.field{display:flex;flex-direction:column;gap:6px}
+.label{font-size:12px;color:rgba(226,232,240,.75)}
+.input,.select{background:rgba(17,26,45,.85);border:1px solid var(--line);color:var(--text);padding:8px 10px;border-radius:10px;outline:none}
+.input:focus,.select:focus{border-color:rgba(122,162,255,.7)}
+.bt-kpis{display:flex;gap:10px}
+.kpi{background:rgba(17,26,45,.6);border:1px solid var(--line);border-radius:12px;padding:8px 10px;min-width:92px;text-align:center}
+.kpi-num{font-size:20px;font-weight:800}
+.kpi-lbl{font-size:12px;color:rgba(226,232,240,.75)}
+.bt-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.list-scroll{max-height:520px;overflow:auto;padding-right:4px}
+.bt-scanner-row{display:flex;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(11,18,32,.55)}
+.bt-scanner-name{font-weight:800;font-size:14px}
+.bt-scanner-src{font-size:12px;color:rgba(226,232,240,.7)}
+.bt-scanner-meta{font-size:12px;color:rgba(226,232,240,.7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42ch}
+.bt-adv-row{display:flex;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(11,18,32,.55);cursor:pointer}
+.bt-adv-row:hover{border-color:#3b537e}
+.bt-adv-row.active{border-color:rgba(122,162,255,.75);background:rgba(122,162,255,.08)}
+.bt-adv-name{font-weight:800;font-size:14px}
+.bt-adv-sub{font-size:12px;color:rgba(226,232,240,.7)}
+.bt-adv-right{display:flex;align-items:center;gap:10px;white-space:nowrap}
+.pill.good{border-color:rgba(94,234,212,.7);background:rgba(94,234,212,.12)}
+.pill.ok{border-color:rgba(245,158,11,.7);background:rgba(245,158,11,.12)}
+.pill.bad{border-color:rgba(248,113,113,.7);background:rgba(248,113,113,.12)}
+.card.warn{border-color:rgba(245,158,11,.6)}
+.bt-pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.bt-viz{width:100%;height:auto;border:1px solid var(--line);border-radius:14px;background:rgba(11,18,32,.45)}
+.bt-viz-title{font-size:14px;font-weight:800;fill:rgba(226,232,240,.9)}
+.bt-viz-label{font-size:12px;fill:rgba(226,232,240,.8)}
+.bt-viz-line{stroke-width:1.2;stroke:rgba(226,232,240,.18)}
+.bt-viz-node{stroke:rgba(226,232,240,.28);stroke-width:1}
+.bt-viz-node.scanner{fill:rgba(122,162,255,.85)}
+.bt-viz-node.device{fill:rgba(226,232,240,.8)}
+.bt-viz-line.rssi-good{stroke:rgba(94,234,212,.55);stroke-width:1.8}
+.bt-viz-line.rssi-ok{stroke:rgba(245,158,11,.5);stroke-width:1.5}
+.bt-viz-line.rssi-bad{stroke:rgba(248,113,113,.45);stroke-width:1.3}
+.bt-viz-line.rssi-unk{stroke:rgba(226,232,240,.2)}
+.bt-viz-node.device.rssi-good{fill:rgba(94,234,212,.85)}
+.bt-viz-node.device.rssi-ok{fill:rgba(245,158,11,.85)}
+.bt-viz-node.device.rssi-bad{fill:rgba(248,113,113,.85)}
+.bt-viz-node.device.rssi-unk{fill:rgba(226,232,240,.7)}
+
+/* Devices view */
+.dev-room-list{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.dev-room{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(11,18,32,.55);color:var(--text);cursor:pointer}
+.dev-room:hover{border-color:#3b537e}
+.dev-room.active{border-color:rgba(122,162,255,.75);background:rgba(122,162,255,.08)}
+.dev-room-name{font-weight:800}
+.badge{display:inline-flex;align-items:center;justify-content:center;min-width:34px;padding:4px 8px;border-radius:999px;border:1px solid var(--line);background:rgba(17,26,45,.85);font-size:12px;color:rgba(226,232,240,.85)}
+.dev-tag-list{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.dev-tag{display:flex;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(11,18,32,.55)}
+.dev-tag-name{font-weight:800;font-size:14px}
+.dev-tag-sub{font-size:12px;color:rgba(226,232,240,.7)}
+.dev-tag-right{display:flex;align-items:center;gap:10px;white-space:nowrap}

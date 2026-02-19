@@ -474,8 +474,14 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     # Some UI modules (overview, legacy panels) expect these keys.
     if "rooms" not in snapshot:
         snapshot["rooms"] = [{"name": r} for r in (snapshot.get("rooms_discovered") or [])]
+
+    # Preserve the older "receivers" device list under a clearer name too.
+    if "bermuda_devices" not in snapshot:
+        snapshot["bermuda_devices"] = snapshot.get("receivers") or []
+
+    # Frontend "radios" should reflect actual Bluetooth scanners/adapters (not Bermuda tag devices).
     if "radios" not in snapshot:
-        snapshot["radios"] = snapshot.get("receivers") or []
+        snapshot["radios"] = (snapshot.get("ble") or {}).get("radios") or []
     return snapshot
 
 @websocket_api.websocket_command({"type": "padspan_ha/settings_get"})
