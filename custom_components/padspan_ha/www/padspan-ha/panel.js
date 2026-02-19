@@ -13,26 +13,26 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import * as Overview from "./views/overview.js";
-import * as Objects from "./views/objects.js";
-import * as Devices from "./views/devices.js";
-import * as Presence from "./views/presence.js";
-import * as Zones from "./views/zones.js";
-import * as Insights from "./views/insights.js";
-import * as History from "./views/history.js";
-import * as Monitor from "./views/monitor.js";
-import * as Maps from "./views/maps.js";
-import * as Events from "./views/events.js";
-import * as Health from "./views/health.js";
-import * as Settings from "./views/settings.js";
-import * as Debug from "./views/debug.js";
-import * as Diagnostics from "./views/diagnostics.js";
-import * as QA from "./views/qa.js";
-import * as Sandbox from "./views/sandbox.js";
+import * as Overview from "./views/overview.js?b=20260219T052345Z";
+import * as Objects from "./views/objects.js?b=20260219T052345Z";
+import * as Devices from "./views/devices.js?b=20260219T052345Z";
+import * as Presence from "./views/presence.js?b=20260219T052345Z";
+import * as Zones from "./views/zones.js?b=20260219T052345Z";
+import * as Insights from "./views/insights.js?b=20260219T052345Z";
+import * as History from "./views/history.js?b=20260219T052345Z";
+import * as Monitor from "./views/monitor.js?b=20260219T052345Z";
+import * as Maps from "./views/maps.js?b=20260219T052345Z";
+import * as Events from "./views/events.js?b=20260219T052345Z";
+import * as Health from "./views/health.js?b=20260219T052345Z";
+import * as Settings from "./views/settings.js?b=20260219T052345Z";
+import * as Debug from "./views/debug.js?b=20260219T052345Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260219T052345Z";
+import * as QA from "./views/qa.js?b=20260219T052345Z";
+import * as Sandbox from "./views/sandbox.js?b=20260219T052345Z";
 
-const APP_VERSION = "0.4.5";
+const APP_VERSION = "0.4.7";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260219T042614Z";
+const BUILD_ID = "20260219T052345Z";
 
 const VIEWS = {
   overview: Overview,
@@ -152,9 +152,9 @@ class PadSpanHaApp extends HTMLElement {
       mapsTab: "library",
       activeMapId: null,
       diag: null,
-      selectedRooms: new Set(),
+      selectedRooms: [],
       _roomsInit: false,
-      mode: "all",
+      mode: "live",
       tagFilter: "",
       wsCounts: {},
       timing: { lastRefreshMs: null, lastDiagMs: null },

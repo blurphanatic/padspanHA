@@ -6,6 +6,11 @@ export function render(ctx){
   // Draft model (so users can edit and hit Save)
   if(!ctx.state._settingsDraft || ctx.state._settingsDraftBuild !== ctx.state.buildId){
     ctx.state._settingsDraft = JSON.parse(JSON.stringify(ctx.state.model || {floors:[], room_meta:{}}));
+
+  // Ensure a stable default "main" floor exists.
+  if(!ctx.state._settingsDraft.floors || !ctx.state._settingsDraft.floors.length) ctx.state._settingsDraft.floors = [{id:"main", name:"Main"}];
+  if(!ctx.state._settingsDraft.floors.find(f=>f.id==="main")) ctx.state._settingsDraft.floors.unshift({id:"main", name:"Main"});
+
     ctx.state._settingsDraftBuild = ctx.state.buildId;
   }
   const draft = ctx.state._settingsDraft;

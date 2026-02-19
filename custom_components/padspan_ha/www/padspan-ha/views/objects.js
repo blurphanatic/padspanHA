@@ -144,7 +144,8 @@ export function renderTags(ctx, tagsList) {
 
 export function render(ctx){
   const { el, esc, roomColor } = ctx.helpers;
-  const { roomTagMap, selectedRooms, mode, tagFilter } = ctx.state;
+  const { roomTagMap, mode, tagFilter } = ctx.state;
+  const selectedRooms = new Set(Array.isArray(ctx.state.selectedRooms) ? ctx.state.selectedRooms : []);
 
   const root = el("section",{id:"objects"});
   root.className = ctx.state.view==="objects" ? "" : "hidden";
@@ -155,6 +156,8 @@ export function render(ctx){
   const rooms = (ctx.state.dataMode==="live" && ctx.state.live?.snapshot?.rooms_discovered?.length)
     ? [...ctx.state.live.snapshot.rooms_discovered].sort((a,b)=>a.localeCompare(b))
     : Object.keys(roomTagMap||{}).sort((a,b)=>a.localeCompare(b));
+  // Ensure at least one room selected so tags list has context.
+  if (selectedRooms.size === 0 && rooms.length) { selectedRooms.add(rooms[0]); ctx.state.selectedRooms = Array.from(selectedRooms); }
   if(!rooms.length){
     roomsList.appendChild(el("div",{class:"item"},"No room data yet."));
   } else {
@@ -163,7 +166,7 @@ export function render(ctx){
       const row = el("label",{class:"item"});
       const cb = el("input",{type:"checkbox"});
       cb.checked = selectedRooms.has(room);
-      cb.addEventListener("change", ()=>{ cb.checked ? selectedRooms.add(room) : selectedRooms.delete(room); ctx.actions.renderTags(); });
+      cb.addEventListener("change", ()=>{ cb.checked ? selectedRooms.add(room) : selectedRooms.delete(room); ctx.state.selectedRooms = Array.from(selectedRooms); ctx.actions.renderTags(); });
       row.appendChild(cb);
       row.appendChild(el("span",{class:"roomdot", style:`background:${roomColor(room)}`}, ""));
       row.appendChild(el("span",{}, esc(room)));
@@ -173,8 +176,8 @@ export function render(ctx){
   }
 
   const toolbarLeft = el("div",{class:"toolbar"},[
-    el("button",{class:"btn", onclick:()=>{ rooms.forEach(r=>selectedRooms.add(r)); ctx.state._roomsInit = true; ctx.actions.renderRooms(); }},"All Rooms"),
-    el("button",{class:"btn", onclick:()=>{ selectedRooms.clear(); ctx.state._roomsInit = true; ctx.actions.renderRooms(); }},"Clear"),
+    el("button",{class:"btn", onclick:()=>{ rooms.forEach(r=>selectedRooms.add(r)); ctx.state.selectedRooms = Array.from(selectedRooms); ctx.state._roomsInit = true; ctx.actions.renderRooms(); ctx.actions.renderTags(); }},"All Rooms"),
+    el("button",{class:"btn", onclick:()=>{ selectedRooms.clear(); ctx.state.selectedRooms = []; ctx.state._roomsInit = true; ctx.actions.renderRooms(); ctx.actions.renderTags(); }},"Clear"),
   ]);
 
   const modeSel = el("select",{class:"btn", id:"modeSel"});
