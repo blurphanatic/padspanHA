@@ -6,8 +6,7 @@ export function render(ctx){
   const tags = (()=>{ const s=new Set(); for(const r of Object.keys(roomTagMap||{})) for(const t of (roomTagMap[r]||[])) s.add(String(t)); return s.size; })();
 
   const live = (ctx.state.dataMode==="live") ? (ctx.state.live && ctx.state.live.snapshot) : null;
-  const scanners = live && live.ble && Array.isArray(live.ble.radios) ? live.ble.radios.length : (live && live.radios ? live.radios.length : 0);
-  const bermudaDevices = live && Array.isArray(live.bermuda_devices) ? live.bermuda_devices.length : (live && Array.isArray(live.receivers) ? live.receivers.length : 0);
+  const radios = live && live.radios ? live.radios.length : 0;
 
   const root = el("section",{id:"overview"});
   root.className = ctx.state.view==="overview" ? "" : "hidden";
@@ -16,8 +15,7 @@ export function render(ctx){
     el("div",{class:"card"},[el("div",{class:"muted"},"Status"), el("div",{class:"kpi"}, status?.status || "unknown")]),
     el("div",{class:"card"},[el("div",{class:"muted"},"Rooms"), el("div",{class:"kpi"}, String(rooms))]),
     el("div",{class:"card"},[el("div",{class:"muted"},"Objects (unique)"), el("div",{class:"kpi"}, String(tags))]),
-    el("div",{class:"card"},[el("div",{class:"muted"},"Scanners (live)"), el("div",{class:"kpi"}, ctx.state.dataMode==="live" ? String(scanners) : "—")]),
-    el("div",{class:"card"},[el("div",{class:"muted"},"Bermuda devices (live)"), el("div",{class:"kpi"}, ctx.state.dataMode==="live" ? String(bermudaDevices) : "—")]),
+    el("div",{class:"card"},[el("div",{class:"muted"},"Radios (live)"), el("div",{class:"kpi"}, ctx.state.dataMode==="live" ? String(radios) : "—")]),
   ]);
 
   const badges = el("div",{class:"row"},[
@@ -32,7 +30,7 @@ export function render(ctx){
   summaryLines.push(rooms ? `Loaded ${rooms} rooms and ${tags} unique tags.` : "No room data yet (room_tag_map empty).");
   if(ctx.state.dataMode==="live"){
     if(live){
-      summaryLines.push(`Live scan heuristic found ${scanners} scanner(s), ${bermudaDevices} Bermuda device(s), and ${(live.tags||[]).length} tag observation(s).`);
+      summaryLines.push(`Live scan heuristic found ${radios} radio/receiver device(s) and ${(live.tags||[]).length} tag observation(s).`);
       summaryLines.push("Tip: if counts are low, confirm Bermuda is running and check that your tag entities report their current room/area as the entity state.");
     }else{
       summaryLines.push("Live mode enabled, but snapshot not available yet.");
@@ -61,7 +59,7 @@ export function render(ctx){
     lines.push("Rooms:");
     for(const r of (live.rooms||[])) lines.push(`- ${r.name}`);
     lines.push("");
-    lines.push("Scanners (heuristic):");
+    lines.push("Radios (heuristic):");
     for(const r of (live.radios||[]).slice(0,25)) lines.push(`- ${r.area ? r.area + " • " : ""}${r.name}${r.model ? " ("+r.model+")" : ""}`);
     if((live.radios||[]).length>25) lines.push(`… +${(live.radios||[]).length-25} more`);
     lines.push("");
