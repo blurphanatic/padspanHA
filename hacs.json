@@ -1,5 +1,1 @@
-{
-  "name": "PadSpan HA",
-  "render_readme": true,
-  "zip_release": true
-}
+{ "name": "PadSpan HA", "content_in_root": false, "render_readme": true }
