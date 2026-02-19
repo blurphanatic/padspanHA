@@ -60,6 +60,14 @@ function _tabBtn(id,label,active,setTab){
   return b;
 }
 
+function _floorName(ctx, floor_id){
+  const floors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
+  const id = String(floor_id || "").trim();
+  if(!id) return "—";
+  const f = floors.find(x=>String(x.id)===id);
+  return f ? (f.name || f.id) : id;
+}
+
 function _library(ctx, maps, activeId){
   const { el } = ctx.helpers;
   const wrap = el("div",{class:"card"},[

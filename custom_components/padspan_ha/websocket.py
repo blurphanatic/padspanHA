@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers import area_registry, device_registry, entity_registry
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DEFAULT_FLOOR_ID
+from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DEFAULT_FLOOR_ID, DATA_COORDINATOR
 from .build_info import BUILD_ID, BUILD_VERSION
 
 _LOGGER = logging.getLogger(__name__)
@@ -265,7 +265,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             return True
 
         dom = entity_id.split(".", 1)[0]
-        if dom not in ("device_tracker", "sensor", "binary_sensor"):
+        if dom not in ("device_tracker", "sensor", "binary_sensor", "tag", "text_sensor"):
             return False
 
         n = _norm(getattr(st, "name", "") or st.attributes.get("friendly_name", ""))
@@ -278,6 +278,49 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
     tags: list[dict[str, Any]] = []
     room_tag_map: dict[str, list[str]] = {}
+
+    # --- Saved (configured) room→tag map (from coordinator) ---
+    # In many setups, you curate your rooms/tags here. We treat these as the
+    # canonical list of tags and attempt to pull their current HA state.
+    saved_room_tag_map: dict[str, list[str]] = {}
+    try:
+        coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
+        if coord and getattr(coord, "room_tag_map", None):
+            saved_room_tag_map = {str(k): list(v) for k, v in (coord.room_tag_map or {}).items() if isinstance(v, (list, tuple))}
+    except Exception:
+        saved_room_tag_map = {}
+
+    def _resolve_saved_entity_id(tag_id: str) -> str:
+        """If coordinator uses tag.* placeholders, try to find a real HA entity."""
+        if hass.states.get(tag_id):
+            return tag_id
+        if "." not in tag_id:
+            return tag_id
+        dom, obj = tag_id.split(".", 1)
+        if dom != "tag":
+            return tag_id
+
+        # Common Bermuda / presence naming patterns
+        guesses = [
+            f"sensor.{obj}_area_last_seen",
+            f"sensor.{obj}_area",
+            f"sensor.{obj}_room",
+            f"device_tracker.{obj}",
+            f"text_sensor.{obj}_area_last_seen",
+            f"text_sensor.{obj}_area",
+        ]
+        for g in guesses:
+            if hass.states.get(g):
+                return g
+
+        # Fuzzy fallback: find an entity id containing the object id
+        objn = _norm(obj)
+        for st in hass.states.async_all():
+            eidn = _norm(st.entity_id)
+            if objn and objn in eidn and any(k in eidn for k in ("area", "room", "bermuda", "ble", "beacon", "tag")):
+                return st.entity_id
+
+        return tag_id
 
     cand = 0
     mapped = 0
@@ -309,6 +352,52 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         # If anything weird happens, keep the UI alive with whatever we collected.
         pass
 
+    # --- Merge in configured tags (even if heuristics didn't find them) ---
+    saved_total = 0
+    saved_found = 0
+    saved_missing = 0
+    try:
+        for room, ids in (saved_room_tag_map or {}).items():
+            if not isinstance(ids, (list, tuple)):
+                continue
+            for tag_id in ids:
+                if not isinstance(tag_id, str):
+                    continue
+                saved_total += 1
+                resolved = _resolve_saved_entity_id(tag_id)
+                st = hass.states.get(resolved)
+                if st is None:
+                    saved_missing += 1
+                    tags.append(
+                        {
+                            "entity_id": resolved,
+                            "name": tag_id,
+                            "room": room,
+                            "state": "unavailable",
+                            "missing": True,
+                            "source": "saved_map",
+                        }
+                    )
+                    room_tag_map.setdefault(room, []).append(resolved)
+                    mapped += 1
+                    continue
+
+                saved_found += 1
+                label = st.attributes.get("friendly_name") or getattr(st, "name", None) or tag_id
+                tags.append(
+                    {
+                        "entity_id": resolved,
+                        "name": str(label),
+                        "room": room,
+                        "state": st.state,
+                        "source": "saved_map",
+                    }
+                )
+                room_tag_map.setdefault(room, []).append(resolved)
+                mapped += 1
+    except Exception:
+        pass
+
     # De-dupe tags by entity_id while keeping first occurrence
     seen = set()
     deduped: list[dict[str, Any]] = []
@@ -326,6 +415,9 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         "receivers": len(snapshot.get("receivers") or []),
         "candidate_entities": cand,
         "mapped_entities": mapped,
+        "saved_entities_total": saved_total if 'saved_total' in locals() else 0,
+        "saved_entities_found": saved_found if 'saved_found' in locals() else 0,
+        "saved_entities_missing": saved_missing if 'saved_missing' in locals() else 0,
     }
 
     return snapshot

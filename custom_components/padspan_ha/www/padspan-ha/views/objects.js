@@ -1,3 +1,56 @@
+export function renderTags(ctx, tagsList){
+  const { el, esc } = ctx.helpers;
+  const { roomTagMap, selectedRooms, mode, tagFilter } = ctx.state;
+
+  if(!tagsList) return;
+  tagsList.innerHTML = "";
+
+  const rooms = Object.keys(roomTagMap||{}).sort((a,b)=>a.localeCompare(b));
+
+  // On first visit only, auto-select all rooms so the right pane isn't empty.
+  if(!ctx.state._roomsInit && rooms.length && selectedRooms.size===0){
+    rooms.forEach(r=>selectedRooms.add(r));
+    ctx.state._roomsInit = true;
+  }
+
+  const selected = [...selectedRooms].filter(r=>roomTagMap && roomTagMap[r]);
+  if(!selected.length){
+    tagsList.appendChild(el("div",{class:"item"},"Select one or more rooms to see objects."));
+    return;
+  }
+
+  // Build tag set
+  let out = null;
+  for(const room of selected){
+    const s = new Set((roomTagMap[room]||[]).map(x=>String(x)));
+    if(out === null){
+      out = new Set(s);
+      continue;
+    }
+    if(mode === "all"){
+      out = new Set([...out].filter(x=>s.has(x)));
+    } else {
+      for(const x of s) out.add(x);
+    }
+  }
+  if(out === null) out = new Set();
+
+  let tags = [...out].sort((a,b)=>a.localeCompare(b));
+  const f = String(tagFilter||"").trim().toLowerCase();
+  if(f) tags = tags.filter(t=>t.toLowerCase().includes(f));
+
+  if(!tags.length){
+    tagsList.appendChild(el("div",{class:"item"},"No matching objects."));
+    return;
+  }
+
+  for(const t of tags){
+    const row = el("div",{class:"item"});
+    row.appendChild(el("span",{}, esc(t)));
+    tagsList.appendChild(row);
+  }
+}
+
 export function render(ctx){
   const { el, esc, roomColor } = ctx.helpers;
   const { roomTagMap, selectedRooms, mode, tagFilter } = ctx.state;
@@ -17,7 +70,7 @@ export function render(ctx){
       const row = el("label",{class:"item"});
       const cb = el("input",{type:"checkbox"});
       cb.checked = selectedRooms.has(room);
-      cb.addEventListener("change", ()=>{ cb.checked ? selectedRooms.add(room) : selectedRooms.delete(room); ctx.actions.renderTags(); ctx.actions.renderDiag(); });
+      cb.addEventListener("change", ()=>{ cb.checked ? selectedRooms.add(room) : selectedRooms.delete(room); ctx.actions.renderTags(); });
       row.appendChild(cb);
       row.appendChild(el("span",{class:"roomdot", style:`background:${roomColor(room)}`}, ""));
       row.appendChild(el("span",{}, esc(room)));
@@ -27,8 +80,8 @@ export function render(ctx){
   }
 
   const toolbarLeft = el("div",{class:"toolbar"},[
-    el("button",{class:"btn", onclick:()=>{ rooms.forEach(r=>selectedRooms.add(r)); ctx.actions.renderRooms(); ctx.actions.renderTags(); ctx.actions.renderDiag(); }},"All Rooms"),
-    el("button",{class:"btn", onclick:()=>{ selectedRooms.clear(); ctx.actions.renderRooms(); ctx.actions.renderTags(); ctx.actions.renderDiag(); }},"Clear"),
+    el("button",{class:"btn", onclick:()=>{ rooms.forEach(r=>selectedRooms.add(r)); ctx.state._roomsInit = true; ctx.actions.renderRooms(); }},"All Rooms"),
+    el("button",{class:"btn", onclick:()=>{ selectedRooms.clear(); ctx.state._roomsInit = true; ctx.actions.renderRooms(); }},"Clear"),
   ]);
 
   const modeSel = el("select",{class:"btn", id:"modeSel"});
@@ -37,7 +90,7 @@ export function render(ctx){
   const optAny = el("option",{value:"any"},"Show tags in ANY selected room (union)");
   modeSel.appendChild(optAll); modeSel.appendChild(optAny);
   modeSel.value = mode;
-  modeSel.addEventListener("change", ()=>{ ctx.state.mode = modeSel.value; ctx.actions.renderTags(); ctx.actions.renderDiag(); });
+  modeSel.addEventListener("change", ()=>{ ctx.state.mode = modeSel.value; ctx.actions.renderTags(); });
 
   const filter = el("input",{type:"text", id:"tagFilter", placeholder:"Filter tags… (e.g., keys)"});
   filter.value = tagFilter;
@@ -60,7 +113,7 @@ export function render(ctx){
   const grid = el("div",{class:"grid"},[leftCard,rightCard]);
   root.appendChild(grid);
 
-  ctx.actions.renderTags(tagsList);
+  renderTags(ctx, tagsList);
 
   return root;
 }

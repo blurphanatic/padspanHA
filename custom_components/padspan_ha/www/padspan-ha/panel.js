@@ -30,8 +30,9 @@ import * as Diagnostics from "./views/diagnostics.js";
 import * as QA from "./views/qa.js";
 import * as Sandbox from "./views/sandbox.js";
 
-const APP_VERSION = "0.4.3";
-const BUILD_ID = "20260219T022555Z";
+const APP_VERSION = "0.4.4";
+// Build stamp used for cache-busting and Diagnostics.
+const BUILD_ID = "20260219T034433Z";
 
 const VIEWS = {
   overview: Overview,
@@ -70,6 +71,26 @@ const MENU = [
   ["qa","QA","mdi:clipboard-check-outline"],
   ["sandbox","Sandbox","mdi:flask-outline"],
 ];
+
+const MENU_COLORS = {
+  overview: "#7aa2ff",
+  objects: "#ff8a65",
+  devices: "#4db6ac",
+  presence: "#ba68c8",
+  zones: "#81c784",
+  insights: "#ffd54f",
+  history: "#90a4ae",
+  monitor: "#f06292",
+  maps: "#64b5f6",
+  events: "#ffb74d",
+  health: "#e57373",
+  settings: "#b0bec5",
+  diagnostics: "#9575cd",
+  debug: "#ef5350",
+  qa: "#26c6da",
+  sandbox: "#9ccc65",
+};
+
 
 function esc(s){
   return String(s ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
@@ -131,6 +152,7 @@ class PadSpanHaApp extends HTMLElement {
       activeMapId: null,
       diag: null,
       selectedRooms: new Set(),
+      _roomsInit: false,
       mode: "all",
       tagFilter: "",
       wsCounts: {},
@@ -142,6 +164,10 @@ class PadSpanHaApp extends HTMLElement {
     this.$ = null;
     this.$nav = null;
     this.$content = null;
+
+    // Live polling (keeps 'Live' mode actually live)
+    this._pollTimer = null;
+    this._pollInFlight = false;
   }
 
   set hass(hass){
@@ -150,6 +176,7 @@ class PadSpanHaApp extends HTMLElement {
     if(!this._booted){
       this._booted = true;
       this._refreshAll(false);
+      if(this.state.dataMode === "live") this._startPolling();
     }
   }
 
@@ -160,7 +187,7 @@ class PadSpanHaApp extends HTMLElement {
       <div id="app" class="app">
         <aside class="left">
           <div class="brand">
-            <img src="/padspan_ha_static/padspan-ha/assets/logo-icon.png" alt="PadSpan">
+            <img src="/padspan_ha_static/padspan-ha/assets/logo-icon.png?b=${BUILD_ID}" alt="PadSpan">
             <div>
               <div class="label">PadSpan HA</div>
               <div class="muted" style="margin-top:2px">v${APP_VERSION} • build ${BUILD_ID}</div>
@@ -214,6 +241,49 @@ class PadSpanHaApp extends HTMLElement {
     // When hass arrives we refresh.
     this._loadSettings();
     this._renderCurrentView();
+    this._startPolling();
+  }
+
+
+  disconnectedCallback(){
+    this._stopPolling();
+  }
+
+  _startPolling(){
+    if(this._pollTimer) return;
+    this._pollTimer = setInterval(()=>this._pollTick(), 5000);
+  }
+
+  _stopPolling(){
+    if(this._pollTimer){
+      clearInterval(this._pollTimer);
+      this._pollTimer = null;
+    }
+  }
+
+  async _pollTick(){
+    if(!this._hass) return;
+    if(this.state.dataMode !== "live") return;
+    if(this._pollInFlight) return;
+    // Avoid interrupting map drawing
+    if(this.state.view === "maps") return;
+
+    this._pollInFlight = true;
+    const t0 = performance.now();
+    try{
+      await this._getLiveSnapshot();
+      await this._getStatus();
+      this.state.timing.lastRefreshMs = Math.round(performance.now() - t0);
+      this._updateBadges();
+
+      // Re-render views that show live data.
+      const liveViews = new Set(["overview","objects","devices","presence","zones","insights","history","monitor","events","health","diagnostics","debug","qa","sandbox"]);
+      if(liveViews.has(this.state.view)) this._renderCurrentView();
+    } catch(e){
+      // Non-fatal; keep trying.
+    } finally {
+      this._pollInFlight = false;
+    }
   }
 
   // ---------- WS helpers ----------
@@ -249,6 +319,8 @@ class PadSpanHaApp extends HTMLElement {
       this.state.dataMode = (m === "live") ? "live" : "sample";
       this._toast(`Data mode: ${this.state.dataMode.toUpperCase()}`);
       await this._refreshAll(false);
+      if(this.state.dataMode === "live") this._startPolling();
+      else this._stopPolling();
     } catch (e) {
       this._toast("Failed to switch data mode. See Diagnostics.", true);
       console.error(e);
@@ -358,7 +430,12 @@ class PadSpanHaApp extends HTMLElement {
   _renderNav(){
     this.$nav.innerHTML = "";
     for(const [id,label] of MENU.map(x=>[x[0],x[1]])) {
-      const btn = el("button",{class:"navbtn"+(this.state.view===id?" active":""), onclick:()=>{ this.state.view=id; this._renderNav(); this._renderCurrentView(); } }, label);
+      const color = MENU_COLORS[id] || "#37588f";
+      const btn = el("button",{
+        class:"navbtn"+(this.state.view===id?" active":""),
+        style:`--navcolor:${color}`,
+        onclick:()=>{ this.state.view=id; this._renderNav(); this._renderCurrentView(); }
+      }, [el("span",{class:"navdot"}), el("span",{}, label)]);
       this.$nav.appendChild(btn);
     }
   }
@@ -371,7 +448,12 @@ class PadSpanHaApp extends HTMLElement {
       actions: {
         // Simple actions used by views
         renderRooms: ()=>this._renderCurrentView(),
-        renderTags: ()=>this._renderCurrentView(),
+        // Objects view updates its tag list in-place to avoid full re-render loops.
+        renderTags: (target=null)=>{
+          const node = target || this.shadowRoot?.querySelector("#content #tags");
+          if(!node) return;
+          try { Objects.renderTags(this._ctx(), node); } catch (e) { console.error(e); }
+        },
         renderDiag: ()=>this._renderCurrentView(),
 
         // Mapping suite actions
