@@ -27,6 +27,9 @@ export function renderTags(ctx, tagsList) {
   if (ctx.state.selectedRooms.length === 0 && rooms.length) ctx.state.selectedRooms = [rooms[0]];
 
   // Rooms list
+  // Preserve scroll position when we refresh the tags pane in-place.
+  // (The main panel's scroll preservation only runs on full view re-renders.)
+  const _prevScrollTop = tagsList.scrollTop || 0;
   tagsList.innerHTML = "";
   const roomsWrap = el("div", { class: "grid2" });
   for (const room of rooms) {
@@ -141,6 +144,16 @@ export function renderTags(ctx, tagsList) {
   }
 
   tagsList.appendChild(list);
+
+  // Restore scroll after DOM paint (best effort)
+  requestAnimationFrame(() => {
+    try {
+      const maxTop = Math.max(0, (tagsList.scrollHeight || 0) - (tagsList.clientHeight || 0));
+      tagsList.scrollTop = Math.min(_prevScrollTop, maxTop);
+    } catch (e) {
+      /* ignore */
+    }
+  });
 }
 
 export function render(ctx){
