@@ -1,8 +1,7 @@
 {
-  "name": "PadSpan HA",
   "content_in_root": false,
-  "zip_release": true,
   "filename": "padspan_ha.zip",
-  "render_readme": true
+  "name": "PadSpan HA",
+  "render_readme": true,
+  "zip_release": true
 }
-
