@@ -222,6 +222,7 @@ class PadSpanHaApp extends HTMLElement {
             </span>
           </div>
           <div id="toast" class="toast hidden"></div>
+          <div id="modal" class="modal hidden"></div>
           <div id="content"></div>
         </main>
       </div>
@@ -230,6 +231,7 @@ class PadSpanHaApp extends HTMLElement {
     this.$ = (q)=>this.shadowRoot.querySelector(q);
     this.$nav = this.$("#nav");
     this.$content = this.$("#content");
+    this.$modal = this.$("#modal");
 
     this.$("#refresh").addEventListener("click", ()=>this._refreshAll(true));
     this.$("#autodiag").addEventListener("click", ()=>this._runAutoDiag(true));
@@ -489,6 +491,53 @@ class PadSpanHaApp extends HTMLElement {
       toast: (m, isErr=false)=>this._toast(m, isErr),
     };
   }
+
+  // ----------------------------
+  // Modal helper (Overview lists)
+  // ----------------------------
+  _openModal(title, bodyNode, subtitle=""){
+    if(!this.$modal) return;
+    this.$modal.classList.remove("hidden");
+    this.$modal.innerHTML = "";
+
+    const overlay = el("div",{class:"overlay"});
+    const panel = el("div",{class:"panel"});
+
+    const closeBtn = el("button",{class:"btn inline close"}, "Close");
+    closeBtn.addEventListener("click", ()=>this._closeModal());
+
+    const head = el("div",{class:"head"},[
+      el("div",{class:"title"}, title || ""),
+      el("div",{class:"sub"}, subtitle || ""),
+      closeBtn
+    ]);
+
+    const body = el("div",{class:"body"});
+    if(typeof bodyNode === "string"){
+      body.innerHTML = bodyNode;
+    } else if(bodyNode){
+      body.appendChild(bodyNode);
+    }
+
+    panel.appendChild(head);
+    panel.appendChild(body);
+    overlay.appendChild(panel);
+
+    overlay.addEventListener("click",(e)=>{ if(e.target === overlay) this._closeModal(); });
+    this.$modal.appendChild(overlay);
+
+    // ESC closes
+    const esc = (e)=>{ if(e.key === "Escape"){ this._closeModal(); } };
+    this._modalEsc = esc;
+    window.addEventListener("keydown", esc, { once: true });
+  }
+
+  _closeModal(){
+    if(!this.$modal) return;
+    this.$modal.classList.add("hidden");
+    this.$modal.innerHTML = "";
+  }
+
 
   _renderCurrentView(){
     if(!this.$content) return;

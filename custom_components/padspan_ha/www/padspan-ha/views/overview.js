@@ -1,79 +1,353 @@
+/**
+ * Overview page (PadSpan)
+ *
+ * REPO LOGIC NOTES
+ * - This is intentionally a "control tower" page: small metrics + buttons that open lists.
+ * - The user explicitly asked that **every metric in Overview links to a list** (modal).
+ * - For BLE, the live snapshot provides:
+ *     snapshot.ble.radios            -> HA scanners/proxies
+ *     snapshot.ble.advertisements    -> ad monitor stream
+ *     snapshot.objects.list          -> derived union list (entities + BLE addresses)
+ *     snapshot.objects.summary       -> counts + common OUIs (>=3)
+ */
+
 export function render(ctx){
   const { el, pill } = ctx.helpers;
-  const { status, roomTagMap, diag } = ctx.state;
 
-  const rooms = Object.keys(roomTagMap||{}).length;
-  const tags = (()=>{ const s=new Set(); for(const r of Object.keys(roomTagMap||{})) for(const t of (roomTagMap[r]||[])) s.add(String(t)); return s.size; })();
+  const fmtNum = (n)=>{
+    try{ return new Intl.NumberFormat().format(Number(n||0)); }catch(e){ return String(n||0); }
+  };
+  const fmtAgo = (sec)=>{
+    if(sec==null || isNaN(sec)) return "";
+    const s = Math.max(0, Math.round(Number(sec)));
+    if(s < 60) return `${s}s ago`;
+    const m = Math.round(s/60);
+    if(m < 60) return `${m}m ago`;
+    const h = Math.round(m/60);
+    if(h < 48) return `${h}h ago`;
+    const d = Math.round(h/24);
+    return `${d}d ago`;
+  };
 
-  const live = (ctx.state.dataMode==="live") ? (ctx.state.live && ctx.state.live.snapshot) : null;
-  const radios = live && live.radios ? live.radios.length : 0;
+  const dataMode = ctx.state.dataMode || "sample";
+  const liveSnap = ctx.state.live?.snapshot || null;
 
-  const root = el("section",{id:"overview"});
-  root.className = ctx.state.view==="overview" ? "" : "hidden";
+  // Fallback counts based on roomTagMap (works in sample mode too).
+  const roomTagMap = ctx.state.roomTagMap || {};
+  const roomsCount = Object.keys(roomTagMap).length;
+  const tagsCount = (() => {
+    const s = new Set();
+    for(const r of Object.keys(roomTagMap)){
+      (roomTagMap[r]||[]).forEach(eid=>s.add(eid));
+    }
+    return s.size;
+  })();
 
-  const grid = el("div",{class:"grid"},[
-    el("div",{class:"card"},[el("div",{class:"muted"},"Status"), el("div",{class:"kpi"}, status?.status || "unknown")]),
-    el("div",{class:"card"},[el("div",{class:"muted"},"Rooms"), el("div",{class:"kpi"}, String(rooms))]),
-    el("div",{class:"card"},[el("div",{class:"muted"},"Objects (unique)"), el("div",{class:"kpi"}, String(tags))]),
-    el("div",{class:"card"},[el("div",{class:"muted"},"Radios (live)"), el("div",{class:"kpi"}, ctx.state.dataMode==="live" ? String(radios) : "—")]),
-  ]);
+  const objSummary = (liveSnap && liveSnap.objects && liveSnap.objects.summary) ? liveSnap.objects.summary : null;
+  const objectsTotal = objSummary ? objSummary.total : tagsCount;
+  const unidentifiedCount = objSummary ? objSummary.unidentified : 0;
 
-  const badges = el("div",{class:"row"},[
-    pill(`v${ctx.state.version}`),
-    pill(`Data: ${ctx.state.dataMode==="live" ? "Live" : "Sample"}`),
-    pill(status?.cloud_enabled ? "Cloud enabled" : "Cloud disabled"),
-    pill(`Scan: ${status?.scan_interval ?? "—"}`),
-    pill(diag?.summary ? `Checks: ${diag.summary.passed}/${diag.summary.total}` : "Checks: —"),
-  ]);
+  const radios = (liveSnap && liveSnap.ble && Array.isArray(liveSnap.ble.radios)) ? liveSnap.ble.radios : [];
+  const radiosCount = radios.length;
 
-  const summaryLines = [];
-  summaryLines.push(rooms ? `Loaded ${rooms} rooms and ${tags} unique tags.` : "No room data yet (room_tag_map empty).");
-  if(ctx.state.dataMode==="live"){
-    if(live){
-      summaryLines.push(`Live scan heuristic found ${radios} radio/receiver device(s) and ${(live.tags||[]).length} tag observation(s).`);
-      summaryLines.push("Tip: if counts are low, confirm Bermuda is running and check that your tag entities report their current room/area as the entity state.");
-    }else{
-      summaryLines.push("Live mode enabled, but snapshot not available yet.");
+  // ---------- Modal helpers ----------
+  function openRoomsList(){
+    const body = el("div",{});
+    const rows = Object.keys(roomTagMap).sort().map((room)=>{
+      const eids = roomTagMap[room] || [];
+      return el("tr",{},[
+        el("td",{}, room),
+        el("td",{}, String(eids.length)),
+        el("td",{}, eids.join(", "))
+      ]);
+    });
+
+    body.appendChild(el("div",{class:"controls"},[
+      el("span",{class:"badge"}, `${roomsCount} rooms`),
+      el("span",{class:"badge"}, `${tagsCount} mapped entities`)
+    ]));
+
+    body.appendChild(el("table",{class:"table"},[
+      el("thead",{}, el("tr",{},[
+        el("th",{}, "Room"),
+        el("th",{}, "Mapped entities"),
+        el("th",{}, "Entity IDs")
+      ])),
+      el("tbody",{}, rows.length?rows:el("tr",{}, el("td",{colspan:3}, "No rooms in current map.")))
+    ]));
+
+    ctx.actions.openModal("Rooms", body, "Current room→entity map");
+  }
+
+  function openRadiosList(){
+    const body = el("div",{});
+    const r = radios || [];
+    body.appendChild(el("div",{class:"controls"},[
+      el("span",{class:"badge"}, `${r.length} radios`),
+      el("span",{class:"badge"}, "Source = HA scanner/proxy"),
+    ]));
+    const rows = r.map((x)=>el("tr",{},[
+      el("td",{}, x.name || ""),
+      el("td",{}, x.source || ""),
+      el("td",{}, (x.adapter!=null?String(x.adapter):"")),
+      el("td",{}, (x.scanning==null?"":String(x.scanning))),
+      el("td",{}, (x.connectable==null?"":String(x.connectable))),
+    ]));
+
+    body.appendChild(el("table",{class:"table"},[
+      el("thead",{}, el("tr",{},[
+        el("th",{}, "Name"),
+        el("th",{}, "Source"),
+        el("th",{}, "Adapter"),
+        el("th",{}, "Scanning"),
+        el("th",{}, "Connectable"),
+      ])),
+      el("tbody",{}, rows.length?rows:el("tr",{}, el("td",{colspan:5}, "No radios found. (Switch to Live mode + ensure Bluetooth is enabled in HA.)")))
+    ]));
+    ctx.actions.openModal("Bluetooth Radios", body, "This mirrors HA Bluetooth scanners/proxies");
+  }
+
+  async function fillVendorCell(mac, cell){
+    // Cache by prefix (AA:BB:CC)
+    ctx.state._vendorCache = ctx.state._vendorCache || {};
+    const prefix = (mac||"").split(":").slice(0,3).join(":").toUpperCase();
+    if(!prefix){ cell.textContent = ""; return; }
+
+    const cached = ctx.state._vendorCache[prefix];
+    if(cached){
+      cell.innerHTML = renderVendorHTML(cached);
+      return;
+    }
+
+    // Placeholder while fetching
+    cell.innerHTML = `<span class="badge">Looking up…</span>`;
+    try{
+      const res = await ctx.actions.vendorLookup(mac, false);
+      ctx.state._vendorCache[prefix] = res;
+      cell.innerHTML = renderVendorHTML(res);
+    }catch(e){
+      cell.innerHTML = `<span class="badge err">Lookup failed</span>`;
     }
   }
 
-  const summary = el("div",{class:"card"},[
-    el("div",{class:"muted"},"Quick summary"),
-    el("div",{}, summaryLines.join(" ")),
+  function renderVendorHTML(res){
+    if(!res || res.enabled === false){
+      return `<span class="badge warn">Vendor lookup disabled</span>`;
+    }
+    const v1 = res.sources?.macvendors || null;
+    const v2 = res.sources?.maclookup?.company || null;
+    const rand = res.sources?.maclookup?.isRand;
+    const priv = res.sources?.maclookup?.isPrivate;
+    const flags = [];
+    if(rand===true) flags.push("randomized");
+    if(priv===true) flags.push("private");
+    const top = (v2 || v1 || "Unknown vendor");
+    const sub = flags.length ? ` <span class="badge warn">${flags.join(", ")}</span>` : "";
+    const bt = res.sources?.maclookup?.blockType ? ` · ${res.sources.maclookup.blockType}` : "";
+    return `<div><span class="badge">${escapeHtml(top)}</span>${sub}${escapeHtml(bt)}</div>`;
+  }
+
+  function escapeHtml(s){
+    return String(s||"").replace(/[&<>"']/g,(c)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[c]));
+  }
+
+  function openObjectsList(initialFilter="all"){
+    if(!liveSnap || !liveSnap.objects){
+      const body = el("div",{},[
+        el("p",{}, "Objects list is only available in Live mode (it includes BLE advertisement monitor data)."),
+        el("p",{}, "Switch to Live in Settings, then reopen this list.")
+      ]);
+      ctx.actions.openModal("Objects", body, "Live snapshot required");
+      return;
+    }
+
+    const list = liveSnap.objects.list || [];
+    const summary = liveSnap.objects.summary || {};
+    const commonPrefixes = summary.common_prefixes || {};
+
+    const body = el("div",{});
+    const controls = el("div",{class:"controls"});
+    const search = el("input",{type:"text", placeholder:"Filter by address, vendor, entity, room…"});
+    const kindSel = el("select",{},[
+      el("option",{value:"all"}, "All kinds"),
+      el("option",{value:"entity"}, "Entities only"),
+      el("option",{value:"ble"}, "BLE only"),
+    ]);
+    const statusSel = el("select",{},[
+      el("option",{value:"all"}, "All statuses"),
+      el("option",{value:"identified"}, "Identified"),
+      el("option",{value:"unidentified"}, "Unidentified"),
+    ]);
+    statusSel.value = initialFilter === "unidentified" ? "unidentified" : "all";
+
+    const commonOnly = el("label",{style:"display:flex;align-items:center;gap:6px"},[
+      el("input",{type:"checkbox"}),
+      el("span",{}, "Only common OUIs (≥3)")
+    ]);
+
+    const stats = el("div",{class:"spacer"});
+    controls.appendChild(el("span",{class:"badge"}, `${fmtNum(summary.total||0)} total`));
+    controls.appendChild(el("span",{class:"badge"}, `${fmtNum(summary.unidentified||0)} unidentified`));
+    controls.appendChild(search);
+    controls.appendChild(kindSel);
+    controls.appendChild(statusSel);
+    controls.appendChild(commonOnly);
+    controls.appendChild(stats);
+
+    const table = el("table",{class:"table"});
+    const thead = el("thead",{}, el("tr",{},[
+      el("th",{}, "Kind"),
+      el("th",{}, "Name / Entity"),
+      el("th",{}, "Address"),
+      el("th",{}, "Room"),
+      el("th",{}, "Signal"),
+      el("th",{}, "Last seen"),
+      el("th",{}, "OUI freq"),
+      el("th",{}, "Vendor (online)"),
+    ]));
+    const tbody = el("tbody",{});
+    table.appendChild(thead);
+    table.appendChild(tbody);
+
+    // Build rows once, then filter by show/hide (fast, no re-render).
+    const rowEls = list.map((o)=>{
+      const kind = o.kind || "";
+      const identified = !!o.identified;
+      const addr = o.address || "";
+      const name = o.name || o.entity_id || "";
+      const room = o.room || "";
+      const rssi = (o.rssi==null?"":String(o.rssi));
+      const lastSeen = o.age_s!=null ? fmtAgo(o.age_s) : (o.last_seen || "");
+      const pfxCount = o.prefix_count || 0;
+      const pfx = (o.prefix || "").toUpperCase();
+      const isCommon = pfx && (commonPrefixes[pfx] || 0) >= 3;
+
+      const vendorCell = el("td",{}, kind==="ble" ? el("span",{class:"badge"}, "—") : el("span",{class:"badge"}, "n/a"));
+
+      const tr = el("tr",{
+        "data-kind": kind,
+        "data-identified": identified ? "1":"0",
+        "data-common": isCommon ? "1":"0",
+        "data-search": `${kind} ${name} ${addr} ${room} ${(o.entity_id||"")} ${(o.linked_entities||[]).join(" ")}`.toLowerCase(),
+        "data-mac": addr,
+      },[
+        el("td",{}, kind==="ble" ? pill("BLE","") : pill("Entity","")),
+        el("td",{}, [
+          el("div",{}, name),
+          (o.entity_id ? el("div",{style:"color:#94a3b8"}, o.entity_id) : null),
+          (Array.isArray(o.linked_entities) && o.linked_entities.length ? el("div",{style:"color:#94a3b8"}, `Linked: ${o.linked_entities.join(", ")}`) : null),
+          (o.device && (o.device.manufacturer || o.device.model) ? el("div",{style:"color:#94a3b8"}, `${o.device.manufacturer||""} ${o.device.model||""}`.trim()) : null),
+        ].filter(Boolean)),
+        el("td",{}, addr || "—"),
+        el("td",{}, room || "—"),
+        el("td",{}, rssi ? `${rssi} dBm` : "—"),
+        el("td",{}, lastSeen || "—"),
+        el("td",{}, pfxCount>=3 ? el("span",{class:"badge warn"}, `${pfxCount}×`) : (pfxCount? String(pfxCount):"")),
+        vendorCell,
+      ]);
+
+      // kick vendor lookup for BLE rows (best-effort, after render)
+      tr._vendorCell = vendorCell;
+      return tr;
+    });
+
+    rowEls.forEach(tr=>tbody.appendChild(tr));
+
+    function apply(){
+      const q = (search.value||"").trim().toLowerCase();
+      const k = kindSel.value;
+      const st = statusSel.value;
+      const co = commonOnly.querySelector("input").checked;
+
+      let shown = 0;
+
+      for(const tr of rowEls){
+        const kind = tr.getAttribute("data-kind");
+        const idf = tr.getAttribute("data-identified")==="1";
+        const common = tr.getAttribute("data-common")==="1";
+        const hay = tr.getAttribute("data-search") || "";
+
+        let ok = true;
+        if(q && !hay.includes(q)) ok=false;
+        if(k!=="all" && kind!==k) ok=false;
+        if(st==="identified" && !idf) ok=false;
+        if(st==="unidentified" && idf) ok=false;
+        if(co && !common) ok=false;
+
+        tr.style.display = ok ? "" : "none";
+        if(ok) shown++;
+      }
+      stats.textContent = `${shown} shown`;
+    }
+
+    search.addEventListener("input", apply);
+    kindSel.addEventListener("change", apply);
+    statusSel.addEventListener("change", apply);
+    commonOnly.querySelector("input").addEventListener("change", apply);
+    apply();
+
+    body.appendChild(controls);
+    body.appendChild(table);
+
+    ctx.actions.openModal("Objects", body, "Filter + vendor lookup (best-effort)");
+
+    // After modal opens, do vendor lookups for visible BLE rows (limited concurrency).
+    const maxLookups = 40;
+    const queue = rowEls
+      .filter(tr=>tr.getAttribute("data-kind")==="ble")
+      .slice(0, maxLookups);
+
+    // lightweight concurrency limiter
+    let i = 0;
+    const conc = 3;
+    const runOne = async ()=>{
+      while(i < queue.length){
+        const tr = queue[i++];
+        if(tr.style.display==="none") continue;
+        const mac = tr.getAttribute("data-mac") || "";
+        const cell = tr._vendorCell;
+        if(mac && cell) await fillVendorCell(mac, cell);
+      }
+    };
+    for(let n=0;n<conc;n++) runOne();
+  }
+
+  // ---------- Page layout ----------
+  const grid = el("div",{class:"grid"},[
+    el("div",{class:"card"},[
+      el("div",{class:"kpi"},[
+        el("div",{class:"k"}, "Rooms"),
+        el("div",{class:"v"}, String(roomsCount)),
+      ]),
+      el("div",{class:"row"},[
+        el("button",{class:"btn", onclick: openRoomsList}, "View rooms list"),
+      ])
+    ]),
+    el("div",{class:"card"},[
+      el("div",{class:"kpi"},[
+        el("div",{class:"k"}, "Objects"),
+        el("div",{class:"v"}, String(objectsTotal)),
+      ]),
+      el("div",{class:"row"},[
+        el("button",{class:"btn", onclick: ()=>openObjectsList("all")}, "All objects"),
+        el("button",{class:"btn", onclick: ()=>openObjectsList("unidentified")}, `Unidentified (${unidentifiedCount})`),
+      ])
+    ]),
+    el("div",{class:"card"},[
+      el("div",{class:"kpi"},[
+        el("div",{class:"k"}, "Bluetooth radios"),
+        el("div",{class:"v"}, String(radiosCount)),
+      ]),
+      el("div",{class:"row"},[
+        el("button",{class:"btn", onclick: openRadiosList}, "View radios list"),
+      ]),
+      el("div",{style:"margin-top:8px;color:#94a3b8;font-size:12px"}, dataMode==="live" ? "Live snapshot" : "Tip: switch to Live to see BLE data")
+    ]),
   ]);
 
-  const liveCard = (() => {
-    if(ctx.state.dataMode!=="live") return null;
-    const c = el("div",{class:"card"},[
-      el("div",{style:"display:flex;justify-content:space-between;align-items:center"},[
-        el("div",{class:"muted"},"Live discovery (best effort)"),
-        el("div",{class:"muted", style:"font-size:12px"}, live && live.sources ? JSON.stringify(live.sources) : "—")
-      ]),
-    ]);
-    if(!live){
-      c.appendChild(el("div",{class:"muted", style:"margin-top:8px"},"No live snapshot yet."));
-      return c;
-    }
-    const list = el("div",{class:"mono", style:"margin-top:10px;white-space:pre-wrap"});
-    const lines = [];
-    lines.push("Rooms:");
-    for(const r of (live.rooms||[])) lines.push(`- ${r.name}`);
-    lines.push("");
-    lines.push("Radios (heuristic):");
-    for(const r of (live.radios||[]).slice(0,25)) lines.push(`- ${r.area ? r.area + " • " : ""}${r.name}${r.model ? " ("+r.model+")" : ""}`);
-    if((live.radios||[]).length>25) lines.push(`… +${(live.radios||[]).length-25} more`);
-    lines.push("");
-    lines.push("Tags seen (room → tag):");
-    for(const t of (live.tags||[]).slice(0,40)) lines.push(`- ${t.room} → ${t.id}`);
-    if((live.tags||[]).length>40) lines.push(`… +${(live.tags||[]).length-40} more`);
-    list.textContent = lines.join("\n");
-    c.appendChild(list);
-    return c;
-  })();
-
-  root.appendChild(badges);
-  root.appendChild(grid);
-  root.appendChild(summary);
-  if(liveCard) root.appendChild(liveCard);
-  return root;
+  return el("section",{},[
+    el("h2",{}, "Overview"),
+    el("div",{style:"color:#94a3b8;margin-top:-6px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
+    grid
+  ]);
 }

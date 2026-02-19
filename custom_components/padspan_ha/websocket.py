@@ -19,6 +19,7 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DEFAULT_FLOOR_ID, DATA_COORDINATOR
 from .build_info import BUILD_ID, BUILD_VERSION
 from .bluetooth_live import get_bluetooth_live
+from .vendor_lookup import async_lookup_vendor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_settings_get)
     websocket_api.async_register_command(hass, ws_settings_set)
     websocket_api.async_register_command(hass, ws_live_snapshot)
+    websocket_api.async_register_command(hass, ws_vendor_lookup)
     websocket_api.async_register_command(hass, ws_maps_list)
     websocket_api.async_register_command(hass, ws_maps_upload)
     websocket_api.async_register_command(hass, ws_maps_update)
@@ -191,6 +193,17 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         "room_tag_map_saved": {},
         "raw_counts": {},
     }
+
+    # --- Bluetooth (scanners + advertisements) ---
+    try:
+        bl = get_bluetooth_live(hass)
+        if bl is not None:
+            snapshot["ble"] = bl.get_snapshot()
+        else:
+            snapshot["ble"] = {"radios": [], "advertisements": [], "diag": {"ok": False, "errors": ["no_bluetooth_live"]}}
+    except Exception as e:
+        snapshot["ble"] = {"radios": [], "advertisements": [], "diag": {"ok": False, "errors": ["ble_snapshot_error"]}}
+
 
     # --- Areas (rooms) ---
     area_by_id: dict[str, str] = {}
@@ -479,6 +492,174 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     if "bermuda_devices" not in snapshot:
         snapshot["bermuda_devices"] = snapshot.get("receivers") or []
 
+    # --- Derived "objects" list (entities + BLE addresses) ---
+    # This is what drives the Overview → Objects / Unidentified modals.
+    try:
+        dr2 = device_registry.async_get(hass)
+        er2 = entity_registry.async_get(hass)
+
+        # Build a quick map of Bluetooth address -> HA device (device_registry)
+        addr_to_device: dict[str, dict[str, Any]] = {}
+        for dev in dr2.devices.values():
+            try:
+                for (ctype, cid) in (dev.connections or set()):
+                    if str(ctype) == "bluetooth" and isinstance(cid, str):
+                        addr_to_device[cid.upper()] = {
+                            "device_id": dev.id,
+                            "name": dev.name_by_user or dev.name or dev.model or "",
+                            "manufacturer": dev.manufacturer or "",
+                            "model": dev.model or "",
+                        }
+            except Exception:
+                continue
+
+        # Map Bluetooth address -> tag entities that belong to the same HA device.
+        addr_to_entities: dict[str, list[str]] = {}
+        for t in (snapshot.get("tags") or []):
+            eid = t.get("entity_id")
+            if not eid:
+                continue
+            ent = er2.async_get(eid)
+            if not ent or not ent.device_id:
+                continue
+            dev = dr2.devices.get(ent.device_id)
+            if not dev:
+                continue
+            for (ctype, cid) in (dev.connections or set()):
+                if str(ctype) == "bluetooth" and isinstance(cid, str):
+                    addr_to_entities.setdefault(cid.upper(), []).append(eid)
+
+        # Deduplicate advertisements by address (HA often reports same address via multiple scanners).
+        ads = ((snapshot.get("ble") or {}).get("advertisements") or [])
+        ble_by_addr: dict[str, dict[str, Any]] = {}
+        for a in ads:
+            addr = str(a.get("address") or "").upper()
+            if not addr:
+                continue
+            rec = ble_by_addr.get(addr)
+            if not rec:
+                rec = {
+                    "address": addr,
+                    "name": a.get("name") or "",
+                    "rssi": a.get("rssi"),
+                    "last_seen": a.get("last_seen"),
+                    "age_s": a.get("age_s"),
+                    "sources": set(),
+                }
+                ble_by_addr[addr] = rec
+
+            src = a.get("source")
+            if src:
+                rec["sources"].add(str(src))
+
+            # Keep the most "useful" RSSI (largest / closest to 0).
+            try:
+                rssi = a.get("rssi")
+                if rssi is not None and (rec.get("rssi") is None or rssi > rec.get("rssi")):
+                    rec["rssi"] = rssi
+            except Exception:
+                pass
+
+            # Keep newest last_seen (ISO8601 string; lexicographic compare works for same-format UTC stamps)
+            try:
+                ls = a.get("last_seen")
+                if ls and (not rec.get("last_seen") or str(ls) > str(rec.get("last_seen"))):
+                    rec["last_seen"] = ls
+            except Exception:
+                pass
+
+            # Keep minimum age_s (lower == newer)
+            try:
+                age = a.get("age_s")
+                if isinstance(age, (int, float)):
+                    if rec.get("age_s") is None or age < rec.get("age_s"):
+                        rec["age_s"] = age
+            except Exception:
+                pass
+
+        # Count how often each OUI/prefix appears (useful heuristic: repeated prefixes often mean "a bunch of the same device type").
+        prefix_counts: dict[str, int] = {}
+        for addr in ble_by_addr.keys():
+            parts = addr.split(":")
+            if len(parts) >= 3:
+                pfx = ":".join(parts[:3])
+                prefix_counts[pfx] = prefix_counts.get(pfx, 0) + 1
+
+        objects: list[dict[str, Any]] = []
+
+        # (A) Entity-based objects (bermuda tags, device_trackers, etc.)
+        for t in (snapshot.get("tags") or []):
+            eid = t.get("entity_id") or ""
+            addr = ""
+            try:
+                ent = er2.async_get(eid)
+                if ent and ent.device_id:
+                    dev = dr2.devices.get(ent.device_id)
+                    if dev:
+                        for (ctype, cid) in (dev.connections or set()):
+                            if str(ctype) == "bluetooth" and isinstance(cid, str):
+                                addr = cid.upper()
+                                break
+            except Exception:
+                addr = ""
+
+            prefix = ":".join(addr.split(":")[:3]) if addr else ""
+            objects.append({
+                "key": f"entity:{eid}",
+                "kind": "entity",
+                "entity_id": eid,
+                "name": t.get("name") or eid,
+                "state": t.get("state"),
+                "room": t.get("room"),
+                "missing": bool(t.get("missing")),
+                "address": addr or None,
+                "prefix": prefix or None,
+                "prefix_count": prefix_counts.get(prefix, 0) if prefix else 0,
+                "identified": True,
+            })
+
+        # (B) BLE advertisement objects (what HA Bluetooth "Advertisement monitor" shows)
+        for addr, rec in ble_by_addr.items():
+            parts = addr.split(":")
+            prefix = ":".join(parts[:3]) if len(parts) >= 3 else ""
+            identified = (addr in addr_to_device) or (addr in addr_to_entities)
+
+            objects.append({
+                "key": f"ble:{addr}",
+                "kind": "ble",
+                "address": addr,
+                "name": rec.get("name") or addr,
+                "rssi": rec.get("rssi"),
+                "last_seen": rec.get("last_seen"),
+                "age_s": rec.get("age_s"),
+                "sources": sorted(list(rec.get("sources") or [])),
+                "prefix": prefix or None,
+                "prefix_count": prefix_counts.get(prefix, 0),
+                "identified": bool(identified),
+                "linked_entities": sorted(list(set(addr_to_entities.get(addr, [])))),
+                "device": addr_to_device.get(addr),
+            })
+
+        unidentified = [o for o in objects if o.get("kind") == "ble" and not o.get("identified")]
+        identified = [o for o in objects if not (o.get("kind") == "ble" and not o.get("identified"))]
+        common_prefixes = {p: c for p, c in prefix_counts.items() if c >= 3}
+
+        snapshot["objects"] = {
+            "list": objects,
+            "summary": {
+                "total": len(objects),
+                "identified": len(identified),
+                "unidentified": len(unidentified),
+                "entities": len([o for o in objects if o.get("kind") == "entity"]),
+                "ble": len([o for o in objects if o.get("kind") == "ble"]),
+                "common_prefixes": common_prefixes,  # prefix -> count (>=3)
+            },
+        }
+    except Exception:
+        snapshot["objects"] = {"list": [], "summary": {"total": 0, "identified": 0, "unidentified": 0, "entities": 0, "ble": 0, "common_prefixes": {}}}
+
+    snapshot["bermuda_devices"] = snapshot.get("receivers") or []
+
     # Frontend "radios" should reflect actual Bluetooth scanners/adapters (not Bermuda tag devices).
     if "radios" not in snapshot:
         snapshot["radios"] = (snapshot.get("ble") or {}).get("radios") or []
@@ -495,6 +676,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
     {
         "type": "padspan_ha/settings_set",
         "data_mode": str,
+        vol.Optional("vendor_lookup_enabled"): bool,
     }
 )
 @websocket_api.async_response
@@ -504,7 +686,10 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         mode = "sample"
     st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
     if st:
-        await st.async_set(data_mode=mode)
+        payload = {"data_mode": mode}
+        if "vendor_lookup_enabled" in msg:
+            payload["vendor_lookup_enabled"] = bool(msg.get("vendor_lookup_enabled"))
+        await st.async_set(**payload)
     connection.send_result(msg["id"], {"settings": _get_settings(hass)})
 
 
@@ -513,6 +698,38 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
 async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
     snap = await _live_snapshot(hass)
     connection.send_result(msg["id"], {"snapshot": snap})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/vendor_lookup",
+        "mac": str,
+        vol.Optional("force_refresh"): bool,
+    }
+)
+@websocket_api.async_response
+async def ws_vendor_lookup(hass: HomeAssistant, connection, msg) -> None:
+    """Vendor lookup for a MAC address.
+
+    Used by the Overview → Objects/Unidentified modal.
+    """
+    st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    enabled = True
+    try:
+        if st:
+            enabled = bool(st.get("vendor_lookup_enabled", True))
+    except Exception:
+        enabled = True
+
+    if not enabled:
+        connection.send_result(msg["id"], {"enabled": False})
+        return
+
+    mac = msg.get("mac") or ""
+    force = bool(msg.get("force_refresh", False))
+    res = await async_lookup_vendor(hass, mac, force_refresh=force)
+    res["enabled"] = True
+    connection.send_result(msg["id"], res)
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/maps_list"})

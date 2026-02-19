@@ -167,3 +167,96 @@
 .dev-tag-name{font-weight:800;font-size:14px}
 .dev-tag-sub{font-size:12px;color:rgba(226,232,240,.7)}
 .dev-tag-right{display:flex;align-items:center;gap:10px;white-space:nowrap}
+
+
+/* -------------------------------
+   Modal / overlay (Overview lists)
+   ------------------------------- */
+.modal.hidden { display:none; }
+.modal { position:fixed; inset:0; z-index: 9999; }
+.modal .overlay {
+  position:absolute; inset:0;
+  background: rgba(0,0,0,0.55);
+  display:flex; align-items:center; justify-content:center;
+  padding: 18px;
+}
+.modal .panel {
+  width: min(1100px, 96vw);
+  max-height: 92vh;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  overflow: hidden;
+  display:flex;
+  flex-direction: column;
+}
+.modal .head {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.modal .head .title {
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+.modal .head .sub {
+  margin-left:auto;
+  color: #94a3b8;
+  font-size: 12px;
+}
+.modal .body {
+  padding: 12px 14px 14px 14px;
+  overflow:auto;
+}
+.modal .close {
+  margin-left:auto;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.table th, .table td {
+  padding: 8px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.table th {
+  text-align:left;
+  color: #cbd5e1;
+  font-weight: 700;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+.badge {
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(122,162,255,0.10);
+  color: var(--text);
+  font-size: 11px;
+}
+.badge.warn {
+  background: rgba(245,158,11,0.12);
+}
+.badge.err {
+  background: rgba(239,68,68,0.12);
+}
+.controls {
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:center;
+  margin-bottom: 10px;
+}
+.controls input[type="text"]{
+  min-width: 260px;
+}
+.controls .spacer{ flex:1; }

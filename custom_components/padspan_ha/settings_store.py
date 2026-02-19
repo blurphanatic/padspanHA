@@ -20,7 +20,9 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "data_mode": "sample",  # "sample" | "live"
+    "vendor_lookup_enabled": True,  # Sends MAC prefixes to vendor lookup APIs when requested from UI
 }
+
 
 @dataclass
 class SettingsStore:
