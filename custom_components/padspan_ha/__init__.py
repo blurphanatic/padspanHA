@@ -35,6 +35,7 @@ from .model_store import ModelStore
 from .panel import async_setup_panel
 from .settings_store import SettingsStore
 from .websocket import async_register_websockets
+from .bluetooth_live import async_setup_bluetooth_live
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -133,6 +134,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coord.mark_success()
 
+    # Live Bluetooth advertisements cache (powers "Radios" + "Tags" lists)
+    # Safe even if Bluetooth integration isn't active; it will stay empty.
+    try:
+        if "bluetooth_live" not in hass.data[DOMAIN]:
+            hass.data[DOMAIN]["bluetooth_live"] = await async_setup_bluetooth_live(hass)
+            _LOGGER.debug("Bluetooth live cache enabled")
+    except Exception as err:
+        _LOGGER.debug("Bluetooth live cache unavailable: %s", err)
+
     # Forward platforms (safe even if they don't create entities yet)
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -143,6 +153,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    # Stop BLE cache if we started it
+    try:
+        unload = hass.data.get(DOMAIN, {}).pop("bluetooth_live", None)
+        if callable(unload):
+            unload()
+    except Exception:
+        pass
     try:
         return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     except Exception:
