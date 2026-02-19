@@ -469,6 +469,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception:
         snapshot["ble"] = {"radios": [], "advertisements": []}
 
+
+    # ---- Backwards-compatible aliases for the frontend ----
+    # Some UI modules (overview, legacy panels) expect these keys.
+    if "rooms" not in snapshot:
+        snapshot["rooms"] = [{"name": r} for r in (snapshot.get("rooms_discovered") or [])]
+    if "radios" not in snapshot:
+        snapshot["radios"] = snapshot.get("receivers") or []
     return snapshot
 
 @websocket_api.websocket_command({"type": "padspan_ha/settings_get"})

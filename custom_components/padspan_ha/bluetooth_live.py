@@ -160,17 +160,32 @@ class BluetoothLive:
     def get_snapshot(self, max_ads: int = 300, max_age_s: int = 120) -> Dict[str, Any]:
         try:
             from homeassistant.components import bluetooth  # type: ignore
-
             radios: List[Dict[str, str]] = []
             try:
-                scanners = bluetooth.async_current_scanners(self.hass)
-                for s in scanners:
-                    src = getattr(s, "source", None)
-                    name = getattr(s, "name", None)
-                    radios.append({
-                        "source": _coerce_source(src) or "",
-                        "name": str(name or ""),
-                    })
+                scanners_fn = getattr(bluetooth, "async_current_scanners", None)
+                if scanners_fn is not None:
+                    scanners = scanners_fn(self.hass)
+                    for s in scanners:
+                        src = getattr(s, "source", None)
+                        name = getattr(s, "name", None)
+                        radios.append({
+                            "source": _coerce_source(src) or "",
+                            "name": str(name or ""),
+                        })
+                else:
+                    # Older HA: we may not be able to list scanners individually.
+                    count = None
+                    count_fn = getattr(bluetooth, "async_scanner_count", None)
+                    if count_fn is not None:
+                        try:
+                            count = count_fn(self.hass, connectable=True)
+                        except TypeError:
+                            count = count_fn(self.hass)
+                    if isinstance(count, int):
+                        radios.append({
+                            "source": "",
+                            "name": f"Scanners active: {count} (upgrade HA for per-scanner list)",
+                        })
             except Exception:
                 radios = []
 
@@ -213,17 +228,27 @@ async def async_setup_bluetooth_live(hass: HomeAssistant) -> BluetoothLive:
         from homeassistant.components import bluetooth  # type: ignore
 
         # Register a single callback without filters to capture all advertisements.
-        # (Some devices have connectable=None, which won't match strict True/False filters.)
+        # Prefer ACTIVE scanning when the enum exists (newer HA), but stay compatible.
+        mode_enum = getattr(bluetooth, "BluetoothScanningMode", None)
+        scan_mode = mode_enum.ACTIVE if mode_enum is not None else None
+
+        unsub = None
+        # Newer HA signature (per docs): async_register_callback(hass, callback, match_dict, mode)
         try:
-            unsub = bluetooth.async_register_callback(
-                hass,
-                bl._on_adv,
-                matcher={},
-                mode=getattr(bluetooth, "BluetoothScanningMode", None) and bluetooth.BluetoothScanningMode.ACTIVE,
-            )
+            if scan_mode is not None:
+                unsub = bluetooth.async_register_callback(hass, bl._on_adv, {}, scan_mode)
+            else:
+                unsub = bluetooth.async_register_callback(hass, bl._on_adv, {})
         except TypeError:
-            # Older HA signature
-            unsub = bluetooth.async_register_callback(hass, bl._on_adv)
+            # Older HA signature(s)
+            try:
+                unsub = bluetooth.async_register_callback(hass, bl._on_adv)
+            except TypeError:
+                # Last-ditch: try keyword variants that have appeared in some releases
+                try:
+                    unsub = bluetooth.async_register_callback(hass, bl._on_adv, matcher={})
+                except Exception:
+                    unsub = None
 
         if unsub:
             bl._unsubs.append(unsub)
