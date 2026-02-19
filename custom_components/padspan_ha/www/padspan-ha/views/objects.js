@@ -1,5 +1,5 @@
 export function render(ctx){
-  const { el, esc } = ctx.helpers;
+  const { el, esc, roomColor } = ctx.helpers;
   const { roomTagMap, selectedRooms, mode, tagFilter } = ctx.state;
 
   const root = el("section",{id:"objects"});
@@ -19,6 +19,7 @@ export function render(ctx){
       cb.checked = selectedRooms.has(room);
       cb.addEventListener("change", ()=>{ cb.checked ? selectedRooms.add(room) : selectedRooms.delete(room); ctx.actions.renderTags(); ctx.actions.renderDiag(); });
       row.appendChild(cb);
+      row.appendChild(el("span",{class:"roomdot", style:`background:${roomColor(room)}`}, ""));
       row.appendChild(el("span",{}, esc(room)));
       row.appendChild(el("span",{class:"muted"}, `(${count})`));
       roomsList.appendChild(row);

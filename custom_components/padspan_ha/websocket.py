@@ -8,13 +8,15 @@ Defines the websocket surface consumed by the panel. This is the preferred integ
 
 
 import logging
+
+import voluptuous as vol
 from typing import Any
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers import area_registry, device_registry, entity_registry
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS
+from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DEFAULT_FLOOR_ID
 from .build_info import BUILD_ID, BUILD_VERSION
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,6 +34,8 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_maps_upload)
     websocket_api.async_register_command(hass, ws_maps_update)
     websocket_api.async_register_command(hass, ws_maps_delete)
+    websocket_api.async_register_command(hass, ws_model_get)
+    websocket_api.async_register_command(hass, ws_model_update)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -46,15 +50,39 @@ async def ws_status(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/room_tags"})
 @websocket_api.async_response
 async def ws_room_tags(hass: HomeAssistant, connection, msg) -> None:
+    """
+    Return the room→object map used by the UI.
+
+    Important behavior:
+      - Always prefer the saved/coordinator room_tag_map when it exists (this is the user's curated model).
+      - In live mode, also return the best-effort *derived* map from HA Areas/entities for debugging,
+        but do not let it collapse the UI to a single room if Areas aren't set up.
+    """
     settings = _get_settings(hass)
-    if settings.get("data_mode") == "live":
-        snap = await _live_snapshot(hass)
-        connection.send_result(msg["id"], {"room_tag_map": snap.get("room_tag_map", {}), "live": True, "sources": snap.get("sources", {})})
-        return
 
     coord = hass.data.get(DOMAIN, {}).get("coordinator")
-    room_tag_map = coord.room_tag_map if coord else {}
-    connection.send_result(msg["id"], {"room_tag_map": room_tag_map, "live": False})
+    saved_map = coord.room_tag_map if coord else {}
+
+    if settings.get("data_mode") == "live":
+        snap = await _live_snapshot(hass)
+        live_map = snap.get("room_tag_map", {}) or {}
+        # If the user has a saved map, keep UI stable by using it.
+        effective = saved_map if saved_map else live_map
+        connection.send_result(
+            msg["id"],
+            {
+                "room_tag_map": effective,
+                "room_tag_map_saved": saved_map,
+                "room_tag_map_live": live_map,
+                "live": True,
+                "sources": snap.get("sources", {}) or {},
+                "raw_counts": snap.get("raw_counts", {}) or {},
+            },
+        )
+        return
+
+    connection.send_result(msg["id"], {"room_tag_map": saved_map, "live": False})
+
 
 @websocket_api.websocket_command({"type": "padspan_ha/auto_diagnostics"})
 @websocket_api.async_response
@@ -101,6 +129,35 @@ async def ws_auto_diagnostics(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.async_response
 async def ws_version(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], {"version": VERSION, "build_version": BUILD_VERSION, "build_id": BUILD_ID})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/model_get"})
+@websocket_api.async_response
+async def ws_model_get(hass: HomeAssistant, connection, msg) -> None:
+    """Return floors + per-room metadata (floor assignment + color)."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_result(msg["id"], {"floors": [{"id": DEFAULT_FLOOR_ID, "name": "Main Floor"}], "room_meta": {}})
+        return
+    connection.send_result(msg["id"], mdl.snapshot())
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/model_update",
+        vol.Optional("floors"): list,
+        vol.Optional("room_meta"): dict,
+    }
+)
+@websocket_api.async_response
+async def ws_model_update(hass: HomeAssistant, connection, msg) -> None:
+    """Update floors and/or room_meta. Partial updates are allowed."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model_store", "Model store not initialized")
+        return
+    updated = await mdl.async_update(floors=msg.get("floors"), room_meta=msg.get("room_meta"))
+    connection.send_result(msg["id"], updated)
 
 
 @callback
@@ -321,6 +378,7 @@ async def ws_maps_list(hass: HomeAssistant, connection, msg) -> None:
         "width": int,
         "height": int,
         "png_base64": str,
+        vol.Optional("floor_id"): str,
     }
 )
 @websocket_api.async_response
@@ -336,6 +394,7 @@ async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
         msg.get("width") or 0,
         msg.get("height") or 0,
         msg.get("png_base64") or "",
+        msg.get("floor_id") or DEFAULT_FLOOR_ID,
     )
     connection.send_result(msg["id"], {"map": info})
 
@@ -347,6 +406,8 @@ async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
         "receivers": list,
         "calibration": dict,
         "notes": str,
+        vol.Optional("floor_id"): str,
+        vol.Optional("room_bounds"): dict,
     }
 )
 @websocket_api.async_response
@@ -362,6 +423,8 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
             receivers=msg.get("receivers"),
             calibration=msg.get("calibration"),
             notes=msg.get("notes"),
+            floor_id=msg.get("floor_id"),
+            room_bounds=msg.get("room_bounds"),
         )
     except KeyError:
         connection.send_error(msg["id"], "not_found", "Map not found")

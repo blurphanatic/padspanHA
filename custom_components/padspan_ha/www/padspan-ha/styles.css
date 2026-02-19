@@ -18,6 +18,7 @@
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #3b4f75;font-size:11px;margin-right:6px;margin-bottom:6px}
 .item{display:flex;gap:8px;align-items:center;padding:6px;border-radius:8px}
+.roomdot{width:10px;height:10px;border-radius:999px;display:inline-block;flex:0 0 10px;box-shadow:0 0 0 2px rgba(255,255,255,.08)}
 .rooms,.tags{max-height:420px;overflow:auto;background:#0d1628;border:1px solid var(--line);border-radius:12px;padding:8px}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .btn.inline{width:auto;margin-top:0}
@@ -58,4 +59,30 @@
   .app{grid-template-columns:1fr}
   .left{position:fixed;inset:0 auto 0 0;width:320px;transform:translateX(-100%);transition:transform .2s ease;z-index:60}
   .app.mobile-open .left{transform:translateX(0)}
+}
+
+
+/* --- 0.4.3: room overlays + color dots --- */
+.dot{
+  width:10px;
+  height:10px;
+  border-radius:999px;
+  display:inline-block;
+  border:1px solid rgba(255,255,255,0.35);
+}
+
+.mapvector{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  pointer-events:none; /* keep drag/click interactions on overlay */
+}
+
+.marker.selected{
+  outline: 2px solid rgba(255,255,255,0.85);
+  box-shadow: 0 0 0 3px rgba(122,162,255,0.35);
+}
+.btn.primary{
+  outline:2px solid rgba(122,162,255,0.65);
 }

@@ -30,8 +30,8 @@ import * as Diagnostics from "./views/diagnostics.js";
 import * as QA from "./views/qa.js";
 import * as Sandbox from "./views/sandbox.js";
 
-const APP_VERSION = "0.4.1";
-const BUILD_ID = "20260218T211256Z";
+const APP_VERSION = "0.4.3";
+const BUILD_ID = "20260219T022555Z";
 
 const VIEWS = {
   overview: Overview,
@@ -91,6 +91,25 @@ function el(tag, attrs={}, children=[]){
   }
   return n;
 }
+
+function _hash32(str){
+  let h = 2166136261;
+  for(let i=0;i<str.length;i++){
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+// Deterministic room color (stable across sessions)
+function roomColor(roomName, model){
+  const meta = model && model.room_meta ? model.room_meta[String(roomName ?? "")] : null;
+  if(meta && meta.color) return String(meta.color);
+  const s = String(roomName ?? "");
+  const h = _hash32(s) % 360;
+  // Slightly different lightness for readability on dark bg
+  return `hsl(${h} 70% 55%)`;
+}
+
 function pill(text){ return el("span",{class:"pill"}, text); }
 
 class PadSpanHaApp extends HTMLElement {
@@ -105,6 +124,7 @@ class PadSpanHaApp extends HTMLElement {
       dataMode: "sample",          // sample | live
       status: {},
       roomTagMap: {},
+      model: { floors: [], room_meta: {} },
       live: { snapshot: null, sources: null, error: null },
       maps: { list: [], lastError: null },
       mapsTab: "library",
@@ -274,6 +294,17 @@ class PadSpanHaApp extends HTMLElement {
     }
   }
 
+
+  async _getModel(){
+    try {
+      const res = await this._callWS({ type: "padspan_ha/model_get" });
+      this.state.model = { floors: res?.floors || [], room_meta: res?.room_meta || {} };
+    } catch (e) {
+      // non-fatal
+      console.warn("model_get failed", e);
+    }
+  }
+
   async _runAutoDiag(userAction=false){
     try {
       const t0 = performance.now();
@@ -303,6 +334,7 @@ class PadSpanHaApp extends HTMLElement {
       this._getRoomTags(),
       this._getLiveSnapshot(),
       this._getMapsList(),
+      this._getModel(),
       this._runAutoDiag(false),
     ]);
     this.state.timing.lastRefreshMs = Math.round(performance.now() - t0);
@@ -335,7 +367,7 @@ class PadSpanHaApp extends HTMLElement {
     return {
       hass: this._hass,
       state: this.state,
-      helpers: { el, esc, pill },
+      helpers: { el, esc, pill, roomColor: (n)=>roomColor(n, this.state.model) },
       actions: {
         // Simple actions used by views
         renderRooms: ()=>this._renderCurrentView(),
@@ -349,6 +381,7 @@ class PadSpanHaApp extends HTMLElement {
         mapsDelete: async (id)=>{ await this._callWS({ type:"padspan_ha/maps_delete", map_id:id }); await this._getMapsList(); if(this.state.activeMapId===id) this.state.activeMapId=null; this._renderCurrentView(); },
         mapsUpload: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_upload"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         mapsUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
+        modelUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/model_update"}, payload)); await this._getModel(); this._renderCurrentView(); },
       },
       toast: (m, isErr=false)=>this._toast(m, isErr),
     };

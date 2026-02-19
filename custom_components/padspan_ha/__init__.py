@@ -27,9 +27,11 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DATA_SETTINGS,
     DATA_MAPS,
+    DATA_MODEL,
 )
 from .coordinator import PadSpanCoordinator
 from .maps_store import MapsStore
+from .model_store import ModelStore
 from .panel import async_setup_panel
 from .settings_store import SettingsStore
 from .websocket import async_register_websockets
@@ -57,6 +59,12 @@ async def _ensure_stores(hass: HomeAssistant) -> None:
         await ms.async_setup()
         hass.data[DOMAIN][DATA_MAPS] = ms
         _LOGGER.debug("MapsStore ready (%s)", ms.maps_dir)
+
+    if DATA_MODEL not in hass.data[DOMAIN]:
+        mdl = ModelStore(hass)
+        await mdl.async_setup()
+        hass.data[DOMAIN][DATA_MODEL] = mdl
+        _LOGGER.debug("ModelStore ready (%d floors, %d rooms)", len(mdl.floors()), len(mdl.room_meta()))
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -114,6 +122,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coord.api_key = str(entry.data.get(CONF_API_KEY, ""))
     coord.scan_interval = int(entry.options.get(CONF_SCAN_INTERVAL, entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)))
     coord.ensure_defaults()
+
+    # Ensure room metadata exists for all rooms
+    try:
+        mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+        if mdl:
+            await mdl.async_ensure_rooms(list(coord.room_tag_map.keys()))
+    except Exception as err:
+        _LOGGER.exception("ModelStore room ensure failed: %s", err)
+
     coord.mark_success()
 
     # Forward platforms (safe even if they don't create entities yet)

@@ -64,7 +64,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
         sidebar_title="PadSpan HA",
         sidebar_icon="mdi:radar",
         require_admin=False,
-        module_url=f"{STATIC_URL}/padspan-ha/panel.js?v={VERSION}&cb=full",
+        module_url=f"{STATIC_URL}/padspan-ha/panel.js?v={VERSION}&b={BUILD_ID}&cb=full",
         config={
             "title": "PadSpan HA",
             "icon": f"{STATIC_URL}/padspan-ha/assets/padspan-mark.svg",

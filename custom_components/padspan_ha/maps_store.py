@@ -12,7 +12,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from .const import MAPS_STORE_KEY, MAPS_DIR
+from .const import MAPS_STORE_KEY, MAPS_DIR, DEFAULT_FLOOR_ID
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -48,6 +48,14 @@ class MapsStore:
             m.setdefault("receivers", [])
             m.setdefault("calibration", {"mode": "none", "px_per_meter": None, "reference_points": []})
             m.setdefault("notes", "")
+            m.setdefault("floor_id", DEFAULT_FLOOR_ID)
+            m.setdefault("room_bounds", {})
+            # Normalize receivers to include optional room assignment
+            recs = m.get("receivers") or []
+            if isinstance(recs, list):
+                for r in recs:
+                    if isinstance(r, dict):
+                        r.setdefault("room", "")
             m.setdefault("created", _now_iso())
             m.setdefault("updated", m.get("created", _now_iso()))
 
@@ -62,7 +70,7 @@ class MapsStore:
                 return m
         return None
 
-    async def async_add_map(self, name: str, filename: str, mime: str, width: int, height: int, png_base64: str) -> dict[str, Any]:
+    async def async_add_map(self, name: str, filename: str, mime: str, width: int, height: int, png_base64: str, floor_id: str | None = None) -> dict[str, Any]:
         raw = base64.b64decode(png_base64)
         map_id = os.urandom(8).hex()
         file_name = f"{map_id}.png"
@@ -86,6 +94,8 @@ class MapsStore:
             },
             "calibration": {"mode": "none", "px_per_meter": None, "reference_points": []},
             "receivers": [],
+            "room_bounds": {},
+            "floor_id": str(floor_id or DEFAULT_FLOOR_ID)[:40],
             "notes": "",
         }
 
@@ -94,7 +104,7 @@ class MapsStore:
         await self.store.async_save(self.data)
         return info
 
-    async def async_update_map(self, map_id: str, *, receivers: list[dict[str, Any]] | None = None, calibration: dict[str, Any] | None = None, notes: str | None = None) -> dict[str, Any]:
+    async def async_update_map(self, map_id: str, *, receivers: list[dict[str, Any]] | None = None, calibration: dict[str, Any] | None = None, notes: str | None = None, floor_id: str | None = None, room_bounds: dict[str, Any] | None = None) -> dict[str, Any]:
         m = self.get_map(map_id)
         if not m:
             raise KeyError("not_found")
@@ -109,6 +119,7 @@ class MapsStore:
                     "label": str(r.get("label") or "")[:120],
                     "x": float(r.get("x") or 0.0),
                     "y": float(r.get("y") or 0.0),
+                    "room": str(r.get("room") or "")[:120],
                 }
                 rx["x"] = max(0.0, min(1.0, rx["x"]))
                 rx["y"] = max(0.0, min(1.0, rx["y"]))
@@ -125,6 +136,45 @@ class MapsStore:
 
         if notes is not None:
             m["notes"] = str(notes)[:10000]
+
+        if floor_id is not None:
+            m["floor_id"] = str(floor_id or DEFAULT_FLOOR_ID)[:40]
+
+        if isinstance(room_bounds, dict):
+            # room_bounds: { roomName: {type:"poly", points:[[x,y],...]} | {type:"circle", cx,cy,r} }
+            clean_rb: dict[str, Any] = {}
+            for room, b in room_bounds.items():
+                if not isinstance(room, str) or not isinstance(b, dict):
+                    continue
+                rname = room[:120]
+                btype = str(b.get("type") or "poly")
+                if btype == "poly":
+                    pts = b.get("points")
+                    if not isinstance(pts, list) or len(pts) < 3:
+                        continue
+                    clean_pts = []
+                    for p in pts:
+                        if not isinstance(p, (list, tuple)) or len(p) < 2:
+                            continue
+                        x = float(p[0])
+                        y = float(p[1])
+                        x = max(0.0, min(1.0, x))
+                        y = max(0.0, min(1.0, y))
+                        clean_pts.append([x, y])
+                    if len(clean_pts) >= 3:
+                        clean_rb[rname] = {"type": "poly", "points": clean_pts}
+                elif btype == "circle":
+                    try:
+                        cx = float(b.get("cx") or 0.5)
+                        cy = float(b.get("cy") or 0.5)
+                        rr = float(b.get("r") or 0.12)
+                        cx = max(0.0, min(1.0, cx))
+                        cy = max(0.0, min(1.0, cy))
+                        rr = max(0.01, min(0.5, rr))
+                        clean_rb[rname] = {"type": "circle", "cx": cx, "cy": cy, "r": rr}
+                    except Exception:
+                        continue
+            m["room_bounds"] = clean_rb
 
         m["updated"] = _now_iso()
         await self.store.async_save(self.data)
