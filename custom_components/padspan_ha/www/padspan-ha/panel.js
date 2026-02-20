@@ -34,7 +34,7 @@ import * as Sandbox from "./views/sandbox.js?b=20260220T200000Z";
 
 const APP_VERSION = "0.4.29";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260220T185639Z";
+const BUILD_ID = "20260220T234804Z";
 
 const VIEWS = {
   overview: Overview,
