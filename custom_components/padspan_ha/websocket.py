@@ -41,6 +41,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_model_update)
     websocket_api.async_register_command(hass, ws_object_label_set)
     websocket_api.async_register_command(hass, ws_object_label_delete)
+    websocket_api.async_register_command(hass, ws_radio_area_set)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -139,29 +140,55 @@ async def ws_version(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/model_get"})
 @websocket_api.async_response
 async def ws_model_get(hass: HomeAssistant, connection, msg) -> None:
-    """Return floors + per-room metadata (floor assignment + color)."""
+    """Return floors from HA floor registry, areas from HA area registry, and per-room metadata."""
+    # --- Floors: prefer HA floor registry (HA 2024.1+), fall back to ModelStore ---
+    floors: list[dict[str, Any]] = []
+    try:
+        from homeassistant.helpers import floor_registry as fr_helper
+        fr = fr_helper.async_get(hass)
+        floors = [
+            {"id": f.floor_id, "name": f.name}
+            for f in sorted(fr.async_list_floors(), key=lambda x: (getattr(x, "level", 0) or 0, x.name))
+        ]
+    except Exception:
+        pass
+    if not floors:
+        mdl_fb = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+        floors = mdl_fb.floors() if mdl_fb else [{"id": DEFAULT_FLOOR_ID, "name": "Main Floor"}]
+
+    # --- Areas: from HA area registry ---
+    areas: list[dict[str, Any]] = []
+    try:
+        ar_r = area_registry.async_get(hass)
+        areas = [
+            {"id": a.id, "name": a.name, "floor_id": getattr(a, "floor_id", None) or DEFAULT_FLOOR_ID}
+            for a in sorted(ar_r.async_list_areas(), key=lambda x: x.name)
+        ]
+    except Exception:
+        pass
+
+    # --- Room meta: from ModelStore ---
     mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
-    if not mdl:
-        connection.send_result(msg["id"], {"floors": [{"id": DEFAULT_FLOOR_ID, "name": "Main Floor"}], "room_meta": {}})
-        return
-    connection.send_result(msg["id"], mdl.snapshot())
+    room_meta = mdl.room_meta() if mdl else {}
+
+    connection.send_result(msg["id"], {"floors": floors, "areas": areas, "room_meta": room_meta})
 
 
 @websocket_api.websocket_command(
     {
         "type": "padspan_ha/model_update",
-        vol.Optional("floors"): list,
+        vol.Optional("floors"): list,  # accepted for schema compat; ignored — floors come from HA
         vol.Optional("room_meta"): dict,
     }
 )
 @websocket_api.async_response
 async def ws_model_update(hass: HomeAssistant, connection, msg) -> None:
-    """Update floors and/or room_meta. Partial updates are allowed."""
+    """Update room_meta (color, floor assignment). Floors are read-only from HA floor registry."""
     mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
     if not mdl:
         connection.send_error(msg["id"], "no_model_store", "Model store not initialized")
         return
-    updated = await mdl.async_update(floors=msg.get("floors"), room_meta=msg.get("room_meta"))
+    updated = await mdl.async_update(room_meta=msg.get("room_meta"))
     connection.send_result(msg["id"], updated)
 
 
@@ -478,31 +505,34 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     # Do NOT overwrite it here — a second bl.get_snapshot() call could return
     # empty data if get_bluetooth_live() returns None, wiping all BLE ads.
 
-    # Attach area_name to radios (best-effort, based on HA device_registry)
+    # Attach area_name and device_id to radios (best-effort, from HA device_registry)
     try:
         dr_ar = device_registry.async_get(hass)
         ar_reg = area_registry.async_get(hass)
         area_names = {a.id: a.name for a in ar_reg.async_list_areas()}
-        # Build name → area lookup from all HA devices
+        # Build name → area and name → device_id lookup from all HA devices
         name_to_area: dict[str, str] = {}
+        name_to_dev_id: dict[str, str] = {}
         for dev in dr_ar.devices.values():
-            if not dev.area_id:
-                continue
-            area = area_names.get(dev.area_id, "")
-            if not area:
-                continue
             for cand in [dev.name_by_user, dev.name]:
-                if cand:
-                    name_to_area[cand.lower()] = area
+                if not cand:
+                    continue
+                key = cand.lower()
+                name_to_dev_id[key] = dev.id
+                if dev.area_id:
+                    area = area_names.get(dev.area_id, "")
+                    if area:
+                        name_to_area[key] = area
         # Match each radio source/name against HA devices
         for radio in ((snapshot.get("ble") or {}).get("radios") or []):
-            if radio.get("area_name"):
-                continue
             src = str(radio.get("source") or "").lower()
             rname = str(radio.get("name") or "").lower()
-            for key, area in name_to_area.items():
+            for key in name_to_dev_id:
                 if key and (key in src or src in key or key in rname or rname in key):
-                    radio["area_name"] = area
+                    if not radio.get("device_id"):
+                        radio["device_id"] = name_to_dev_id[key]
+                    if not radio.get("area_name") and key in name_to_area:
+                        radio["area_name"] = name_to_area[key]
                     break
     except Exception:
         pass
@@ -917,3 +947,60 @@ async def ws_object_label_delete(hass: HomeAssistant, connection, msg) -> None:
     if addr:
         await obj_store.async_delete(addr)
     connection.send_result(msg["id"], {"ok": True, "address": addr})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/radio_area_set",
+        vol.Optional("device_id"): str,
+        vol.Optional("source"): str,
+        vol.Optional("area_name"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_radio_area_set(hass: HomeAssistant, connection, msg) -> None:
+    """Assign a BLE radio/scanner to an HA area (updates HA device registry). area_name='' to clear."""
+    dev_id = (msg.get("device_id") or "").strip()
+    source = (msg.get("source") or "").strip()
+    area_name = (msg.get("area_name") or "").strip()
+
+    # Resolve device_id from source string if not provided directly
+    if not dev_id and source:
+        try:
+            dr_r = device_registry.async_get(hass)
+            src_l = source.lower()
+            for dev in dr_r.devices.values():
+                for nm in [dev.name_by_user, dev.name]:
+                    if nm and (nm.lower() in src_l or src_l in nm.lower()):
+                        dev_id = dev.id
+                        break
+                if dev_id:
+                    break
+        except Exception:
+            pass
+
+    if not dev_id:
+        connection.send_error(msg["id"], "device_not_found", "Could not find HA device for this radio source")
+        return
+
+    # Resolve area_id from area_name (blank → clear area assignment)
+    area_id: str | None = None
+    if area_name:
+        try:
+            ar_r = area_registry.async_get(hass)
+            for a in ar_r.async_list_areas():
+                if a.name.casefold() == area_name.casefold():
+                    area_id = a.id
+                    break
+        except Exception:
+            pass
+        if not area_id:
+            connection.send_error(msg["id"], "area_not_found", f"Area '{area_name}' not found in HA area registry")
+            return
+
+    try:
+        dr_u = device_registry.async_get(hass)
+        dr_u.async_update_device(dev_id, area_id=area_id)
+        connection.send_result(msg["id"], {"ok": True, "device_id": dev_id, "area_id": area_id, "area_name": area_name or None})
+    except Exception as e:
+        connection.send_error(msg["id"], "update_failed", str(e))

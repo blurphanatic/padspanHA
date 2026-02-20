@@ -82,17 +82,27 @@ export function render(ctx){
   function openRadiosList(){
     const body = el("div",{});
     const r = radios || [];
+    const areas = (liveSnap && Array.isArray(liveSnap.rooms_discovered)) ? liveSnap.rooms_discovered : [];
     body.appendChild(el("div",{class:"controls"},[
       el("span",{class:"badge"}, `${r.length} radios`),
-      el("span",{class:"badge"}, "Source = HA scanner/proxy"),
+      el("span",{class:"badge"}, "Areas read from HA device registry"),
     ]));
-    const rows = r.map((x)=>el("tr",{},[
-      el("td",{}, x.name || ""),
-      el("td",{}, x.source || ""),
-      el("td",{}, (x.adapter!=null?String(x.adapter):"")),
-      el("td",{}, (x.scanning==null?"":String(x.scanning))),
-      el("td",{}, (x.connectable==null?"":String(x.connectable))),
-    ]));
+    const rows = r.map((x)=>{
+      const assignBtn = el("button",{class:"btn tiny"}, x.area_name ? "Change" : "Assign");
+      assignBtn.addEventListener("click",(e)=>{
+        e.stopPropagation();
+        openAreaAssign(x, areas);
+      });
+      return el("tr",{},[
+        el("td",{}, x.name || ""),
+        el("td",{}, x.source || ""),
+        el("td",{}, (x.adapter!=null?String(x.adapter):"")),
+        el("td",{}, (x.scanning==null?"":String(x.scanning))),
+        el("td",{}, (x.connectable==null?"":String(x.connectable))),
+        el("td",{}, x.area_name || "—"),
+        el("td",{}, assignBtn),
+      ]);
+    });
 
     body.appendChild(el("table",{class:"table"},[
       el("thead",{}, el("tr",{},[
@@ -101,10 +111,53 @@ export function render(ctx){
         el("th",{}, "Adapter"),
         el("th",{}, "Scanning"),
         el("th",{}, "Connectable"),
+        el("th",{}, "Area"),
+        el("th",{}, ""),
       ])),
-      el("tbody",{}, rows.length?rows:el("tr",{}, el("td",{colspan:5}, "No radios found. (Switch to Live mode + ensure Bluetooth is enabled in HA.)")))
+      el("tbody",{}, rows.length?rows:el("tr",{}, el("td",{colspan:7}, "No radios found. (Switch to Live mode + ensure Bluetooth is enabled in HA.)")))
     ]));
-    ctx.actions.openModal("Bluetooth Radios", body, "This mirrors HA Bluetooth scanners/proxies");
+    ctx.actions.openModal("Bluetooth Radios", body, "Areas read from HA — assign to update HA device registry");
+  }
+
+  function openAreaAssign(radio, areas){
+    if(dataMode !== "live"){
+      ctx.toast("Area assignment requires Live mode.", true);
+      return;
+    }
+    const sel = el("select",{class:"select"});
+    sel.appendChild(el("option",{value:""},"— No area (clear) —"));
+    for(const a of areas){
+      const opt = el("option",{value:a}, a);
+      if(a === radio.area_name) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    const status = el("div",{class:"muted", style:"min-height:20px;margin-top:6px"});
+    const saveBtn = el("button",{class:"btn"}, "Save");
+    const cancelBtn = el("button",{class:"btn inline"}, "Cancel");
+    cancelBtn.addEventListener("click", ()=>ctx.actions.closeModal());
+    saveBtn.addEventListener("click", async ()=>{
+      const area_name = sel.value;
+      saveBtn.disabled = true;
+      try {
+        const payload = { area_name };
+        if(radio.device_id) payload.device_id = radio.device_id;
+        else if(radio.source) payload.source = radio.source;
+        await ctx.actions.radioAreaSet(payload);
+        ctx.actions.closeModal();
+        ctx.toast(area_name ? `Area set to "${area_name}"` : "Area cleared");
+        await ctx.actions.refreshSnapshot();
+      } catch(e) {
+        status.textContent = "Failed to update area. Check HA logs.";
+        saveBtn.disabled = false;
+      }
+    });
+    const body = el("div",{},[
+      el("div",{class:"muted", style:"margin-bottom:8px"}, `Radio: ${radio.name || radio.source}`),
+      el("div",{style:"color:#94a3b8;font-size:12px;margin-bottom:10px"}, areas.length ? "Select an HA area for this scanner:" : "No HA areas found. Add areas in HA Settings → Areas & Zones."),
+      el("div",{class:"row",style:"gap:8px;flex-wrap:wrap"},[sel, saveBtn, cancelBtn]),
+      status,
+    ]);
+    ctx.actions.openModal("Assign Area", body, `HA area for "${radio.name || radio.source}"`);
   }
 
   async function fillVendorCell(mac, cell){

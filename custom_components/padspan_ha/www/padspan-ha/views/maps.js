@@ -125,24 +125,6 @@ function _upload(ctx){
   }
   if(!floorSel.value && floors[0]) floorSel.value = floors[0].id;
 
-  const newFloor = el("input",{type:"text", placeholder:"New floor name (optional) e.g., Upstairs"});
-  const addFloorBtn = el("button",{class:"btn inline", onclick: async ()=>{
-    const nm = (newFloor.value||"").trim();
-    if(!nm) return;
-    // Add locally then persist
-    const id = _slug(nm);
-    const next = [...floors];
-    if(!next.find(x=>x.id===id)){
-      next.push({id, name:nm});
-      await ctx.actions.modelUpdate({floors: next});
-      // refresh list in this view
-      newFloor.value = "";
-      ctx.actions.renderRooms();
-    } else {
-      floorSel.value = id;
-    }
-  }}, "Add Floor");
-
   const name = el("input",{type:"text", placeholder:"Map name (e.g., Main Floor)"});
   const maxw = el("input",{type:"text", placeholder:"Max size (e.g., 1600). Default 1600"});
   const file = document.createElement("input");
@@ -157,18 +139,7 @@ function _upload(ctx){
 
     // Floor is REQUIRED: either select existing or add new
     let floor_id = (floorSel.value||"").trim();
-    const nm = (newFloor.value||"").trim();
-    if(nm){
-      const id = _slug(nm);
-      const next = [...floors];
-      if(!next.find(x=>x.id===id)){
-        next.push({id, name:nm});
-        await ctx.actions.modelUpdate({floors: next});
-      }
-      floor_id = id;
-      newFloor.value = "";
-    }
-    if(!floor_id){ status.textContent = "Choose a floor (owner) before uploading."; return; }
+    if(!floor_id){ status.textContent = "Choose a floor (from HA) before uploading."; return; }
 
     status.textContent = "Reading…";
     try{
@@ -193,9 +164,8 @@ function _upload(ctx){
   }}, "Upload & Convert");
 
   card.appendChild(el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-top:10px"},[
-    el("div",{},[ el("div",{class:"muted",style:"font-size:12px;margin-bottom:4px"},"Floor (owner)"), floorSel ]),
-    el("div",{},[ newFloor ]),
-    addFloorBtn
+    el("div",{},[ el("div",{class:"muted",style:"font-size:12px;margin-bottom:4px"},"Floor (from HA)"), floorSel ]),
+    el("div",{class:"muted",style:"font-size:12px;align-self:flex-end;padding-bottom:4px"}, "Manage floors in HA Settings → Areas & Zones"),
   ]));
 
   card.appendChild(name);
