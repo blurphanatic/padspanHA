@@ -129,8 +129,9 @@ export function render(ctx) {
     el("pre", { class: "pre" }, esc(JSON.stringify({ tags: tagsRaw.slice(0, 100) }, null, 2))),
   ]);
 
-  // Unidentified BLE Objects section
+  // BLE Objects from scanner
   const objList = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
+  const taggedBle = objList.filter(o => o.kind === "ble" && (o.user_label || o.identified));
   const unidentifiedBle = objList.filter(o => o.kind === "ble" && !o.identified && !o.user_label);
 
   const unidentifiedSection = el("div", { class: "card" }, [
@@ -160,7 +161,34 @@ export function render(ctx) {
         })),
   ]);
 
-  return el("div", {}, [stats, controls, el("div", { class: "grid-2" }, [left, right]), unidentifiedSection, footer]);
+  const taggedBleSection = taggedBle.length === 0 ? null : el("div", { class: "card" }, [
+    el("div", { class: "row" }, [
+      el("div", { class: "h2", style: "flex:1" }, "Tagged BLE Objects"),
+      el("span", { class: "badge" }, `${taggedBle.length} tagged`),
+    ]),
+    el("div", { class: "muted", style: "margin-bottom:8px" }, "BLE devices you have labeled — these are tracked by your scanners."),
+    el("div", { class: "dev-tag-list list-scroll" }, taggedBle.slice(0, 200).map(o => {
+      const label = o.user_label || o.name || o.address || "Unknown";
+      const addr = o.address || "";
+      const sources = Array.isArray(o.sources) ? o.sources.join(", ") : "";
+      const rssi = o.rssi != null ? `RSSI ${o.rssi}` : "";
+      const age = o.age_s != null ? `${Math.round(Number(o.age_s))}s ago` : "";
+      const relabelBtn = el("button", { class: "btn tiny" }, "Relabel");
+      relabelBtn.addEventListener("click", () => ctx.actions.tagObjectPrompt(addr, o.user_label || ""));
+      return el("div", { class: "dev-tag" }, [
+        el("div", { class: "dev-tag-main" }, [
+          el("div", { class: "dev-tag-name" }, label),
+          el("div", { class: "dev-tag-sub" }, [addr, sources, rssi, age].filter(Boolean).join(" • ")),
+        ]),
+        el("div", { class: "dev-tag-right" }, [
+          el("span", { class: "pill good" }, "Tagged"),
+          relabelBtn,
+        ]),
+      ]);
+    })),
+  ]);
+
+  return el("div", {}, [stats, controls, el("div", { class: "grid-2" }, [left, right]), taggedBleSection, unidentifiedSection, footer].filter(Boolean));
 }
 
 function normalizeRoom(state) {

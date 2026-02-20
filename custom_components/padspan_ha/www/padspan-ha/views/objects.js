@@ -4,13 +4,14 @@ export function renderTags(ctx, tagsList) {
 
   const isLive = ctx.state.dataMode === "live";
   const roomTagMap = ctx.state.roomTagMap || {};
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const missingByRoom =
     ctx.state.missingRoomTagMap ||
-    (ctx.state.live && ctx.state.live.snapshot && ctx.state.live.snapshot.room_tag_map_missing) ||
+    (snap && snap.room_tag_map_missing) ||
     {};
 
   // Index live snapshot tags so we can show friendly names + state (not just entity_id).
-  const liveTags = isLive ? ((ctx.state.live && ctx.state.live.snapshot && ctx.state.live.snapshot.tags) || []) : [];
+  const liveTags = ((snap && snap.tags) || []);
   const liveIndex = {};
   const liveMissingIndex = {};
   for (const t of liveTags) {
@@ -26,31 +27,7 @@ export function renderTags(ctx, tagsList) {
   if (!ctx.state.selectedRooms || !Array.isArray(ctx.state.selectedRooms)) ctx.state.selectedRooms = rooms.slice(0, 1);
   if (ctx.state.selectedRooms.length === 0 && rooms.length) ctx.state.selectedRooms = [rooms[0]];
 
-  // Rooms list
   tagsList.innerHTML = "";
-  const roomsWrap = el("div", { class: "grid2" });
-  for (const room of rooms) {
-    const liveCount = (roomTagMap[room] || []).length;
-    const missCount = (missingByRoom[room] || []).length;
-
-    const pill = el("div", { class: "pill" });
-    pill.addEventListener("click", () => {
-      const sel = new Set(ctx.state.selectedRooms || []);
-      if (sel.has(room)) sel.delete(room);
-      else sel.add(room);
-      ctx.state.selectedRooms = Array.from(sel);
-      renderTags(ctx, tagsList);
-    });
-
-    const row = el("div", { class: "row" });
-    row.appendChild(el("span", { class: "label" }, room));
-    row.appendChild(el("span", { class: "muted" }, `(${liveCount}${missCount ? ` +${missCount} missing` : ""})`));
-    pill.appendChild(row);
-
-    if ((ctx.state.selectedRooms || []).includes(room)) pill.style.outline = "2px solid var(--acc)";
-    roomsWrap.appendChild(pill);
-  }
-  tagsList.appendChild(roomsWrap);
 
   // Selected tags
   const selectedRooms = (ctx.state.selectedRooms || []).filter(r => rooms.includes(r));
@@ -81,17 +58,15 @@ export function renderTags(ctx, tagsList) {
   // Empty state guidance (common when only placeholders exist).
   if (items.length === 0) {
     const missingTotal = Object.values(missingByRoom).reduce((a, v) => a + (Array.isArray(v) ? v.length : 0), 0);
-    if (isLive) {
-      list.appendChild(
-        el("div", { class: "muted", style: "padding:8px 4px" },
-          missingTotal
-            ? `No LIVE tags found. (${missingTotal} configured tags are missing in Home Assistant.)`
-            : "No LIVE tags found. If you expected tags, confirm your BLE integration is creating entities whose state equals a room/area (e.g., *area_last_seen)."
-        )
-      );
-    } else {
-      list.appendChild(el("div", { class: "muted", style: "padding:8px 4px" }, "No tags mapped for the selected room(s)."));
-    }
+    list.appendChild(
+      el("div", { class: "muted", style: "padding:8px 4px" },
+        missingTotal
+          ? `No tags found. (${missingTotal} configured tags are missing in Home Assistant.)`
+          : isLive
+            ? "No tags found. Confirm your BLE integration creates entities whose state equals a room/area (e.g., *area_last_seen)."
+            : "No tags mapped for the selected room(s)."
+      )
+    );
   }
 
   // Render each tag
@@ -155,7 +130,7 @@ export function render(ctx){
   // Inventory: unified Objects model (BLE advertisements + mapped entities)
   // ----------------------------
   const isLive = ctx.state.dataMode === "live";
-  const liveSnap = isLive ? (ctx.state.live && ctx.state.live.snapshot) : null;
+  const liveSnap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const objModel = liveSnap && liveSnap.objects ? liveSnap.objects : null;
 
   const fmtAgo = (age_s)=>{
@@ -332,15 +307,13 @@ export function render(ctx){
   };
 
   const inventoryCard = el("div",{class:"card"},[
-    el("div",{class:"muted"},"Inventory (Bluetooth objects)"),
-    (!isLive ? el("div",{class:"muted"},"Switch Data Mode to Live to populate BLE objects.") : null),
-    (isLive && objModel && objModel.summary ? el("div",{class:"row", style:"gap:12px;flex-wrap:wrap"},[
+    el("div",{class:"muted"},"BLE Scanner Detections — devices seen by your Bluetooth scanners"),
+    (objModel && objModel.summary ? el("div",{class:"row", style:"gap:12px;flex-wrap:wrap"},[
       el("span",{class:"badge"}, `${fmtNum(objModel.summary.total||0)} total`),
       el("span",{class:"badge warn"}, `${fmtNum(objModel.summary.unidentified||0)} unidentified`),
       el("button",{class:"btn", onclick:()=>openObjectsModal("all")},"All objects"),
       el("button",{class:"btn", onclick:()=>openObjectsModal("unidentified")},"Unidentified"),
-    ]) : null),
-    (isLive && (!objModel || !objModel.summary) ? el("div",{class:"muted"},"Waiting for first snapshot…") : null)
+    ]) : el("div",{class:"muted"},isLive ? "Waiting for first snapshot…" : "No scanner data — switch to Live mode to see real BLE detections."))
   ]);
   root.appendChild(inventoryCard);
 
@@ -348,9 +321,11 @@ export function render(ctx){
   const roomsList = el("div",{class:"rooms", id:"rooms"});
   const tagsList = el("div",{class:"tags", id:"tags"});
 
-  const rooms = (ctx.state.dataMode==="live" && ctx.state.live?.snapshot?.rooms_discovered?.length)
-    ? [...ctx.state.live.snapshot.rooms_discovered].sort((a,b)=>a.localeCompare(b))
-    : Object.keys(roomTagMap||{}).sort((a,b)=>a.localeCompare(b));
+  const rooms = (() => {
+    const disc = liveSnap && liveSnap.rooms_discovered;
+    if (disc && disc.length) return [...disc].sort((a,b)=>a.localeCompare(b));
+    return Object.keys(roomTagMap||{}).sort((a,b)=>a.localeCompare(b));
+  })();
   // Ensure at least one room selected so tags list has context.
   if (selectedRooms.size === 0 && rooms.length) { selectedRooms.add(rooms[0]); ctx.state.selectedRooms = Array.from(selectedRooms); }
   if(!rooms.length){

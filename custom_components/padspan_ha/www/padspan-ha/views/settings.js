@@ -39,7 +39,7 @@ export function render(ctx){
 
   const list = el("div",{style:"margin-top:10px;display:flex;flex-direction:column;gap:8px"});
   for(const f of (draft.floors||[])){
-    const row = el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;border:1px solid #2d4673;border-radius:12px;padding:10px;background:#0b1426"});
+    const row = el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;border:1px solid #1b3526;border-radius:12px;padding:10px;background:#0a150e"});
     const left = el("div",{style:"display:flex;gap:10px;align-items:center;flex-wrap:wrap"},[
       el("div",{class:"pill"}, f.id),
     ]);
@@ -69,7 +69,13 @@ export function render(ctx){
     "Assign each room to a floor and pick a color for sidebar + map overlays."
   ));
 
-  const rooms = Object.keys(ctx.state.roomTagMap||{}).sort();
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const rooms = (() => {
+    // Prefer rooms_discovered — these come directly from the HA Area Registry
+    const disc = snap && snap.rooms_discovered;
+    if (disc && disc.length) return [...disc].sort((a,b) => a.localeCompare(b));
+    return Object.keys(ctx.state.roomTagMap||{}).sort((a,b) => a.localeCompare(b));
+  })();
 
   const table = el("div",{style:"margin-top:10px;display:flex;flex-direction:column;gap:8px"});
   for(const room of rooms){
@@ -77,7 +83,7 @@ export function render(ctx){
     if(!draft.room_meta[room]) draft.room_meta[room] = { floor_id: "main", color: _toHex(roomColor(room)) };
 
     const meta = draft.room_meta[room];
-    const row = el("div",{style:"display:grid;grid-template-columns: 1fr 160px 90px;gap:10px;align-items:center;border:1px solid #2d4673;border-radius:12px;padding:10px;background:#0b1426"});
+    const row = el("div",{style:"display:grid;grid-template-columns: 1fr 160px 90px;gap:10px;align-items:center;border:1px solid #1b3526;border-radius:12px;padding:10px;background:#0a150e"});
     row.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;flex-wrap:wrap"},[
       el("span",{class:"dot", style:`background:${meta.color || roomColor(room)};`}),
       el("div",{style:"font-weight:600"}, room),

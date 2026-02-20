@@ -571,8 +571,11 @@ class PadSpanHaApp extends HTMLElement {
     const status = el("div",{class:"muted", style:"min-height:20px;margin-top:6px"});
 
     const saveBtn = el("button",{class:"btn"}, currentLabel ? "Update label" : "Save label");
-    const clearBtn = el("button",{class:"btn"}, "Remove label");
-    clearBtn.style.display = currentLabel ? "" : "none";
+    const clearBtn = el("button",{class:"btn"}, "Untag");
+    clearBtn.disabled = !currentLabel;
+    clearBtn.title = currentLabel ? `Remove label "${currentLabel}"` : "No label to remove";
+    const cancelBtn = el("button",{class:"btn inline"}, "Cancel");
+    cancelBtn.addEventListener("click", ()=>this._closeModal());
 
     saveBtn.addEventListener("click", async ()=>{
       const label = input.value.trim();
@@ -605,7 +608,7 @@ class PadSpanHaApp extends HTMLElement {
 
     const body = el("div",{}, [
       el("div",{class:"muted", style:"margin-bottom:8px"}, `BLE address: ${addr}`),
-      el("div",{class:"row", style:"gap:8px;flex-wrap:wrap"}, [input, saveBtn, clearBtn]),
+      el("div",{class:"row", style:"gap:8px;flex-wrap:wrap"}, [input, saveBtn, clearBtn, cancelBtn]),
       status,
     ]);
     this._openModal("Tag BLE Object", body, "Assign a human-readable label to identify this device");
