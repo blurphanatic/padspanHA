@@ -78,6 +78,11 @@ function _library(ctx, maps, activeId){
   ]);
 
   if(!maps.length){
+    if(ctx.state.dataMode !== "live"){
+      // Sample mode: show the demo house floor plan
+      wrap.innerHTML = "";
+      return _sampleDemo(ctx);
+    }
     wrap.appendChild(el("div",{class:"muted", style:"margin-top:10px"},"No maps yet. Go to Upload tab."));
     return wrap;
   }
@@ -827,4 +832,176 @@ function _help(ctx){
     "• Next step after this: calibration layers (physical/distortion maps) + per-room fit, then drag-and-drop tag trajectories to validate.",
   ]));
   return card;
+}
+
+// ─── Sample Mode Demo Floor Plan ────────────────────────────────────────────
+
+function _sampleDemo(ctx){
+  const { el } = ctx.helpers;
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const fp = (snap && snap.floor_plan) || null;
+
+  const card = el("div",{class:"card"});
+  card.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;margin-bottom:4px"},[
+    el("div",{style:"font-weight:700;font-size:16px"}, "Demo Floor Plan — Smith Residence"),
+    el("span",{class:"badge"}, "Sample"),
+  ]));
+  card.appendChild(el("div",{class:"muted",style:"margin-bottom:12px"},
+    "This shows a fully-configured system. Switch to Live mode and upload your own floor plan to get started."));
+
+  const svgWrap = el("div",{style:"overflow:auto;border-radius:8px;background:#071008;padding:8px"});
+  svgWrap.innerHTML = _buildDemoSVG(fp);
+  card.appendChild(svgWrap);
+
+  // Legend
+  const legend = el("div",{style:"display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:#94a3b8"});
+  [
+    ["#52b788", "BLE Scanner"],
+    ["#52b788", "HA Entity (phone/tracker)", "circle"],
+    ["#5eead4", "Tagged BLE object", "square"],
+    ["#f59e0b", "Unidentified BLE", "triangle"],
+  ].forEach(([color, label, shape]) => {
+    const icon = document.createElement("div");
+    icon.style.cssText = `width:12px;height:12px;flex-shrink:0;background:${color};border-radius:${shape==="square"?"2px":shape==="triangle"?"0":"50%"};clip-path:${shape==="triangle"?"polygon(50% 0%,100% 100%,0% 100%)":"none"}`;
+    legend.appendChild(el("div",{style:"display:flex;align-items:center;gap:6px"},[icon, el("span",{},label)]));
+  });
+  card.appendChild(legend);
+  return card;
+}
+
+function _buildDemoSVG(fp){
+  const rooms = (fp && fp.rooms) || [
+    { id:"living_room",    name:"Living Room",    x:10,  y:10,  w:370, h:200, color:"#52b788" },
+    { id:"kitchen",        name:"Kitchen",        x:390, y:10,  w:400, h:200, color:"#4caf50" },
+    { id:"hallway",        name:"Hallway",        x:10,  y:220, w:780, h:40,  color:"#388e3c" },
+    { id:"office",         name:"Office",         x:10,  y:270, w:230, h:160, color:"#43a047" },
+    { id:"master_bedroom", name:"Master Bedroom", x:250, y:270, w:540, h:160, color:"#66bb6a" },
+  ];
+  const radios = (fp && fp.radios) || [
+    { name:"Living Room Hub", x:185, y:95  },
+    { name:"Bedroom Hub",     x:520, y:345 },
+    { name:"Kitchen Hub",     x:590, y:95  },
+  ];
+  const objects = (fp && fp.objects) || [
+    { name:"Alice's Phone",  x:140, y:155, type:"entity",       color:"#52b788" },
+    { name:"Bob's Phone",    x:360, y:380, type:"entity",       color:"#52b788" },
+    { name:"Car Keys",       x:280, y:75,  type:"tagged_ble",   color:"#5eead4" },
+    { name:"Wallet",         x:90,  y:175, type:"tagged_ble",   color:"#5eead4" },
+    { name:"Backpack",       x:555, y:155, type:"tagged_ble",   color:"#5eead4" },
+    { name:"?? Unknown",     x:400, y:370, type:"unidentified", color:"#f59e0b" },
+    { name:"?? Unknown",     x:210, y:45,  type:"unidentified", color:"#f59e0b" },
+  ];
+
+  let s = `<svg viewBox="0 0 810 460" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:520px;display:block;font-family:system-ui,sans-serif">`;
+
+  // Background
+  s += `<rect width="810" height="460" fill="#071008"/>`;
+
+  // Room fills
+  for(const r of rooms){
+    s += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${r.color}12" stroke="${r.color}" stroke-width="2"/>`;
+  }
+
+  // Furniture — Living Room
+  s += `<rect x="25" y="148" width="140" height="48" fill="#1a3525" stroke="#2a5038" stroke-width="1" rx="4"/>`; // sofa
+  s += `<rect x="25" y="148" width="140" height="13" fill="#1d3d2a" stroke="#2a5038" stroke-width="0.5" rx="2"/>`; // sofa back
+  s += `<rect x="60" y="118" width="85" height="32" fill="#111e17" stroke="#1c3225" stroke-width="1" rx="2"/>`; // coffee table
+  s += `<rect x="335" y="18" width="32" height="85" fill="#1a3525" stroke="#2a5038" stroke-width="1" rx="2"/>`; // bookshelf
+
+  // Furniture — Kitchen
+  s += `<rect x="395" y="14" width="392" height="38" fill="#1a3525" stroke="#2a5038" stroke-width="1"/>`; // counter top
+  s += `<rect x="395" y="14" width="38" height="192" fill="#1a3525" stroke="#2a5038" stroke-width="1"/>`; // counter left
+  s += `<rect x="488" y="78" width="135" height="70" fill="#1a3525" stroke="#2a5038" stroke-width="1" rx="3"/>`; // island
+  s += `<circle cx="555" cy="113" r="22" fill="none" stroke="#2a5038" stroke-width="1.5" stroke-dasharray="3,2"/>`; // cooktop
+
+  // Furniture — Master Bedroom
+  s += `<rect x="428" y="293" width="205" height="125" fill="#1a3525" stroke="#2a5038" stroke-width="1" rx="5"/>`; // bed
+  s += `<rect x="432" y="297" width="88" height="42" fill="#1c3a28" stroke="#2a5038" stroke-width="0.5" rx="3"/>`; // pillow L
+  s += `<rect x="548" y="297" width="81" height="42" fill="#1c3a28" stroke="#2a5038" stroke-width="0.5" rx="3"/>`; // pillow R
+  s += `<rect x="397" y="293" width="26" height="26" fill="#111e17" stroke="#1c3225" stroke-width="1" rx="2"/>`; // nightstand L
+  s += `<rect x="638" y="293" width="26" height="26" fill="#111e17" stroke="#1c3225" stroke-width="1" rx="2"/>`; // nightstand R
+  s += `<rect x="258" y="278" width="78" height="48" fill="#1a3525" stroke="#2a5038" stroke-width="1" rx="2"/>`; // dresser
+
+  // Furniture — Office
+  s += `<rect x="14" y="278" width="210" height="32" fill="#1a3525" stroke="#2a5038" stroke-width="1"/>`; // desk top
+  s += `<rect x="14" y="278" width="32" height="90" fill="#1a3525" stroke="#2a5038" stroke-width="1"/>`; // desk side
+  s += `<rect x="80" y="318" width="36" height="36" fill="#111e17" stroke="#1c3225" stroke-width="1" rx="18"/>`; // chair seat
+  s += `<rect x="88" y="350" width="20" height="12" fill="#1a3525" stroke="#2a5038" stroke-width="1" rx="2"/>`; // chair base
+
+  // Room labels
+  for(const r of rooms){
+    const cx = r.x + r.w/2;
+    const cy = r.y + (r.id === "hallway" ? 28 : 24);
+    s += `<text x="${cx}" y="${cy}" text-anchor="middle" fill="${r.color}" font-size="${r.id==="hallway"?"11":"13"}" font-weight="600" opacity="0.85">${r.name}</text>`;
+  }
+
+  // Doors (gap + arc swing)
+  const doors = [
+    {x:110,y:220,w:30,top:false}, // Living Room → Hallway
+    {x:470,y:210,w:30,top:false}, // Kitchen → Hallway (side)
+    {x:75, y:270,w:30,top:true},  // Office → Hallway
+    {x:415,y:270,w:30,top:true},  // Bedroom → Hallway
+  ];
+  for(const d of doors){
+    s += `<rect x="${d.x}" y="${d.y-3}" width="${d.w}" height="7" fill="#071008"/>`; // gap
+    const sweep = d.top ? 0 : 1;
+    s += `<path d="M${d.x},${d.y} a${d.w},${d.w} 0 0,${sweep} ${d.w},0" fill="none" stroke="#52b78855" stroke-width="1.5" stroke-dasharray="4,2"/>`;
+    s += `<line x1="${d.x}" y1="${d.y}" x2="${d.x}" y2="${d.top?d.y-d.w:d.y+d.w}" stroke="#52b78888" stroke-width="1.5" stroke-dasharray="2,2"/>`;
+  }
+
+  // Windows on exterior walls
+  const wins = [
+    {x1:10,y1:45,x2:10,y2:85,v:true},
+    {x1:10,y1:115,x2:10,y2:155,v:true},
+    {x1:450,y1:10,x2:560,y2:10,v:false},
+    {x1:640,y1:10,x2:750,y2:10,v:false},
+    {x1:790,y1:60,x2:790,y2:140,v:true},
+    {x1:300,y1:430,x2:410,y2:430,v:false},
+    {x1:500,y1:430,x2:630,y2:430,v:false},
+    {x1:40, y1:430,x2:120,y2:430,v:false},
+  ];
+  for(const w of wins){
+    s += `<line x1="${w.x1}" y1="${w.y1}" x2="${w.x2}" y2="${w.y2}" stroke="#4caf50" stroke-width="4" stroke-linecap="round"/>`;
+    const mx=(w.x1+w.x2)/2, my=(w.y1+w.y2)/2;
+    if(w.v) s += `<line x1="${mx-3}" y1="${my}" x2="${mx+3}" y2="${my}" stroke="#4caf5088" stroke-width="1.5"/>`;
+    else    s += `<line x1="${mx}" y1="${my-3}" x2="${mx}" y2="${my+3}" stroke="#4caf5088" stroke-width="1.5"/>`;
+  }
+
+  // Exterior outline (thick walls)
+  s += `<rect x="10" y="10" width="780" height="420" fill="none" stroke="#52b788" stroke-width="3" rx="2"/>`;
+
+  // BLE scanner markers (concentric rings)
+  for(const r of radios){
+    const {x,y,name} = r;
+    s += `<circle cx="${x}" cy="${y}" r="50" fill="none" stroke="#52b788" stroke-width="0.5" opacity="0.1"/>`;
+    s += `<circle cx="${x}" cy="${y}" r="32" fill="none" stroke="#52b788" stroke-width="0.8" opacity="0.2"/>`;
+    s += `<circle cx="${x}" cy="${y}" r="18" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.45"/>`;
+    s += `<circle cx="${x}" cy="${y}" r="8"  fill="#52b788" opacity="0.95"/>`;
+    s += `<circle cx="${x}" cy="${y}" r="3.5" fill="#071008"/>`;
+    s += `<text x="${x}" y="${y+28}" text-anchor="middle" fill="#52b788" font-size="9" opacity="0.8">${name}</text>`;
+  }
+
+  // Objects
+  for(const o of objects){
+    const {x,y,color,name,type} = o;
+    if(type === "entity"){
+      s += `<circle cx="${x}" cy="${y}" r="9" fill="${color}" opacity="0.95"/>`;
+      s += `<circle cx="${x}" cy="${y}" r="4" fill="#071008" opacity="0.6"/>`;
+    } else if(type === "tagged_ble"){
+      s += `<rect x="${x-8}" y="${y-8}" width="16" height="16" fill="${color}" opacity="0.95" rx="3"/>`;
+      s += `<rect x="${x-3}" y="${y-3}" width="6" height="6" fill="#071008" opacity="0.5" rx="1"/>`;
+    } else {
+      s += `<polygon points="${x},${y-10} ${x+9},${y+5} ${x-9},${y+5}" fill="${color}" opacity="0.85"/>`;
+    }
+    s += `<text x="${x}" y="${y-13}" text-anchor="middle" fill="${color}" font-size="9" font-weight="500">${name}</text>`;
+  }
+
+  // Title in top-right corner
+  s += `<rect x="620" y="375" width="175" height="46" fill="#0a150e" stroke="#1b3526" stroke-width="1" rx="4"/>`;
+  s += `<text x="632" y="391" fill="#52b788" font-size="10" font-weight="700">Smith Residence (Demo)</text>`;
+  s += `<text x="632" y="404" fill="#94a3b8" font-size="8">3 scanners · 5 objects · 5 rooms</text>`;
+  s += `<text x="632" y="415" fill="#52b78870" font-size="8">PadSpan HA Sample Mode</text>`;
+
+  s += `</svg>`;
+  return s;
 }
