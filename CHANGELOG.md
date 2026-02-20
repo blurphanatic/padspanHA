@@ -1,8 +1,5 @@
+<!-- Branch-dump packaging: manifest/version pinned to 0.4.2 per request (no zip_release). -->
 # Changelog
-
-## 0.4.16 (2026-02-19)
-- Fix: release asset + UI version/build stamp aligned for HACS updates.
-
 
 ## 0.4.15
 
