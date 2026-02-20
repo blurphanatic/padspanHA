@@ -13,28 +13,28 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260220T140000Z";
-import * as Overview from "./views/overview.js?b=20260220T140000Z";
-import * as Objects from "./views/objects.js?b=20260220T140000Z";
-import * as Devices from "./views/devices.js?b=20260220T140000Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260220T140000Z";
-import * as Presence from "./views/presence.js?b=20260220T140000Z";
-import * as Zones from "./views/zones.js?b=20260220T140000Z";
-import * as Insights from "./views/insights.js?b=20260220T140000Z";
-import * as History from "./views/history.js?b=20260220T140000Z";
-import * as Monitor from "./views/monitor.js?b=20260220T140000Z";
-import * as Maps from "./views/maps.js?b=20260220T140000Z";
-import * as Events from "./views/events.js?b=20260220T140000Z";
-import * as Health from "./views/health.js?b=20260220T140000Z";
-import * as Settings from "./views/settings.js?b=20260220T140000Z";
-import * as Debug from "./views/debug.js?b=20260220T140000Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260220T140000Z";
-import * as QA from "./views/qa.js?b=20260220T140000Z";
-import * as Sandbox from "./views/sandbox.js?b=20260220T140000Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260220T200000Z";
+import * as Overview from "./views/overview.js?b=20260220T200000Z";
+import * as Objects from "./views/objects.js?b=20260220T200000Z";
+import * as Devices from "./views/devices.js?b=20260220T200000Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260220T200000Z";
+import * as Presence from "./views/presence.js?b=20260220T200000Z";
+import * as Zones from "./views/zones.js?b=20260220T200000Z";
+import * as Insights from "./views/insights.js?b=20260220T200000Z";
+import * as History from "./views/history.js?b=20260220T200000Z";
+import * as Monitor from "./views/monitor.js?b=20260220T200000Z";
+import * as Maps from "./views/maps.js?b=20260220T200000Z";
+import * as Events from "./views/events.js?b=20260220T200000Z";
+import * as Health from "./views/health.js?b=20260220T200000Z";
+import * as Settings from "./views/settings.js?b=20260220T200000Z";
+import * as Debug from "./views/debug.js?b=20260220T200000Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260220T200000Z";
+import * as QA from "./views/qa.js?b=20260220T200000Z";
+import * as Sandbox from "./views/sandbox.js?b=20260220T200000Z";
 
-const APP_VERSION = "0.4.28";
+const APP_VERSION = "0.4.29";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260220T182204Z";
+const BUILD_ID = "20260220T185639Z";
 
 const VIEWS = {
   overview: Overview,
@@ -399,7 +399,7 @@ class PadSpanHaApp extends HTMLElement {
   async _getModel(){
     try {
       const res = await this._callWS({ type: "padspan_ha/model_get" });
-      this.state.model = { floors: res?.floors || [], room_meta: res?.room_meta || {} };
+      this.state.model = { floors: res?.floors || [], areas: res?.areas || [], room_meta: res?.room_meta || {} };
     } catch (e) {
       // non-fatal
       console.warn("model_get failed", e);
@@ -502,6 +502,8 @@ class PadSpanHaApp extends HTMLElement {
           return await this._callWS({ type:"padspan_ha/object_label_delete", address });
         },
         tagObjectPrompt: (addr, currentLabel)=>this._tagObjectPrompt(addr, currentLabel),
+        radioAreaSet: async (payload)=>await this._callWS({ type:"padspan_ha/radio_area_set", ...payload }),
+        refreshSnapshot: async ()=>{ await this._getLiveSnapshot(); this._renderCurrentView(); },
 
         // Mapping suite actions
         setMapsTab: (t)=>{ this.state.mapsTab=t; this._renderCurrentView(); },

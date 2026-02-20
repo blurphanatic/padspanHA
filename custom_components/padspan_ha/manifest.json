@@ -17,5 +17,6 @@
   "name": "PadSpan HA",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.4.28"
+  "icon": "mdi:radar",
+  "version": "0.4.29"
 }
