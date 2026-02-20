@@ -77,12 +77,12 @@ function _library(ctx, maps, activeId){
     ]),
   ]);
 
+  // Sample mode: always show the demo floor plan regardless of real map count
+  if(ctx.state.dataMode !== "live"){
+    return _sampleDemo(ctx);
+  }
+
   if(!maps.length){
-    if(ctx.state.dataMode !== "live"){
-      // Sample mode: show the demo house floor plan
-      wrap.innerHTML = "";
-      return _sampleDemo(ctx);
-    }
     wrap.appendChild(el("div",{class:"muted", style:"margin-top:10px"},"No maps yet. Go to Upload tab."));
     return wrap;
   }

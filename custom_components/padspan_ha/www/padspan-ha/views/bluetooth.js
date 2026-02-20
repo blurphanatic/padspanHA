@@ -133,12 +133,7 @@ export function render(ctx) {
   ]);
 
   let body = null;
-  if (!isLive) {
-    body = el("div", { class: "card" }, [
-      el("div", { style: "font-weight:700" }, "Live mode required"),
-      el("div", { class: "muted" }, "Bluetooth data is only available in live mode."),
-    ]);
-  } else if (ctx.state.btTab === "scanners") {
+  if (ctx.state.btTab === "scanners") {
     body = renderScanners(ctx, radios, sources);
   } else if (ctx.state.btTab === "monitor") {
     body = renderMonitor(ctx, ads, radios, objIndex);
@@ -300,7 +295,6 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   }
 
   // Layout: scanners on left, devices on right, lines between by source.
-  // Keep it simple + readable (similar spirit to HA Bluetooth visualization).
   const w = 920;
   const h = 460;
   const pad = 24;
@@ -326,7 +320,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   for (const src of Object.keys(bySrc)) {
     const sIdx = srcIndex.has(src) ? srcIndex.get(src) : -1;
     const base = scannerNodes[Math.max(0, sIdx)] || { x: pad + 110, y: h / 2 };
-    const list = bySrc[src].slice(0, 18); // limit per scanner to keep readable
+    const list = bySrc[src].slice(0, 18);
     for (let i = 0; i < list.length; i++) {
       const a = list[i];
       const y = base.y - 90 + (i * 18);
@@ -341,11 +335,6 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     }
   }
 
-  const line = (x1, y1, x2, y2, cls) => el("line", { x1, y1, x2, y2, class: cls });
-  const circle = (x, y, r, cls) => el("circle", { cx: x, cy: y, r, class: cls });
-  const text = (x, y, value, cls, anchor = "start") =>
-    el("text", { x, y, class: cls, "text-anchor": anchor, dominantBaseline: "middle" }, value);
-
   const rssiClass = rssi => {
     const v = Number(rssi);
     if (!isFinite(v)) return "rssi-unk";
@@ -354,39 +343,48 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     return "rssi-bad";
   };
 
-  const svg = el(
-    "svg",
-    { class: "bt-viz", viewBox: `0 0 ${w} ${h}` },
-    [
-      // Title
-      text(pad, pad, "Scanners", "bt-viz-title", "start"),
-      text(w - pad, pad, "Devices", "bt-viz-title", "end"),
+  // Build SVG as an HTML string — avoids the HTML-namespace issue that makes
+  // document.createElement("circle") / ("line") render as invisible elements.
+  let s = `<svg class="bt-viz" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
 
-      // Lines
-      ...deviceNodes.map(d => {
-        const sn = scannerNodes.find(s => s.id === d.src);
-        if (!sn) return null;
-        return line(sn.x + 10, sn.y, d.x - 10, d.y, `bt-viz-line ${rssiClass(d.rssi)}`);
-      }).filter(Boolean),
+  // Titles
+  s += `<text x="${pad}" y="${pad}" class="bt-viz-title" text-anchor="start" dominant-baseline="middle">Scanners</text>`;
+  s += `<text x="${w - pad}" y="${pad}" class="bt-viz-title" text-anchor="end" dominant-baseline="middle">Devices</text>`;
 
-      // Scanner nodes
-      ...scannerNodes.flatMap(s => [
-        circle(s.x, s.y, 7, "bt-viz-node scanner"),
-        text(s.x + 14, s.y, s.label, "bt-viz-label", "start"),
-      ]),
+  // Lines
+  for (const d of deviceNodes) {
+    const sn = scannerNodes.find(n => n.id === d.src);
+    if (!sn) continue;
+    const rc = rssiClass(d.rssi);
+    s += `<line x1="${sn.x + 10}" y1="${sn.y}" x2="${d.x - 10}" y2="${d.y}" class="bt-viz-line ${rc}"/>`;
+  }
 
-      // Device nodes
-      ...deviceNodes.flatMap(d => [
-        circle(d.x, d.y, 6, `bt-viz-node device ${rssiClass(d.rssi)}`),
-        text(d.x - 12, d.y, d.label, "bt-viz-label", "end"),
-      ]),
-    ]
-  );
+  // Scanner nodes
+  for (const sn of scannerNodes) {
+    s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner"/>`;
+    s += `<text x="${sn.x + 14}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle">${_escSvg(sn.label)}</text>`;
+  }
+
+  // Device nodes
+  for (const d of deviceNodes) {
+    const rc = rssiClass(d.rssi);
+    s += `<circle cx="${d.x}" cy="${d.y}" r="6" class="bt-viz-node device ${rc}"/>`;
+    s += `<text x="${d.x - 12}" y="${d.y}" class="bt-viz-label" text-anchor="end" dominant-baseline="middle">${_escSvg(d.label)}</text>`;
+  }
+
+  s += `</svg>`;
+
+  const svgWrap = document.createElement("div");
+  svgWrap.innerHTML = s;
 
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),
     el("div", { class: "muted", style: "margin-bottom:10px" }, "A simple scanner→device graph, grouped by the scanner source that reported the advertisement."),
-    svg,
+    svgWrap,
     el("div", { class: "muted", style: "margin-top:10px" }, "Tip: use Source + Search filters above to narrow the graph."),
   ]);
+}
+
+function _escSvg(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
