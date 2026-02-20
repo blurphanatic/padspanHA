@@ -151,171 +151,120 @@ export function render(ctx){
     return v.toLocaleString();
   };
 
-  const openObjectsModal = (initialFilter="all")=>{
-    if(!objModel || !Array.isArray(objModel.list)) {
-      ctx.toast("No live objects yet. Switch Data Mode to Live and wait for BLE advertisements.", true);
-      return;
-    }
+  // --- Inline objects list (BLE scanner detections + entities) ---
+  const allObjects = objModel && Array.isArray(objModel.list) ? objModel.list : [];
+  const summary = objModel && objModel.summary ? objModel.summary : null;
 
-    const summary = objModel.summary || {};
-    const list = objModel.list || [];
+  if (!ctx.state.objSearch) ctx.state.objSearch = "";
+  if (!ctx.state.objKind)   ctx.state.objKind   = "all";
+  if (!ctx.state.objStatus) ctx.state.objStatus  = "all";
 
-    const container = el("div",{});
-    const controls = el("div",{class:"toolbar"});
+  const objSearchInput = el("input",{type:"text", placeholder:"Search address, name, label…", value: ctx.state.objSearch});
+  const objKindSel = el("select",{class:"btn"});
+  [{v:"all",t:"All"},{v:"ble",t:"BLE devices"},{v:"entity",t:"HA entities"}]
+    .forEach(o=>objKindSel.appendChild(el("option",{value:o.v},o.t)));
+  objKindSel.value = ctx.state.objKind;
 
-    const search = el("input",{type:"text", placeholder:"Search name/entity/address…"});
-    search.style.minWidth="220px";
+  const objStatusSel = el("select",{class:"btn"});
+  [{v:"all",t:"All statuses"},{v:"unidentified",t:"Unidentified"},{v:"identified",t:"Identified"}]
+    .forEach(o=>objStatusSel.appendChild(el("option",{value:o.v},o.t)));
+  objStatusSel.value = ctx.state.objStatus;
 
-    const kindSel = el("select",{class:"btn"});
-    [
-      {v:"all", t:"All kinds"},
-      {v:"ble", t:"BLE (advertisements)"},
-      {v:"entity", t:"HA entities"},
-    ].forEach(o=>kindSel.appendChild(el("option",{value:o.v}, o.t)));
+  const objStats = el("span",{class:"muted"});
 
-    const statusSel = el("select",{class:"btn"});
-    [
-      {v:"all", t:"All"},
-      {v:"identified", t:"Identified"},
-      {v:"unidentified", t:"Unidentified"},
-    ].forEach(o=>statusSel.appendChild(el("option",{value:o.v}, o.t)));
-    statusSel.value = initialFilter === "unidentified" ? "unidentified" : "all";
-
-    const stats = el("div",{class:"spacer"});
-    controls.appendChild(el("span",{class:"badge"}, `${fmtNum(summary.total||0)} total`));
-    controls.appendChild(el("span",{class:"badge"}, `${fmtNum(summary.unidentified||0)} unidentified`));
-    controls.appendChild(search);
-    controls.appendChild(kindSel);
-    controls.appendChild(statusSel);
-    controls.appendChild(stats);
-
-    const table = el("table",{class:"table"});
-    const thead = el("thead",{}, el("tr",{},[
-      el("th",{}, "Kind"),
-      el("th",{}, "Name / Entity"),
-      el("th",{}, "Address"),
-      el("th",{}, "Room"),
-      el("th",{}, "Signal"),
-      el("th",{}, "Last seen"),
-      el("th",{}, "Tag"),
-      el("th",{}, "Vendor (online)"),
-    ]));
-    const tbody = el("tbody",{});
-    table.appendChild(thead);
-    table.appendChild(tbody);
-
-    const rowEls = list.map((o)=>{
-      const kind = o.kind || "";
-      const identified = !!o.identified;
-      const addr = o.address || "";
-      const name = o.name || o.entity_id || "";
-      const room = o.room || "";
-      const rssi = (o.rssi==null?"":String(o.rssi));
-      const lastSeen = o.age_s!=null ? fmtAgo(o.age_s) : (o.last_seen || "");
-
-      const userLabel = o.user_label || "";
-      const displayName = userLabel || name;
-      const vendorCell = el("td",{}, kind==="ble" ? el("span",{class:"badge"}, "—") : el("span",{class:"badge"}, "n/a"));
-
-      // Tag button for BLE rows
-      const tagCell = (() => {
-        if (kind !== "ble" || !addr) return el("td",{}, "—");
-        const btn = el("button",{class:"btn tiny"}, userLabel ? "Relabel" : "Tag");
-        btn.addEventListener("click", (e)=>{
-          e.stopPropagation();
-          ctx.actions.tagObjectPrompt(addr, userLabel);
-        });
-        const wrap = el("div",{style:"display:flex;align-items:center;gap:6px"});
-        if(userLabel) wrap.appendChild(el("span",{class:"badge"}, userLabel));
-        wrap.appendChild(btn);
-        return el("td",{}, wrap);
-      })();
-
-      const tr = el("tr",{
-        "data-kind": kind,
-        "data-identified": identified ? "1":"0",
-      },[
-        el("td",{}, [ el("span",{class:"badge"}, kind || "—"), (identified ? null : el("span",{class:"badge warn", style:"margin-left:6px"}, "unidentified")) ]),
-        el("td",{}, [
-          el("div",{style:"font-weight:600"}, displayName || "—"),
-          (userLabel && name && name !== userLabel ? el("div",{class:"muted"}, `raw: ${name}`) : null),
-          (o.entity_id ? el("div",{class:"muted"}, o.entity_id) : null),
-          (kind==="ble" && Array.isArray(o.sources) && o.sources.length ? el("div",{class:"muted"}, `Seen by: ${o.sources.join(", ")}`) : null),
-          (kind==="ble" && o.manufacturer_data && Object.keys(o.manufacturer_data).length ? el("div",{class:"muted"}, `Manuf IDs: ${Object.keys(o.manufacturer_data).slice(0,3).join(", ")}${Object.keys(o.manufacturer_data).length>3?"…":""}`) : null),
-          (kind==="ble" && Array.isArray(o.service_uuids) && o.service_uuids.length ? el("div",{class:"muted"}, `Services: ${o.service_uuids.length}`) : null),
-        ].filter(Boolean)),
-        el("td",{}, addr ? el("code",{}, addr) : "—"),
-        el("td",{}, room ? el("span",{class:"badge"}, room) : "—"),
-        el("td",{}, rssi ? el("span",{class:"badge"}, rssi) : "—"),
-        el("td",{}, lastSeen || "—"),
-        tagCell,
-        vendorCell,
-      ]);
-
-      // Best-effort vendor lookup for BLE addresses
-      if(kind==="ble" && addr) {
-        (async ()=>{
-          try{
-            vendorCell.innerHTML = "";
-            vendorCell.appendChild(el("span",{class:"muted"}, "Looking up…"));
-            const res = await ctx.actions.vendorLookup(addr, false);
-            const vendor = (res && (res.vendor || res.name)) ? (res.vendor || res.name) : "Unknown";
-            vendorCell.innerHTML = "";
-            vendorCell.appendChild(el("span",{class:"badge"}, vendor));
-          } catch(e) {
-            vendorCell.innerHTML = "";
-            vendorCell.appendChild(el("span",{class:"badge warn"}, "lookup failed"));
-          }
-        })();
-      }
-
-      tbody.appendChild(tr);
-      return tr;
-    });
-
-    const applyFilter = ()=>{
-      const q = String(search.value||"").trim().toLowerCase();
-      const kindV = kindSel.value || "all";
-      const statusV = statusSel.value || "all";
-      let shown=0;
-      for(const tr of rowEls){
-        const kind = tr.getAttribute("data-kind")||"";
-        const ident = tr.getAttribute("data-identified")==="1";
-        if(kindV!=="all" && kind!==kindV){ tr.style.display="none"; continue; }
-        if(statusV==="identified" && !ident){ tr.style.display="none"; continue; }
-        if(statusV==="unidentified" && ident){ tr.style.display="none"; continue; }
-        if(q){
-          const hay = tr.innerText.toLowerCase();
-          if(!hay.includes(q)){ tr.style.display="none"; continue; }
-        }
-        tr.style.display="";
-        shown++;
-      }
-      stats.innerHTML="";
-      stats.appendChild(el("span",{class:"muted"}, `${shown} shown`));
-    };
-
-    search.addEventListener("input", applyFilter);
-    kindSel.addEventListener("change", applyFilter);
-    statusSel.addEventListener("change", applyFilter);
-
-    container.appendChild(controls);
-    container.appendChild(table);
-
-    ctx.actions.openModal("Objects", container, "Unified object inventory (BLE advertisements + mapped entities). Use filters above.");
-    applyFilter();
-  };
-
-  const inventoryCard = el("div",{class:"card"},[
-    el("div",{class:"muted"},"BLE Scanner Detections — devices seen by your Bluetooth scanners"),
-    (objModel && objModel.summary ? el("div",{class:"row", style:"gap:12px;flex-wrap:wrap"},[
-      el("span",{class:"badge"}, `${fmtNum(objModel.summary.total||0)} total`),
-      el("span",{class:"badge warn"}, `${fmtNum(objModel.summary.unidentified||0)} unidentified`),
-      el("button",{class:"btn", onclick:()=>openObjectsModal("all")},"All objects"),
-      el("button",{class:"btn", onclick:()=>openObjectsModal("unidentified")},"Unidentified"),
-    ]) : el("div",{class:"muted"},isLive ? "Waiting for first snapshot…" : "No scanner data — switch to Live mode to see real BLE detections."))
+  const objTbody = el("tbody",{});
+  const objTable = el("table",{class:"table"},[
+    el("thead",{}, el("tr",{},[
+      el("th",{},"Kind"),
+      el("th",{},"Name / Address"),
+      el("th",{},"Signal"),
+      el("th",{},"Last seen"),
+      el("th",{},"Scanner"),
+      el("th",{},"Tag"),
+    ])),
+    objTbody,
   ]);
-  root.appendChild(inventoryCard);
+
+  const objRowEls = allObjects.map(o=>{
+    const kind = o.kind || "";
+    const identified = !!o.identified;
+    const addr = o.address || "";
+    const userLabel = o.user_label || "";
+    const displayName = userLabel || o.name || o.entity_id || addr || "—";
+    const rssi = o.rssi != null ? `${o.rssi} dBm` : "";
+    const age = o.age_s != null ? fmtAgo(o.age_s) : "";
+    const scanner = kind==="ble" && Array.isArray(o.sources) && o.sources.length
+      ? o.sources.join(", ") : (o.room || "");
+
+    const tagCell = (() => {
+      if (kind !== "ble" || !addr) return el("td",{}, "");
+      const btn = el("button",{class:"btn tiny"}, userLabel ? "Relabel" : "Tag");
+      btn.addEventListener("click",(e)=>{ e.stopPropagation(); ctx.actions.tagObjectPrompt(addr, userLabel); });
+      return el("td",{}, btn);
+    })();
+
+    const tr = el("tr",{
+      "data-kind": kind,
+      "data-identified": identified ? "1" : "0",
+      "data-search": `${kind} ${displayName} ${addr} ${userLabel} ${o.entity_id||""} ${scanner}`.toLowerCase(),
+    },[
+      el("td",{}, [
+        el("span",{class:"badge"+(identified?"":" warn")}, kind==="ble" ? (identified?"BLE":"BLE?") : "Entity"),
+      ]),
+      el("td",{}, [
+        el("div",{style:"font-weight:600"}, displayName),
+        (addr && addr !== displayName ? el("div",{class:"muted",style:"font-size:11px"}, addr) : null),
+        (o.entity_id && !userLabel ? el("div",{class:"muted",style:"font-size:11px"}, o.entity_id) : null),
+        (kind==="ble" && o.manufacturer_data && Object.keys(o.manufacturer_data).length
+          ? el("div",{class:"muted",style:"font-size:11px"}, `Apple/Manuf: ${Object.keys(o.manufacturer_data).slice(0,2).join(", ")}`) : null),
+      ].filter(Boolean)),
+      el("td",{}, rssi ? el("span",{class:"badge"}, rssi) : "—"),
+      el("td",{}, age || "—"),
+      el("td",{class:"muted",style:"font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis"}, scanner || "—"),
+      tagCell,
+    ]);
+    objTbody.appendChild(tr);
+    return tr;
+  });
+
+  function applyObjFilter(){
+    const q = String(ctx.state.objSearch||"").toLowerCase();
+    const k = ctx.state.objKind || "all";
+    const s = ctx.state.objStatus || "all";
+    let shown = 0;
+    for(const tr of objRowEls){
+      const kind = tr.getAttribute("data-kind");
+      const ident = tr.getAttribute("data-identified")==="1";
+      const hay = tr.getAttribute("data-search")||"";
+      let ok = true;
+      if(k !== "all" && kind !== k) ok = false;
+      if(s === "identified" && !ident) ok = false;
+      if(s === "unidentified" && ident) ok = false;
+      if(q && !hay.includes(q)) ok = false;
+      tr.style.display = ok ? "" : "none";
+      if(ok) shown++;
+    }
+    objStats.textContent = `${shown} shown`;
+  }
+
+  objSearchInput.addEventListener("input",  ()=>{ ctx.state.objSearch = objSearchInput.value; applyObjFilter(); });
+  objKindSel.addEventListener("change",     ()=>{ ctx.state.objKind   = objKindSel.value;     applyObjFilter(); });
+  objStatusSel.addEventListener("change",   ()=>{ ctx.state.objStatus = objStatusSel.value;   applyObjFilter(); });
+  applyObjFilter();
+
+  const inventorySection = el("div",{class:"card"},[
+    el("div",{class:"row",style:"margin-bottom:8px"},[
+      el("div",{class:"h2",style:"flex:1"},"BLE Scanner Detections"),
+      summary ? el("span",{class:"badge"}, `${summary.ble||0} BLE`) : null,
+      summary ? el("span",{class:"badge warn"}, `${summary.unidentified||0} unidentified`) : null,
+      summary ? el("span",{class:"badge"}, `${summary.entities||0} entities`) : null,
+    ].filter(Boolean)),
+    el("div",{class:"toolbar"},[objSearchInput, objKindSel, objStatusSel, objStats]),
+    allObjects.length
+      ? objTable
+      : el("div",{class:"muted"}, isLive ? "Waiting for scanner data…" : "Switch to Live mode to see real BLE detections."),
+  ]);
+  root.appendChild(inventorySection);
 
 
   const roomsList = el("div",{class:"rooms", id:"rooms"});
@@ -365,13 +314,14 @@ export function render(ctx){
   const toolbarRight = el("div",{class:"toolbar"},[modeSel, filter]);
 
   const leftCard = el("div",{class:"card"},[
-    el("div",{class:"muted"},"Select rooms"),
+    el("div",{class:"h2"},"Room Presence Mapping"),
+    el("div",{class:"muted",style:"margin-bottom:6px"},"Select rooms to see which trackers are assigned to them."),
     toolbarLeft,
     roomsList,
   ]);
 
   const rightCard = el("div",{class:"card"},[
-    el("div",{class:"muted"},"Object checklist from selected rooms"),
+    el("div",{class:"muted"},"Trackers in selected rooms"),
     toolbarRight,
     tagsList,
   ]);
