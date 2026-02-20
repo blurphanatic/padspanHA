@@ -1,6 +1,6 @@
 DOMAIN = "padspan_ha"
 NAME = "PadSpan HA"
-VERSION = "0.4.22"
+VERSION = "0.4.23"
 
 CONF_ENABLE_CLOUD = "enable_cloud"
 CONF_HUB_URL = "hub_url"
@@ -21,3 +21,5 @@ DEFAULT_FLOOR_ID = "main"
 DEFAULT_ROOM_RADIUS = 0.12  # normalized (0–1) radius around receiver before polygon is drawn
 MAPS_DIR = "padspan_ha/maps"
 VENDOR_CACHE_STORE_KEY = "padspan_ha.vendor_cache"
+OBJECT_STORE_KEY = "padspan_ha.objects"
+DATA_OBJECTS = "objects"

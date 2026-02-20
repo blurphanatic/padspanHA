@@ -13,27 +13,27 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import * as Overview from "./views/overview.js?b=20260220T031520Z";
-import * as Objects from "./views/objects.js?b=20260220T031520Z";
-import * as Devices from "./views/devices.js?b=20260220T031520Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260220T031520Z";
-import * as Presence from "./views/presence.js?b=20260220T031520Z";
-import * as Zones from "./views/zones.js?b=20260220T031520Z";
-import * as Insights from "./views/insights.js?b=20260220T031520Z";
-import * as History from "./views/history.js?b=20260220T031520Z";
-import * as Monitor from "./views/monitor.js?b=20260220T031520Z";
-import * as Maps from "./views/maps.js?b=20260220T031520Z";
-import * as Events from "./views/events.js?b=20260220T031520Z";
-import * as Health from "./views/health.js?b=20260220T031520Z";
-import * as Settings from "./views/settings.js?b=20260220T031520Z";
-import * as Debug from "./views/debug.js?b=20260220T031520Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260220T031520Z";
-import * as QA from "./views/qa.js?b=20260220T031520Z";
-import * as Sandbox from "./views/sandbox.js?b=20260220T031520Z";
+import * as Overview from "./views/overview.js?b=20260220T120000Z";
+import * as Objects from "./views/objects.js?b=20260220T120000Z";
+import * as Devices from "./views/devices.js?b=20260220T120000Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260220T120000Z";
+import * as Presence from "./views/presence.js?b=20260220T120000Z";
+import * as Zones from "./views/zones.js?b=20260220T120000Z";
+import * as Insights from "./views/insights.js?b=20260220T120000Z";
+import * as History from "./views/history.js?b=20260220T120000Z";
+import * as Monitor from "./views/monitor.js?b=20260220T120000Z";
+import * as Maps from "./views/maps.js?b=20260220T120000Z";
+import * as Events from "./views/events.js?b=20260220T120000Z";
+import * as Health from "./views/health.js?b=20260220T120000Z";
+import * as Settings from "./views/settings.js?b=20260220T120000Z";
+import * as Debug from "./views/debug.js?b=20260220T120000Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260220T120000Z";
+import * as QA from "./views/qa.js?b=20260220T120000Z";
+import * as Sandbox from "./views/sandbox.js?b=20260220T120000Z";
 
-const APP_VERSION = "0.4.22";
+const APP_VERSION = "0.4.23";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260220T031520Z";
+const BUILD_ID = "20260220T091303Z";
 
 const VIEWS = {
   overview: Overview,
@@ -284,7 +284,7 @@ class PadSpanHaApp extends HTMLElement {
       this._updateBadges();
 
       // Re-render views that show live data.
-      const liveViews = new Set(["overview","objects","devices","presence","zones","insights","history","monitor","events","health","diagnostics","debug","qa","sandbox"]);
+      const liveViews = new Set(["overview","objects","devices","bluetooth","presence","zones","insights","history","monitor","events","health","diagnostics","debug","qa","sandbox"]);
       if(liveViews.has(this.state.view)) this._renderCurrentView();
     } catch(e){
       // Non-fatal; keep trying.
@@ -487,6 +487,15 @@ class PadSpanHaApp extends HTMLElement {
           return await this._callWS({ type:"padspan_ha/vendor_lookup", mac, force_refresh: !!force_refresh });
         },
 
+        // Object label actions (tag/untag BLE devices)
+        objectLabelSet: async (address, label)=>{
+          return await this._callWS({ type:"padspan_ha/object_label_set", address, label });
+        },
+        objectLabelDelete: async (address)=>{
+          return await this._callWS({ type:"padspan_ha/object_label_delete", address });
+        },
+        tagObjectPrompt: (addr, currentLabel)=>this._tagObjectPrompt(addr, currentLabel),
+
         // Mapping suite actions
         setMapsTab: (t)=>{ this.state.mapsTab=t; this._renderCurrentView(); },
         mapsRefresh: async ()=>{ await this._getMapsList(); this._renderCurrentView(); },
@@ -546,6 +555,56 @@ class PadSpanHaApp extends HTMLElement {
     this.$modal.innerHTML = "";
   }
 
+
+  _tagObjectPrompt(addr, currentLabel){
+    const input = el("input",{type:"text", placeholder:"Enter a label…"});
+    input.value = currentLabel || "";
+    input.style.minWidth = "240px";
+
+    const status = el("div",{class:"muted", style:"min-height:20px;margin-top:6px"});
+
+    const saveBtn = el("button",{class:"btn"}, currentLabel ? "Update label" : "Save label");
+    const clearBtn = el("button",{class:"btn"}, "Remove label");
+    clearBtn.style.display = currentLabel ? "" : "none";
+
+    saveBtn.addEventListener("click", async ()=>{
+      const label = input.value.trim();
+      if(!label){ status.textContent = "Label cannot be empty."; return; }
+      try {
+        await this._callWS({ type:"padspan_ha/object_label_set", address: addr, label });
+        this._closeModal();
+        this._toast(`Tagged: ${label}`);
+        await this._getLiveSnapshot();
+        this._renderCurrentView();
+      } catch(e) {
+        status.textContent = "Failed to save label. Check HA logs.";
+      }
+    });
+
+    clearBtn.addEventListener("click", async ()=>{
+      try {
+        await this._callWS({ type:"padspan_ha/object_label_delete", address: addr });
+        this._closeModal();
+        this._toast("Label removed.");
+        await this._getLiveSnapshot();
+        this._renderCurrentView();
+      } catch(e) {
+        status.textContent = "Failed to remove label. Check HA logs.";
+      }
+    });
+
+    // Allow Enter key to save
+    input.addEventListener("keydown",(e)=>{ if(e.key==="Enter") saveBtn.click(); });
+
+    const body = el("div",{}, [
+      el("div",{class:"muted", style:"margin-bottom:8px"}, `BLE address: ${addr}`),
+      el("div",{class:"row", style:"gap:8px;flex-wrap:wrap"}, [input, saveBtn, clearBtn]),
+      status,
+    ]);
+    this._openModal("Tag BLE Object", body, "Assign a human-readable label to identify this device");
+    // Focus input after modal renders
+    requestAnimationFrame(()=>{ try{ input.focus(); }catch(e){} });
+  }
 
   _renderCurrentView(){
     if(!this.$content) return;
