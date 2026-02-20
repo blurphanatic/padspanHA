@@ -31,7 +31,7 @@ import * as Diagnostics from "./views/diagnostics.js?b=20260219T160000Z";
 import * as QA from "./views/qa.js?b=20260219T160000Z";
 import * as Sandbox from "./views/sandbox.js?b=20260219T160000Z";
 
-const APP_VERSION = "0.4.4";
+const APP_VERSION = "0.4.17";
 // Build stamp used for cache-busting and Diagnostics.
 const BUILD_ID = "20260219T160000Z";
 
