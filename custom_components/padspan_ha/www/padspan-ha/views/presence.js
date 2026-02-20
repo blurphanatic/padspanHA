@@ -5,8 +5,8 @@ export function render(ctx){
   const root = el("section",{id:"presence"});
   root.className = ctx.state.view==="presence" ? "" : "hidden";
 
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const isLive = ctx.state.dataMode === "live";
-  const snap = isLive ? (ctx.state.live && ctx.state.live.snapshot) : null;
 
   // --- Original: room→tag lookup ---
   const tagRooms = {};
@@ -37,7 +37,7 @@ export function render(ctx){
   ]));
 
   // --- BLE presence: objects by scanner ---
-  if(isLive && snap){
+  if(snap){
     const bleAds = (snap.ble && Array.isArray(snap.ble.advertisements)) ? snap.ble.advertisements : [];
     const radios = (snap.ble && Array.isArray(snap.ble.radios)) ? snap.ble.radios : [];
     const objList = (snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
@@ -127,7 +127,7 @@ export function render(ctx){
       root.appendChild(scannerCards);
     } else {
       root.appendChild(el("div",{class:"card"},[
-        el("div",{class:"muted"},"No BLE scanner data yet. Switch to Live mode and ensure Bluetooth is enabled."),
+        el("div",{class:"muted"},"No BLE scanner data yet. Ensure Bluetooth is enabled in HA."),
       ]));
     }
   }

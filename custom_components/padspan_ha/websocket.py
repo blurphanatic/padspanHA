@@ -474,16 +474,38 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     }
 
 
-    # BLE radios + advertisements (from HA Bluetooth stack)
-    try:
-        bl = get_bluetooth_live(hass)
-        if bl is not None:
-            snapshot["ble"] = bl.get_snapshot()
-        else:
-            snapshot["ble"] = {"radios": [], "advertisements": []}
-    except Exception:
-        snapshot["ble"] = {"radios": [], "advertisements": []}
+    # NOTE: snapshot["ble"] was already set at the top of this function.
+    # Do NOT overwrite it here — a second bl.get_snapshot() call could return
+    # empty data if get_bluetooth_live() returns None, wiping all BLE ads.
 
+    # Attach area_name to radios (best-effort, based on HA device_registry)
+    try:
+        dr_ar = device_registry.async_get(hass)
+        ar_reg = area_registry.async_get(hass)
+        area_names = {a.id: a.name for a in ar_reg.async_list_areas()}
+        # Build name → area lookup from all HA devices
+        name_to_area: dict[str, str] = {}
+        for dev in dr_ar.devices.values():
+            if not dev.area_id:
+                continue
+            area = area_names.get(dev.area_id, "")
+            if not area:
+                continue
+            for cand in [dev.name_by_user, dev.name]:
+                if cand:
+                    name_to_area[cand.lower()] = area
+        # Match each radio source/name against HA devices
+        for radio in ((snapshot.get("ble") or {}).get("radios") or []):
+            if radio.get("area_name"):
+                continue
+            src = str(radio.get("source") or "").lower()
+            rname = str(radio.get("name") or "").lower()
+            for key, area in name_to_area.items():
+                if key and (key in src or src in key or key in rname or rname in key):
+                    radio["area_name"] = area
+                    break
+    except Exception:
+        pass
 
     # ---- Backwards-compatible aliases for the frontend ----
     # Some UI modules (overview, legacy panels) expect these keys.

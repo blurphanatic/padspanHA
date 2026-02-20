@@ -5,13 +5,13 @@
 export function render(ctx) {
   const { el, esc } = ctx.helpers;
 
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const isLive = ctx.state.dataMode === "live";
-  const snap = isLive ? (ctx.state.live && ctx.state.live.snapshot) : null;
 
-  if (!isLive) {
+  if (!snap) {
     return el("div", { class: "card" }, [
-      el("div", { style: "font-weight:700" }, "Live mode required"),
-      el("div", { class: "muted" }, "Device/tag status is only available in live mode."),
+      el("div", { style: "font-weight:700" }, "No snapshot data"),
+      el("div", { class: "muted" }, "Switch to Sample or Live mode to see device data."),
     ]);
   }
 

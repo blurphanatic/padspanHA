@@ -333,6 +333,50 @@ export function render(ctx){
     for(let n=0;n<conc;n++) runOne();
   }
 
+  // ---------- Floor plan SVG ----------
+  function renderFloorPlan(fp){
+    if(!fp) return null;
+    const vw = fp.vw || 800;
+    const vh = fp.vh || 440;
+    let s = `<svg viewBox="0 0 ${vw} ${vh}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;border-radius:8px;background:#091209;display:block">`;
+
+    // Rooms
+    for(const r of (fp.rooms||[])){
+      s += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${r.color}18" stroke="${r.color}" stroke-width="1.5" rx="3"/>`;
+      const tx = r.x + r.w/2, ty = r.y + 16;
+      s += `<text x="${tx}" y="${ty}" text-anchor="middle" fill="${r.color}" font-size="12" font-family="system-ui,sans-serif" font-weight="600">${r.name}</text>`;
+    }
+
+    // Radio markers (concentric rings = scanning BT proxy)
+    for(const radio of (fp.radios||[])){
+      const {x,y} = radio;
+      s += `<circle cx="${x}" cy="${y}" r="22" fill="none" stroke="#52b788" stroke-width="0.8" opacity="0.2"/>`;
+      s += `<circle cx="${x}" cy="${y}" r="14" fill="none" stroke="#52b788" stroke-width="1" opacity="0.4"/>`;
+      s += `<circle cx="${x}" cy="${y}" r="8"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.7"/>`;
+      s += `<circle cx="${x}" cy="${y}" r="4"  fill="#52b788" opacity="1"/>`;
+      s += `<text x="${x}" y="${y+30}" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui,sans-serif">${radio.name}</text>`;
+    }
+
+    // Objects (phones, keys, trackers)
+    for(const obj of (fp.objects||[])){
+      const {x,y,color,name} = obj;
+      s += `<circle cx="${x}" cy="${y}" r="7" fill="${color}" opacity="0.95"/>`;
+      s += `<text x="${x}" y="${y-11}" text-anchor="middle" fill="${color}" font-size="9" font-family="system-ui,sans-serif">${name}</text>`;
+    }
+
+    s += `</svg>`;
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "margin-bottom:16px";
+    wrap.innerHTML = s;
+    if(fp.name){
+      const lbl = document.createElement("div");
+      lbl.style.cssText = "color:#94a3b8;font-size:11px;margin-top:4px;text-align:center";
+      lbl.textContent = fp.name;
+      wrap.appendChild(lbl);
+    }
+    return wrap;
+  }
+
   // ---------- Page layout ----------
   const grid = el("div",{class:"grid"},[
     el("div",{class:"card"},[
@@ -362,13 +406,17 @@ export function render(ctx){
       el("div",{class:"row"},[
         el("button",{class:"btn", onclick: openRadiosList}, "View radios list"),
       ]),
-      el("div",{style:"margin-top:8px;color:#94a3b8;font-size:12px"}, dataMode==="live" ? "Live snapshot" : "Tip: switch to Live to see BLE data")
+      el("div",{style:"margin-top:8px;color:#94a3b8;font-size:12px"}, dataMode==="live" ? "Live snapshot" : "Sample data — switch to Live to see your real devices")
     ]),
   ]);
 
-  return el("section",{},[
+  const floorPlanEl = (liveSnap && liveSnap.floor_plan) ? renderFloorPlan(liveSnap.floor_plan) : null;
+
+  const section = el("section",{},[
     el("h2",{}, "Overview"),
     el("div",{style:"color:#94a3b8;margin-top:-6px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
-    grid
   ]);
+  if(floorPlanEl) section.appendChild(floorPlanEl);
+  section.appendChild(grid);
+  return section;
 }

@@ -4,8 +4,8 @@
 export function render(ctx) {
   const { el, esc } = ctx.helpers;
 
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const isLive = ctx.state.dataMode === "live";
-  const snap = isLive ? (ctx.state.live && ctx.state.live.snapshot) : null;
   const ble = snap && snap.ble ? snap.ble : { radios: [], advertisements: [], diag: { ok: true, errors: [] } };
 
   // Build an address→object index from the same objects model used by the Objects view,

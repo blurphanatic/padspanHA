@@ -13,27 +13,28 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import * as Overview from "./views/overview.js?b=20260220T120000Z";
-import * as Objects from "./views/objects.js?b=20260220T120000Z";
-import * as Devices from "./views/devices.js?b=20260220T120000Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260220T120000Z";
-import * as Presence from "./views/presence.js?b=20260220T120000Z";
-import * as Zones from "./views/zones.js?b=20260220T120000Z";
-import * as Insights from "./views/insights.js?b=20260220T120000Z";
-import * as History from "./views/history.js?b=20260220T120000Z";
-import * as Monitor from "./views/monitor.js?b=20260220T120000Z";
-import * as Maps from "./views/maps.js?b=20260220T120000Z";
-import * as Events from "./views/events.js?b=20260220T120000Z";
-import * as Health from "./views/health.js?b=20260220T120000Z";
-import * as Settings from "./views/settings.js?b=20260220T120000Z";
-import * as Debug from "./views/debug.js?b=20260220T120000Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260220T120000Z";
-import * as QA from "./views/qa.js?b=20260220T120000Z";
-import * as Sandbox from "./views/sandbox.js?b=20260220T120000Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260220T140000Z";
+import * as Overview from "./views/overview.js?b=20260220T140000Z";
+import * as Objects from "./views/objects.js?b=20260220T140000Z";
+import * as Devices from "./views/devices.js?b=20260220T140000Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260220T140000Z";
+import * as Presence from "./views/presence.js?b=20260220T140000Z";
+import * as Zones from "./views/zones.js?b=20260220T140000Z";
+import * as Insights from "./views/insights.js?b=20260220T140000Z";
+import * as History from "./views/history.js?b=20260220T140000Z";
+import * as Monitor from "./views/monitor.js?b=20260220T140000Z";
+import * as Maps from "./views/maps.js?b=20260220T140000Z";
+import * as Events from "./views/events.js?b=20260220T140000Z";
+import * as Health from "./views/health.js?b=20260220T140000Z";
+import * as Settings from "./views/settings.js?b=20260220T140000Z";
+import * as Debug from "./views/debug.js?b=20260220T140000Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260220T140000Z";
+import * as QA from "./views/qa.js?b=20260220T140000Z";
+import * as Sandbox from "./views/sandbox.js?b=20260220T140000Z";
 
 const APP_VERSION = "0.4.23";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260220T091415Z";
+const BUILD_ID = "20260220T140000Z";
 
 const VIEWS = {
   overview: Overview,
@@ -76,16 +77,16 @@ const MENU = [
 ];
 
 const MENU_COLORS = {
-  overview: "#7aa2ff",
+  overview: "#52b788",
   objects: "#ff8a65",
   devices: "#4db6ac",
-  bluetooth: "#0066cc",
+  bluetooth: "#43a047",
   presence: "#ba68c8",
   zones: "#81c784",
   insights: "#ffd54f",
   history: "#90a4ae",
   monitor: "#f06292",
-  maps: "#64b5f6",
+  maps: "#4caf50",
   events: "#ffb74d",
   health: "#e57373",
   settings: "#b0bec5",
@@ -192,7 +193,7 @@ class PadSpanHaApp extends HTMLElement {
       <div id="app" class="app">
         <aside class="left">
           <div class="brand">
-            <img src="/padspan_ha_static/padspan-ha/assets/logo-icon.png?b=${BUILD_ID}" alt="PadSpan">
+            <img src="/padspan_ha_static/padspan-ha/assets/padspan-mark.svg?b=${BUILD_ID}" alt="PadSpan" onerror="this.style.display='none'">
             <div>
               <div class="label">PadSpan HA</div>
               <div class="muted" style="margin-top:2px">v${APP_VERSION} • build ${BUILD_ID}</div>
@@ -353,10 +354,13 @@ class PadSpanHaApp extends HTMLElement {
     // Keep the saved map separate from the effective map the UI should use.
     const saved = this.state.savedRoomTagMap || {};
     const snap = this.state.live?.snapshot;
-    if(this.state.dataMode === "live" && snap && snap.room_tag_map){
+    if(snap && snap.room_tag_map){
       this.state.roomTagMap = (snap.room_tag_map_live || snap.room_tag_map) || {};
       this.state.missingRoomTagMap = snap.room_tag_map_missing || {};
-      this.state.savedRoomTagMap = snap.room_tag_map_saved || {};
+      // Only update savedRoomTagMap from live data (sample snapshot has no persistent map)
+      if(this.state.dataMode === "live"){
+        this.state.savedRoomTagMap = snap.room_tag_map_saved || {};
+      }
     } else {
       this.state.roomTagMap = saved || {};
     }
@@ -371,7 +375,10 @@ class PadSpanHaApp extends HTMLElement {
 
   async _getLiveSnapshot(){
     if(this.state.dataMode !== "live") {
-      this.state.live.snapshot = null;
+      // Sample mode: use the built-in demo snapshot so all views render fully
+      this.state.live.snapshot = SAMPLE_SNAPSHOT;
+      this.state.live.error = null;
+      this._recomputeDerived();
       return;
     }
     const res = await this._callWS({ type: "padspan_ha/live_snapshot" });

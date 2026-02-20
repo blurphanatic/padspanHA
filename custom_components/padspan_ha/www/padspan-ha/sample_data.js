@@ -1,0 +1,122 @@
+/**
+ * PadSpan HA — Sample / Demo Data
+ *
+ * When the panel is in "Sample" mode this snapshot is used instead of calling
+ * the backend. It represents a fully-configured demo house ("The Smith Residence")
+ * so new users can see exactly what the system looks like when everything is set up.
+ *
+ * To see real data from your Home Assistant installation, switch to Live mode.
+ */
+
+export const SAMPLE_SNAPSHOT = {
+  source: "sample",
+  generated_at: "2026-02-20T12:00:00Z",
+
+  rooms_discovered: ["Living Room", "Kitchen", "Master Bedroom", "Office", "Guest Room"],
+  rooms: [
+    { name: "Living Room" },
+    { name: "Kitchen" },
+    { name: "Master Bedroom" },
+    { name: "Office" },
+    { name: "Guest Room" },
+  ],
+
+  receivers: [
+    { id: "r1", name: "Living Room Hub", manufacturer: "Espressif", model: "ESP32 BT Proxy", sw_version: "2024.11.0", area_name: "Living Room" },
+    { id: "r2", name: "Bedroom Hub",     manufacturer: "Espressif", model: "ESP32 BT Proxy", sw_version: "2024.11.0", area_name: "Master Bedroom" },
+    { id: "r3", name: "Kitchen Hub",     manufacturer: "Espressif", model: "ESP32 BT Proxy", sw_version: "2024.11.0", area_name: "Kitchen" },
+  ],
+  bermuda_devices: [
+    { id: "r1", name: "Living Room Hub", manufacturer: "Espressif" },
+    { id: "r2", name: "Bedroom Hub",     manufacturer: "Espressif" },
+    { id: "r3", name: "Kitchen Hub",     manufacturer: "Espressif" },
+  ],
+
+  ble: {
+    radios: [
+      { source: "living_room_hub", name: "Living Room Hub", scanning: true,  connectable: true,  adapter: "hci0", area_name: "Living Room" },
+      { source: "bedroom_hub",     name: "Bedroom Hub",     scanning: true,  connectable: true,  adapter: "hci0", area_name: "Master Bedroom" },
+      { source: "kitchen_hub",     name: "Kitchen Hub",     scanning: true,  connectable: false, adapter: "hci0", area_name: "Kitchen" },
+    ],
+    advertisements: [
+      { address: "AA:BB:CC:11:22:33", name: "Alice's Phone",  source: "living_room_hub", rssi: -58, age_s: 3,  service_uuids: ["0x180F","0x180A"] },
+      { address: "AA:BB:CC:11:22:33", name: "Alice's Phone",  source: "bedroom_hub",     rssi: -84, age_s: 3 },
+      { address: "BB:CC:DD:22:33:44", name: "Bob's Phone",    source: "bedroom_hub",     rssi: -61, age_s: 7,  service_uuids: ["0x180F"] },
+      { address: "BB:CC:DD:22:33:44", name: "Bob's Phone",    source: "living_room_hub", rssi: -88, age_s: 7 },
+      { address: "CC:DD:EE:33:44:55", name: "",               source: "living_room_hub", rssi: -64, age_s: 5 },
+      { address: "CC:DD:EE:33:44:55", name: "",               source: "bedroom_hub",     rssi: -89, age_s: 5 },
+      { address: "DD:EE:FF:44:55:66", name: "AirTag",         source: "living_room_hub", rssi: -71, age_s: 12, manufacturer_data: { "76": [18,25] } },
+      { address: "EE:FF:00:55:66:77", name: "Tile",           source: "kitchen_hub",     rssi: -68, age_s: 8,  service_uuids: ["FEED"] },
+      { address: "FF:00:11:66:77:88", name: "",               source: "bedroom_hub",     rssi: -76, age_s: 22 },
+      { address: "00:11:22:77:88:99", name: "",               source: "living_room_hub", rssi: -82, age_s: 45 },
+    ],
+    diag: { ok: true, errors: [] },
+  },
+
+  tags: [
+    { entity_id: "device_tracker.alice_phone", name: "Alice's Phone",  room: "Living Room",    state: "Living Room" },
+    { entity_id: "device_tracker.bob_phone",   name: "Bob's Phone",    room: "Master Bedroom", state: "Master Bedroom" },
+  ],
+
+  room_tag_map: {
+    "Living Room":    ["device_tracker.alice_phone"],
+    "Master Bedroom": ["device_tracker.bob_phone"],
+    "Kitchen":    [],
+    "Office":     [],
+    "Guest Room": [],
+  },
+  room_tag_map_live: {
+    "Living Room":    ["device_tracker.alice_phone"],
+    "Master Bedroom": ["device_tracker.bob_phone"],
+    "Kitchen":    [],
+    "Office":     [],
+    "Guest Room": [],
+  },
+  room_tag_map_missing:  { "Living Room": [], "Master Bedroom": [], "Kitchen": [], "Office": [], "Guest Room": [] },
+  room_tag_map_saved:    { "Living Room": ["device_tracker.alice_phone"], "Master Bedroom": ["device_tracker.bob_phone"] },
+
+  objects: {
+    list: [
+      // --- Entity-tracked ---
+      { key: "entity:device_tracker.alice_phone", kind: "entity", entity_id: "device_tracker.alice_phone", name: "Alice's Phone",  room: "Living Room",    state: "Living Room",    identified: true,  address: "AA:BB:CC:11:22:33" },
+      { key: "entity:device_tracker.bob_phone",   kind: "entity", entity_id: "device_tracker.bob_phone",   name: "Bob's Phone",    room: "Master Bedroom", state: "Master Bedroom", identified: true,  address: "BB:CC:DD:22:33:44" },
+      // --- Tagged BLE ---
+      { key: "ble:CC:DD:EE:33:44:55", kind: "ble", address: "CC:DD:EE:33:44:55", name: "CC:DD:EE:33:44:55", user_label: "Car Keys",       identified: true,  rssi: -64, age_s: 5,  sources: ["living_room_hub"], prefix: "CC:DD:EE", prefix_count: 1 },
+      { key: "ble:DD:EE:FF:44:55:66", kind: "ble", address: "DD:EE:FF:44:55:66", name: "AirTag",             user_label: "Wallet (AirTag)", identified: true,  rssi: -71, age_s: 12, sources: ["living_room_hub"], manufacturer_data: {"76":[18,25]}, prefix: "DD:EE:FF", prefix_count: 1 },
+      { key: "ble:EE:FF:00:55:66:77", kind: "ble", address: "EE:FF:00:55:66:77", name: "Tile",               user_label: "Backpack (Tile)", identified: true,  rssi: -68, age_s: 8,  sources: ["kitchen_hub"],     service_uuids: ["FEED"], prefix: "EE:FF:00", prefix_count: 1 },
+      // --- Unidentified BLE ---
+      { key: "ble:FF:00:11:66:77:88", kind: "ble", address: "FF:00:11:66:77:88", name: "", identified: false, rssi: -76, age_s: 22, sources: ["bedroom_hub"],     prefix: "FF:00:11", prefix_count: 1 },
+      { key: "ble:00:11:22:77:88:99", kind: "ble", address: "00:11:22:77:88:99", name: "", identified: false, rssi: -82, age_s: 45, sources: ["living_room_hub"], prefix: "00:11:22", prefix_count: 1 },
+    ],
+    summary: { total: 7, identified: 5, unidentified: 2, entities: 2, ble: 5, common_prefixes: {} },
+  },
+
+  raw_counts: { areas: 5, receivers: 3, candidate_entities: 2, mapped_entities: 2, saved_entities_total: 2, saved_entities_found: 2, saved_entities_missing: 0 },
+
+  // Floor plan data used by overview sample visualization
+  floor_plan: {
+    name: "Smith Residence (Demo)",
+    vw: 800, vh: 440,
+    rooms: [
+      { id: "living_room",    name: "Living Room",    x: 10,  y: 10,  w: 370, h: 200, color: "#52b788" },
+      { id: "kitchen",        name: "Kitchen",        x: 390, y: 10,  w: 400, h: 200, color: "#4caf50" },
+      { id: "hallway",        name: "Hallway",        x: 10,  y: 220, w: 780, h: 40,  color: "#388e3c" },
+      { id: "office",         name: "Office",         x: 10,  y: 270, w: 230, h: 160, color: "#43a047" },
+      { id: "master_bedroom", name: "Master Bedroom", x: 250, y: 270, w: 540, h: 160, color: "#66bb6a" },
+    ],
+    radios: [
+      { id: "r1", name: "Living Room Hub", x: 185, y: 95,  room: "Living Room" },
+      { id: "r2", name: "Bedroom Hub",     x: 520, y: 345, room: "Master Bedroom" },
+      { id: "r3", name: "Kitchen Hub",     x: 590, y: 95,  room: "Kitchen" },
+    ],
+    objects: [
+      { name: "Alice's Phone",  x: 140, y: 155, type: "entity",       color: "#52b788" },
+      { name: "Bob's Phone",    x: 360, y: 380, type: "entity",       color: "#52b788" },
+      { name: "Car Keys",       x: 280, y: 75,  type: "tagged_ble",   color: "#5eead4" },
+      { name: "Wallet",         x: 90,  y: 175, type: "tagged_ble",   color: "#5eead4" },
+      { name: "Backpack",       x: 555, y: 155, type: "tagged_ble",   color: "#5eead4" },
+      { name: "?? Unknown",     x: 400, y: 370, type: "unidentified", color: "#f59e0b" },
+      { name: "?? Unknown",     x: 210, y: 45,  type: "unidentified", color: "#f59e0b" },
+    ],
+  },
+};
