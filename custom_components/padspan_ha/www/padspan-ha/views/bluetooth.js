@@ -133,7 +133,7 @@ export function render(ctx) {
   } else if (ctx.state.btTab === "monitor") {
     body = renderMonitor(ctx, ads, radios);
   } else {
-    body = renderVisualization(ctx, radios, ads);
+    body = renderVisualization(ctx, radios, ads, objIndex);
   }
 
   const out = el("div", { id: "bluetooth" }, [header, diagCard, tabs, controls, body]);
@@ -200,6 +200,14 @@ function renderMonitor(ctx, ads, radios) {
     return el("span", { class: cls }, `RSSI ${v}`);
   };
 
+  const statusPill = (addr) => {
+    const o = addr ? objIndex.get(String(addr).toUpperCase()) : null;
+    if (!o) return null;
+    const cls = o.identified ? "badge" : "badge warn";
+    const lbl = o.identified ? "identified" : "unidentified";
+    return el("span", { class: cls }, lbl);
+  };
+
   const ageText = age_s => {
     const s = Number(age_s);
     if (!isFinite(s)) return "—";
@@ -230,7 +238,7 @@ function renderMonitor(ctx, ads, radios) {
           el("div", { class: "bt-adv-name" }, name || addr || "Unknown"),
           el("div", { class: "bt-adv-sub" }, addr ? `${addr} • ${src || "—"}` : src || "—"),
         ]),
-        el("div", { class: "bt-adv-right" }, [rssiPill(a.rssi), el("span", { class: "muted" }, ageText(a.age_s)), el("span", { class: "muted" }, services ? `${services} svc` : "")]),
+        el("div", { class: "bt-adv-right" }, [statusPill(addr), rssiPill(a.rssi), el("span", { class: "muted" }, ageText(a.age_s)), el("span", { class: "muted" }, services ? `${services} svc` : "")]),
       ]
     );
   };
@@ -256,7 +264,7 @@ function renderMonitor(ctx, ads, radios) {
   ]);
 }
 
-function renderVisualization(ctx, radios, ads) {
+function renderVisualization(ctx, radios, ads, objIndex) {
   const { el } = ctx.helpers;
 
   if (!radios.length && !ads.length) {

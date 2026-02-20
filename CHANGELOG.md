@@ -1,4 +1,4 @@
-<!-- Branch-dump packaging: manifest/version pinned to 0.4.2 per request (no zip_release). -->
+<!-- Branch-dump packaging: manifest/version pinned to 0.4.3 per request (no zip_release). -->
 # Changelog
 
 ## 0.4.15

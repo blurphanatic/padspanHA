@@ -151,6 +151,181 @@ export function render(ctx){
   const root = el("section",{id:"objects"});
   root.className = ctx.state.view==="objects" ? "" : "hidden";
 
+  // ----------------------------
+  // Inventory: unified Objects model (BLE advertisements + mapped entities)
+  // ----------------------------
+  const isLive = ctx.state.dataMode === "live";
+  const liveSnap = isLive ? (ctx.state.live && ctx.state.live.snapshot) : null;
+  const objModel = liveSnap && liveSnap.objects ? liveSnap.objects : null;
+
+  const fmtAgo = (age_s)=>{
+    const s = Number(age_s);
+    if(!isFinite(s)) return "—";
+    if(s < 1) return "<1s";
+    if(s < 60) return `${Math.round(s)}s`;
+    const m = Math.floor(s/60);
+    const rs = Math.round(s - m*60);
+    if(m < 60) return `${m}m ${rs}s`;
+    const h = Math.floor(m/60);
+    const rm = m - h*60;
+    return `${h}h ${rm}m`;
+  };
+  const fmtNum = (n)=>{
+    const v = Number(n);
+    if(!isFinite(v)) return "0";
+    return v.toLocaleString();
+  };
+
+  const openObjectsModal = (initialFilter="all")=>{
+    if(!objModel || !Array.isArray(objModel.list)) {
+      ctx.toast("No live objects yet. Switch Data Mode to Live and wait for BLE advertisements.", true);
+      return;
+    }
+
+    const summary = objModel.summary || {};
+    const list = objModel.list || [];
+
+    const container = el("div",{});
+    const controls = el("div",{class:"toolbar"});
+
+    const search = el("input",{type:"text", placeholder:"Search name/entity/address…"});
+    search.style.minWidth="220px";
+
+    const kindSel = el("select",{class:"btn"});
+    [
+      {v:"all", t:"All kinds"},
+      {v:"ble", t:"BLE (advertisements)"},
+      {v:"entity", t:"HA entities"},
+    ].forEach(o=>kindSel.appendChild(el("option",{value:o.v}, o.t)));
+
+    const statusSel = el("select",{class:"btn"});
+    [
+      {v:"all", t:"All"},
+      {v:"identified", t:"Identified"},
+      {v:"unidentified", t:"Unidentified"},
+    ].forEach(o=>statusSel.appendChild(el("option",{value:o.v}, o.t)));
+    statusSel.value = initialFilter === "unidentified" ? "unidentified" : "all";
+
+    const stats = el("div",{class:"spacer"});
+    controls.appendChild(el("span",{class:"badge"}, `${fmtNum(summary.total||0)} total`));
+    controls.appendChild(el("span",{class:"badge"}, `${fmtNum(summary.unidentified||0)} unidentified`));
+    controls.appendChild(search);
+    controls.appendChild(kindSel);
+    controls.appendChild(statusSel);
+    controls.appendChild(stats);
+
+    const table = el("table",{class:"table"});
+    const thead = el("thead",{}, el("tr",{},[
+      el("th",{}, "Kind"),
+      el("th",{}, "Name / Entity"),
+      el("th",{}, "Address"),
+      el("th",{}, "Room"),
+      el("th",{}, "Signal"),
+      el("th",{}, "Last seen"),
+      el("th",{}, "Vendor (online)"),
+    ]));
+    const tbody = el("tbody",{});
+    table.appendChild(thead);
+    table.appendChild(tbody);
+
+    const rowEls = list.map((o)=>{
+      const kind = o.kind || "";
+      const identified = !!o.identified;
+      const addr = o.address || "";
+      const name = o.name || o.entity_id || "";
+      const room = o.room || "";
+      const rssi = (o.rssi==null?"":String(o.rssi));
+      const lastSeen = o.age_s!=null ? fmtAgo(o.age_s) : (o.last_seen || "");
+
+      const vendorCell = el("td",{}, kind==="ble" ? el("span",{class:"badge"}, "—") : el("span",{class:"badge"}, "n/a"));
+
+      const tr = el("tr",{
+        "data-kind": kind,
+        "data-identified": identified ? "1":"0",
+      },[
+        el("td",{}, [ el("span",{class:"badge"}, kind || "—"), (identified ? null : el("span",{class:"badge warn", style:"margin-left:6px"}, "unidentified")) ]),
+        el("td",{}, [
+          el("div",{style:"font-weight:600"}, name || "—"),
+          (o.entity_id ? el("div",{class:"muted"}, o.entity_id) : null),
+          (kind==="ble" && Array.isArray(o.sources) && o.sources.length ? el("div",{class:"muted"}, `Seen by: ${o.sources.join(", ")}`) : null),
+          (kind==="ble" && o.manufacturer_data && Object.keys(o.manufacturer_data).length ? el("div",{class:"muted"}, `Manuf IDs: ${Object.keys(o.manufacturer_data).slice(0,3).join(", ")}${Object.keys(o.manufacturer_data).length>3?"…":""}`) : null),
+          (kind==="ble" && Array.isArray(o.service_uuids) && o.service_uuids.length ? el("div",{class:"muted"}, `Services: ${o.service_uuids.length}`) : null),
+        ]),
+        el("td",{}, addr ? el("code",{}, addr) : "—"),
+        el("td",{}, room ? el("span",{class:"badge"}, room) : "—"),
+        el("td",{}, rssi ? el("span",{class:"badge"}, rssi) : "—"),
+        el("td",{}, lastSeen || "—"),
+        vendorCell,
+      ]);
+
+      // Best-effort vendor lookup for BLE addresses
+      if(kind==="ble" && addr) {
+        (async ()=>{
+          try{
+            vendorCell.innerHTML = "";
+            vendorCell.appendChild(el("span",{class:"muted"}, "Looking up…"));
+            const res = await ctx.actions.vendorLookup(addr, false);
+            const vendor = (res && (res.vendor || res.name)) ? (res.vendor || res.name) : "Unknown";
+            vendorCell.innerHTML = "";
+            vendorCell.appendChild(el("span",{class:"badge"}, vendor));
+          } catch(e) {
+            vendorCell.innerHTML = "";
+            vendorCell.appendChild(el("span",{class:"badge warn"}, "lookup failed"));
+          }
+        })();
+      }
+
+      tbody.appendChild(tr);
+      return tr;
+    });
+
+    const applyFilter = ()=>{
+      const q = String(search.value||"").trim().toLowerCase();
+      const kindV = kindSel.value || "all";
+      const statusV = statusSel.value || "all";
+      let shown=0;
+      for(const tr of rowEls){
+        const kind = tr.getAttribute("data-kind")||"";
+        const ident = tr.getAttribute("data-identified")==="1";
+        if(kindV!=="all" && kind!==kindV){ tr.style.display="none"; continue; }
+        if(statusV==="identified" && !ident){ tr.style.display="none"; continue; }
+        if(statusV==="unidentified" && ident){ tr.style.display="none"; continue; }
+        if(q){
+          const hay = tr.innerText.toLowerCase();
+          if(!hay.includes(q)){ tr.style.display="none"; continue; }
+        }
+        tr.style.display="";
+        shown++;
+      }
+      stats.innerHTML="";
+      stats.appendChild(el("span",{class:"muted"}, `${shown} shown`));
+    };
+
+    search.addEventListener("input", applyFilter);
+    kindSel.addEventListener("change", applyFilter);
+    statusSel.addEventListener("change", applyFilter);
+
+    container.appendChild(controls);
+    container.appendChild(table);
+
+    ctx.actions.openModal("Objects", container, "Unified object inventory (BLE advertisements + mapped entities). Use filters above.");
+    applyFilter();
+  };
+
+  const inventoryCard = el("div",{class:"card"},[
+    el("div",{class:"muted"},"Inventory (Bluetooth objects)"),
+    (!isLive ? el("div",{class:"muted"},"Switch Data Mode to Live to populate BLE objects.") : null),
+    (isLive && objModel && objModel.summary ? el("div",{class:"row", style:"gap:12px;flex-wrap:wrap"},[
+      el("span",{class:"badge"}, `${fmtNum(objModel.summary.total||0)} total`),
+      el("span",{class:"badge warn"}, `${fmtNum(objModel.summary.unidentified||0)} unidentified`),
+      el("button",{class:"btn", onclick:()=>openObjectsModal("all")},"All objects"),
+      el("button",{class:"btn", onclick:()=>openObjectsModal("unidentified")},"Unidentified"),
+    ]) : null),
+    (isLive && (!objModel || !objModel.summary) ? el("div",{class:"muted"},"Waiting for first snapshot…") : null)
+  ]);
+  root.appendChild(inventoryCard);
+
+
   const roomsList = el("div",{class:"rooms", id:"rooms"});
   const tagsList = el("div",{class:"tags", id:"tags"});
 

@@ -545,12 +545,30 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     "last_seen": a.get("last_seen"),
                     "age_s": a.get("age_s"),
                     "sources": set(),
+                    # Extra fields for identification hints (mirrors HA advertisement monitor)
+                    "manufacturer_data": a.get("manufacturer_data") or {},
+                    "service_data": a.get("service_data") or {},
+                    "service_uuids": a.get("service_uuids") or [],
                 }
                 ble_by_addr[addr] = rec
 
             src = a.get("source")
             if src:
                 rec["sources"].add(str(src))
+
+            # Merge identification hints (keep the richest set we have)
+            try:
+                md = a.get("manufacturer_data") or {}
+                sd = a.get("service_data") or {}
+                su = a.get("service_uuids") or []
+                if md and (not rec.get("manufacturer_data")):
+                    rec["manufacturer_data"] = md
+                if sd and (not rec.get("service_data")):
+                    rec["service_data"] = sd
+                if su and (not rec.get("service_uuids")):
+                    rec["service_uuids"] = su
+            except Exception:
+                pass
 
             # Keep the most "useful" RSSI (largest / closest to 0).
             try:
@@ -633,6 +651,9 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "last_seen": rec.get("last_seen"),
                 "age_s": rec.get("age_s"),
                 "sources": sorted(list(rec.get("sources") or [])),
+                "manufacturer_data": rec.get("manufacturer_data") or {},
+                "service_data": rec.get("service_data") or {},
+                "service_uuids": rec.get("service_uuids") or [],
                 "prefix": prefix or None,
                 "prefix_count": prefix_counts.get(prefix, 0),
                 "identified": bool(identified),
