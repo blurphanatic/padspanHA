@@ -8,6 +8,16 @@ export function render(ctx) {
   const snap = isLive ? (ctx.state.live && ctx.state.live.snapshot) : null;
   const ble = snap && snap.ble ? snap.ble : { radios: [], advertisements: [], diag: { ok: true, errors: [] } };
 
+  // Build an address→object index from the same objects model used by the Objects view,
+  // so identified/unidentified status is consistent across both views.
+  const objModel = snap && snap.objects ? snap.objects : null;
+  const objIndex = new Map();
+  if (objModel && Array.isArray(objModel.list)) {
+    for (const o of objModel.list) {
+      if (o && o.address) objIndex.set(String(o.address).toUpperCase(), o);
+    }
+  }
+
   // View state (stored on ctx.state so it survives re-renders)
   if (!ctx.state.btTab) ctx.state.btTab = "visualization"; // visualization | monitor | scanners
   if (ctx.state.btFilter == null) ctx.state.btFilter = "";
@@ -131,7 +141,7 @@ export function render(ctx) {
   } else if (ctx.state.btTab === "scanners") {
     body = renderScanners(ctx, radios, sources);
   } else if (ctx.state.btTab === "monitor") {
-    body = renderMonitor(ctx, ads, radios);
+    body = renderMonitor(ctx, ads, radios, objIndex);
   } else {
     body = renderVisualization(ctx, radios, ads, objIndex);
   }
@@ -178,7 +188,7 @@ function renderScanners(ctx, radios, sources) {
   ]);
 }
 
-function renderMonitor(ctx, ads, radios) {
+function renderMonitor(ctx, ads, radios, objIndex) {
   const { el, esc } = ctx.helpers;
 
   const selected = ctx.state.btSelectedAddr || null;

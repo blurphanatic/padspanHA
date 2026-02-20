@@ -1,7 +1,7 @@
 :host{--accent:#7aa2ff;--accent2:#5eead4;--accent3:#f59e0b;display:block;min-height:100vh;color:#e2e8f0;--bg:#0b1220;--panel:#111a2d;--line:#24324b;--text:#e2e8f0;--pad:14px;font-family:Inter,system-ui,Arial,sans-serif}
 .app{display:grid;grid-template-columns:300px 1fr;min-height:100vh;background:var(--bg)}
 .app.mini{grid-template-columns:92px 1fr}
-.left{background:linear-gradient(180deg,#111a2d 0%,#0b1220 100%);border-right:1px solid var(--line);padding:var(--pad);overflow:auto}
+.left{background:linear-gradient(180deg,#2d1a0a 0%,#1a0d05 100%);border-right:1px solid var(--line);padding:var(--pad);overflow:auto}
 .left::before{content:"";display:block;height:4px;border-radius:999px;margin-bottom:12px;background:linear-gradient(90deg,var(--accent),var(--accent2),var(--accent3))}
 .brand{display:flex;gap:10px;align-items:center;font-weight:700;margin-bottom:10px;padding:10px;border-radius:14px;background:linear-gradient(90deg,rgba(122,162,255,.18),rgba(94,234,212,.10));border:1px solid #2d4673;}
 .brand img{width:30px;height:30px;border-radius:8px}
@@ -46,7 +46,7 @@
 
 /* Sidebar scroll polish */
 .left::-webkit-scrollbar{width:10px}
-.left::-webkit-scrollbar-thumb{background:rgba(122,162,255,.28);border-radius:999px;border:2px solid rgba(17,26,45,.9)}
+.left::-webkit-scrollbar-thumb{background:rgba(180,120,60,.35);border-radius:999px;border:2px solid rgba(26,13,5,.9)}
 
 
 /* --- v0.4.0 additions --- */
