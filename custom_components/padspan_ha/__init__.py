@@ -28,10 +28,12 @@ from .const import (
     DATA_SETTINGS,
     DATA_MAPS,
     DATA_MODEL,
+    DATA_OBJECTS,
 )
 from .coordinator import PadSpanCoordinator
 from .maps_store import MapsStore
 from .model_store import ModelStore
+from .object_store import ObjectStore
 from .panel import async_setup_panel
 from .settings_store import SettingsStore
 from .websocket import async_register_websockets
@@ -65,6 +67,12 @@ async def _ensure_stores(hass: HomeAssistant) -> None:
         await mdl.async_setup()
         hass.data[DOMAIN][DATA_MODEL] = mdl
         _LOGGER.debug("ModelStore ready (%d floors, %d rooms)", len(mdl.floors()), len(mdl.room_meta()))
+
+    if DATA_OBJECTS not in hass.data[DOMAIN]:
+        obj_store = ObjectStore(hass)
+        await obj_store.async_load()
+        hass.data[DOMAIN][DATA_OBJECTS] = obj_store
+        _LOGGER.debug("ObjectStore ready (%d labels)", len(obj_store.all()))
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:

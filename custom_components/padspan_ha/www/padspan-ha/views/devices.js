@@ -129,7 +129,38 @@ export function render(ctx) {
     el("pre", { class: "pre" }, esc(JSON.stringify({ tags: tagsRaw.slice(0, 100) }, null, 2))),
   ]);
 
-  return el("div", {}, [stats, controls, el("div", { class: "grid-2" }, [left, right]), footer]);
+  // Unidentified BLE Objects section
+  const objList = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
+  const unidentifiedBle = objList.filter(o => o.kind === "ble" && !o.identified && !o.user_label);
+
+  const unidentifiedSection = el("div", { class: "card" }, [
+    el("div", { class: "row" }, [
+      el("div", { class: "h2", style: "flex:1" }, "Unidentified BLE Objects"),
+      el("span", { class: "badge warn" }, `${unidentifiedBle.length} untagged`),
+    ]),
+    el("div", { class: "muted", style: "margin-bottom:8px" }, "BLE devices seen by your scanners that have no Home Assistant entity and no user label. Use Tag to identify them."),
+    unidentifiedBle.length === 0
+      ? el("div", { class: "muted" }, "None — all detected BLE devices are identified or tagged.")
+      : el("div", { class: "dev-tag-list list-scroll" }, unidentifiedBle.slice(0, 200).map(o => {
+          const addr = o.address || "";
+          const sources = Array.isArray(o.sources) ? o.sources.join(", ") : "";
+          const rssi = o.rssi != null ? `RSSI ${o.rssi}` : "";
+          const age = o.age_s != null ? `${Math.round(Number(o.age_s))}s ago` : "";
+
+          const tagBtn = el("button", { class: "btn tiny" }, "Tag This");
+          tagBtn.addEventListener("click", () => ctx.actions.tagObjectPrompt(addr, ""));
+
+          return el("div", { class: "dev-tag" }, [
+            el("div", { class: "dev-tag-main" }, [
+              el("div", { class: "dev-tag-name" }, addr || "Unknown"),
+              el("div", { class: "dev-tag-sub" }, [sources, rssi, age].filter(Boolean).join(" • ")),
+            ]),
+            el("div", { class: "dev-tag-right" }, [tagBtn]),
+          ]);
+        })),
+  ]);
+
+  return el("div", {}, [stats, controls, el("div", { class: "grid-2" }, [left, right]), unidentifiedSection, footer]);
 }
 
 function normalizeRoom(state) {

@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers import area_registry, device_registry, entity_registry
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DEFAULT_FLOOR_ID, DATA_COORDINATOR
+from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DATA_OBJECTS, DEFAULT_FLOOR_ID, DATA_COORDINATOR
 from .build_info import BUILD_ID, BUILD_VERSION
 from .bluetooth_live import get_bluetooth_live
 from .vendor_lookup import async_lookup_vendor
@@ -39,6 +39,8 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_maps_delete)
     websocket_api.async_register_command(hass, ws_model_get)
     websocket_api.async_register_command(hass, ws_model_update)
+    websocket_api.async_register_command(hass, ws_object_label_set)
+    websocket_api.async_register_command(hass, ws_object_label_delete)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -661,6 +663,21 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "device": addr_to_device.get(addr),
             })
 
+        # Attach user labels from ObjectStore (labels make BLE objects "identified")
+        try:
+            obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+            if obj_store:
+                for obj in objects:
+                    addr = obj.get("address", "")
+                    if addr:
+                        entry = obj_store.get(addr)
+                        if entry:
+                            obj["user_label"] = entry.get("label", "")
+                            if obj.get("kind") == "ble":
+                                obj["identified"] = True
+        except Exception:
+            pass
+
         unidentified = [o for o in objects if o.get("kind") == "ble" and not o.get("identified")]
         identified = [o for o in objects if not (o.get("kind") == "ble" and not o.get("identified"))]
         common_prefixes = {p: c for p, c in prefix_counts.items() if c >= 3}
@@ -833,3 +850,48 @@ async def ws_maps_delete(hass: HomeAssistant, connection, msg) -> None:
         return
     await ms.async_delete_map(msg.get("map_id"))
     connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/object_label_set",
+        "address": str,
+        "label": str,
+    }
+)
+@websocket_api.async_response
+async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
+    """Assign a user label to a BLE MAC address."""
+    obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+    if not obj_store:
+        connection.send_error(msg["id"], "no_object_store", "Object store not initialized")
+        return
+    addr = str(msg.get("address") or "").strip().upper()
+    label = str(msg.get("label") or "").strip()
+    if not addr:
+        connection.send_error(msg["id"], "invalid_address", "Address is required")
+        return
+    if not label:
+        connection.send_error(msg["id"], "invalid_label", "Label is required")
+        return
+    await obj_store.async_set(addr, label)
+    connection.send_result(msg["id"], {"ok": True, "address": addr, "label": label})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/object_label_delete",
+        "address": str,
+    }
+)
+@websocket_api.async_response
+async def ws_object_label_delete(hass: HomeAssistant, connection, msg) -> None:
+    """Remove the user label for a BLE MAC address."""
+    obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+    if not obj_store:
+        connection.send_error(msg["id"], "no_object_store", "Object store not initialized")
+        return
+    addr = str(msg.get("address") or "").strip().upper()
+    if addr:
+        await obj_store.async_delete(addr)
+    connection.send_result(msg["id"], {"ok": True, "address": addr})

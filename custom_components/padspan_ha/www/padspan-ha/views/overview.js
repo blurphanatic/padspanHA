@@ -203,6 +203,7 @@ export function render(ctx){
       el("th",{}, "Signal"),
       el("th",{}, "Last seen"),
       el("th",{}, "OUI freq"),
+      el("th",{}, "Tag"),
       el("th",{}, "Vendor (online)"),
     ]));
     const tbody = el("tbody",{});
@@ -214,7 +215,8 @@ export function render(ctx){
       const kind = o.kind || "";
       const identified = !!o.identified;
       const addr = o.address || "";
-      const name = o.name || o.entity_id || "";
+      const userLabel = o.user_label || "";
+      const name = userLabel || o.name || o.entity_id || "";
       const room = o.room || "";
       const rssi = (o.rssi==null?"":String(o.rssi));
       const lastSeen = o.age_s!=null ? fmtAgo(o.age_s) : (o.last_seen || "");
@@ -224,16 +226,31 @@ export function render(ctx){
 
       const vendorCell = el("td",{}, kind==="ble" ? el("span",{class:"badge"}, "—") : el("span",{class:"badge"}, "n/a"));
 
+      // Tag button for BLE rows
+      const tagCell = (() => {
+        if (kind !== "ble" || !addr) return el("td",{}, "");
+        const btn = el("button",{class:"btn tiny"}, userLabel ? "Relabel" : "Tag");
+        btn.addEventListener("click",(e)=>{
+          e.stopPropagation();
+          ctx.actions.tagObjectPrompt(addr, userLabel);
+        });
+        const wrap = el("div",{style:"display:flex;align-items:center;gap:6px"});
+        if(userLabel) wrap.appendChild(el("span",{style:"color:#94a3b8;font-size:12px"}, userLabel));
+        wrap.appendChild(btn);
+        return el("td",{}, wrap);
+      })();
+
       const tr = el("tr",{
         "data-kind": kind,
         "data-identified": identified ? "1":"0",
         "data-common": isCommon ? "1":"0",
-        "data-search": `${kind} ${name} ${addr} ${room} ${(o.entity_id||"")} ${(o.linked_entities||[]).join(" ")}`.toLowerCase(),
+        "data-search": `${kind} ${name} ${addr} ${room} ${userLabel} ${(o.entity_id||"")} ${(o.linked_entities||[]).join(" ")}`.toLowerCase(),
         "data-mac": addr,
       },[
         el("td",{}, kind==="ble" ? pill("BLE","") : pill("Entity","")),
         el("td",{}, [
           el("div",{}, name),
+          (userLabel && (o.name && o.name !== userLabel) ? el("div",{style:"color:#94a3b8"}, `raw: ${o.name}`) : null),
           (o.entity_id ? el("div",{style:"color:#94a3b8"}, o.entity_id) : null),
           (Array.isArray(o.linked_entities) && o.linked_entities.length ? el("div",{style:"color:#94a3b8"}, `Linked: ${o.linked_entities.join(", ")}`) : null),
           (kind==="ble" && Array.isArray(o.sources) && o.sources.length ? el("div",{style:"color:#94a3b8"}, `Seen by: ${o.sources.join(", ")}`) : null),
@@ -246,6 +263,7 @@ export function render(ctx){
         el("td",{}, rssi ? `${rssi} dBm` : "—"),
         el("td",{}, lastSeen || "—"),
         el("td",{}, pfxCount>=3 ? el("span",{class:"badge warn"}, `${pfxCount}×`) : (pfxCount? String(pfxCount):"")),
+        tagCell,
         vendorCell,
       ]);
 

@@ -20,28 +20,29 @@ from .build_info import BUILD_ID
 _LOGGER = logging.getLogger(__name__)
 
 STATIC_URL = "/padspan_ha_static"
+ICON_STATIC_URL = "/padspan_ha_int"
 WEB_COMPONENT = "padspan-ha-app"
 
-async def _register_static(hass: HomeAssistant, static_dir: Path) -> None:
+async def _register_static(hass: HomeAssistant, static_dir: Path, url: str = STATIC_URL) -> None:
     try:
         from homeassistant.components.http import StaticPathConfig  # type: ignore
         await hass.http.async_register_static_paths(
-            [StaticPathConfig(STATIC_URL, str(static_dir), False)]
+            [StaticPathConfig(url, str(static_dir), False)]
         )
         return
     except Exception:
         pass
 
     try:
-        await hass.http.async_register_static_path(STATIC_URL, str(static_dir), False)
+        await hass.http.async_register_static_path(url, str(static_dir), False)
         return
     except Exception:
         pass
 
     try:
-        hass.http.register_static_path(STATIC_URL, str(static_dir), False)
+        hass.http.register_static_path(url, str(static_dir), False)
     except Exception:
-        _LOGGER.debug("Static register fallback failed")
+        _LOGGER.debug("Static register fallback failed (url=%s)", url)
 
 async def async_setup_panel(hass: HomeAssistant) -> None:
     hass.data.setdefault(DOMAIN, {})
@@ -49,6 +50,8 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
         return
 
     await _register_static(hass, Path(__file__).parent / "www")
+    # Also serve the integration root so icon.png is accessible at /padspan_ha_int/icon.png
+    await _register_static(hass, Path(__file__).parent, url=ICON_STATIC_URL)
 
     from homeassistant.components import panel_custom
 

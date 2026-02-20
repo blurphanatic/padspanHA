@@ -233,6 +233,15 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     const addr = a.address || "";
     const src = a.source || "";
     const services = Array.isArray(a.service_uuids) ? a.service_uuids.length : 0;
+    const obj = addr ? objIndex.get(String(addr).toUpperCase()) : null;
+    const userLabel = (obj && obj.user_label) ? obj.user_label : "";
+    const displayName = userLabel || name || addr || "Unknown";
+
+    const tagBtn = el("button", { class: "btn tiny" }, userLabel ? "Relabel" : "Tag");
+    tagBtn.addEventListener("click", e => {
+      e.stopPropagation();
+      ctx.actions.tagObjectPrompt(addr, userLabel);
+    });
 
     return el(
       "div",
@@ -245,10 +254,16 @@ function renderMonitor(ctx, ads, radios, objIndex) {
       },
       [
         el("div", { class: "bt-adv-main" }, [
-          el("div", { class: "bt-adv-name" }, name || addr || "Unknown"),
+          el("div", { class: "bt-adv-name" }, displayName),
           el("div", { class: "bt-adv-sub" }, addr ? `${addr} • ${src || "—"}` : src || "—"),
         ]),
-        el("div", { class: "bt-adv-right" }, [statusPill(addr), rssiPill(a.rssi), el("span", { class: "muted" }, ageText(a.age_s)), el("span", { class: "muted" }, services ? `${services} svc` : "")]),
+        el("div", { class: "bt-adv-right" }, [
+          statusPill(addr),
+          rssiPill(a.rssi),
+          el("span", { class: "muted" }, ageText(a.age_s)),
+          el("span", { class: "muted" }, services ? `${services} svc` : ""),
+          tagBtn,
+        ]),
       ]
     );
   };

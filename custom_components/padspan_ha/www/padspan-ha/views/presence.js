@@ -5,6 +5,10 @@ export function render(ctx){
   const root = el("section",{id:"presence"});
   root.className = ctx.state.view==="presence" ? "" : "hidden";
 
+  const isLive = ctx.state.dataMode === "live";
+  const snap = isLive ? (ctx.state.live && ctx.state.live.snapshot) : null;
+
+  // --- Original: room→tag lookup ---
   const tagRooms = {};
   for(const r of Object.keys(roomTagMap||{})){
     for(const t of (roomTagMap[r]||[])){
@@ -31,5 +35,102 @@ export function render(ctx){
     el("div",{class:"toolbar"},[input, btn]),
     out,
   ]));
+
+  // --- BLE presence: objects by scanner ---
+  if(isLive && snap){
+    const bleAds = (snap.ble && Array.isArray(snap.ble.advertisements)) ? snap.ble.advertisements : [];
+    const radios = (snap.ble && Array.isArray(snap.ble.radios)) ? snap.ble.radios : [];
+    const objList = (snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
+
+    // Build addr → object metadata index (for user_label, identified)
+    const objIndex = new Map();
+    for(const o of objList){
+      if(o.address) objIndex.set(String(o.address).toUpperCase(), o);
+    }
+
+    // Build scanner name lookup
+    const radioNames = {};
+    for(const r of radios){
+      const src = String(r.source || "");
+      if(src) radioNames[src] = r.name || src;
+    }
+
+    // Group advertisements by scanner source, keep best RSSI per address
+    const scannerDevices = {};
+    for(const ad of bleAds){
+      const src = String(ad.source || "unknown");
+      const addr = String(ad.address || "").toUpperCase();
+      if(!addr) continue;
+      if(!scannerDevices[src]) scannerDevices[src] = {};
+      const existing = scannerDevices[src][addr];
+      const rssi = Number(ad.rssi);
+      if(!existing || (isFinite(rssi) && rssi > (existing.rssi || -Infinity))){
+        scannerDevices[src][addr] = { addr, rssi: isFinite(rssi)?rssi:null, name: ad.name||"", age_s: ad.age_s };
+      }
+    }
+
+    const scanners = Object.keys(scannerDevices).sort();
+
+    if(scanners.length){
+      const scannerCards = el("div",{class:"grid"});
+
+      for(const src of scanners){
+        const scannerName = radioNames[src] || src;
+        const devs = Object.values(scannerDevices[src])
+          .sort((a,b)=>(b.rssi||(-Infinity))-(a.rssi||(-Infinity)))
+          .slice(0, 50);
+
+        const tagged = devs.filter(d=>{ const o=objIndex.get(d.addr); return o && (o.user_label||o.identified); });
+        const untagged = devs.filter(d=>{ const o=objIndex.get(d.addr); return !o || (!o.user_label && !o.identified); });
+
+        const devRow = d => {
+          const o = objIndex.get(d.addr);
+          const label = (o && o.user_label) || (o && o.name!==d.addr && o.name) || d.name || d.addr;
+          const rssiStr = d.rssi!=null ? `RSSI ${d.rssi}` : "";
+
+          const tagBtn = el("button",{class:"btn tiny"}, o&&o.user_label ? "Relabel" : "Tag");
+          tagBtn.addEventListener("click",()=>ctx.actions.tagObjectPrompt(d.addr, (o&&o.user_label)||""));
+
+          return el("div",{class:"item"},[
+            el("div",{style:"flex:1"},[
+              el("span",{}, label),
+              rssiStr ? el("span",{class:"muted", style:"margin-left:8px"}, rssiStr) : null,
+            ].filter(Boolean)),
+            tagBtn,
+          ]);
+        };
+
+        const card = el("div",{class:"card"},[
+          el("div",{class:"row"},[
+            el("div",{class:"h2", style:"flex:1"}, scannerName),
+            el("span",{class:"badge"}, `${tagged.length} tagged`),
+            el("span",{class:"badge warn"}, `${untagged.length} untagged`),
+          ]),
+          el("div",{class:"muted"}, src),
+          tagged.length ? el("div",{},[
+            el("div",{class:"muted",style:"margin:6px 0 2px"},"Tagged"),
+            el("div",{class:"list"}, tagged.map(devRow)),
+          ]) : null,
+          untagged.length ? el("div",{},[
+            el("div",{class:"muted",style:"margin:6px 0 2px"},"Unidentified"),
+            el("div",{class:"list"}, untagged.map(devRow)),
+          ]) : null,
+        ].filter(Boolean));
+
+        scannerCards.appendChild(card);
+      }
+
+      root.appendChild(el("div",{class:"card"},[
+        el("div",{class:"muted"},"BLE Objects by Scanner (live)"),
+        el("div",{class:"muted", style:"margin-bottom:8px"}, "Objects visible to each scanner, sorted by signal strength. Use Tag to label unknown devices."),
+      ]));
+      root.appendChild(scannerCards);
+    } else {
+      root.appendChild(el("div",{class:"card"},[
+        el("div",{class:"muted"},"No BLE scanner data yet. Switch to Live mode and ensure Bluetooth is enabled."),
+      ]));
+    }
+  }
+
   return root;
 }

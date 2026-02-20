@@ -222,6 +222,7 @@ export function render(ctx){
       el("th",{}, "Room"),
       el("th",{}, "Signal"),
       el("th",{}, "Last seen"),
+      el("th",{}, "Tag"),
       el("th",{}, "Vendor (online)"),
     ]));
     const tbody = el("tbody",{});
@@ -237,7 +238,23 @@ export function render(ctx){
       const rssi = (o.rssi==null?"":String(o.rssi));
       const lastSeen = o.age_s!=null ? fmtAgo(o.age_s) : (o.last_seen || "");
 
+      const userLabel = o.user_label || "";
+      const displayName = userLabel || name;
       const vendorCell = el("td",{}, kind==="ble" ? el("span",{class:"badge"}, "—") : el("span",{class:"badge"}, "n/a"));
+
+      // Tag button for BLE rows
+      const tagCell = (() => {
+        if (kind !== "ble" || !addr) return el("td",{}, "—");
+        const btn = el("button",{class:"btn tiny"}, userLabel ? "Relabel" : "Tag");
+        btn.addEventListener("click", (e)=>{
+          e.stopPropagation();
+          ctx.actions.tagObjectPrompt(addr, userLabel);
+        });
+        const wrap = el("div",{style:"display:flex;align-items:center;gap:6px"});
+        if(userLabel) wrap.appendChild(el("span",{class:"badge"}, userLabel));
+        wrap.appendChild(btn);
+        return el("td",{}, wrap);
+      })();
 
       const tr = el("tr",{
         "data-kind": kind,
@@ -245,16 +262,18 @@ export function render(ctx){
       },[
         el("td",{}, [ el("span",{class:"badge"}, kind || "—"), (identified ? null : el("span",{class:"badge warn", style:"margin-left:6px"}, "unidentified")) ]),
         el("td",{}, [
-          el("div",{style:"font-weight:600"}, name || "—"),
+          el("div",{style:"font-weight:600"}, displayName || "—"),
+          (userLabel && name && name !== userLabel ? el("div",{class:"muted"}, `raw: ${name}`) : null),
           (o.entity_id ? el("div",{class:"muted"}, o.entity_id) : null),
           (kind==="ble" && Array.isArray(o.sources) && o.sources.length ? el("div",{class:"muted"}, `Seen by: ${o.sources.join(", ")}`) : null),
           (kind==="ble" && o.manufacturer_data && Object.keys(o.manufacturer_data).length ? el("div",{class:"muted"}, `Manuf IDs: ${Object.keys(o.manufacturer_data).slice(0,3).join(", ")}${Object.keys(o.manufacturer_data).length>3?"…":""}`) : null),
           (kind==="ble" && Array.isArray(o.service_uuids) && o.service_uuids.length ? el("div",{class:"muted"}, `Services: ${o.service_uuids.length}`) : null),
-        ]),
+        ].filter(Boolean)),
         el("td",{}, addr ? el("code",{}, addr) : "—"),
         el("td",{}, room ? el("span",{class:"badge"}, room) : "—"),
         el("td",{}, rssi ? el("span",{class:"badge"}, rssi) : "—"),
         el("td",{}, lastSeen || "—"),
+        tagCell,
         vendorCell,
       ]);
 
