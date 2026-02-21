@@ -42,6 +42,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_object_label_set)
     websocket_api.async_register_command(hass, ws_object_label_delete)
     websocket_api.async_register_command(hass, ws_radio_area_set)
+    websocket_api.async_register_command(hass, ws_follow_alert_save)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -1004,3 +1005,24 @@ async def ws_radio_area_set(hass: HomeAssistant, connection, msg) -> None:
         connection.send_result(msg["id"], {"ok": True, "device_id": dev_id, "area_id": area_id, "area_name": area_name or None})
     except Exception as e:
         connection.send_error(msg["id"], "update_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/follow_alert_save",
+        vol.Optional("addr"): str,
+        vol.Optional("config"): dict,
+    }
+)
+@websocket_api.async_response
+async def ws_follow_alert_save(hass: HomeAssistant, connection, msg) -> None:
+    """Save follow/alert configuration for a tracked object.
+
+    Stores config in hass.data so it persists for the HA session.
+    Future: persist to storage + trigger HA notify service on movement.
+    """
+    addr = str(msg.get("addr") or "").strip()
+    config = msg.get("config") or {}
+    hass.data.setdefault(DOMAIN, {}).setdefault("follow_alerts", {})[addr] = config
+    _LOGGER.debug("PadSpan HA follow_alert_save: addr=%s config=%s", addr, config)
+    connection.send_result(msg["id"], {"ok": True, "addr": addr})

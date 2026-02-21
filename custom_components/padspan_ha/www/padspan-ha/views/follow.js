@@ -1,0 +1,406 @@
+// PadSpan HA – Follow view
+// Real-time tag tracker: pick a tag, see its current room + floor, movement log, and alert config.
+// Position updates arrive via the existing 5s live-snapshot poll — no extra timers needed.
+
+export function render(ctx) {
+  const { el, esc } = ctx.helpers;
+
+  const snap     = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const dataMode = ctx.state.dataMode || "sample";
+
+  // All tracked objects from snapshot
+  const allObjects = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
+  const haAreas    = (ctx.state.model && Array.isArray(ctx.state.model.areas))  ? ctx.state.model.areas  : [];
+  const haFloors   = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
+  const radios     = (snap && snap.ble && Array.isArray(snap.ble.radios)) ? snap.ble.radios : [];
+  const ads        = (snap && snap.ble && Array.isArray(snap.ble.advertisements)) ? snap.ble.advertisements : [];
+
+  // ── Persistent state ────────────────────────────────────────────────────────
+  if (!ctx.state.followAddr) ctx.state.followAddr = "";
+  if (!ctx.state.followHistory) ctx.state.followHistory = {};    // addr → [{room, ts}]
+  if (!ctx.state.followAlertConfig) ctx.state.followAlertConfig = {}; // addr → {email, on_change, watch_rooms:[]}
+
+  // ── Resolve chosen object ────────────────────────────────────────────────────
+  const addr   = ctx.state.followAddr || "";
+  const chosen = addr ? (allObjects.find(o => (o.address||o.entity_id||"") === addr) || null) : null;
+
+  // Track movement (ring-buffer per tag)
+  if (chosen) {
+    const room = chosen.room || "";
+    const history = ctx.state.followHistory[addr] || [];
+    const last = history[history.length - 1];
+    if (!last || last.room !== room) {
+      history.push({ room, ts: Date.now() });
+      if (history.length > 60) history.shift();
+      ctx.state.followHistory[addr] = history;
+    }
+  }
+
+  // ── Header ──────────────────────────────────────────────────────────────────
+  const header = el("div", { class: "row", style: "margin-bottom:14px" }, [
+    el("div", { class: "grow" }, [
+      el("div", { class: "h1" }, "Follow"),
+      el("div", { class: "muted" }, "Track a tag's real-time location. Position updates every ~5 s in Live mode."),
+    ]),
+    dataMode !== "live"
+      ? el("span", { class: "badge warn" }, "Sample mode — switch to Live for real data")
+      : el("span", { class: "badge" }, "Live · auto-refresh 5 s"),
+  ]);
+
+  // ── Tag selector ─────────────────────────────────────────────────────────────
+  const selectorCard = _buildSelector(ctx, el, allObjects, addr);
+
+  if (!chosen) {
+    return el("div", { id: "follow" }, [header, selectorCard,
+      el("div", { class: "card" }, [
+        el("div", { style: "font-weight:700" }, "No tag selected"),
+        el("div", { class: "muted", style: "margin-top:6px" }, "Use the selector above to choose a tag to follow."),
+      ]),
+    ]);
+  }
+
+  // ── Current status ──────────────────────────────────────────────────────────
+  const statusCard = _buildStatus(ctx, el, chosen, haAreas, haFloors, ads, dataMode);
+
+  // ── Mini-map (room grid with tag highlighted) ────────────────────────────────
+  const mapCard = _buildMapCard(ctx, el, snap, chosen, haAreas, haFloors, radios);
+
+  // ── Movement log ─────────────────────────────────────────────────────────────
+  const logCard = _buildLog(el, ctx.state.followHistory[addr] || []);
+
+  // ── Alert config ─────────────────────────────────────────────────────────────
+  const alertCard = _buildAlerts(ctx, el, addr, chosen, haAreas, dataMode);
+
+  return el("div", { id: "follow" }, [header, selectorCard, statusCard, mapCard, logCard, alertCard]);
+}
+
+// ── Tag selector card ──────────────────────────────────────────────────────────
+function _buildSelector(ctx, el, allObjects, currentAddr) {
+  const card = el("div", { class: "card", style: "margin-bottom:10px" });
+
+  const label = el("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Choose tag to follow:");
+
+  const sel = document.createElement("select");
+  sel.className = "select";
+  const blank = document.createElement("option");
+  blank.value = ""; blank.textContent = "— Select a tag —";
+  sel.appendChild(blank);
+
+  // Sort: identified first, then by display name
+  const sorted = [...allObjects].sort((a, b) => {
+    if (!!a.identified !== !!b.identified) return a.identified ? -1 : 1;
+    const na = a.user_label || a.name || a.entity_id || a.address || "";
+    const nb = b.user_label || b.name || b.entity_id || b.address || "";
+    return na.localeCompare(nb);
+  });
+
+  for (const o of sorted) {
+    const id  = o.address || o.entity_id || "";
+    if (!id) continue;
+    const opt = document.createElement("option");
+    opt.value = id;
+    const name = o.user_label || o.name || o.entity_id || id;
+    const room = o.room ? ` · ${o.room}` : "";
+    const kind = o.kind === "entity" ? "[Entity]" : (o.identified ? "[Tagged]" : "[Unidentified]");
+    opt.textContent = `${kind} ${name}${room}`;
+    if (id === currentAddr) opt.selected = true;
+    sel.appendChild(opt);
+  }
+
+  sel.addEventListener("change", () => {
+    ctx.state.followAddr = sel.value;
+    ctx.actions.renderRooms();
+  });
+
+  card.appendChild(label);
+  card.appendChild(sel);
+  return card;
+}
+
+// ── Current status card ────────────────────────────────────────────────────────
+function _buildStatus(ctx, el, obj, haAreas, haFloors, ads, dataMode) {
+  const name   = obj.user_label || obj.name || obj.entity_id || obj.address || "Unknown";
+  const room   = obj.room || "—";
+  const addr   = obj.address || "";
+
+  // Floor from HA area
+  const haArea  = haAreas.find(a => a.name === room);
+  const haFloor = haFloors.find(f => f.id === (haArea?.floor_id || ""));
+  const floor   = haFloor ? haFloor.name : "—";
+
+  // Radios seeing this tag (from advertisements)
+  const seenBy = ads
+    .filter(a => a.address && a.address.toUpperCase() === addr.toUpperCase())
+    .sort((a, b) => (b.rssi || -999) - (a.rssi || -999));
+
+  const rssiClass = v => {
+    if (v >= -60) return "badge";
+    if (v >= -80) return "badge warn";
+    return "badge err";
+  };
+
+  const radiosEl = seenBy.length
+    ? el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
+        seenBy.map(a => el("span", { class: rssiClass(a.rssi || -999) },
+          `${a.source || "?"} ${a.rssi != null ? a.rssi + " dBm" : ""}`
+        ))
+      )
+    : el("div", { class: "muted", style: "margin-top:4px;font-size:12px" }, "No active detections");
+
+  const lastSeen = (() => {
+    if (!seenBy.length) return null;
+    const s = seenBy[0].age_s;
+    if (s == null) return null;
+    const v = Math.max(0, Math.round(Number(s)));
+    if (v < 60) return `${v}s ago`;
+    return `${Math.round(v / 60)}m ago`;
+  })();
+
+  const statusBadge = obj.identified
+    ? el("span", { class: "badge" }, "identified")
+    : el("span", { class: "badge warn" }, "unidentified");
+
+  return el("div", { class: "card", style: "margin-bottom:10px" }, [
+    el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px" }, [
+      el("div", { style: "font-size:18px;font-weight:800;color:#e2e8f0" }, name),
+      statusBadge,
+    ]),
+    el("div", { class: "grid-2" }, [
+      el("div", {}, [
+        el("div", { class: "muted", style: "font-size:11px" }, "Current room"),
+        el("div", { style: "font-size:20px;font-weight:700;color:#52b788;margin-top:2px" }, room),
+        el("div", { class: "muted", style: "font-size:11px;margin-top:2px" }, `Floor: ${floor}`),
+      ]),
+      el("div", {}, [
+        el("div", { class: "muted", style: "font-size:11px" }, "Detected by"),
+        radiosEl,
+        lastSeen ? el("div", { class: "muted", style: "font-size:11px;margin-top:4px" }, `Last seen: ${lastSeen}`) : null,
+      ].filter(Boolean)),
+    ]),
+    addr ? el("div", { class: "muted", style: "font-size:11px;margin-top:8px" }, `Address: ${addr}`) : null,
+  ].filter(Boolean));
+}
+
+// ── Mini-map ───────────────────────────────────────────────────────────────────
+function _buildMapCard(ctx, el, snap, chosen, haAreas, haFloors, radios) {
+  const roomTagMap = ctx.state.roomTagMap || {};
+  const allObjects = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
+
+  const chosenRoom = chosen.room || "";
+  const chosenAddr = chosen.address || chosen.entity_id || "";
+
+  // Build room list
+  const roomSet = new Set(haAreas.map(a => a.name));
+  for (const r of Object.keys(roomTagMap)) roomSet.add(r);
+  const rooms = Array.from(roomSet).sort();
+
+  if (!rooms.length) {
+    return el("div", { class: "card", style: "margin-bottom:10px" }, [
+      el("div", { class: "muted" }, "No rooms configured. Add areas in HA Settings → Areas & Zones."),
+    ]);
+  }
+
+  // Radio→room mapping
+  const radiosByRoom = {};
+  for (const r of radios) {
+    const a = r.area_name || "";
+    if (a) (radiosByRoom[a] = radiosByRoom[a] || []).push(r);
+  }
+
+  const COLS = 3, BW = 210, BH = 115, GAP = 12, PX = 14, PY = 14;
+  const rows = Math.ceil(rooms.length / COLS);
+  const svgW = COLS * (BW + GAP) - GAP + PX * 2;
+  const svgH = rows * (BH + GAP) - GAP + PY * 2;
+  const PALETTE = ["#52b788","#4caf50","#43a047","#388e3c","#66bb6a","#81c784","#a5d6a7","#2e7d32"];
+  const _esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
+  let s = `<svg viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:520px;display:block;font-family:system-ui,sans-serif">`;
+  s += `<rect width="${svgW}" height="${svgH}" fill="#071008" rx="8"/>`;
+
+  rooms.forEach((room, idx) => {
+    const col = idx % COLS;
+    const row = Math.floor(idx / COLS);
+    const x = PX + col * (BW + GAP);
+    const y = PY + row * (BH + GAP);
+    const isActive = room === chosenRoom;
+    const color = PALETTE[idx % PALETTE.length];
+    const strokeW = isActive ? "3" : "1.5";
+    const fillOp = isActive ? "22" : "10";
+
+    s += `<rect x="${x}" y="${y}" width="${BW}" height="${BH}" fill="${color}${fillOp}" stroke="${color}" stroke-width="${strokeW}" rx="8"/>`;
+    s += `<text x="${x + BW/2}" y="${y + 17}" text-anchor="middle" fill="${color}" font-size="13" font-weight="700">${_esc(room)}</text>`;
+
+    const haArea  = haAreas.find(a => a.name === room);
+    const haFloor = haFloors.find(f => f.id === (haArea?.floor_id || ""));
+    if (haFloor) {
+      s += `<text x="${x + BW/2}" y="${y + 29}" text-anchor="middle" fill="${color}88" font-size="9">${_esc(haFloor.name)}</text>`;
+    }
+
+    // Radios in this room
+    const roomRadios = radiosByRoom[room] || [];
+    roomRadios.slice(0, 4).forEach((r, ri) => {
+      const rx = x + 18 + ri * 36, ry = y + 60;
+      s += `<circle cx="${rx}" cy="${ry}" r="10" fill="none" stroke="#52b788" stroke-width="0.7" opacity="0.25"/>`;
+      s += `<circle cx="${rx}" cy="${ry}" r="6"  fill="none" stroke="#52b788" stroke-width="1"   opacity="0.5"/>`;
+      s += `<circle cx="${rx}" cy="${ry}" r="3"  fill="#52b788"/>`;
+    });
+
+    // Chosen tag marker — bright pulsing ring
+    if (isActive) {
+      const tx = x + BW / 2, ty = y + BH / 2 + 10;
+      // Outer glow ring (animated via SVG animate)
+      s += `<circle cx="${tx}" cy="${ty}" r="20" fill="none" stroke="#5eead4" stroke-width="1.5" opacity="0.3">`;
+      s += `<animate attributeName="r" values="14;24;14" dur="2s" repeatCount="indefinite"/>`;
+      s += `<animate attributeName="opacity" values="0.4;0.1;0.4" dur="2s" repeatCount="indefinite"/>`;
+      s += `</circle>`;
+      s += `<circle cx="${tx}" cy="${ty}" r="10" fill="#5eead4" opacity="0.2"/>`;
+      s += `<circle cx="${tx}" cy="${ty}" r="7"  fill="#5eead4" opacity="0.95"/>`;
+      s += `<circle cx="${tx}" cy="${ty}" r="3.5" fill="#071008"/>`;
+      const lbl = (chosen.user_label || chosen.name || "Tag").substring(0, 10);
+      s += `<text x="${tx}" y="${ty + 22}" text-anchor="middle" fill="#5eead4" font-size="9" font-weight="600">${_esc(lbl)}</text>`;
+    }
+  });
+
+  s += `</svg>`;
+
+  const wrap = document.createElement("div");
+  wrap.innerHTML = s;
+
+  return el("div", { class: "card", style: "margin-bottom:10px" }, [
+    el("div", { class: "h2", style: "margin-bottom:8px" }, "Location map"),
+    el("div", { class: "muted", style: "margin-bottom:10px;font-size:12px" },
+      chosenRoom
+        ? `Showing: ${chosen.user_label || chosen.name || "Tag"} is in ${chosenRoom}`
+        : "Tag has no room assignment yet."),
+    wrap,
+  ]);
+}
+
+// ── Movement log ───────────────────────────────────────────────────────────────
+function _buildLog(el, history) {
+  const card = el("div", { class: "card", style: "margin-bottom:10px" });
+  card.appendChild(el("div", { class: "h2" }, "Movement log"));
+
+  if (!history.length) {
+    card.appendChild(el("div", { class: "muted", style: "margin-top:6px" }, "No movement recorded yet in this session."));
+    return card;
+  }
+
+  const fmtTs = ts => {
+    try {
+      const d = new Date(ts);
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    } catch { return ""; }
+  };
+
+  const rows = [...history].reverse().slice(0, 30);
+  const table = el("table", { class: "table", style: "margin-top:8px" }, [
+    el("thead", {}, el("tr", {}, [
+      el("th", {}, "Time"),
+      el("th", {}, "Room"),
+      el("th", {}, ""),
+    ])),
+    el("tbody", {}, rows.map((entry, i) => {
+      const prev = rows[i + 1];
+      const arrow = prev ? el("td", { class: "muted", style: "font-size:11px" }, `← ${prev.room || "—"}`) : el("td", {}, "");
+      return el("tr", {}, [
+        el("td", { class: "mono", style: "font-size:11px;color:#94a3b8" }, fmtTs(entry.ts)),
+        el("td", { style: "font-weight:600;color:#5eead4" }, entry.room || "—"),
+        arrow,
+      ]);
+    })),
+  ]);
+  card.appendChild(table);
+  return card;
+}
+
+// ── Alert configuration ────────────────────────────────────────────────────────
+function _buildAlerts(ctx, el, addr, chosen, haAreas, dataMode) {
+  const cfg = ctx.state.followAlertConfig[addr] || {};
+  const name = chosen.user_label || chosen.name || addr || "tag";
+
+  const card = el("div", { class: "card" });
+  card.appendChild(el("div", { class: "h2" }, "Movement alerts"));
+  card.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-top:4px;margin-bottom:12px" },
+    "Configure email notifications when this tag moves. Emails are sent via Home Assistant's notify service."
+  ));
+
+  // Email input
+  const emailInput = el("input", {
+    class: "input",
+    type: "email",
+    placeholder: "email@example.com",
+    value: cfg.email || "",
+    oninput: e => { cfg.email = e.target.value; ctx.state.followAlertConfig[addr] = cfg; },
+  });
+
+  // On-change checkbox
+  const chkChange = el("input", { type: "checkbox" });
+  if (cfg.on_room_change) chkChange.checked = true;
+  chkChange.addEventListener("change", () => {
+    cfg.on_room_change = chkChange.checked;
+    ctx.state.followAlertConfig[addr] = cfg;
+  });
+
+  // Watch-rooms multi-select
+  const watchRooms = cfg.watch_rooms || [];
+  const roomNames  = haAreas.map(a => a.name).sort();
+
+  const checkboxes = roomNames.map(room => {
+    const chk = el("input", { type: "checkbox" });
+    if (watchRooms.includes(room)) chk.checked = true;
+    chk.addEventListener("change", () => {
+      const wr = ctx.state.followAlertConfig[addr]?.watch_rooms || [];
+      if (chk.checked) { if (!wr.includes(room)) wr.push(room); }
+      else { const i = wr.indexOf(room); if (i >= 0) wr.splice(i, 1); }
+      cfg.watch_rooms = wr;
+      ctx.state.followAlertConfig[addr] = cfg;
+    });
+    return el("label", { style: "display:flex;align-items:center;gap:6px;cursor:pointer" }, [chk, el("span", {}, room)]);
+  });
+
+  const saveStatus = el("div", { class: "muted", style: "min-height:18px;font-size:12px;margin-top:8px" });
+
+  const saveBtn = el("button", { class: "btn", style: "margin-top:10px" }, "Save alert settings");
+  saveBtn.addEventListener("click", async () => {
+    if (dataMode !== "live") {
+      saveStatus.textContent = "Switch to Live mode to save alert settings.";
+      return;
+    }
+    if (cfg.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cfg.email)) {
+      saveStatus.textContent = "Please enter a valid email address.";
+      return;
+    }
+    saveStatus.textContent = "Saving…";
+    try {
+      await ctx.actions.followAlertSave({ addr, config: cfg });
+      saveStatus.textContent = "Alert settings saved ✔";
+    } catch (e) {
+      saveStatus.textContent = "Save failed — alert backend may not be configured yet.";
+    }
+  });
+
+  card.appendChild(el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
+    el("div", {}, [
+      el("div", { class: "muted", style: "font-size:12px;margin-bottom:4px" }, "Notification email address"),
+      emailInput,
+    ]),
+    el("div", {}, [
+      el("label", { style: "display:flex;align-items:center;gap:8px;cursor:pointer" }, [
+        chkChange,
+        el("div", {}, [
+          el("div", {}, `Alert on every room change for "${name}"`),
+          el("div", { class: "muted", style: "font-size:11px" }, "Sends an email each time the tag moves to a new room."),
+        ]),
+      ]),
+    ]),
+    checkboxes.length ? el("div", {}, [
+      el("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Also alert when tag enters any of these rooms:"),
+      el("div", { style: "display:flex;flex-wrap:wrap;gap:10px" }, checkboxes),
+    ]) : null,
+  ].filter(Boolean)));
+
+  card.appendChild(saveBtn);
+  card.appendChild(saveStatus);
+  return card;
+}
