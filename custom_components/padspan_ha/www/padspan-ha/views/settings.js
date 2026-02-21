@@ -15,53 +15,21 @@ export function render(ctx){
   }
   const draft = ctx.state._settingsDraft;
 
+  const haFloors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
+  const haAreas  = (ctx.state.model && Array.isArray(ctx.state.model.areas))  ? ctx.state.model.areas  : [];
+
   const floorsCard = el("div",{class:"card"});
-  floorsCard.appendChild(el("div",{style:"font-weight:700"},"Floors (map owners)"));
-  floorsCard.appendChild(el("div",{class:"muted", style:"font-size:12px;margin-top:6px"},
-    "Each uploaded map belongs to a floor. Rooms can be assigned to floors so only relevant rooms appear when editing that map."
+  floorsCard.appendChild(el("div",{style:"font-weight:700"},"Floors"));
+  floorsCard.appendChild(el("div",{class:"muted", style:"font-size:12px;margin-top:4px"},
+    "Floors are read from HA. Manage them in HA Settings → Areas & Zones."
   ));
-
-  const addRow = el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-top:10px"});
-  const newFloorName = el("input",{type:"text", placeholder:"New floor name (e.g., Basement)"});
-  const addBtn = el("button",{class:"btn inline", onclick:()=>{
-    const nm = (newFloorName.value||"").trim();
-    if(!nm) return;
-    const id = _slug(nm);
-    if(!draft.floors) draft.floors = [];
-    if(draft.floors.find(f=>f.id===id)){ newFloorName.value=""; return; }
-    draft.floors.push({id, name:nm});
-    newFloorName.value="";
-    ctx.actions.renderRooms();
-  }}, "Add floor");
-  addRow.appendChild(newFloorName);
-  addRow.appendChild(addBtn);
-  floorsCard.appendChild(addRow);
-
-  const list = el("div",{style:"margin-top:10px;display:flex;flex-direction:column;gap:8px"});
-  for(const f of (draft.floors||[])){
-    const row = el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;border:1px solid #1b3526;border-radius:12px;padding:10px;background:#0a150e"});
-    const left = el("div",{style:"display:flex;gap:10px;align-items:center;flex-wrap:wrap"},[
-      el("div",{class:"pill"}, f.id),
-    ]);
-    const nm = el("input",{type:"text", value:f.name||f.id, style:"min-width:220px"});
-    nm.addEventListener("input", ()=>{ f.name = nm.value; });
-    left.appendChild(nm);
-
-    const del = el("button",{class:"btn inline", onclick:()=>{
-      // Never delete main floor; keep it as a safe fallback
-      if(f.id==="main"){ alert("Main floor can't be deleted."); return; }
-      draft.floors = (draft.floors||[]).filter(x=>x.id!==f.id);
-      // Reassign any rooms on this floor back to main
-      for(const [room,meta] of Object.entries(draft.room_meta||{})){
-        if(meta && meta.floor_id===f.id) meta.floor_id="main";
-      }
-      ctx.actions.renderRooms();
-    }}, "Delete");
-    row.appendChild(left);
-    row.appendChild(del);
-    list.appendChild(row);
+  const floorPills = el("div",{style:"display:flex;flex-wrap:wrap;gap:8px;margin-top:10px"});
+  if(haFloors.length){
+    for(const f of haFloors) floorPills.appendChild(el("span",{class:"pill"}, f.name || f.id));
+  } else {
+    floorPills.appendChild(el("span",{class:"muted", style:"font-size:12px"}, "No floors found in HA."));
   }
-  floorsCard.appendChild(list);
+  floorsCard.appendChild(floorPills);
 
   const roomsCard = el("div",{class:"card", style:"margin-top:12px"});
   roomsCard.appendChild(el("div",{style:"font-weight:700"},"Rooms"));
@@ -83,22 +51,25 @@ export function render(ctx){
     if(!draft.room_meta[room]) draft.room_meta[room] = { floor_id: "main", color: _toHex(roomColor(room)) };
 
     const meta = draft.room_meta[room];
-    const row = el("div",{style:"display:grid;grid-template-columns: 1fr 160px 90px;gap:10px;align-items:center;border:1px solid #1b3526;border-radius:12px;padding:10px;background:#0a150e"});
+
+    // Sync floor from HA area registry — HA is the source of truth
+    const haArea = haAreas.find(a => a.name === room);
+    const haFloorId = haArea?.floor_id || "";
+    if(haFloorId) meta.floor_id = haFloorId;
+    const haFloor = haFloors.find(f => f.id === meta.floor_id);
+    const floorLabel = haFloor ? (haFloor.name || haFloor.id) : (meta.floor_id || "—");
+
+    const row = el("div",{style:"display:grid;grid-template-columns: 1fr 140px 90px;gap:10px;align-items:center;border:1px solid #1b3526;border-radius:12px;padding:10px;background:#0a150e"});
     row.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;flex-wrap:wrap"},[
       el("span",{class:"dot", style:`background:${meta.color || roomColor(room)};`}),
       el("div",{style:"font-weight:600"}, room),
     ]));
 
-    const sel = document.createElement("select");
-    sel.className = "select";
-    for(const f of (draft.floors||[])){
-      const o = document.createElement("option");
-      o.value = f.id; o.textContent = f.name || f.id;
-      sel.appendChild(o);
-    }
-    sel.value = meta.floor_id || "main";
-    sel.addEventListener("change", ()=>{ meta.floor_id = sel.value; });
-    row.appendChild(sel);
+    // Floor shown as a read-only label (managed in HA)
+    row.appendChild(el("div",{style:"display:flex;flex-direction:column;gap:2px"},[
+      el("div",{class:"muted", style:"font-size:10px"}, "Floor (HA)"),
+      el("div",{style:"font-size:12px;font-weight:600;color:#94a3b8"}, floorLabel),
+    ]));
 
     const col = document.createElement("input");
     col.type = "color";

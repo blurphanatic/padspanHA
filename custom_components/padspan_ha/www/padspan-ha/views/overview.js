@@ -386,6 +386,111 @@ export function render(ctx){
     for(let n=0;n<conc;n++) runOne();
   }
 
+  // ---------- Room + radio grid (auto-generated from live HA data) ----------
+  function renderRoomGrid(){
+    const haAreas  = (ctx.state.model && Array.isArray(ctx.state.model.areas))  ? ctx.state.model.areas  : [];
+    const haFloors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
+
+    const allRadios  = (liveSnap && liveSnap.ble && Array.isArray(liveSnap.ble.radios)) ? liveSnap.ble.radios : [];
+    const allObjects = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
+
+    // Build room list from HA areas + roomTagMap (union)
+    const roomSet = new Set(haAreas.map(a => a.name));
+    for(const r of Object.keys(roomTagMap)) roomSet.add(r);
+    const rooms = Array.from(roomSet).sort();
+
+    if(!rooms.length && !allRadios.length) return null;
+
+    // Group radios + objects by room
+    const radiosByRoom = {}, objByRoom = {};
+    for(const r of allRadios){
+      const a = r.area_name || ""; if(a){ (radiosByRoom[a] = radiosByRoom[a]||[]).push(r); }
+    }
+    for(const o of allObjects){
+      const r = o.room || ""; if(r){ (objByRoom[r] = objByRoom[r]||[]).push(o); }
+    }
+    const unassignedRadios = allRadios.filter(r => !r.area_name);
+
+    // Layout constants
+    const COLS = 3, BW = 210, BH = 115, GAP = 12, PX = 14, PY = 14;
+    const rows = Math.ceil(rooms.length / COLS);
+    const svgW  = COLS * (BW + GAP) - GAP + PX * 2;
+    const svgH  = rows * (BH + GAP) - GAP + PY * 2;
+    const extraH = unassignedRadios.length ? BH * 0.6 + GAP : 0;
+    const PALETTE = ["#52b788","#4caf50","#43a047","#388e3c","#66bb6a","#81c784","#a5d6a7","#2e7d32"];
+
+    const _esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
+    let s = `<svg viewBox="0 0 ${svgW} ${svgH + extraH}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:600px;display:block;font-family:system-ui,sans-serif">`;
+    s += `<rect width="${svgW}" height="${svgH + extraH}" fill="#071008" rx="8"/>`;
+
+    rooms.forEach((room, idx) => {
+      const col = idx % COLS;
+      const row = Math.floor(idx / COLS);
+      const x = PX + col * (BW + GAP);
+      const y = PY + row * (BH + GAP);
+      const color = PALETTE[idx % PALETTE.length];
+
+      // Box
+      s += `<rect x="${x}" y="${y}" width="${BW}" height="${BH}" fill="${color}10" stroke="${color}" stroke-width="1.5" rx="8"/>`;
+
+      // Room name
+      s += `<text x="${x + BW/2}" y="${y + 17}" text-anchor="middle" fill="${color}" font-size="13" font-weight="700">${_esc(room)}</text>`;
+
+      // Floor label from HA
+      const haArea = haAreas.find(a => a.name === room);
+      const haFloor = haFloors.find(f => f.id === (haArea?.floor_id||""));
+      if(haFloor){
+        s += `<text x="${x + BW/2}" y="${y + 29}" text-anchor="middle" fill="${color}88" font-size="9">${_esc(haFloor.name)}</text>`;
+      }
+
+      // Radios (antenna rings)
+      const roomRadios = radiosByRoom[room] || [];
+      roomRadios.slice(0,4).forEach((r, ri) => {
+        const rx = x + 18 + ri * 36, ry = y + 60;
+        s += `<circle cx="${rx}" cy="${ry}" r="12" fill="none" stroke="#52b788" stroke-width="0.7" opacity="0.2"/>`;
+        s += `<circle cx="${rx}" cy="${ry}" r="7"  fill="none" stroke="#52b788" stroke-width="1"   opacity="0.5"/>`;
+        s += `<circle cx="${rx}" cy="${ry}" r="3.5" fill="#52b788"/>`;
+        const lbl = (r.name || r.source || "").substring(0, 7);
+        s += `<text x="${rx}" y="${ry + 17}" text-anchor="middle" fill="#52b788" font-size="7.5">${_esc(lbl)}</text>`;
+      });
+
+      // Objects (dots on the right)
+      const roomObjs = objByRoom[room] || [];
+      roomObjs.slice(0,5).forEach((o, oi) => {
+        const ox = x + BW - 12 - oi * 20, oy = y + 60;
+        const oc = o.identified ? "#5eead4" : "#f59e0b";
+        s += `<circle cx="${ox}" cy="${oy}" r="5" fill="${oc}" opacity="0.9"/>`;
+        const lbl = (o.user_label || o.name || "?").substring(0, 5);
+        s += `<text x="${ox}" y="${oy + 14}" text-anchor="middle" fill="${oc}" font-size="7">${_esc(lbl)}</text>`;
+      });
+
+      // Bottom summary
+      const rc = roomRadios.length, oc = roomObjs.length;
+      const sumTxt = [rc ? `${rc} radio${rc>1?"s":""}` : "", oc ? `${oc} obj${oc>1?"s":""}` : ""].filter(Boolean).join(" · ") || "no devices";
+      s += `<text x="${x + BW - 6}" y="${y + BH - 5}" text-anchor="end" fill="${color}77" font-size="8">${_esc(sumTxt)}</text>`;
+    });
+
+    // Unassigned radios row
+    if(unassignedRadios.length){
+      const uy = svgH + GAP;
+      s += `<text x="${PX}" y="${uy + 13}" fill="#94a3b8" font-size="11" font-weight="600">Radios not yet assigned to an HA area</text>`;
+      unassignedRadios.slice(0,8).forEach((r, ri) => {
+        const rx = PX + 16 + ri * 120, ry = uy + 38;
+        s += `<circle cx="${rx}" cy="${ry}" r="7" fill="none" stroke="#52b788" stroke-width="0.8" opacity="0.3"/>`;
+        s += `<circle cx="${rx}" cy="${ry}" r="4" fill="none" stroke="#52b788" stroke-width="1"   opacity="0.6"/>`;
+        s += `<circle cx="${rx}" cy="${ry}" r="2.5" fill="#52b78888"/>`;
+        s += `<text x="${rx + 12}" y="${ry + 4}" fill="#94a3b8" font-size="9">${_esc(r.name || r.source || "Unknown")}</text>`;
+      });
+    }
+
+    s += `</svg>`;
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "margin-bottom:16px";
+    wrap.innerHTML = s;
+    return wrap;
+  }
+
   // ---------- Floor plan SVG ----------
   function renderFloorPlan(fp){
     if(!fp) return null;
@@ -463,13 +568,16 @@ export function render(ctx){
     ]),
   ]);
 
-  const floorPlanEl = (liveSnap && liveSnap.floor_plan) ? renderFloorPlan(liveSnap.floor_plan) : null;
+  // Use the sample floor plan if available (sample mode), otherwise auto-generate from HA data
+  const mapEl = (liveSnap && liveSnap.floor_plan)
+    ? renderFloorPlan(liveSnap.floor_plan)
+    : renderRoomGrid();
 
   const section = el("section",{},[
     el("h2",{}, "Overview"),
     el("div",{style:"color:#94a3b8;margin-top:-6px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
   ]);
-  if(floorPlanEl) section.appendChild(floorPlanEl);
+  if(mapEl) section.appendChild(mapEl);
   section.appendChild(grid);
   return section;
 }
