@@ -14,6 +14,7 @@ If UI changes don't show:
 */
 
 import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260220T200000Z";
+import * as Follow from "./views/follow.js?b=20260220T200000Z";
 import * as Overview from "./views/overview.js?b=20260220T200000Z";
 import * as Objects from "./views/objects.js?b=20260220T200000Z";
 import * as Devices from "./views/devices.js?b=20260220T200000Z";
@@ -32,11 +33,12 @@ import * as Diagnostics from "./views/diagnostics.js?b=20260220T200000Z";
 import * as QA from "./views/qa.js?b=20260220T200000Z";
 import * as Sandbox from "./views/sandbox.js?b=20260220T200000Z";
 
-const APP_VERSION = "0.4.31";
+const APP_VERSION = "0.4.32";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260221T001040Z";
+const BUILD_ID = "20260221T074807Z";
 
 const VIEWS = {
+  follow: Follow,
   overview: Overview,
   objects: Objects,
   devices: Devices,
@@ -57,6 +59,7 @@ const VIEWS = {
 };
 
 const MENU = [
+  ["follow","Follow","mdi:crosshairs-gps"],
   ["overview","Overview","mdi:view-dashboard-outline"],
   ["objects","Objects","mdi:tag-multiple-outline"],
   ["devices","Devices","mdi:devices"],
@@ -77,6 +80,7 @@ const MENU = [
 ];
 
 const MENU_COLORS = {
+  follow: "#5eead4",
   overview: "#52b788",
   objects: "#ff8a65",
   devices: "#4db6ac",
@@ -504,6 +508,7 @@ class PadSpanHaApp extends HTMLElement {
         tagObjectPrompt: (addr, currentLabel)=>this._tagObjectPrompt(addr, currentLabel),
         radioAreaSet: async (payload)=>await this._callWS({ type:"padspan_ha/radio_area_set", ...payload }),
         refreshSnapshot: async ()=>{ await this._getLiveSnapshot(); this._renderCurrentView(); },
+        followAlertSave: async (payload)=>await this._callWS({ type:"padspan_ha/follow_alert_save", ...payload }),
 
         // Mapping suite actions
         setMapsTab: (t)=>{ this.state.mapsTab=t; this._renderCurrentView(); },
