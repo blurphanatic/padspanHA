@@ -3,7 +3,8 @@
 // Position updates arrive via the existing 5s live-snapshot poll — no extra timers needed.
 
 export function render(ctx) {
-  const { el, esc } = ctx.helpers;
+  const { el, esc, helpBtn } = ctx.helpers;
+  const isBasic = ctx.state.complexity === "basic";
 
   const snap     = (ctx.state.live && ctx.state.live.snapshot) || null;
   const dataMode = ctx.state.dataMode || "sample";
@@ -39,8 +40,13 @@ export function render(ctx) {
   // ── Header ──────────────────────────────────────────────────────────────────
   const header = el("div", { class: "row", style: "margin-bottom:14px" }, [
     el("div", { class: "grow" }, [
-      el("div", { class: "h1" }, "Follow"),
-      el("div", { class: "muted" }, "Track a tag's real-time location. Position updates every ~5 s in Live mode."),
+      el("div", { class: "row", style: "align-items:center;gap:8px" }, [
+        el("div", { class: "h1" }, "Follow"),
+        helpBtn("follow"),
+      ]),
+      el("div", { class: "muted" }, isBasic
+        ? "Track exactly where a person or object is right now."
+        : "Track a tag's real-time location. Position updates every ~5 s in Live mode."),
     ]),
     dataMode !== "live"
       ? el("span", { class: "badge warn" }, "Sample mode — switch to Live for real data")
@@ -48,37 +54,42 @@ export function render(ctx) {
   ]);
 
   // ── Tag selector ─────────────────────────────────────────────────────────────
-  const selectorCard = _buildSelector(ctx, el, allObjects, addr);
+  const selectorCard = _buildSelector(ctx, el, helpBtn, allObjects, addr, isBasic);
 
   if (!chosen) {
     return el("div", { id: "follow" }, [header, selectorCard,
       el("div", { class: "card" }, [
-        el("div", { style: "font-weight:700" }, "No tag selected"),
+        isBasic
+          ? el("div", { style: "font-size:16px;font-weight:700;margin-bottom:8px" }, "Choose a tag above to start tracking it")
+          : el("div", { style: "font-weight:700" }, "No tag selected"),
         el("div", { class: "muted", style: "margin-top:6px" }, "Use the selector above to choose a tag to follow."),
       ]),
     ]);
   }
 
   // ── Current status ──────────────────────────────────────────────────────────
-  const statusCard = _buildStatus(ctx, el, chosen, haAreas, haFloors, ads, dataMode);
+  const statusCard = _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode, isBasic);
 
   // ── Mini-map (room grid with tag highlighted) ────────────────────────────────
-  const mapCard = _buildMapCard(ctx, el, snap, chosen, haAreas, haFloors, radios);
+  const mapCard = _buildMapCard(ctx, el, helpBtn, snap, chosen, haAreas, haFloors, radios);
 
-  // ── Movement log ─────────────────────────────────────────────────────────────
-  const logCard = _buildLog(el, ctx.state.followHistory[addr] || []);
+  // ── Movement log (advanced only) ─────────────────────────────────────────────
+  const logCard = isBasic ? null : _buildLog(el, ctx.state.followHistory[addr] || []);
 
   // ── Alert config ─────────────────────────────────────────────────────────────
-  const alertCard = _buildAlerts(ctx, el, addr, chosen, haAreas, dataMode);
+  const alertCard = _buildAlerts(ctx, el, helpBtn, addr, chosen, haAreas, dataMode, isBasic);
 
-  return el("div", { id: "follow" }, [header, selectorCard, statusCard, mapCard, logCard, alertCard]);
+  return el("div", { id: "follow" }, [header, selectorCard, statusCard, mapCard, logCard, alertCard].filter(Boolean));
 }
 
 // ── Tag selector card ──────────────────────────────────────────────────────────
-function _buildSelector(ctx, el, allObjects, currentAddr) {
+function _buildSelector(ctx, el, helpBtn, allObjects, currentAddr, isBasic) {
   const card = el("div", { class: "card", style: "margin-bottom:10px" });
 
-  const label = el("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Choose tag to follow:");
+  card.appendChild(el("div", { class: "card-head" }, [
+    el("div", { class: isBasic ? "h2" : "muted", style: isBasic ? "" : "font-size:12px" }, "Choose a tag to follow"),
+    helpBtn("follow_selector"),
+  ]));
 
   const sel = document.createElement("select");
   sel.className = "select";
@@ -112,13 +123,13 @@ function _buildSelector(ctx, el, allObjects, currentAddr) {
     ctx.actions.renderRooms();
   });
 
-  card.appendChild(label);
   card.appendChild(sel);
   return card;
 }
 
 // ── Current status card ────────────────────────────────────────────────────────
-function _buildStatus(ctx, el, obj, haAreas, haFloors, ads, dataMode) {
+function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode, isBasic) {
+  const obj    = chosen;
   const name   = obj.user_label || obj.name || obj.entity_id || obj.address || "Unknown";
   const room   = obj.room || "—";
   const addr   = obj.address || "";
@@ -139,14 +150,6 @@ function _buildStatus(ctx, el, obj, haAreas, haFloors, ads, dataMode) {
     return "badge err";
   };
 
-  const radiosEl = seenBy.length
-    ? el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
-        seenBy.map(a => el("span", { class: rssiClass(a.rssi || -999) },
-          `${a.source || "?"} ${a.rssi != null ? a.rssi + " dBm" : ""}`
-        ))
-      )
-    : el("div", { class: "muted", style: "margin-top:4px;font-size:12px" }, "No active detections");
-
   const lastSeen = (() => {
     if (!seenBy.length) return null;
     const s = seenBy[0].age_s;
@@ -159,6 +162,30 @@ function _buildStatus(ctx, el, obj, haAreas, haFloors, ads, dataMode) {
   const statusBadge = obj.identified
     ? el("span", { class: "badge" }, "identified")
     : el("span", { class: "badge warn" }, "unidentified");
+
+  if (isBasic) {
+    // Basic mode: large room name + floor, simple last-seen
+    return el("div", { class: "card", style: "margin-bottom:10px" }, [
+      el("div", { class: "card-head" }, [
+        el("div", { class: "h2" }, name),
+        helpBtn("follow_map"),
+      ]),
+      el("div", { style: "margin-top:8px" }, [
+        el("div", { class: "muted", style: "font-size:12px" }, "Currently in"),
+        el("div", { style: "font-size:28px;font-weight:800;color:#52b788;margin-top:2px" }, room),
+        floor !== "—" ? el("div", { class: "muted", style: "margin-top:4px" }, `Floor: ${floor}`) : null,
+        lastSeen ? el("div", { class: "muted", style: "margin-top:8px" }, `Last seen: ${lastSeen}`) : null,
+      ].filter(Boolean)),
+    ]);
+  }
+
+  const radiosEl = seenBy.length
+    ? el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
+        seenBy.map(a => el("span", { class: rssiClass(a.rssi || -999) },
+          `${a.source || "?"} ${a.rssi != null ? a.rssi + " dBm" : ""}`
+        ))
+      )
+    : el("div", { class: "muted", style: "margin-top:4px;font-size:12px" }, "No active detections");
 
   return el("div", { class: "card", style: "margin-bottom:10px" }, [
     el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px" }, [
@@ -182,7 +209,7 @@ function _buildStatus(ctx, el, obj, haAreas, haFloors, ads, dataMode) {
 }
 
 // ── Mini-map ───────────────────────────────────────────────────────────────────
-function _buildMapCard(ctx, el, snap, chosen, haAreas, haFloors, radios) {
+function _buildMapCard(ctx, el, helpBtn, snap, chosen, haAreas, haFloors, radios) {
   const roomTagMap = ctx.state.roomTagMap || {};
   const allObjects = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
 
@@ -267,7 +294,10 @@ function _buildMapCard(ctx, el, snap, chosen, haAreas, haFloors, radios) {
   wrap.innerHTML = s;
 
   return el("div", { class: "card", style: "margin-bottom:10px" }, [
-    el("div", { class: "h2", style: "margin-bottom:8px" }, "Location map"),
+    el("div", { class: "card-head" }, [
+      el("div", { class: "h2" }, "Location map"),
+      helpBtn("follow_map"),
+    ]),
     el("div", { class: "muted", style: "margin-bottom:10px;font-size:12px" },
       chosenRoom
         ? `Showing: ${chosen.user_label || chosen.name || "Tag"} is in ${chosenRoom}`
@@ -315,15 +345,21 @@ function _buildLog(el, history) {
 }
 
 // ── Alert configuration ────────────────────────────────────────────────────────
-function _buildAlerts(ctx, el, addr, chosen, haAreas, dataMode) {
+function _buildAlerts(ctx, el, helpBtn, addr, chosen, haAreas, dataMode, isBasic) {
   const cfg = ctx.state.followAlertConfig[addr] || {};
   const name = chosen.user_label || chosen.name || addr || "tag";
 
   const card = el("div", { class: "card" });
-  card.appendChild(el("div", { class: "h2" }, "Movement alerts"));
-  card.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-top:4px;margin-bottom:12px" },
-    "Configure email notifications when this tag moves. Emails are sent via Home Assistant's notify service."
-  ));
+  card.appendChild(el("div", { class: "card-head" }, [
+    el("div", { class: isBasic ? "h2" : "h2" }, "Movement alerts"),
+    helpBtn("follow_alerts"),
+  ]));
+
+  if (!isBasic) {
+    card.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-top:4px;margin-bottom:12px" },
+      "Configure email notifications when this tag moves. Emails are sent via Home Assistant's notify service."
+    ));
+  }
 
   // Email input
   const emailInput = el("input", {
@@ -334,29 +370,12 @@ function _buildAlerts(ctx, el, addr, chosen, haAreas, dataMode) {
     oninput: e => { cfg.email = e.target.value; ctx.state.followAlertConfig[addr] = cfg; },
   });
 
-  // On-change checkbox
+  // On-change toggle
   const chkChange = el("input", { type: "checkbox" });
   if (cfg.on_room_change) chkChange.checked = true;
   chkChange.addEventListener("change", () => {
     cfg.on_room_change = chkChange.checked;
     ctx.state.followAlertConfig[addr] = cfg;
-  });
-
-  // Watch-rooms multi-select
-  const watchRooms = cfg.watch_rooms || [];
-  const roomNames  = haAreas.map(a => a.name).sort();
-
-  const checkboxes = roomNames.map(room => {
-    const chk = el("input", { type: "checkbox" });
-    if (watchRooms.includes(room)) chk.checked = true;
-    chk.addEventListener("change", () => {
-      const wr = ctx.state.followAlertConfig[addr]?.watch_rooms || [];
-      if (chk.checked) { if (!wr.includes(room)) wr.push(room); }
-      else { const i = wr.indexOf(room); if (i >= 0) wr.splice(i, 1); }
-      cfg.watch_rooms = wr;
-      ctx.state.followAlertConfig[addr] = cfg;
-    });
-    return el("label", { style: "display:flex;align-items:center;gap:6px;cursor:pointer" }, [chk, el("span", {}, room)]);
   });
 
   const saveStatus = el("div", { class: "muted", style: "min-height:18px;font-size:12px;margin-top:8px" });
@@ -380,25 +399,55 @@ function _buildAlerts(ctx, el, addr, chosen, haAreas, dataMode) {
     }
   });
 
-  card.appendChild(el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
-    el("div", {}, [
-      el("div", { class: "muted", style: "font-size:12px;margin-bottom:4px" }, "Notification email address"),
-      emailInput,
-    ]),
-    el("div", {}, [
-      el("label", { style: "display:flex;align-items:center;gap:8px;cursor:pointer" }, [
+  if (isBasic) {
+    // Basic mode: just email + on/off, no per-room list
+    card.appendChild(el("div", { style: "margin-top:10px;display:flex;flex-direction:column;gap:14px" }, [
+      el("div", {}, [
+        el("div", { class: "muted", style: "font-size:12px;margin-bottom:4px" }, "Your email address for alerts"),
+        emailInput,
+      ]),
+      el("label", { style: "display:flex;align-items:center;gap:10px;cursor:pointer;font-size:15px" }, [
         chkChange,
-        el("div", {}, [
-          el("div", {}, `Alert on every room change for "${name}"`),
-          el("div", { class: "muted", style: "font-size:11px" }, "Sends an email each time the tag moves to a new room."),
+        el("span", {}, `Email me when ${name} moves to a new room`),
+      ]),
+    ]));
+  } else {
+    // Advanced mode: email + per-room watch list
+    const watchRooms = cfg.watch_rooms || [];
+    const roomNames  = haAreas.map(a => a.name).sort();
+    const checkboxes = roomNames.map(room => {
+      const chk = el("input", { type: "checkbox" });
+      if (watchRooms.includes(room)) chk.checked = true;
+      chk.addEventListener("change", () => {
+        const wr = ctx.state.followAlertConfig[addr]?.watch_rooms || [];
+        if (chk.checked) { if (!wr.includes(room)) wr.push(room); }
+        else { const i = wr.indexOf(room); if (i >= 0) wr.splice(i, 1); }
+        cfg.watch_rooms = wr;
+        ctx.state.followAlertConfig[addr] = cfg;
+      });
+      return el("label", { style: "display:flex;align-items:center;gap:6px;cursor:pointer" }, [chk, el("span", {}, room)]);
+    });
+
+    card.appendChild(el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
+      el("div", {}, [
+        el("div", { class: "muted", style: "font-size:12px;margin-bottom:4px" }, "Notification email address"),
+        emailInput,
+      ]),
+      el("div", {}, [
+        el("label", { style: "display:flex;align-items:center;gap:8px;cursor:pointer" }, [
+          chkChange,
+          el("div", {}, [
+            el("div", {}, `Alert on every room change for "${name}"`),
+            el("div", { class: "muted", style: "font-size:11px" }, "Sends an email each time the tag moves to a new room."),
+          ]),
         ]),
       ]),
-    ]),
-    checkboxes.length ? el("div", {}, [
-      el("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Also alert when tag enters any of these rooms:"),
-      el("div", { style: "display:flex;flex-wrap:wrap;gap:10px" }, checkboxes),
-    ]) : null,
-  ].filter(Boolean)));
+      checkboxes.length ? el("div", {}, [
+        el("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Also alert when tag enters any of these rooms:"),
+        el("div", { style: "display:flex;flex-wrap:wrap;gap:10px" }, checkboxes),
+      ]) : null,
+    ].filter(Boolean)));
+  }
 
   card.appendChild(saveBtn);
   card.appendChild(saveStatus);

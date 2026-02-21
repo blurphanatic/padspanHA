@@ -1,5 +1,6 @@
 export function render(ctx){
-  const { el, roomColor } = ctx.helpers;
+  const { el, roomColor, helpBtn } = ctx.helpers;
+  const isBasic = ctx.state.complexity === "basic";
   const root = el("section",{id:"settings"});
   root.className = ctx.state.view==="settings" ? "" : "hidden";
 
@@ -32,9 +33,14 @@ export function render(ctx){
   floorsCard.appendChild(floorPills);
 
   const roomsCard = el("div",{class:"card", style:"margin-top:12px"});
-  roomsCard.appendChild(el("div",{style:"font-weight:700"},"Rooms"));
+  roomsCard.appendChild(el("div",{class:"card-head"},[
+    el("div",{style:"font-weight:700"}, isBasic ? "Room colours" : "Rooms"),
+    helpBtn("settings_colors"),
+  ]));
   roomsCard.appendChild(el("div",{class:"muted", style:"font-size:12px;margin-top:6px"},
-    "Assign each room to a floor and pick a color for sidebar + map overlays."
+    isBasic
+      ? "Pick a colour for each room — this colour shows up on the Follow map and Overview."
+      : "Assign each room to a floor and pick a color for sidebar + map overlays."
   ));
 
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
@@ -90,7 +96,7 @@ export function render(ctx){
   saveCard.appendChild(el("div",{class:"muted"},"These settings are stored locally in Home Assistant storage."));
   saveCard.appendChild(el("div",{style:"margin-top:10px"}, saveBtn));
 
-  root.appendChild(floorsCard);
+  if(!isBasic) root.appendChild(floorsCard);
   root.appendChild(roomsCard);
   root.appendChild(saveCard);
 

@@ -13,29 +13,30 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260220T200000Z";
-import * as Follow from "./views/follow.js?b=20260220T200000Z";
-import * as Overview from "./views/overview.js?b=20260220T200000Z";
-import * as Objects from "./views/objects.js?b=20260220T200000Z";
-import * as Devices from "./views/devices.js?b=20260220T200000Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260220T200000Z";
-import * as Presence from "./views/presence.js?b=20260220T200000Z";
-import * as Zones from "./views/zones.js?b=20260220T200000Z";
-import * as Insights from "./views/insights.js?b=20260220T200000Z";
-import * as History from "./views/history.js?b=20260220T200000Z";
-import * as Monitor from "./views/monitor.js?b=20260220T200000Z";
-import * as Maps from "./views/maps.js?b=20260220T200000Z";
-import * as Events from "./views/events.js?b=20260220T200000Z";
-import * as Health from "./views/health.js?b=20260220T200000Z";
-import * as Settings from "./views/settings.js?b=20260220T200000Z";
-import * as Debug from "./views/debug.js?b=20260220T200000Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260220T200000Z";
-import * as QA from "./views/qa.js?b=20260220T200000Z";
-import * as Sandbox from "./views/sandbox.js?b=20260220T200000Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260221T120000Z";
+import { HELP } from "./help_content.js?b=20260221T120000Z";
+import * as Follow from "./views/follow.js?b=20260221T120000Z";
+import * as Overview from "./views/overview.js?b=20260221T120000Z";
+import * as Objects from "./views/objects.js?b=20260221T120000Z";
+import * as Devices from "./views/devices.js?b=20260221T120000Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260221T120000Z";
+import * as Presence from "./views/presence.js?b=20260221T120000Z";
+import * as Zones from "./views/zones.js?b=20260221T120000Z";
+import * as Insights from "./views/insights.js?b=20260221T120000Z";
+import * as History from "./views/history.js?b=20260221T120000Z";
+import * as Monitor from "./views/monitor.js?b=20260221T120000Z";
+import * as Maps from "./views/maps.js?b=20260221T120000Z";
+import * as Events from "./views/events.js?b=20260221T120000Z";
+import * as Health from "./views/health.js?b=20260221T120000Z";
+import * as Settings from "./views/settings.js?b=20260221T120000Z";
+import * as Debug from "./views/debug.js?b=20260221T120000Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260221T120000Z";
+import * as QA from "./views/qa.js?b=20260221T120000Z";
+import * as Sandbox from "./views/sandbox.js?b=20260221T120000Z";
 
 const APP_VERSION = "0.4.32";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260221T074807Z";
+const BUILD_ID = "20260221T120000Z";
 
 const VIEWS = {
   follow: Follow,
@@ -78,6 +79,9 @@ const MENU = [
   ["qa","QA","mdi:clipboard-check-outline"],
   ["sandbox","Sandbox","mdi:flask-outline"],
 ];
+
+// Tabs shown in Basic (simplified) mode
+const BASIC_TABS = new Set(["follow", "overview", "objects", "maps", "settings"]);
 
 const MENU_COLORS = {
   follow: "#5eead4",
@@ -152,6 +156,7 @@ class PadSpanHaApp extends HTMLElement {
       buildId: BUILD_ID,
       view: "overview",
       dataMode: "sample",          // sample | live
+      complexity: "advanced",      // advanced | basic
       status: {},
       roomTagMap: {},
       savedRoomTagMap: {},
@@ -211,7 +216,7 @@ class PadSpanHaApp extends HTMLElement {
             <button class="btn inline" id="toggleSide">Toggle</button>
           </div>
 
-          <div style="margin-top:12px;margin-bottom:8px" class="muted">Menu (inside this panel)</div>
+          <div style="margin-top:12px;margin-bottom:8px" class="muted" id="navLabel">Menu</div>
           <div class="nav" id="nav"></div>
         </aside>
 
@@ -224,6 +229,7 @@ class PadSpanHaApp extends HTMLElement {
             <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
               <span class="muted" style="font-size:12px">Data</span>
               <button class="btn inline" id="dataModeToggle" title="Toggle sample vs live data">Sample</button>
+              <button class="btn inline" id="complexityToggle" title="Switch between Basic (simplified) and Advanced layout">Advanced</button>
             </span>
           </div>
           <div id="toast" class="toast hidden"></div>
@@ -246,6 +252,24 @@ class PadSpanHaApp extends HTMLElement {
     this.$("#dataModeToggle").addEventListener("click", async ()=>{
       const next = (this.state.dataMode === "sample") ? "live" : "sample";
       await this._setDataMode(next);
+    });
+
+    // Restore persisted complexity preference
+    try {
+      const saved = localStorage.getItem("padspan_complexity");
+      if (saved === "basic" || saved === "advanced") this.state.complexity = saved;
+    } catch(e) { /* ignore */ }
+
+    this.$("#complexityToggle").addEventListener("click", ()=>{
+      this.state.complexity = (this.state.complexity === "basic") ? "advanced" : "basic";
+      try { localStorage.setItem("padspan_complexity", this.state.complexity); } catch(e) {}
+      // If switching to basic and current view isn't in basic tabs, go to Follow
+      if (this.state.complexity === "basic" && !BASIC_TABS.has(this.state.view)) {
+        this.state.view = "follow";
+      }
+      this._updateBadges();
+      this._renderNav();
+      this._renderCurrentView();
     });
 
     this._renderNav();
@@ -458,12 +482,24 @@ class PadSpanHaApp extends HTMLElement {
 
     const b = this.$("#dataModeToggle");
     if(b) b.textContent = (this.state.dataMode === "live") ? "Live" : "Sample";
+    const cb = this.$("#complexityToggle");
+    if(cb){
+      const isBasic = this.state.complexity === "basic";
+      cb.textContent = isBasic ? "Basic" : "Advanced";
+      cb.style.outline = isBasic ? "2px solid rgba(94,234,212,.6)" : "";
+    }
   }
 
   // ---------- Nav + rendering ----------
   _renderNav(){
+    const isBasic = this.state.complexity === "basic";
     this.$nav.innerHTML = "";
-    for(const [id,label] of MENU.map(x=>[x[0],x[1]])) {
+    this.$nav.className = isBasic ? "nav basic-nav" : "nav";
+    const navLabel = this.shadowRoot.querySelector("#navLabel");
+    if(navLabel) navLabel.textContent = isBasic ? "Basic Menu" : "Menu";
+
+    const items = isBasic ? MENU.filter(x => BASIC_TABS.has(x[0])) : MENU;
+    for(const [id,label] of items.map(x=>[x[0],x[1]])) {
       const color = MENU_COLORS[id] || "#37588f";
       const btn = el("button",{
         class:"navbtn"+(this.state.view===id?" active":""),
@@ -474,11 +510,38 @@ class PadSpanHaApp extends HTMLElement {
     }
   }
 
+  _showHelp(key){
+    const h = HELP[key];
+    if(!h){ this._toast("No help entry for: " + key, false); return; }
+    const body = document.createElement("div");
+    body.style.cssText = "line-height:1.75;font-size:14px";
+    const paras = Array.isArray(h.body) ? h.body : [h.body];
+    for(const p of paras){
+      const d = document.createElement("div");
+      d.style.cssText = "margin-bottom:12px;color:#cbd5e1";
+      d.textContent = p;
+      body.appendChild(d);
+    }
+    this._openModal(h.title, body, "");
+  }
+
   _ctx(){
+    const self = this;
     return {
       hass: this._hass,
       state: this.state,
-      helpers: { el, esc, pill, roomColor: (n)=>roomColor(n, this.state.model) },
+      helpers: {
+        el, esc, pill,
+        roomColor: (n)=>roomColor(n, this.state.model),
+        helpBtn: (key)=>{
+          const b = document.createElement("button");
+          b.className = "btn-help";
+          b.title = "Help";
+          b.textContent = "?";
+          b.addEventListener("click", (e)=>{ e.stopPropagation(); self._showHelp(key); });
+          return b;
+        },
+      },
       actions: {
         // Simple actions used by views
         renderRooms: ()=>this._renderCurrentView(),
@@ -509,6 +572,7 @@ class PadSpanHaApp extends HTMLElement {
         radioAreaSet: async (payload)=>await this._callWS({ type:"padspan_ha/radio_area_set", ...payload }),
         refreshSnapshot: async ()=>{ await this._getLiveSnapshot(); this._renderCurrentView(); },
         followAlertSave: async (payload)=>await this._callWS({ type:"padspan_ha/follow_alert_save", ...payload }),
+        showHelp: (key)=>this._showHelp(key),
 
         // Mapping suite actions
         setMapsTab: (t)=>{ this.state.mapsTab=t; this._renderCurrentView(); },

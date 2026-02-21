@@ -270,3 +270,29 @@
 .grow{flex:1}
 .spacer{flex:1}
 .pre{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:#0c1a0e;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;max-height:320px}
+
+/* ── Basic / Advanced mode ────────────────────────────────────────────────── */
+/* Small ? help button — appears in card headers */
+.btn-help{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;min-width:22px;border-radius:999px;border:1px solid rgba(82,183,136,.45);background:rgba(82,183,136,.1);color:rgba(82,183,136,.9);font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;margin:0;padding:0;line-height:1}
+.btn-help:hover{background:rgba(82,183,136,.22);border-color:rgba(82,183,136,.8)}
+
+/* Shared card-header row: title on left, ? button on right */
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.card-head .h2{margin-bottom:0}
+
+/* Basic mode object card */
+.basic-obj-card{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:14px;padding:14px;background:rgba(10,21,14,.55)}
+.basic-obj-card:hover{border-color:#2e5040}
+.basic-obj-name{font-weight:800;font-size:15px;color:#e2e8f0}
+.basic-obj-room{font-size:14px;font-weight:600;color:#52b788;margin-top:3px}
+.basic-obj-sub{font-size:12px;color:#94a3b8;margin-top:2px}
+.basic-obj-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
+
+/* Basic mode large summary banner */
+.basic-summary{display:flex;gap:18px;flex-wrap:wrap;padding:12px 14px;background:rgba(82,183,136,.07);border:1px solid rgba(82,183,136,.2);border-radius:14px;margin-bottom:12px}
+.basic-summary-item{display:flex;flex-direction:column;align-items:center;min-width:70px}
+.basic-summary-num{font-size:26px;font-weight:800;color:#52b788;line-height:1}
+.basic-summary-lbl{font-size:11px;color:#94a3b8;margin-top:2px;text-align:center}
+
+/* Basic mode nav — slightly bigger buttons */
+.basic-nav .navbtn{padding:11px 14px;font-size:14px}

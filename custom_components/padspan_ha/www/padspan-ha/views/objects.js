@@ -119,9 +119,10 @@ export function renderTags(ctx, tagsList) {
 }
 
 export function render(ctx){
-  const { el, esc, roomColor } = ctx.helpers;
+  const { el, esc, roomColor, helpBtn } = ctx.helpers;
   const { roomTagMap, mode, tagFilter } = ctx.state;
   const selectedRooms = new Set(Array.isArray(ctx.state.selectedRooms) ? ctx.state.selectedRooms : []);
+  const isBasic = ctx.state.complexity === "basic";
 
   const root = el("section",{id:"objects"});
   root.className = ctx.state.view==="objects" ? "" : "hidden";
@@ -252,6 +253,67 @@ export function render(ctx){
   objStatusSel.addEventListener("change",   ()=>{ ctx.state.objStatus = objStatusSel.value;   applyObjFilter(); });
   applyObjFilter();
 
+  // ── Basic mode: card-per-object list ─────────────────────────────────────────
+  if(isBasic){
+    const identified = allObjects.filter(o => o.identified);
+    const unidentified = allObjects.filter(o => !o.identified);
+
+    const headerRow = el("div",{class:"card-head"},[
+      el("div",{class:"h2"}, "Tracked Objects"),
+      helpBtn("objects"),
+    ]);
+
+    const mkCard = (o) => {
+      const addr = o.address || o.entity_id || "";
+      const name = o.user_label || o.name || o.entity_id || addr || "Unknown";
+      const room = o.room || "—";
+      const rssi = o.rssi != null ? `${o.rssi} dBm` : null;
+      const kind = o.kind === "entity" ? "HA Entity" : (o.identified ? "Tagged BLE" : "Unknown BLE");
+
+      const actions = el("div",{class:"basic-obj-actions"});
+      if(o.kind === "ble" && addr){
+        const btn = el("button",{class:"btn tiny"}, o.user_label ? "Relabel" : "Tag");
+        btn.addEventListener("click", ()=> ctx.actions.tagObjectPrompt(addr, o.user_label || ""));
+        actions.appendChild(btn);
+      }
+
+      return el("div",{class:"basic-obj-card"},[
+        el("div",{},[
+          el("div",{class:"basic-obj-name"}, name),
+          el("div",{class:"basic-obj-room"}, room),
+          el("div",{class:"basic-obj-sub"}, [kind, rssi].filter(Boolean).join(" · ")),
+        ]),
+        actions,
+      ]);
+    };
+
+    const identCard = el("div",{class:"card",style:"margin-bottom:10px"},[
+      headerRow,
+      helpBtn ? null : null,
+    ]);
+    identified.forEach(o => identCard.appendChild(mkCard(o)));
+    if(!identified.length){
+      identCard.appendChild(el("div",{class:"muted",style:"margin-top:8px"},
+        isLive ? "No identified objects detected yet." : "Switch to Live mode to see your real devices."));
+    }
+    root.appendChild(identCard);
+
+    if(unidentified.length){
+      const unCard = el("div",{class:"card"},[
+        el("div",{class:"card-head"},[
+          el("div",{class:"h2"}, `Unidentified (${unidentified.length})`),
+          helpBtn("objects_tag"),
+        ]),
+        el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
+          "These Bluetooth devices haven't been named yet. Click Tag to give one a friendly name."),
+      ]);
+      unidentified.slice(0, 20).forEach(o => unCard.appendChild(mkCard(o)));
+      root.appendChild(unCard);
+    }
+    return root;
+  }
+
+  // ── Advanced mode: table ──────────────────────────────────────────────────────
   const inventorySection = el("div",{class:"card"},[
     el("div",{class:"row",style:"margin-bottom:8px"},[
       el("div",{class:"h2",style:"flex:1"},"BLE Scanner Detections"),

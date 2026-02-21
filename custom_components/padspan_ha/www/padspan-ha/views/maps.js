@@ -7,7 +7,8 @@ Editor provides pan/zoom and marker add/drag/delete.
 */
 
 export function render(ctx){
-  const { el, esc, pill } = ctx.helpers;
+  const { el, esc, pill, helpBtn } = ctx.helpers;
+  const isBasic = ctx.state.complexity === "basic";
   const root = el("section",{id:"maps"});
   root.className = ctx.state.view==="maps" ? "" : "hidden";
 
@@ -18,19 +19,29 @@ export function render(ctx){
   const tab = ctx.state.mapsTab || "library";
   const setTab = (t)=>ctx.actions.setMapsTab(t);
 
-  const tabs = el("div",{class:"tabs"},[
-    _tabBtn("library","Library",tab,setTab),
-    _tabBtn("upload","Upload",tab,setTab),
-    _tabBtn("edit","Edit",tab,setTab),
-    _tabBtn("export","Export",tab,setTab),
-    _tabBtn("help","Help",tab,setTab),
-  ]);
+  // Basic mode: only Library + Upload tabs
+  const tabDefs = isBasic
+    ? [["library","Library"],["upload","Upload"]]
+    : [["library","Library"],["upload","Upload"],["edit","Edit"],["export","Export"],["help","Help"]];
+
+  // If current tab is not in basic tab list, reset to library
+  if(isBasic && tab !== "library" && tab !== "upload"){
+    ctx.state.mapsTab = "library";
+  }
+  const activeTab = ctx.state.mapsTab || "library";
+
+  const tabs = el("div",{class:"tabs"}, tabDefs.map(([id,label])=>_tabBtn(id,label,activeTab,setTab)));
 
   const header = el("div",{class:"card"},[
     el("div",{style:"display:flex;align-items:center;gap:10px;justify-content:space-between"},[
       el("div",{},[
-        el("div",{style:"font-weight:700;font-size:16px"},"Mapping Suite"),
-        el("div",{class:"muted"},"Upload floorplans (any image type), auto-size to PNG, then place BLE receivers. Export maps + receiver layout."),
+        el("div",{class:"card-head"},[
+          el("div",{style:"font-weight:700;font-size:16px"},"Mapping"),
+          helpBtn("maps"),
+        ]),
+        el("div",{class:"muted"}, isBasic
+          ? "Upload a photo of your floor plan to visualise where your Bluetooth scanners are placed."
+          : "Upload floorplans (any image type), auto-size to PNG, then place BLE receivers. Export maps + receiver layout."),
       ]),
       el("div",{style:"display:flex;gap:8px;align-items:center"},[
         el("button",{class:"btn inline", onclick:()=>ctx.actions.mapsRefresh()}, "Refresh"),
@@ -40,10 +51,10 @@ export function render(ctx){
   ]);
 
   const body = el("div",{},[
-    tab==="library" ? _library(ctx, maps, activeId) :
-    tab==="upload" ? _upload(ctx) :
-    tab==="edit" ? _edit(ctx, active) :
-    tab==="export" ? _export(ctx, active) :
+    activeTab==="library" ? _library(ctx, maps, activeId, helpBtn, isBasic) :
+    activeTab==="upload" ? _upload(ctx, helpBtn, isBasic) :
+    activeTab==="edit" ? _edit(ctx, active) :
+    activeTab==="export" ? _export(ctx, active) :
     _help(ctx),
   ]);
 
@@ -68,12 +79,16 @@ function _floorName(ctx, floor_id){
   return f ? (f.name || f.id) : id;
 }
 
-function _library(ctx, maps, activeId){
+function _library(ctx, maps, activeId, helpBtn, isBasic){
   const { el } = ctx.helpers;
+  helpBtn = helpBtn || (()=>null);
   const wrap = el("div",{class:"card"},[
-    el("div",{style:"display:flex;justify-content:space-between;align-items:center"},[
-      el("div",{class:"muted"},"Maps Library"),
-      el("div",{class:"muted"},`${maps.length} map(s)`),
+    el("div",{class:"card-head"},[
+      el("div",{style:"display:flex;align-items:center;gap:10px"},[
+        el("div",{class:"muted"}, isBasic ? "Your floor plans" : "Maps Library"),
+        el("div",{class:"muted"},`${maps.length} map(s)`),
+      ]),
+      helpBtn("maps_library"),
     ]),
   ]);
 
@@ -109,10 +124,17 @@ function _library(ctx, maps, activeId){
   return wrap;
 }
 
-function _upload(ctx){
+function _upload(ctx, helpBtn, isBasic){
+  helpBtn = helpBtn || (()=>null);
   const { el } = ctx.helpers;
   const card = el("div",{class:"card"});
-  card.appendChild(el("div",{class:"muted"},"Upload floorplan image (PNG/JPG/WebP/GIF/SVG). We'll auto-resize and store as optimized PNG for mapping."));
+  card.appendChild(el("div",{class:"card-head"},[
+    el("div",{class:"h2"}, isBasic ? "Upload a floor plan" : "Upload floor plan"),
+    helpBtn("maps_upload"),
+  ]));
+  card.appendChild(el("div",{class:"muted",style:"margin-bottom:10px"}, isBasic
+    ? "Take a photo of your house plan (or use any image). Give it a name and click Upload."
+    : "Upload floorplan image (PNG/JPG/WebP/GIF/SVG). We'll auto-resize and store as optimized PNG for mapping."));
 
   const floors = (ctx.state.model && ctx.state.model.floors) ? ctx.state.model.floors : [];
   const floorSel = document.createElement("select");

@@ -12,7 +12,8 @@
  */
 
 export function render(ctx){
-  const { el, pill } = ctx.helpers;
+  const { el, pill, helpBtn } = ctx.helpers;
+  const isBasic = ctx.state.complexity === "basic";
 
   const fmtNum = (n)=>{
     try{ return new Intl.NumberFormat().format(Number(n||0)); }catch(e){ return String(n||0); }
@@ -535,7 +536,50 @@ export function render(ctx){
     return wrap;
   }
 
-  // ---------- Page layout ----------
+  // Use the sample floor plan if available (sample mode), otherwise auto-generate from HA data
+  const mapEl = (liveSnap && liveSnap.floor_plan)
+    ? renderFloorPlan(liveSnap.floor_plan)
+    : renderRoomGrid();
+
+  // ---------- Basic mode layout ----------
+  if(isBasic){
+    const summary = el("div",{class:"basic-summary"},[
+      el("div",{style:"text-align:center"},[
+        el("div",{class:"basic-summary-num"}, String(roomsCount)),
+        el("div",{class:"basic-summary-lbl"}, "Rooms"),
+      ]),
+      el("div",{style:"text-align:center"},[
+        el("div",{class:"basic-summary-num"}, String(objectsTotal)),
+        el("div",{class:"basic-summary-lbl"}, "Objects"),
+      ]),
+      el("div",{style:"text-align:center"},[
+        el("div",{class:"basic-summary-num"}, String(radiosCount)),
+        el("div",{class:"basic-summary-lbl"}, "Scanners"),
+      ]),
+    ]);
+
+    const mapCard = el("div",{class:"card"},[
+      el("div",{class:"card-head"},[
+        el("div",{class:"h2"}, "Your home"),
+        helpBtn("overview"),
+      ]),
+      el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
+        dataMode === "live" ? "Live view · updates every 5s" : "Sample data — switch to Live for your real home."),
+    ]);
+    if(mapEl) mapCard.appendChild(mapEl);
+
+    const section = el("section",{},[
+      el("div",{class:"row",style:"align-items:center;gap:8px;margin-bottom:10px"},[
+        el("h2",{}, "Overview"),
+        helpBtn("overview_grid"),
+      ]),
+      summary,
+      mapCard,
+    ]);
+    return section;
+  }
+
+  // ---------- Advanced mode layout ----------
   const grid = el("div",{class:"grid"},[
     el("div",{class:"card"},[
       el("div",{class:"kpi"},[
@@ -567,11 +611,6 @@ export function render(ctx){
       el("div",{style:"margin-top:8px;color:#94a3b8;font-size:12px"}, dataMode==="live" ? "Live snapshot" : "Sample data — switch to Live to see your real devices")
     ]),
   ]);
-
-  // Use the sample floor plan if available (sample mode), otherwise auto-generate from HA data
-  const mapEl = (liveSnap && liveSnap.floor_plan)
-    ? renderFloorPlan(liveSnap.floor_plan)
-    : renderRoomGrid();
 
   const section = el("section",{},[
     el("h2",{}, "Overview"),
