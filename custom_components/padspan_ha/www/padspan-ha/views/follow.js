@@ -234,14 +234,14 @@ function _buildMapCard(ctx, el, helpBtn, snap, chosen, haAreas, haFloors, radios
     if (a) (radiosByRoom[a] = radiosByRoom[a] || []).push(r);
   }
 
-  const COLS = 3, BW = 210, BH = 115, GAP = 12, PX = 14, PY = 14;
+  const COLS = 2, BW = 380, BH = 170, GAP = 16, PX = 14, PY = 14;
   const rows = Math.ceil(rooms.length / COLS);
   const svgW = COLS * (BW + GAP) - GAP + PX * 2;
   const svgH = rows * (BH + GAP) - GAP + PY * 2;
   const PALETTE = ["#52b788","#4caf50","#43a047","#388e3c","#66bb6a","#81c784","#a5d6a7","#2e7d32"];
   const _esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 
-  let s = `<svg viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:520px;display:block;font-family:system-ui,sans-serif">`;
+  let s = `<svg viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg" width="100%" style="display:block;font-family:system-ui,sans-serif">`;
   s += `<rect width="${svgW}" height="${svgH}" fill="#071008" rx="8"/>`;
 
   rooms.forEach((room, idx) => {
@@ -254,37 +254,36 @@ function _buildMapCard(ctx, el, helpBtn, snap, chosen, haAreas, haFloors, radios
     const strokeW = isActive ? "3" : "1.5";
     const fillOp = isActive ? "22" : "10";
 
-    s += `<rect x="${x}" y="${y}" width="${BW}" height="${BH}" fill="${color}${fillOp}" stroke="${color}" stroke-width="${strokeW}" rx="8"/>`;
-    s += `<text x="${x + BW/2}" y="${y + 17}" text-anchor="middle" fill="${color}" font-size="13" font-weight="700">${_esc(room)}</text>`;
+    s += `<rect x="${x}" y="${y}" width="${BW}" height="${BH}" fill="${color}${fillOp}" stroke="${color}" stroke-width="${strokeW}" rx="10"/>`;
+    s += `<text x="${x + BW/2}" y="${y + 22}" text-anchor="middle" fill="${color}" font-size="16" font-weight="700">${_esc(room)}</text>`;
 
     const haArea  = haAreas.find(a => a.name === room);
     const haFloor = haFloors.find(f => f.id === (haArea?.floor_id || ""));
     if (haFloor) {
-      s += `<text x="${x + BW/2}" y="${y + 29}" text-anchor="middle" fill="${color}88" font-size="9">${_esc(haFloor.name)}</text>`;
+      s += `<text x="${x + BW/2}" y="${y + 37}" text-anchor="middle" fill="${color}88" font-size="11">${_esc(haFloor.name)}</text>`;
     }
 
     // Radios in this room
     const roomRadios = radiosByRoom[room] || [];
-    roomRadios.slice(0, 4).forEach((r, ri) => {
-      const rx = x + 18 + ri * 36, ry = y + 60;
-      s += `<circle cx="${rx}" cy="${ry}" r="10" fill="none" stroke="#52b788" stroke-width="0.7" opacity="0.25"/>`;
-      s += `<circle cx="${rx}" cy="${ry}" r="6"  fill="none" stroke="#52b788" stroke-width="1"   opacity="0.5"/>`;
-      s += `<circle cx="${rx}" cy="${ry}" r="3"  fill="#52b788"/>`;
+    roomRadios.slice(0, 5).forEach((r, ri) => {
+      const rx = x + 22 + ri * 52, ry = y + 100;
+      s += `<circle cx="${rx}" cy="${ry}" r="14" fill="none" stroke="#52b788" stroke-width="0.7" opacity="0.25"/>`;
+      s += `<circle cx="${rx}" cy="${ry}" r="8"  fill="none" stroke="#52b788" stroke-width="1"   opacity="0.5"/>`;
+      s += `<circle cx="${rx}" cy="${ry}" r="4"  fill="#52b788"/>`;
     });
 
     // Chosen tag marker — bright pulsing ring
     if (isActive) {
-      const tx = x + BW / 2, ty = y + BH / 2 + 10;
-      // Outer glow ring (animated via SVG animate)
-      s += `<circle cx="${tx}" cy="${ty}" r="20" fill="none" stroke="#5eead4" stroke-width="1.5" opacity="0.3">`;
-      s += `<animate attributeName="r" values="14;24;14" dur="2s" repeatCount="indefinite"/>`;
+      const tx = x + BW / 2, ty = y + BH / 2 + 14;
+      s += `<circle cx="${tx}" cy="${ty}" r="24" fill="none" stroke="#5eead4" stroke-width="1.5" opacity="0.3">`;
+      s += `<animate attributeName="r" values="18;30;18" dur="2s" repeatCount="indefinite"/>`;
       s += `<animate attributeName="opacity" values="0.4;0.1;0.4" dur="2s" repeatCount="indefinite"/>`;
       s += `</circle>`;
-      s += `<circle cx="${tx}" cy="${ty}" r="10" fill="#5eead4" opacity="0.2"/>`;
-      s += `<circle cx="${tx}" cy="${ty}" r="7"  fill="#5eead4" opacity="0.95"/>`;
-      s += `<circle cx="${tx}" cy="${ty}" r="3.5" fill="#071008"/>`;
-      const lbl = (chosen.user_label || chosen.name || "Tag").substring(0, 10);
-      s += `<text x="${tx}" y="${ty + 22}" text-anchor="middle" fill="#5eead4" font-size="9" font-weight="600">${_esc(lbl)}</text>`;
+      s += `<circle cx="${tx}" cy="${ty}" r="13" fill="#5eead4" opacity="0.2"/>`;
+      s += `<circle cx="${tx}" cy="${ty}" r="9"  fill="#5eead4" opacity="0.95"/>`;
+      s += `<circle cx="${tx}" cy="${ty}" r="4.5" fill="#071008"/>`;
+      const lbl = (chosen.user_label || chosen.name || "Tag").substring(0, 14);
+      s += `<text x="${tx}" y="${ty + 26}" text-anchor="middle" fill="#5eead4" font-size="11" font-weight="600">${_esc(lbl)}</text>`;
     }
   });
 
