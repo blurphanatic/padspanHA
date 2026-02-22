@@ -34,9 +34,9 @@ import * as Diagnostics from "./views/diagnostics.js?b=20260221T120000Z";
 import * as QA from "./views/qa.js?b=20260221T120000Z";
 import * as Sandbox from "./views/sandbox.js?b=20260221T120000Z";
 
-const APP_VERSION = "0.4.35";
+const APP_VERSION = "0.4.36";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260222T012155Z";
+const BUILD_ID = "20260222T201334Z";
 
 const VIEWS = {
   follow: Follow,
@@ -574,6 +574,16 @@ class PadSpanHaApp extends HTMLElement {
         followAlertSave: async (payload)=>await this._callWS({ type:"padspan_ha/follow_alert_save", ...payload }),
         showHelp: (key)=>this._showHelp(key),
 
+        // Area management
+        areaDelete: async (area_id) =>
+            await this._callWS({ type: "padspan_ha/area_delete", area_id }),
+        modelRefresh: async () => { await this._getModel(); this._renderCurrentView(); },
+
+        // Detail modals
+        showObjectDetail: (obj) => this._showObjectDetail(obj),
+        showRoomDetail: (roomName) => this._showRoomDetail(roomName),
+        showScannerDetail: (scanner) => this._showScannerDetail(scanner),
+
         // Mapping suite actions
         setMapsTab: (t)=>{ this.state.mapsTab=t; this._renderCurrentView(); },
         mapsRefresh: async ()=>{ await this._getMapsList(); this._renderCurrentView(); },
@@ -685,6 +695,314 @@ class PadSpanHaApp extends HTMLElement {
     this._openModal("Tag BLE Object", body, "Assign a human-readable label to identify this device");
     // Focus input after modal renders
     requestAnimationFrame(()=>{ try{ input.focus(); }catch(e){} });
+  }
+
+  // ----------- Detail modals -----------
+
+  _floorName(floor_id){
+    if(!floor_id) return "—";
+    const floors = this.state.model?.floors || [];
+    const f = floors.find(x => x.id === floor_id);
+    return f ? f.name : "—";
+  }
+
+  _showObjectDetail(obj){
+    const addr = obj.address || "";
+    const userLabel = obj.user_label || "";
+    const name = userLabel || obj.name || obj.entity_id || addr || "Unknown";
+    const kind = obj.kind || "";
+    const identified = !!obj.identified;
+
+    const fmtAgo = (age_s) => {
+      const s = Number(age_s);
+      if(!isFinite(s)) return "—";
+      if(s < 1) return "<1s";
+      if(s < 60) return `${Math.round(s)}s`;
+      const m = Math.floor(s/60), rs = Math.round(s - m*60);
+      if(m < 60) return `${m}m ${rs}s`;
+      return `${Math.floor(m/60)}h ${m%60}m`;
+    };
+
+    const body = el("div", {style:"display:flex;flex-direction:column;gap:14px"});
+
+    // Identity
+    body.appendChild(el("div", {}, [
+      el("div", {style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"}, [
+        el("div", {style:"font-size:20px;font-weight:800;color:#e2e8f0"}, name),
+        el("span", {class:"badge"+(identified?"":" warn")},
+          kind==="ble" ? (identified?"BLE · Identified":"BLE · Unidentified") : "HA Entity"),
+      ]),
+      addr ? el("div", {class:"muted", style:"font-family:monospace;font-size:12px"}, addr) : null,
+      obj.entity_id ? el("div", {class:"muted", style:"font-size:12px"}, `Entity: ${obj.entity_id}`) : null,
+    ].filter(Boolean)));
+
+    // Location
+    const objRoom = obj.room || "—";
+    const haArea = (this.state.model?.areas||[]).find(a => a.name === objRoom);
+    const floorName = haArea ? this._floorName(haArea.floor_id) : "—";
+    const rc = roomColor(objRoom, this.state.model);
+    body.appendChild(el("div", {}, [
+      el("div", {style:"font-weight:600;margin-bottom:4px"}, "Location"),
+      el("div", {style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap"}, [
+        el("span", {class:"dot", style:`background:${rc}`}),
+        el("span", {}, objRoom),
+        el("span", {class:"muted"}, `· ${floorName}`),
+      ]),
+      obj.nearest_receiver ? el("div", {class:"muted", style:"font-size:12px;margin-top:4px"}, `Nearest: ${obj.nearest_receiver}`) : null,
+    ].filter(Boolean)));
+
+    // Detection sources table
+    const sources = obj.sources || [];
+    const makeSourceRow = (srcName, rssi, age_s) => {
+      const pct = Math.max(0, Math.min(100, ((rssi ?? -100) + 100) / 60 * 100));
+      const bar = el("div", {style:`width:${pct.toFixed(0)}%;height:6px;background:#52b788;border-radius:3px;min-width:2px`});
+      const barWrap = el("div", {style:"width:80px;background:#1a2e1e;border-radius:3px"}, bar);
+      return el("tr", {}, [
+        el("td", {class:"muted", style:"font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis"}, srcName || "—"),
+        el("td", {}, barWrap),
+        el("td", {}, rssi != null ? `${rssi}` : "—"),
+        el("td", {class:"muted", style:"font-size:11px"}, fmtAgo(age_s)),
+      ]);
+    };
+    if(sources.length || obj.rssi != null){
+      const tbody = el("tbody");
+      if(sources.length){
+        for(const s of sources){
+          const srcName = typeof s === "string" ? s : (s.source || "");
+          const rssi = typeof s === "object" ? (s.rssi ?? obj.rssi) : obj.rssi;
+          const age_s = typeof s === "object" ? (s.age_s ?? obj.age_s) : obj.age_s;
+          tbody.appendChild(makeSourceRow(srcName, rssi, age_s));
+        }
+      } else {
+        tbody.appendChild(makeSourceRow("primary", obj.rssi, obj.age_s));
+      }
+      const srcSection = el("div", {}, [
+        el("div", {style:"font-weight:600;margin-bottom:6px"}, "Detection sources"),
+        el("table", {class:"table"}, [
+          el("thead", {}, el("tr", {}, [el("th",{},"Source"),el("th",{},"Signal"),el("th",{},"dBm"),el("th",{},"Age")])),
+          tbody,
+        ]),
+      ]);
+      body.appendChild(srcSection);
+    }
+
+    // Device info
+    if(obj.device && (obj.device.manufacturer || obj.device.model || obj.device.name)){
+      const dev = obj.device;
+      body.appendChild(el("div", {}, [
+        el("div", {style:"font-weight:600;margin-bottom:4px"}, "Device"),
+        el("div", {class:"muted", style:"font-size:12px"}, [dev.manufacturer, dev.model].filter(Boolean).join(" · ") || dev.name || ""),
+      ]));
+    }
+
+    // Raw BLE data (collapsible)
+    const manufData = obj.manufacturer_data || {};
+    const svcUUIDs = obj.service_uuids || [];
+    if(kind==="ble" && (Object.keys(manufData).length || svcUUIDs.length)){
+      const det = document.createElement("details");
+      det.style.cssText = "margin-top:4px";
+      const sum = document.createElement("summary");
+      sum.style.cssText = "cursor:pointer;font-weight:600;font-size:13px;color:#52b788";
+      sum.textContent = "Raw BLE data";
+      det.appendChild(sum);
+      if(Object.keys(manufData).length){
+        det.appendChild(el("table", {class:"table", style:"margin-top:8px"}, [
+          el("thead", {}, el("tr", {}, [el("th",{},"Manufacturer key"),el("th",{},"Value (hex)")])),
+          el("tbody", {}, Object.entries(manufData).map(([k,v]) =>
+            el("tr", {}, [el("td",{},String(k)), el("td",{class:"muted",style:"font-family:monospace;font-size:11px"},String(v))])
+          )),
+        ]));
+      }
+      if(svcUUIDs.length){
+        det.appendChild(el("div", {style:"font-size:12px;color:#94a3b8;margin-top:8px"}, "Service UUIDs:"));
+        det.appendChild(el("div", {style:"margin-top:4px;display:flex;flex-wrap:wrap;gap:6px"},
+          svcUUIDs.map(u => el("span", {class:"pill"}, String(u)))
+        ));
+      }
+      body.appendChild(det);
+    }
+
+    // Linked entities
+    const linked = obj.linked_entities || [];
+    if(linked.length){
+      body.appendChild(el("div", {}, [
+        el("div", {style:"font-weight:600;margin-bottom:4px"}, "Linked entities"),
+        el("div", {style:"display:flex;flex-wrap:wrap;gap:6px"}, linked.map(eid => el("span", {class:"pill"}, eid))),
+      ]));
+    }
+
+    // Actions row
+    const actionsRow = el("div", {style:"display:flex;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #1b3526;margin-top:4px"});
+    if(kind==="ble" && addr){
+      const tagBtn = el("button", {class:"btn", onclick:()=>{
+        this._closeModal();
+        this._tagObjectPrompt(addr, userLabel);
+      }}, userLabel ? "Relabel" : "Tag");
+      actionsRow.appendChild(tagBtn);
+      if(userLabel){
+        const untagBtn = el("button", {class:"btn", onclick:async()=>{
+          try {
+            await this._callWS({ type:"padspan_ha/object_label_delete", address:addr });
+            this._closeModal();
+            this._toast("Label removed.");
+            await this._getLiveSnapshot();
+            this._renderCurrentView();
+          } catch(e){ this._toast("Failed to remove label.", true); }
+        }}, "Untag");
+        actionsRow.appendChild(untagBtn);
+      }
+    }
+    actionsRow.appendChild(el("button", {class:"btn inline", onclick:()=>this._closeModal()}, "Close"));
+    body.appendChild(actionsRow);
+
+    this._openModal(name, body, kind==="ble" ? `BLE object · ${identified?"identified":"unidentified"}` : "HA entity");
+  }
+
+  _showRoomDetail(roomName){
+    const snap = this.state.live?.snapshot;
+    const objects = (snap?.objects?.list||[]).filter(o => o.room === roomName);
+    const radios = (snap?.ble?.radios||[]).filter(r => r.area_name === roomName || r.area === roomName);
+    const area = (this.state.model?.areas||[]).find(a => a.name === roomName);
+    const floorName = area ? this._floorName(area.floor_id) : "—";
+    const rc = roomColor(roomName, this.state.model);
+
+    const body = el("div", {style:"display:flex;flex-direction:column;gap:14px"});
+
+    // Header with color swatch + floor
+    body.appendChild(el("div", {style:"display:flex;align-items:center;gap:10px"}, [
+      el("span", {style:`display:inline-block;width:20px;height:20px;border-radius:50%;background:${rc};flex-shrink:0`}),
+      el("div", {}, [
+        el("div", {style:"font-weight:700;font-size:16px"}, roomName),
+        el("div", {class:"muted", style:"font-size:12px"}, `Floor: ${floorName}`),
+      ]),
+    ]));
+
+    // Objects in room
+    const objSection = el("div", {}, [
+      el("div", {style:"font-weight:600;margin-bottom:6px"}, `Objects now (${objects.length})`),
+    ]);
+    if(objects.length){
+      for(const o of objects){
+        const oName = o.user_label || o.name || o.entity_id || o.address || "Unknown";
+        const oc = o.identified ? "#5eead4" : "#f59e0b";
+        const rssiTxt = o.rssi != null ? `${o.rssi} dBm` : "";
+        const ageTxt = o.age_s != null ? `${Math.round(o.age_s)}s` : "";
+        const oRow = el("div", {style:"display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #0d1f12"}, [
+          el("span", {style:`width:8px;height:8px;border-radius:50%;background:${oc};flex-shrink:0`}),
+          el("div", {style:"flex:1"}, oName),
+          rssiTxt ? el("span", {class:"badge"}, rssiTxt) : null,
+          ageTxt ? el("span", {class:"muted", style:"font-size:11px"}, ageTxt) : null,
+          el("button", {class:"btn tiny", onclick:()=>{ this._closeModal(); this._showObjectDetail(o); }}, "Details"),
+        ].filter(Boolean));
+        objSection.appendChild(oRow);
+      }
+    } else {
+      objSection.appendChild(el("div", {class:"muted", style:"font-size:12px"}, "No objects currently detected in this room."));
+    }
+    body.appendChild(objSection);
+
+    // Radios in room
+    const radioSection = el("div", {}, [
+      el("div", {style:"font-weight:600;margin-bottom:6px"}, `Bluetooth scanners (${radios.length})`),
+    ]);
+    if(radios.length){
+      for(const r of radios){
+        const rName = r.name || r.source || "Scanner";
+        const rRow = el("div", {style:"display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #0d1f12"}, [
+          el("div", {style:"flex:1"}, [
+            el("div", {}, rName),
+            r.source ? el("div", {class:"muted", style:"font-size:11px;font-family:monospace"}, r.source) : null,
+          ].filter(Boolean)),
+          r.scanning ? el("span", {class:"badge"}, "scanning") : null,
+          el("button", {class:"btn tiny", onclick:()=>{ this._closeModal(); this._showScannerDetail(r); }}, "Details"),
+        ].filter(Boolean));
+        radioSection.appendChild(rRow);
+      }
+    } else {
+      radioSection.appendChild(el("div", {class:"muted", style:"font-size:12px"}, "No Bluetooth scanners assigned to this room."));
+    }
+    body.appendChild(radioSection);
+
+    // HA Entities
+    const entities = Object.keys(this.state.roomTagMap?.[roomName] || {});
+    if(entities.length){
+      body.appendChild(el("div", {}, [
+        el("div", {style:"font-weight:600;margin-bottom:6px"}, `HA Entities (${entities.length})`),
+        el("div", {style:"display:flex;flex-wrap:wrap;gap:6px"}, entities.map(eid => el("span", {class:"pill"}, eid))),
+      ]));
+    }
+
+    this._openModal(roomName, body, `Room · ${floorName}`);
+  }
+
+  _showScannerDetail(scanner){
+    const snap = this.state.live?.snapshot;
+    const devices = (snap?.objects?.list||[]).filter(
+      o => (o.sources||[]).some(s => (typeof s==="string" ? s : s.source) === scanner.source)
+    ).map(o => {
+      const srcEntry = (o.sources||[]).find(s => (typeof s==="string" ? s : s.source) === scanner.source);
+      return {
+        ...o,
+        srcRssi: typeof srcEntry==="object" ? (srcEntry?.rssi ?? o.rssi) : o.rssi,
+        srcAge: typeof srcEntry==="object" ? (srcEntry?.age_s ?? o.age_s) : o.age_s,
+      };
+    }).sort((a,b) => (b.srcRssi ?? -999) - (a.srcRssi ?? -999));
+
+    const name = scanner.name || scanner.source || "Scanner";
+    const body = el("div", {style:"display:flex;flex-direction:column;gap:14px"});
+
+    // Status badges
+    const statusRow = el("div", {style:"display:flex;gap:8px;flex-wrap:wrap"});
+    if(scanner.scanning != null) statusRow.appendChild(el("span", {class:scanner.scanning?"badge":"badge warn"}, scanner.scanning?"scanning":"not scanning"));
+    if(scanner.connectable != null) statusRow.appendChild(el("span", {class:"badge"}, scanner.connectable?"connectable":"not connectable"));
+    if(scanner.adapter) statusRow.appendChild(el("span", {class:"muted", style:"font-family:monospace;font-size:12px"}, `adapter: ${scanner.adapter}`));
+    body.appendChild(statusRow);
+
+    // Area
+    body.appendChild(el("div", {}, [
+      el("div", {style:"font-weight:600;margin-bottom:4px"}, "Area assignment"),
+      scanner.area_name
+        ? el("span", {class:"badge"}, scanner.area_name)
+        : el("span", {class:"muted"}, "Not assigned to an area"),
+    ]));
+
+    // Visible devices
+    const devSection = el("div", {}, [
+      el("div", {style:"font-weight:600;margin-bottom:6px"}, `Devices visible (${devices.length})`),
+    ]);
+    if(devices.length){
+      for(const d of devices){
+        const dName = d.user_label || d.name || d.address || "Unknown";
+        const rssi = d.srcRssi;
+        const pct = Math.max(0, Math.min(100, ((rssi ?? -100) + 100) / 60 * 100));
+        const bar = el("div", {style:`width:${pct.toFixed(0)}%;height:5px;background:#52b788;border-radius:2px`});
+        const barWrap = el("div", {style:"width:60px;background:#1a2e1e;border-radius:2px"}, bar);
+        const ageTxt = d.srcAge != null ? `${Math.round(d.srcAge)}s` : "";
+        const dRow = el("div", {style:"display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #0d1f12"}, [
+          el("div", {style:"flex:1"}, [
+            el("div", {style:"font-weight:600"}, dName),
+            d.address ? el("div", {class:"muted", style:"font-size:11px;font-family:monospace"}, d.address) : null,
+          ].filter(Boolean)),
+          barWrap,
+          rssi != null ? el("span", {class:"muted", style:"font-size:11px"}, `${rssi}dBm`) : null,
+          ageTxt ? el("span", {class:"muted", style:"font-size:11px"}, ageTxt) : null,
+          d.identified ? el("span", {class:"badge"}, "identified") : el("span", {class:"badge warn"}, "unknown"),
+          el("button", {class:"btn tiny", onclick:()=>{ this._closeModal(); this._showObjectDetail(d); }}, "Details"),
+        ].filter(Boolean));
+        devSection.appendChild(dRow);
+      }
+    } else {
+      devSection.appendChild(el("div", {class:"muted", style:"font-size:12px"}, "No objects currently visible from this scanner."));
+    }
+    body.appendChild(devSection);
+
+    // Source ID
+    body.appendChild(el("div", {style:"margin-top:4px"}, [
+      el("span", {class:"muted", style:"font-size:11px"}, "Source ID: "),
+      el("span", {style:"font-family:monospace;font-size:11px;color:#94a3b8"}, scanner.source || "—"),
+    ]));
+
+    this._openModal(name, body, `Bluetooth scanner · ${scanner.area_name || "unassigned"}`);
   }
 
   _renderCurrentView(){
