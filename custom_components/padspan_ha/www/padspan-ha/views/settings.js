@@ -278,6 +278,7 @@ function _settingsManage(ctx, el){
           await ctx.actions.areaDelete(area.id);
           await ctx.actions.modelRefresh();
           ctx.toast(`Area "${area.name}" deleted.`);
+          ctx.actions.renderRooms();
         } catch(e){ ctx.toast("Failed: " + String(e), true); }
       });
       tbody.appendChild(el("tr",{},[
@@ -321,7 +322,7 @@ function _settingsManage(ctx, el){
       });
       tbody.appendChild(el("tr",{},[
         el("td",{style:"font-weight:600"}, m.name || m.id),
-        el("td",{class:"muted",style:"font-size:11px"}, m.filename || ""),
+        el("td",{class:"muted",style:"font-size:11px"}, m.image?.filename || ""),
         el("td",{}, delBtn),
       ]));
     }
