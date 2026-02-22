@@ -105,6 +105,15 @@ export const HELP = {
       "Tip: a photo of your architect's drawing or even a rough sketch works great.",
     ],
   },
+  maps_stack: {
+    title: "3D Floor Stack — align plans vertically",
+    body: [
+      "The 3D Stack tool lets you assign each floor plan to a building level (Basement through Level 3) and record the ceiling height for each level.",
+      "Use the Alignment tool to drag one floor plan on top of another so their coordinate spaces match — for example, positioning the first floor directly above the ground floor.",
+      "The scale control handles cases where one floor plan covers a larger or smaller physical area than another.",
+      "Once aligned, PadSpan can calculate real-world 3D distances between Bluetooth scanners and tracked objects across different floors.",
+    ],
+  },
 
   // ── Settings ─────────────────────────────────────────────────────────────────
   settings: {

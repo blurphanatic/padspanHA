@@ -56,6 +56,7 @@ class MapsStore:
                 for r in recs:
                     if isinstance(r, dict):
                         r.setdefault("room", "")
+            m.setdefault("stack", {"z_level": 0, "x_offset": 0.0, "y_offset": 0.0, "scale": 1.0, "ceiling_height_m": 2.4})
             m.setdefault("created", _now_iso())
             m.setdefault("updated", m.get("created", _now_iso()))
 
@@ -97,6 +98,7 @@ class MapsStore:
             "room_bounds": {},
             "floor_id": str(floor_id or DEFAULT_FLOOR_ID)[:40],
             "notes": "",
+            "stack": {"z_level": 0, "x_offset": 0.0, "y_offset": 0.0, "scale": 1.0, "ceiling_height_m": 2.4},
         }
 
         self.data.setdefault("maps", [])
@@ -104,7 +106,7 @@ class MapsStore:
         await self.store.async_save(self.data)
         return info
 
-    async def async_update_map(self, map_id: str, *, receivers: list[dict[str, Any]] | None = None, calibration: dict[str, Any] | None = None, notes: str | None = None, floor_id: str | None = None, room_bounds: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def async_update_map(self, map_id: str, *, receivers: list[dict[str, Any]] | None = None, calibration: dict[str, Any] | None = None, notes: str | None = None, floor_id: str | None = None, room_bounds: dict[str, Any] | None = None, stack: dict | None = None) -> dict[str, Any]:
         m = self.get_map(map_id)
         if not m:
             raise KeyError("not_found")
@@ -175,6 +177,18 @@ class MapsStore:
                     except Exception:
                         continue
             m["room_bounds"] = clean_rb
+
+        if isinstance(stack, dict):
+            z = max(0, min(4, int(stack.get("z_level", 0))))
+            sc = max(0.1, min(10.0, float(stack.get("scale", 1.0))))
+            ceil_h = max(1.5, min(20.0, float(stack.get("ceiling_height_m", 2.4))))
+            m["stack"] = {
+                "z_level": z,
+                "x_offset": float(stack.get("x_offset", 0.0)),
+                "y_offset": float(stack.get("y_offset", 0.0)),
+                "scale": sc,
+                "ceiling_height_m": ceil_h,
+            }
 
         m["updated"] = _now_iso()
         await self.store.async_save(self.data)

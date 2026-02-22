@@ -163,13 +163,17 @@ function renderScanners(ctx, radios, sources) {
     if (r.scanning != null) meta.push(`scanning: ${r.scanning ? "yes" : "no"}`);
     if (r.connectable != null) meta.push(`connectable: ${r.connectable ? "yes" : "no"}`);
 
-    return el("div", { class: "bt-scanner-row" }, [
+    const div = el("div", { class: "bt-scanner-row" }, [
       el("div", { class: "bt-scanner-main" }, [
         el("div", { class: "bt-scanner-name" }, name || src || "Scanner"),
         el("div", { class: "bt-scanner-src" }, src || "—"),
       ]),
       el("div", { class: "bt-scanner-meta" }, meta.join(" • ") || "—"),
     ]);
+    div.style.cursor = "pointer";
+    div.title = "Click for scanner details";
+    div.addEventListener("click", () => ctx.actions.showScannerDetail(r));
+    return div;
   };
 
   return el("div", { class: "grid-2" }, [
@@ -267,11 +271,21 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     if (!selected) return null;
     const a = ads.find(x => x && String(x.address || "") === selected) || null;
     if (!a) return null;
-    return el("div", { class: "card" }, [
+    const snap = ctx.state.live?.snapshot;
+    const matchedObj = (snap?.objects?.list||[]).find(o =>
+      o.address && o.address.toUpperCase() === selected.toUpperCase()
+    );
+    const card = el("div", { class: "card" }, [
       el("div", { class: "h2" }, "Details"),
       el("div", { class: "muted", style: "margin-bottom:8px" }, "Raw advertisement record (trimmed to JSON-safe values)."),
       el("pre", { class: "pre" }, esc(JSON.stringify(a, null, 2))),
     ]);
+    if(matchedObj){
+      card.appendChild(el("button", {class:"btn inline", style:"margin-top:8px",
+        onclick:()=> ctx.actions.showObjectDetail(matchedObj)
+      }, "Full object details"));
+    }
+    return card;
   })();
 
   return el("div", { class: "grid-2" }, [

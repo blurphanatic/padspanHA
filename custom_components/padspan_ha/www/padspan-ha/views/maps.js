@@ -22,7 +22,7 @@ export function render(ctx){
   // Basic mode: only Library + Upload tabs
   const tabDefs = isBasic
     ? [["library","Library"],["upload","Upload"]]
-    : [["library","Library"],["upload","Upload"],["edit","Edit"],["export","Export"],["help","Help"]];
+    : [["library","Library"],["upload","Upload"],["edit","Edit"],["stack","3D Stack"],["export","Export"],["help","Help"]];
 
   // If current tab is not in basic tab list, reset to library
   if(isBasic && tab !== "library" && tab !== "upload"){
@@ -54,6 +54,7 @@ export function render(ctx){
     activeTab==="library" ? _library(ctx, maps, activeId, helpBtn, isBasic) :
     activeTab==="upload" ? _upload(ctx, helpBtn, isBasic) :
     activeTab==="edit" ? _edit(ctx, active) :
+    activeTab==="stack" ? _stack(ctx, maps, helpBtn) :
     activeTab==="export" ? _export(ctx, active) :
     _help(ctx),
   ]);
@@ -996,4 +997,432 @@ function _buildDemoSVG(fp){
 
   s += `</svg>`;
   return s;
+}
+
+// ─── 3D Stack Tab ─────────────────────────────────────────────────────────────
+
+const _LEVEL_NAMES = ["Basement", "Ground", "Level 1", "Level 2", "Level 3"];
+
+function _stack(ctx, maps, helpBtn){
+  const { el } = ctx.helpers;
+  helpBtn = helpBtn || (()=>null);
+
+  // Init alignment state
+  if(!ctx.state.maps._stackAlign){
+    const firstTgt = maps[1] || maps[0] || null;
+    ctx.state.maps._stackAlign = {
+      refId:     maps[0] ? maps[0].id : null,
+      targetId:  firstTgt ? firstTgt.id : null,
+      x_offset:  firstTgt?.stack?.x_offset  ?? 0.0,
+      y_offset:  firstTgt?.stack?.y_offset  ?? 0.0,
+      scale:     firstTgt?.stack?.scale     ?? 1.0,
+    };
+  }
+  const alignState = ctx.state.maps._stackAlign;
+
+  // Guard: ensure saved refId/targetId still valid after map deletions
+  if(alignState.refId && !maps.find(m=>m.id===alignState.refId))
+    alignState.refId = maps[0]?.id || null;
+  if(alignState.targetId && !maps.find(m=>m.id===alignState.targetId)){
+    const newTgt = maps[1] || maps[0] || null;
+    alignState.targetId  = newTgt?.id || null;
+    alignState.x_offset  = newTgt?.stack?.x_offset  ?? 0.0;
+    alignState.y_offset  = newTgt?.stack?.y_offset  ?? 0.0;
+    alignState.scale     = newTgt?.stack?.scale     ?? 1.0;
+  }
+
+  // Level options: use HA floor registry if available, fall back to hardcoded names
+  const haFloors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
+  const levelOptions = haFloors.length > 0
+    ? haFloors
+        .slice()
+        .sort((a,b)=> (a.level ?? 999) - (b.level ?? 999) || (a.name||"").localeCompare(b.name||""))
+        .map((f, i) => ({ value: f.level ?? i, label: f.name || f.id }))
+    : _LEVEL_NAMES.map((name, i) => ({ value: i, label: name }));
+
+  // Overlay mode: "bounds" (SVG room polygons) or "images" (actual PNG images)
+  if(!ctx.state.maps._stackOverlayMode) ctx.state.maps._stackOverlayMode = "bounds";
+
+  const card = el("div",{class:"card"});
+  card.appendChild(el("div",{class:"card-head"},[
+    el("div",{style:"font-weight:700"},"3D Floor Stack"),
+    helpBtn("maps_stack"),
+  ]));
+
+  if(!maps.length){
+    card.appendChild(el("div",{class:"muted",style:"margin-top:10px"},"No maps uploaded yet. Go to Upload tab first."));
+    return card;
+  }
+
+  // ── Section 1: Level & Ceiling Height Table ──────────────────────────────
+  card.appendChild(el("div",{class:"muted",style:"margin-top:16px;font-size:13px;font-weight:600"},"Floor Levels & Ceiling Heights"));
+  card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:2px"},"Set the building level and ceiling height for each map."));
+
+  const tableWrap = el("div",{style:"overflow-x:auto;margin-top:8px"});
+  const table = document.createElement("table");
+  table.style.cssText = "width:100%;border-collapse:collapse;font-size:13px";
+  const thead = document.createElement("thead");
+  thead.innerHTML = `<tr style="border-bottom:1px solid #1b3526">
+    <th style="text-align:left;padding:6px 8px;color:#94a3b8;font-weight:500">Map</th>
+    <th style="text-align:left;padding:6px 8px;color:#94a3b8;font-weight:500">Level</th>
+    <th style="text-align:left;padding:6px 8px;color:#94a3b8;font-weight:500">Ceiling (m)</th>
+    <th style="padding:6px 8px"></th>
+  </tr>`;
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+
+  for(const m of maps){
+    const stk = m.stack || {z_level:0,ceiling_height_m:2.4};
+    const tr = document.createElement("tr");
+    tr.style.cssText = "border-bottom:1px solid #0f2017";
+
+    const tdName = document.createElement("td");
+    tdName.style.cssText = "padding:6px 8px;font-weight:500";
+    tdName.textContent = m.name || m.id;
+    tr.appendChild(tdName);
+
+    const tdLevel = document.createElement("td");
+    tdLevel.style.cssText = "padding:6px 8px";
+    const levelSel = document.createElement("select");
+    levelSel.className = "select";
+    levelSel.style.minWidth = "110px";
+    levelOptions.forEach(({value, label})=>{
+      const o = document.createElement("option");
+      o.value = value; o.textContent = label;
+      if(value === (stk.z_level || 0)) o.selected = true;
+      levelSel.appendChild(o);
+    });
+    tdLevel.appendChild(levelSel);
+    tr.appendChild(tdLevel);
+
+    const tdCeil = document.createElement("td");
+    tdCeil.style.cssText = "padding:6px 8px";
+    const ceilInput = document.createElement("input");
+    ceilInput.type = "number"; ceilInput.min = "1.5"; ceilInput.max = "20"; ceilInput.step = "0.1";
+    ceilInput.value = String(stk.ceiling_height_m || 2.4);
+    ceilInput.style.cssText = "width:70px;background:#0a150e;border:1px solid #1b3526;color:#e2e8f0;padding:4px 6px;border-radius:4px";
+    tdCeil.appendChild(ceilInput);
+    tr.appendChild(tdCeil);
+
+    const tdSave = document.createElement("td");
+    tdSave.style.cssText = "padding:6px 8px";
+    tdSave.appendChild(el("button",{class:"btn inline", onclick: async ()=>{
+      const newStk = Object.assign({}, m.stack || {},{
+        z_level: parseInt(levelSel.value, 10),
+        ceiling_height_m: parseFloat(ceilInput.value) || 2.4,
+      });
+      await ctx.actions.mapsUpdate({
+        map_id: m.id, receivers: m.receivers||[], calibration: m.calibration||{},
+        notes: m.notes||"", floor_id: m.floor_id||"", room_bounds: m.room_bounds||{},
+        stack: newStk,
+      });
+      ctx.actions.mapsRefresh();
+    }},"Save"));
+    tr.appendChild(tdSave);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  card.appendChild(tableWrap);
+
+  // ── Section 2: Alignment Overlay Editor ──────────────────────────────────
+  card.appendChild(el("div",{class:"muted",style:"margin-top:24px;font-size:13px;font-weight:600"},"Alignment Overlay"));
+  card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:4px"},"Drag the target floor plan (semi-transparent) over the reference to align them spatially. Use Scale +/− to resize."));
+
+  const selRow = el("div",{style:"display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-top:10px"});
+  const refSel = document.createElement("select"); refSel.className = "select";
+  const tgtSel = document.createElement("select"); tgtSel.className = "select";
+  for(const m of maps){
+    const oR = document.createElement("option"); oR.value = m.id; oR.textContent = m.name||m.id;
+    if(m.id === alignState.refId) oR.selected = true;
+    refSel.appendChild(oR);
+    const oT = document.createElement("option"); oT.value = m.id; oT.textContent = m.name||m.id;
+    if(m.id === alignState.targetId) oT.selected = true;
+    tgtSel.appendChild(oT);
+  }
+  selRow.appendChild(el("div",{},[el("div",{class:"muted",style:"font-size:11px;margin-bottom:3px"},"Reference (fixed)"), refSel]));
+  selRow.appendChild(el("div",{},[el("div",{class:"muted",style:"font-size:11px;margin-bottom:3px"},"Target (draggable)"), tgtSel]));
+  card.appendChild(selRow);
+
+  const readoutDiv = el("div",{style:"margin-top:8px;font-size:12px;font-family:monospace;color:#94a3b8"});
+  const updateReadout = ()=>{ readoutDiv.textContent = `X: ${alignState.x_offset.toFixed(3)}  Y: ${alignState.y_offset.toFixed(3)}  Scale: ${alignState.scale.toFixed(3)}`; };
+  updateReadout();
+  card.appendChild(readoutDiv);
+
+  // Overlay mode toggle: Option 1 = Radio Boundaries (SVG), Option 2 = Images (PNG)
+  const boundsBtn = el("button",{
+    class:"btn inline" + (ctx.state.maps._stackOverlayMode==="bounds" ? " primary" : ""),
+    onclick:()=>{ ctx.state.maps._stackOverlayMode="bounds"; boundsBtn.className="btn inline primary"; imagesBtn.className="btn inline"; buildStage(); }
+  },"Option 1: Radio Boundaries");
+  const imagesBtn = el("button",{
+    class:"btn inline" + (ctx.state.maps._stackOverlayMode==="images" ? " primary" : ""),
+    onclick:()=>{ ctx.state.maps._stackOverlayMode="images"; imagesBtn.className="btn inline primary"; boundsBtn.className="btn inline"; buildStage(); }
+  },"Option 2: Images");
+  const modeToggleRow = el("div",{style:"display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap"},[
+    el("span",{class:"muted",style:"font-size:12px"},"Overlay view:"),
+    boundsBtn,
+    imagesBtn,
+  ]);
+  card.appendChild(modeToggleRow);
+
+  const stageWrap = el("div",{style:"position:relative;margin-top:10px;border-radius:8px;overflow:hidden;background:#071008"});
+  card.appendChild(stageWrap);
+
+  let applyCurrentTransform = ()=>{ updateReadout(); };
+
+  const buildStage = ()=>{
+    stageWrap.innerHTML = "";
+    const refId = refSel.value;
+    const tgtId = tgtSel.value;
+
+    // When target changes, reload its saved alignment
+    if(tgtId !== alignState.targetId){
+      const newTgt = maps.find(m=>m.id===tgtId);
+      alignState.x_offset = newTgt?.stack?.x_offset ?? 0.0;
+      alignState.y_offset = newTgt?.stack?.y_offset ?? 0.0;
+      alignState.scale    = newTgt?.stack?.scale    ?? 1.0;
+    }
+    alignState.refId    = refId;
+    alignState.targetId = tgtId;
+
+    const refMap = maps.find(m=>m.id===refId) || null;
+    const tgtMap = maps.find(m=>m.id===tgtId) || null;
+    if(!refMap){ applyCurrentTransform = ()=>{ updateReadout(); }; return; }
+
+    const iw = refMap.image?.width  || 800;
+    const ih = refMap.image?.height || 600;
+    const ar = ih / iw;
+
+    stageWrap.style.paddingBottom = `${ar*100}%`;
+    stageWrap.style.height = "0";
+
+    const overlayMode = ctx.state.maps._stackOverlayMode || "bounds";
+    const refLayer = document.createElement("div");
+    refLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none";
+    if(overlayMode === "images"){
+      const refUrl = refMap.image?.filename ? `/local/padspan_ha/maps/${refMap.image.filename}` : null;
+      if(refUrl){ const ri = document.createElement("img"); ri.src = refUrl; ri.style.cssText = "width:100%;height:100%;object-fit:fill;display:block"; refLayer.appendChild(ri); }
+      else { refLayer.style.cssText += ";display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:12px"; refLayer.textContent = "No image available for " + (refMap.name||refMap.id); }
+    } else {
+      refLayer.innerHTML = _stackMapSVGStr(refMap, ctx, false);
+    }
+    stageWrap.appendChild(refLayer);
+
+    if(tgtMap && tgtMap.id !== refMap.id){
+      const tgtLayer = document.createElement("div");
+      tgtLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:grab;transform-origin:0 0;opacity:0.55";
+      if(overlayMode === "images"){
+        const tgtUrl = tgtMap.image?.filename ? `/local/padspan_ha/maps/${tgtMap.image.filename}` : null;
+        if(tgtUrl){ const ti = document.createElement("img"); ti.src = tgtUrl; ti.style.cssText = "width:100%;height:100%;object-fit:fill;display:block"; tgtLayer.appendChild(ti); }
+        else { tgtLayer.textContent = "No image for " + (tgtMap.name||tgtMap.id); }
+      } else {
+        tgtLayer.innerHTML = _stackMapSVGStr(tgtMap, ctx, true);
+      }
+
+      applyCurrentTransform = ()=>{
+        tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) scale(${alignState.scale})`;
+        updateReadout();
+      };
+      applyCurrentTransform();
+
+      let dragging = false, dragStartX = 0, dragStartY = 0, startOffX = 0, startOffY = 0;
+      const stageRect = ()=>stageWrap.getBoundingClientRect();
+
+      tgtLayer.addEventListener("mousedown",(ev)=>{
+        dragging=true; dragStartX=ev.clientX; dragStartY=ev.clientY;
+        startOffX=alignState.x_offset; startOffY=alignState.y_offset;
+        tgtLayer.style.cursor="grabbing"; ev.preventDefault();
+      });
+      tgtLayer.addEventListener("touchstart",(ev)=>{
+        if(!ev.touches[0]) return;
+        dragging=true; dragStartX=ev.touches[0].clientX; dragStartY=ev.touches[0].clientY;
+        startOffX=alignState.x_offset; startOffY=alignState.y_offset;
+        ev.preventDefault();
+      },{passive:false});
+      window.addEventListener("mousemove",(ev)=>{
+        if(!dragging) return;
+        const r = stageRect(); if(!r.width) return;
+        alignState.x_offset = startOffX + (ev.clientX - dragStartX)/r.width;
+        alignState.y_offset = startOffY + (ev.clientY - dragStartY)/r.height;
+        applyCurrentTransform();
+      });
+      window.addEventListener("touchmove",(ev)=>{
+        if(!dragging||!ev.touches[0]) return;
+        const r = stageRect(); if(!r.width) return;
+        alignState.x_offset = startOffX + (ev.touches[0].clientX - dragStartX)/r.width;
+        alignState.y_offset = startOffY + (ev.touches[0].clientY - dragStartY)/r.height;
+        applyCurrentTransform();
+      },{passive:false});
+      window.addEventListener("mouseup",()=>{ dragging=false; tgtLayer.style.cursor="grab"; });
+      window.addEventListener("touchend",()=>{ dragging=false; });
+
+      stageWrap.appendChild(tgtLayer);
+    } else {
+      applyCurrentTransform = ()=>{ updateReadout(); };
+      applyCurrentTransform();
+    }
+  };
+
+  refSel.addEventListener("change", buildStage);
+  tgtSel.addEventListener("change", buildStage);
+  buildStage();
+
+  const ctrlRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px"});
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.scale = Math.min(5.0, Math.round((alignState.scale+0.05)*1000)/1000); applyCurrentTransform(); }},"Scale +"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.scale = Math.max(0.1, Math.round((alignState.scale-0.05)*1000)/1000); applyCurrentTransform(); }},"Scale −"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; applyCurrentTransform(); }},"Reset"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick: async ()=>{
+    const tgtId = tgtSel.value;
+    const tgtMap = maps.find(m=>m.id===tgtId);
+    if(!tgtMap) return;
+    const newStk = Object.assign({}, tgtMap.stack||{},{
+      x_offset: alignState.x_offset, y_offset: alignState.y_offset, scale: alignState.scale,
+    });
+    await ctx.actions.mapsUpdate({
+      map_id: tgtMap.id, receivers: tgtMap.receivers||[], calibration: tgtMap.calibration||{},
+      notes: tgtMap.notes||"", floor_id: tgtMap.floor_id||"", room_bounds: tgtMap.room_bounds||{},
+      stack: newStk,
+    });
+    ctx.actions.mapsRefresh();
+  }},"Save Alignment"));
+  card.appendChild(ctrlRow);
+
+  // ── Section 3: 3D Isometric Preview ───────────────────────────────────────
+  card.appendChild(el("div",{class:"muted",style:"margin-top:24px;font-size:13px;font-weight:600"},"3D Isometric Preview"));
+  card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:2px"},"Shows all uploaded floor plans stacked by their assigned level."));
+  const isoWrap = el("div",{style:"margin-top:8px;overflow:auto;border-radius:8px;background:#071008;padding:8px"});
+  isoWrap.innerHTML = _stackIsoSVG(maps, ctx, levelOptions);
+  card.appendChild(isoWrap);
+
+  return card;
+}
+
+function _stackMapSVGStr(map, ctx, isTarget){
+  const roomColor = ctx.helpers.roomColor;
+  const rb = map.room_bounds || {};
+  const hasRooms = Object.keys(rb).length > 0;
+  const borderCol = isTarget ? "#52b78888" : "#1b3526";
+
+  let s = `<svg viewBox="0 0 1 1" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block">`;
+  s += `<rect x="0.005" y="0.005" width="0.99" height="0.99" fill="${isTarget?"#071008aa":"#071008"}" stroke="${borderCol}" stroke-width="0.012"/>`;
+
+  if(hasRooms){
+    for(const [room, b] of Object.entries(rb)){
+      if(!b) continue;
+      const color = roomColor(room);
+      const alpha = isTarget ? "99" : "33";
+      if(b.type==="poly" && Array.isArray(b.points) && b.points.length >= 3){
+        const pts = b.points.map(p=>`${p[0]},${p[1]}`).join(" ");
+        s += `<polygon points="${pts}" fill="${color}${alpha}" stroke="${color}" stroke-width="0.006"/>`;
+        const cx = b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
+        const cy = b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
+        s += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="0.05" font-family="system-ui,sans-serif">${_escSVG(room)}</text>`;
+      } else if(b.type==="circle"){
+        const cx=b.cx||0.5, cy=b.cy||0.5, r=b.r||0.12;
+        s += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}${alpha}" stroke="${color}" stroke-width="0.006"/>`;
+        s += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="0.05" font-family="system-ui,sans-serif">${_escSVG(room)}</text>`;
+      }
+    }
+    for(const r of (map.receivers||[])){
+      s += `<circle cx="${r.x||0}" cy="${r.y||0}" r="0.022" fill="#52b788" opacity="0.9"/>`;
+    }
+  } else {
+    s += `<text x="0.5" y="0.43" text-anchor="middle" dominant-baseline="middle" fill="#94a3b8" font-size="0.07" font-family="system-ui,sans-serif">${_escSVG(map.name||map.id)}</text>`;
+    s += `<text x="0.5" y="0.58" text-anchor="middle" dominant-baseline="middle" fill="#4a6052" font-size="0.045" font-family="system-ui,sans-serif">no room bounds yet</text>`;
+  }
+
+  s += `<text x="0.97" y="0.97" text-anchor="end" dominant-baseline="auto" fill="${isTarget?"#52b788":"#94a3b8"}" font-size="0.04" font-family="system-ui,sans-serif">${_escSVG(map.name||map.id)}</text>`;
+  s += `</svg>`;
+  return s;
+}
+
+function _stackIsoSVG(maps, ctx, levelOptions){
+  const TILE=140, FLOOR_GAP=80, CX=390, CY=360, W=780, H=520;
+  const roomColor = ctx.helpers.roomColor;
+  const lvlLabel = (z)=>{ const opt=(levelOptions||[]).find(o=>o.value===z); return opt ? opt.label : `L${z}`; };
+
+  const iso = (wx, wy, wz)=>[
+    CX + (wx-wy)*TILE*0.866,
+    CY + (wx+wy)*TILE*0.5 - wz*FLOOR_GAP,
+  ];
+  const pt = (c)=>`${Math.round(c[0])},${Math.round(c[1])}`;
+  const pts = (corners)=>corners.map(pt).join(" ");
+
+  let s = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:520px;display:block;font-family:system-ui,sans-serif">`;
+  s += `<rect width="${W}" height="${H}" fill="#071008"/>`;
+  s += `<text x="12" y="20" fill="#52b788" font-size="11" font-weight="600">3D Floor Stack Preview</text>`;
+
+  if(!maps.length){
+    s += `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#4a6052" font-size="14">No floor plans uploaded yet.</text>`;
+    s += `</svg>`; return s;
+  }
+
+  // Draw ascending z_level (lowest z first = behind)
+  const sorted = [...maps].sort((a,b)=>(a.stack?.z_level||0)-(b.stack?.z_level||0));
+  const slabWZ = 10/FLOOR_GAP; // slab thickness in world z units
+
+  for(const m of sorted){
+    const stk = m.stack || {z_level:0,x_offset:0,y_offset:0,scale:1.0,ceiling_height_m:2.4};
+    const z   = stk.z_level || 0;
+    const ox  = stk.x_offset || 0;
+    const oy  = stk.y_offset || 0;
+    const sc  = stk.scale || 1.0;
+    const ceil_h = stk.ceiling_height_m || 2.4;
+
+    const iw = m.image?.width  || 800;
+    const ih = m.image?.height || 600;
+    const ar = ih / iw;
+
+    const x0=ox, y0=oy, x1=ox+sc, y1=oy+sc*ar;
+
+    // 4 top-face corners
+    const TL = iso(x0,y0,z), TR = iso(x1,y0,z);
+    const BR = iso(x1,y1,z), BL = iso(x0,y1,z);
+
+    // Slab-bottom corners
+    const TR_b = iso(x1,y0,z-slabWZ), BR_b = iso(x1,y1,z-slabWZ);
+    const BL_b = iso(x0,y1,z-slabWZ);
+
+    // Right slab face
+    s += `<polygon points="${pts([TR,BR,BR_b,TR_b])}" fill="#0d2318" stroke="#1b3526" stroke-width="0.5"/>`;
+    // Front slab face
+    s += `<polygon points="${pts([BL,BR,BR_b,BL_b])}" fill="#0a1a12" stroke="#1b3526" stroke-width="0.5"/>`;
+    // Top face
+    s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="#0f2017" stroke="#1b3526" stroke-width="1"/>`;
+
+    // Project room_bounds onto top face
+    const rb = m.room_bounds || {};
+    for(const [room, b] of Object.entries(rb)){
+      if(!b || b.type!=="poly" || !Array.isArray(b.points) || b.points.length<3) continue;
+      const color = roomColor(room);
+      const polyPts = b.points.map(p=>{
+        const wx=ox+p[0]*sc, wy=oy+p[1]*sc*ar;
+        return pt(iso(wx,wy,z));
+      }).join(" ");
+      s += `<polygon points="${polyPts}" fill="${color}22" stroke="${color}" stroke-width="0.5" opacity="0.75"/>`;
+    }
+
+    // Receiver dots on top face
+    for(const r of (m.receivers||[])){
+      const wx=ox+(r.x||0)*sc, wy=oy+(r.y||0)*sc*ar;
+      const [px,py] = iso(wx,wy,z);
+      s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4" fill="#52b788" opacity="0.9"/>`;
+    }
+
+    // Labels on top face (centroid)
+    const centX = (TL[0]+TR[0]+BR[0]+BL[0])/4;
+    const centY = (TL[1]+TR[1]+BR[1]+BL[1])/4;
+    s += `<text x="${Math.round(centX)}" y="${Math.round(centY-7)}" text-anchor="middle" fill="#e2e8f0" font-size="11" font-weight="500">${_escSVG(m.name||m.id)}</text>`;
+    s += `<text x="${Math.round(centX)}" y="${Math.round(centY+8)}" text-anchor="middle" fill="#94a3b8" font-size="9">${_escSVG(lvlLabel(z))} · ${ceil_h}m</text>`;
+
+    // Level marker on left edge
+    s += `<text x="${Math.round(TL[0]-6)}" y="${Math.round(TL[1])}" text-anchor="end" dominant-baseline="middle" fill="#52b788" font-size="10" font-weight="700">L${z}</text>`;
+  }
+
+  s += `</svg>`;
+  return s;
+}
+
+function _escSVG(s){
+  return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }

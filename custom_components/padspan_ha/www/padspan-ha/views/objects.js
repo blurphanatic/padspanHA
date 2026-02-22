@@ -224,6 +224,12 @@ export function render(ctx){
       el("td",{class:"muted",style:"font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis"}, scanner || "—"),
       tagCell,
     ]);
+    tr.style.cursor = "pointer";
+    tr.title = "Click for details";
+    tr.addEventListener("click", (ev)=>{
+      if(ev.target.tagName==="BUTTON") return;
+      ctx.actions.showObjectDetail(o);
+    });
     objTbody.appendChild(tr);
     return tr;
   });
@@ -276,6 +282,8 @@ export function render(ctx){
         btn.addEventListener("click", ()=> ctx.actions.tagObjectPrompt(addr, o.user_label || ""));
         actions.appendChild(btn);
       }
+      const detailsBtn = el("button",{class:"btn tiny", onclick:()=> ctx.actions.showObjectDetail(o)}, "Details");
+      actions.appendChild(detailsBtn);
 
       return el("div",{class:"basic-obj-card"},[
         el("div",{},[

@@ -43,6 +43,9 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_object_label_delete)
     websocket_api.async_register_command(hass, ws_radio_area_set)
     websocket_api.async_register_command(hass, ws_follow_alert_save)
+    websocket_api.async_register_command(hass, ws_area_delete)
+    websocket_api.async_register_command(hass, ws_entity_delete)
+    websocket_api.async_register_command(hass, ws_integration_reload)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -870,6 +873,7 @@ async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
         "notes": str,
         vol.Optional("floor_id"): str,
         vol.Optional("room_bounds"): dict,
+        vol.Optional("stack"): dict,
     }
 )
 @websocket_api.async_response
@@ -887,6 +891,7 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
             notes=msg.get("notes"),
             floor_id=msg.get("floor_id"),
             room_bounds=msg.get("room_bounds"),
+            stack=msg.get("stack"),
         )
     except KeyError:
         connection.send_error(msg["id"], "not_found", "Map not found")
@@ -1026,3 +1031,72 @@ async def ws_follow_alert_save(hass: HomeAssistant, connection, msg) -> None:
     hass.data.setdefault(DOMAIN, {}).setdefault("follow_alerts", {})[addr] = config
     _LOGGER.debug("PadSpan HA follow_alert_save: addr=%s config=%s", addr, config)
     connection.send_result(msg["id"], {"ok": True, "addr": addr})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/area_delete",
+        "area_id": str,
+    }
+)
+@websocket_api.async_response
+async def ws_area_delete(hass: HomeAssistant, connection, msg) -> None:
+    """Delete an HA area and clean up PadSpan room_meta."""
+    area_id = (msg.get("area_id") or "").strip()
+    if not area_id:
+        connection.send_error(msg["id"], "invalid_area_id", "area_id required")
+        return
+    ar = area_registry.async_get(hass)
+    area = ar.async_get_area(area_id)
+    if not area:
+        connection.send_error(msg["id"], "not_found", "Area not found")
+        return
+    area_name = area.name
+    ar.async_delete(area_id)
+    # Clean up PadSpan room_meta for this area name
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if mdl:
+        try:
+            room_meta = mdl.room_meta() or {}
+            if area_name in room_meta:
+                updated_meta = {k: v for k, v in room_meta.items() if k != area_name}
+                await mdl.async_update(room_meta=updated_meta)
+        except Exception:
+            pass
+    connection.send_result(msg["id"], {"deleted": area_id, "name": area_name})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/entity_delete",
+        "entity_id": str,
+    }
+)
+@websocket_api.async_response
+async def ws_entity_delete(hass: HomeAssistant, connection, msg) -> None:
+    """Remove an entity from the HA entity registry."""
+    entity_id = (msg.get("entity_id") or "").strip()
+    if not entity_id:
+        connection.send_error(msg["id"], "invalid_entity_id", "entity_id required")
+        return
+    er = entity_registry.async_get(hass)
+    entry = er.async_get(entity_id)
+    if not entry:
+        connection.send_error(msg["id"], "not_found", f"Entity '{entity_id}' not found in registry")
+        return
+    er.async_remove(entity_id)
+    connection.send_result(msg["id"], {"deleted": entity_id})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/integration_reload"})
+@websocket_api.async_response
+async def ws_integration_reload(hass: HomeAssistant, connection, msg) -> None:
+    """Reload the PadSpan HA config entry."""
+    reloaded = 0
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        try:
+            await hass.config_entries.async_reload(entry.entry_id)
+            reloaded += 1
+        except Exception as e:
+            _LOGGER.warning("PadSpan HA reload failed for %s: %s", entry.entry_id, e)
+    connection.send_result(msg["id"], {"ok": True, "reloaded": reloaded})

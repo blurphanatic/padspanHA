@@ -56,11 +56,15 @@ export function render(ctx){
     const body = el("div",{});
     const rows = Object.keys(roomTagMap).sort().map((room)=>{
       const eids = roomTagMap[room] || [];
-      return el("tr",{},[
+      const row = el("tr",{},[
         el("td",{}, room),
         el("td",{}, String(eids.length)),
         el("td",{}, eids.join(", "))
       ]);
+      row.style.cursor = "pointer";
+      row.title = "Click for room details";
+      row.addEventListener("click", ()=>{ ctx.actions.closeModal(); ctx.actions.showRoomDetail(room); });
+      return row;
     });
 
     body.appendChild(el("div",{class:"controls"},[
@@ -94,7 +98,7 @@ export function render(ctx){
         e.stopPropagation();
         openAreaAssign(x, areas);
       });
-      return el("tr",{},[
+      const tr = el("tr",{},[
         el("td",{}, x.name || ""),
         el("td",{}, x.source || ""),
         el("td",{}, (x.adapter!=null?String(x.adapter):"")),
@@ -103,6 +107,13 @@ export function render(ctx){
         el("td",{}, x.area_name || "—"),
         el("td",{}, assignBtn),
       ]);
+      tr.style.cursor = "pointer";
+      tr.title = "Click for scanner details";
+      tr.addEventListener("click",(e)=>{
+        if(e.target.tagName==="BUTTON") return;
+        ctx.actions.closeModal(); ctx.actions.showScannerDetail(x);
+      });
+      return tr;
     });
 
     body.appendChild(el("table",{class:"table"},[
@@ -321,6 +332,11 @@ export function render(ctx){
         vendorCell,
       ]);
 
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click",(ev)=>{
+        if(ev.target.tagName==="BUTTON"||ev.target.tagName==="A") return;
+        ctx.actions.closeModal(); ctx.actions.showObjectDetail(o);
+      });
       // kick vendor lookup for BLE rows (best-effort, after render)
       tr._vendorCell = vendorCell;
       return tr;

@@ -84,8 +84,8 @@ def update_version_files(version, build_id):
     content = PANEL_JS.read_text(encoding="utf-8")
     content = re.sub(r'const APP_VERSION = "[^"]+"', f'const APP_VERSION = "{version}"', content)
     content = re.sub(r'const BUILD_ID = "[^"]+"',    f'const BUILD_ID = "{build_id}"',    content)
-    if old_build_id:
-        content = content.replace(f"?b={old_build_id}", f"?b={build_id}")
+    # Replace ALL ?b= cache-busters in import lines regardless of their current value
+    content = re.sub(r'\?b=\w+', f'?b={build_id}', content)
     PANEL_JS.write_text(content, encoding="utf-8")
     print(f"  panel.js             -> {version} / {build_id}")
 
@@ -107,7 +107,17 @@ def git_commit_tag_push(version, tag):
         "custom_components/padspan_ha/manifest.json",
         "custom_components/padspan_ha/const.py",
         "custom_components/padspan_ha/build_info.py",
+        "custom_components/padspan_ha/websocket.py",
+        "custom_components/padspan_ha/maps_store.py",
         "custom_components/padspan_ha/www/padspan-ha/panel.js",
+        "custom_components/padspan_ha/www/padspan-ha/help_content.js",
+        "custom_components/padspan_ha/www/padspan-ha/views/follow.js",
+        "custom_components/padspan_ha/www/padspan-ha/views/overview.js",
+        "custom_components/padspan_ha/www/padspan-ha/views/objects.js",
+        "custom_components/padspan_ha/www/padspan-ha/views/bluetooth.js",
+        "custom_components/padspan_ha/www/padspan-ha/views/settings.js",
+        "custom_components/padspan_ha/www/padspan-ha/views/maps.js",
+        "scripts/release.py",
     ])
     run(f"git add {files}")
     run(f'git commit -m "chore: bump version to {tag}"')

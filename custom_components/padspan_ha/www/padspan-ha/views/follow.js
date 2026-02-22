@@ -165,10 +165,14 @@ function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode
 
   if (isBasic) {
     // Basic mode: large room name + floor, simple last-seen
+    const detailsBtnBasic = el("button", {class:"btn inline", style:"margin-left:auto",
+      onclick:()=> ctx.actions.showObjectDetail(obj)
+    }, "Details →");
     return el("div", { class: "card", style: "margin-bottom:10px" }, [
       el("div", { class: "card-head" }, [
         el("div", { class: "h2" }, name),
         helpBtn("follow_map"),
+        detailsBtnBasic,
       ]),
       el("div", { style: "margin-top:8px" }, [
         el("div", { class: "muted", style: "font-size:12px" }, "Currently in"),
@@ -191,6 +195,9 @@ function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode
     el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px" }, [
       el("div", { style: "font-size:18px;font-weight:800;color:#e2e8f0" }, name),
       statusBadge,
+      el("button", {class:"btn inline", style:"margin-left:auto",
+        onclick:()=> ctx.actions.showObjectDetail(obj)
+      }, "Details →"),
     ]),
     el("div", { class: "grid-2" }, [
       el("div", {}, [
