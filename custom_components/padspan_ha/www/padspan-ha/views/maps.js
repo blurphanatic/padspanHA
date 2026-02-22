@@ -1016,9 +1016,11 @@ function _stack(ctx, maps, helpBtn){
       x_offset:  firstTgt?.stack?.x_offset  ?? 0.0,
       y_offset:  firstTgt?.stack?.y_offset  ?? 0.0,
       scale:     firstTgt?.stack?.scale     ?? 1.0,
+      rotation:  firstTgt?.stack?.rotation  ?? 0.0,
     };
   }
   const alignState = ctx.state.maps._stackAlign;
+  if(alignState.rotation === undefined) alignState.rotation = 0.0;
 
   // Guard: ensure saved refId/targetId still valid after map deletions
   if(alignState.refId && !maps.find(m=>m.id===alignState.refId))
@@ -1029,6 +1031,7 @@ function _stack(ctx, maps, helpBtn){
     alignState.x_offset  = newTgt?.stack?.x_offset  ?? 0.0;
     alignState.y_offset  = newTgt?.stack?.y_offset  ?? 0.0;
     alignState.scale     = newTgt?.stack?.scale     ?? 1.0;
+    alignState.rotation  = newTgt?.stack?.rotation  ?? 0.0;
   }
 
   // Level options: use HA floor registry if available, fall back to hardcoded names
@@ -1042,6 +1045,9 @@ function _stack(ctx, maps, helpBtn){
 
   // Overlay mode: "bounds" (SVG room polygons) or "images" (actual PNG images)
   if(!ctx.state.maps._stackOverlayMode) ctx.state.maps._stackOverlayMode = "bounds";
+  // View zoom (scales the stage down so both maps fit on screen) and target opacity
+  if(ctx.state.maps._stackViewScale  === undefined) ctx.state.maps._stackViewScale  = 1.0;
+  if(ctx.state.maps._stackTgtOpacity === undefined) ctx.state.maps._stackTgtOpacity = 0.55;
 
   const card = el("div",{class:"card"});
   card.appendChild(el("div",{class:"card-head"},[
@@ -1145,7 +1151,7 @@ function _stack(ctx, maps, helpBtn){
   card.appendChild(selRow);
 
   const readoutDiv = el("div",{style:"margin-top:8px;font-size:12px;font-family:monospace;color:#94a3b8"});
-  const updateReadout = ()=>{ readoutDiv.textContent = `X: ${alignState.x_offset.toFixed(3)}  Y: ${alignState.y_offset.toFixed(3)}  Scale: ${alignState.scale.toFixed(3)}`; };
+  const updateReadout = ()=>{ readoutDiv.textContent = `X: ${alignState.x_offset.toFixed(3)}  Y: ${alignState.y_offset.toFixed(3)}  Scale: ${alignState.scale.toFixed(3)}  Rot: ${(alignState.rotation||0).toFixed(1)}°`; };
   updateReadout();
   card.appendChild(readoutDiv);
 
@@ -1165,9 +1171,13 @@ function _stack(ctx, maps, helpBtn){
   ]);
   card.appendChild(modeToggleRow);
 
-  const stageWrap = el("div",{style:"position:relative;margin-top:10px;border-radius:8px;overflow:hidden;background:#071008"});
-  card.appendChild(stageWrap);
+  // stageOuter: scrollable so target can extend beyond stageWrap when offset/rotated
+  const stageOuter = el("div",{style:"margin-top:10px;overflow:auto;border-radius:8px;background:#071008;padding:4px"});
+  const stageWrap = el("div",{style:`position:relative;border-radius:6px;background:#071008;width:${Math.round((ctx.state.maps._stackViewScale||1.0)*100)}%;min-width:220px`});
+  stageOuter.appendChild(stageWrap);
+  card.appendChild(stageOuter);
 
+  let tgtLayerRef = null;
   let applyCurrentTransform = ()=>{ updateReadout(); };
 
   const buildStage = ()=>{
@@ -1181,6 +1191,7 @@ function _stack(ctx, maps, helpBtn){
       alignState.x_offset = newTgt?.stack?.x_offset ?? 0.0;
       alignState.y_offset = newTgt?.stack?.y_offset ?? 0.0;
       alignState.scale    = newTgt?.stack?.scale    ?? 1.0;
+      alignState.rotation = newTgt?.stack?.rotation ?? 0.0;
     }
     alignState.refId    = refId;
     alignState.targetId = tgtId;
@@ -1219,8 +1230,11 @@ function _stack(ctx, maps, helpBtn){
         tgtLayer.innerHTML = _stackMapSVGStr(tgtMap, ctx, true);
       }
 
+      tgtLayer.style.opacity = String(ctx.state.maps._stackTgtOpacity || 0.55);
+      tgtLayerRef = tgtLayer;
+
       applyCurrentTransform = ()=>{
-        tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) scale(${alignState.scale})`;
+        tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) scale(${alignState.scale}) rotate(${alignState.rotation||0}deg)`;
         updateReadout();
       };
       applyCurrentTransform();
@@ -1268,15 +1282,59 @@ function _stack(ctx, maps, helpBtn){
   buildStage();
 
   const ctrlRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px"});
+
+  // Scale controls
+  ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap"},"Scale:"));
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.scale = Math.min(5.0, Math.round((alignState.scale+0.05)*1000)/1000); applyCurrentTransform(); }},"Scale +"));
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.scale = Math.max(0.1, Math.round((alignState.scale-0.05)*1000)/1000); applyCurrentTransform(); }},"Scale −"));
-  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; applyCurrentTransform(); }},"Reset"));
+
+  // Rotate controls
+  ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"Rotate:"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.rotation = Math.round((alignState.rotation||0) - 15); applyCurrentTransform(); }},"−15°"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.rotation = Math.round((alignState.rotation||0) + 15); applyCurrentTransform(); }},"﹢15°"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.rotation = 0; applyCurrentTransform(); }},"0°"));
+
+  // View zoom controls (shrinks the stage canvas so both maps are visible)
+  ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"View:"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
+    ctx.state.maps._stackViewScale = Math.max(0.25, Math.round(((ctx.state.maps._stackViewScale||1.0)-0.1)*100)/100);
+    stageWrap.style.width = `${Math.round(ctx.state.maps._stackViewScale*100)}%`;
+  }},"Zoom −"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
+    ctx.state.maps._stackViewScale = 1.0;
+    stageWrap.style.width = "100%";
+  }},"100%"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
+    ctx.state.maps._stackViewScale = Math.min(1.0, Math.round(((ctx.state.maps._stackViewScale||1.0)+0.1)*100)/100);
+    stageWrap.style.width = `${Math.round(ctx.state.maps._stackViewScale*100)}%`;
+  }},"Zoom +"));
+
+  // Opacity controls (how transparent the draggable target layer is)
+  ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"Opacity:"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
+    ctx.state.maps._stackTgtOpacity = Math.max(0.05, Math.round(((ctx.state.maps._stackTgtOpacity||0.55)-0.1)*100)/100);
+    if(tgtLayerRef) tgtLayerRef.style.opacity = String(ctx.state.maps._stackTgtOpacity);
+  }},"▼"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
+    ctx.state.maps._stackTgtOpacity = 0.55;
+    if(tgtLayerRef) tgtLayerRef.style.opacity = "0.55";
+  }},"50%"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
+    ctx.state.maps._stackTgtOpacity = Math.min(0.95, Math.round(((ctx.state.maps._stackTgtOpacity||0.55)+0.1)*100)/100);
+    if(tgtLayerRef) tgtLayerRef.style.opacity = String(ctx.state.maps._stackTgtOpacity);
+  }},"▲"));
+
+  // Reset all alignment
+  ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; alignState.rotation=0; applyCurrentTransform(); }},"Reset"));
+
+  // Save alignment
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick: async ()=>{
     const tgtId = tgtSel.value;
     const tgtMap = maps.find(m=>m.id===tgtId);
     if(!tgtMap) return;
     const newStk = Object.assign({}, tgtMap.stack||{},{
-      x_offset: alignState.x_offset, y_offset: alignState.y_offset, scale: alignState.scale,
+      x_offset: alignState.x_offset, y_offset: alignState.y_offset,
+      scale: alignState.scale, rotation: alignState.rotation||0,
     });
     await ctx.actions.mapsUpdate({
       map_id: tgtMap.id, receivers: tgtMap.receivers||[], calibration: tgtMap.calibration||{},

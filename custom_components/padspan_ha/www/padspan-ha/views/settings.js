@@ -21,42 +21,18 @@ export function render(ctx){
     return root;
   }
 
-  // Advanced mode: multi-tab
+  // Advanced mode: Appearance | Manage
   if(!ctx.state.settingsTab) ctx.state.settingsTab = "appearance";
   const activeTab = ctx.state.settingsTab;
   const setTab = (t) => { ctx.state.settingsTab = t; ctx.actions.renderRooms(); };
 
-  const TABS = [
-    ["appearance","Appearance"],
-    ["manage","Manage"],
-    ["history","History"],
-    ["events","Events"],
-    ["health","Health"],
-    ["diagnostics","Diagnostics"],
-    ["debug","Debug"],
-  ];
-
-  const tabBar = el("div", {class:"tabs", style:"margin-bottom:12px;flex-wrap:wrap;gap:4px"});
-  for(const [id, label] of TABS){
-    tabBar.appendChild(el("button", {
-      class: "tab" + (activeTab === id ? " active" : ""),
-      onclick: () => setTab(id),
-    }, label));
-  }
-  root.appendChild(tabBar);
+  root.appendChild(el("div", {class:"tabs", style:"margin-bottom:12px"}, [
+    el("button", {class:"tab"+(activeTab==="appearance"?" active":""), onclick:()=>setTab("appearance")}, "Appearance"),
+    el("button", {class:"tab"+(activeTab==="manage"?" active":""), onclick:()=>setTab("manage")}, "Manage"),
+  ]));
 
   if(activeTab === "manage"){
     root.appendChild(_settingsManage(ctx, el));
-  } else if(activeTab === "history"){
-    root.appendChild(_settingsHistory(ctx, el));
-  } else if(activeTab === "events"){
-    root.appendChild(_settingsEvents(ctx, el));
-  } else if(activeTab === "health"){
-    root.appendChild(_settingsHealth(ctx, el));
-  } else if(activeTab === "diagnostics"){
-    root.appendChild(_settingsDiagnostics(ctx, el));
-  } else if(activeTab === "debug"){
-    root.appendChild(_settingsDebug(ctx, el));
   } else {
     root.appendChild(_settingsAppearance(ctx, el, helpBtn, draft, haFloors, haAreas, roomColor, false));
   }
@@ -146,12 +122,33 @@ function _settingsAppearance(ctx, el, helpBtn, draft, haFloors, haAreas, roomCol
 
 // ── Manage tab ─────────────────────────────────────────────────────────────────
 function _settingsManage(ctx, el){
+  // Sub-tab routing: Data | History | Events | Health | Diagnostics | Debug
+  if(!ctx.state.settingsManageTab) ctx.state.settingsManageTab = "data";
+  const mTab = ctx.state.settingsManageTab;
+  const setMTab = (t) => { ctx.state.settingsManageTab = t; ctx.actions.renderRooms(); };
+  const M_TABS = [["data","Data"],["history","History"],["events","Events"],["health","Health"],["diagnostics","Diagnostics"],["debug","Debug"]];
+
+  const wrap = el("div", {style:"display:flex;flex-direction:column;gap:12px"});
+
+  // Sub-tab bar
+  const subBar = el("div", {class:"tabs", style:"flex-wrap:wrap;gap:4px"});
+  for(const [id,label] of M_TABS){
+    subBar.appendChild(el("button",{class:"tab"+(mTab===id?" active":""), onclick:()=>setMTab(id)},label));
+  }
+  wrap.appendChild(subBar);
+
+  // Non-data sub-tabs delegate to their own functions
+  if(mTab === "history")     { wrap.appendChild(_settingsHistory(ctx, el));     return wrap; }
+  if(mTab === "events")      { wrap.appendChild(_settingsEvents(ctx, el));      return wrap; }
+  if(mTab === "health")      { wrap.appendChild(_settingsHealth(ctx, el));      return wrap; }
+  if(mTab === "diagnostics") { wrap.appendChild(_settingsDiagnostics(ctx, el)); return wrap; }
+  if(mTab === "debug")       { wrap.appendChild(_settingsDebug(ctx, el));       return wrap; }
+
+  // "data" sub-tab: destructive operations
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const haAreas  = (ctx.state.model && Array.isArray(ctx.state.model.areas))  ? ctx.state.model.areas  : [];
   const haFloors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
   const dataMode = ctx.state.dataMode || "sample";
-
-  const wrap = el("div", {style:"display:flex;flex-direction:column;gap:16px"});
 
   // ── DANGER WARNING BANNER ──────────────────────────────────────────────────
   wrap.appendChild(el("div", {style:"background:#3d0c0c;border:2px solid #dc2626;border-radius:12px;padding:16px"}, [
