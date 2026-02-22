@@ -13,30 +13,30 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260222T230148Z";
-import { HELP } from "./help_content.js?b=20260222T230148Z";
-import * as Follow from "./views/follow.js?b=20260222T230148Z";
-import * as Overview from "./views/overview.js?b=20260222T230148Z";
-import * as Objects from "./views/objects.js?b=20260222T230148Z";
-import * as Devices from "./views/devices.js?b=20260222T230148Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260222T230148Z";
-import * as Presence from "./views/presence.js?b=20260222T230148Z";
-import * as Zones from "./views/zones.js?b=20260222T230148Z";
-import * as Insights from "./views/insights.js?b=20260222T230148Z";
-import * as History from "./views/history.js?b=20260222T230148Z";
-import * as Monitor from "./views/monitor.js?b=20260222T230148Z";
-import * as Maps from "./views/maps.js?b=20260222T230148Z";
-import * as Events from "./views/events.js?b=20260222T230148Z";
-import * as Health from "./views/health.js?b=20260222T230148Z";
-import * as Settings from "./views/settings.js?b=20260222T230148Z";
-import * as Debug from "./views/debug.js?b=20260222T230148Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260222T230148Z";
-import * as QA from "./views/qa.js?b=20260222T230148Z";
-import * as Sandbox from "./views/sandbox.js?b=20260222T230148Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260222T230608Z";
+import { HELP } from "./help_content.js?b=20260222T230608Z";
+import * as Follow from "./views/follow.js?b=20260222T230608Z";
+import * as Overview from "./views/overview.js?b=20260222T230608Z";
+import * as Objects from "./views/objects.js?b=20260222T230608Z";
+import * as Devices from "./views/devices.js?b=20260222T230608Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260222T230608Z";
+import * as Presence from "./views/presence.js?b=20260222T230608Z";
+import * as Zones from "./views/zones.js?b=20260222T230608Z";
+import * as Insights from "./views/insights.js?b=20260222T230608Z";
+import * as History from "./views/history.js?b=20260222T230608Z";
+import * as Monitor from "./views/monitor.js?b=20260222T230608Z";
+import * as Maps from "./views/maps.js?b=20260222T230608Z";
+import * as Events from "./views/events.js?b=20260222T230608Z";
+import * as Health from "./views/health.js?b=20260222T230608Z";
+import * as Settings from "./views/settings.js?b=20260222T230608Z";
+import * as Debug from "./views/debug.js?b=20260222T230608Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260222T230608Z";
+import * as QA from "./views/qa.js?b=20260222T230608Z";
+import * as Sandbox from "./views/sandbox.js?b=20260222T230608Z";
 
-const APP_VERSION = "0.4.41";
+const APP_VERSION = "0.4.42";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260222T230148Z";
+const BUILD_ID = "20260222T230608Z";
 
 const VIEWS = {
   follow: Follow,

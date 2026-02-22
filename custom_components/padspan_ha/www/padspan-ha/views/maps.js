@@ -1221,7 +1221,7 @@ function _stack(ctx, maps, helpBtn){
 
     if(tgtMap && tgtMap.id !== refMap.id){
       const tgtLayer = document.createElement("div");
-      tgtLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:grab;transform-origin:0 0;opacity:0.55";
+      tgtLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:grab;transform-origin:0 0";
       if(overlayMode === "images"){
         const tgtUrl = tgtMap.image?.filename ? `/local/padspan_ha/maps/${tgtMap.image.filename}` : null;
         if(tgtUrl){ const ti = document.createElement("img"); ti.src = tgtUrl; ti.style.cssText = "width:100%;height:100%;object-fit:fill;display:block"; tgtLayer.appendChild(ti); }
