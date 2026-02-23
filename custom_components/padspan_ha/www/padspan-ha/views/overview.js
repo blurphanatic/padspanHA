@@ -412,7 +412,7 @@ export function render(ctx){
       return renderRoomGrid();
     }
 
-    const TILE=120, FLOOR_GAP=78, CX=380, CY=320, W=760, BASE_H=470;
+    const TILE=220, FLOOR_GAP=150, CX=380, CY=590, W=760, BASE_H=940;
     const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
     const roomColorFn = ctx.helpers.roomColor;
     const _esc = s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
@@ -457,7 +457,7 @@ export function render(ctx){
     if(ctx.state._overviewIsoFocus === undefined) ctx.state._overviewIsoFocus = null;
     const slabWZ = 7/FLOOR_GAP;
     const hasBounds = sorted.some(m=>Object.keys(m.room_bounds||{}).length>0);
-    const LEGEND_H = sortedIsoLevels.length * 22 + 20;
+    const LEGEND_H = sortedIsoLevels.length * 30 + 24;
 
     const buildIsoSVG = (focusZ)=>{
       const HTOTAL = BASE_H + LEGEND_H;
@@ -503,22 +503,22 @@ export function render(ctx){
             const cx=b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
             const cy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
             const [lx,ly]=iso(ox+cx*sc, oy__+cy*sc*ar, z);
-            s += `<text x="${Math.round(lx)}" y="${Math.round(ly)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" font-weight="600">${_esc(room)}</text>`;
+            s += `<text x="${Math.round(lx)}" y="${Math.round(ly)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="16" font-weight="600">${_esc(room)}</text>`;
           }
           // Placed receivers
           for(const r of (m.receivers||[])){
             const wx=ox+(r.x||0)*sc, wy=oy__+(r.y||0)*sc*ar;
             const [px,py]=iso(wx,wy,z);
-            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7" fill="none" stroke="#52b788" stroke-width="0.8" opacity="0.3"/>`;
-            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4" fill="none" stroke="#52b788" stroke-width="1"   opacity="0.6"/>`;
-            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="2.5" fill="#52b788" opacity="0.9"/>`;
+            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.3"/>`;
+            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.6"/>`;
+            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4"  fill="#52b788" opacity="0.9"/>`;
           }
         }
 
         // Layer index dot at bottom-left corner (BL = front-left of top face)
         const lidx = sortedIsoLevels.indexOf(z);
-        s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="8" fill="${lyrColor}" opacity="0.95"/>`;
-        s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1])+4}" text-anchor="middle" fill="#071008" font-size="9" font-weight="700">${lidx+1}</text>`;
+        s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="15" fill="${lyrColor}" opacity="0.95"/>`;
+        s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1])+6}" text-anchor="middle" fill="#071008" font-size="14" font-weight="700">${lidx+1}</text>`;
         s += `</g>`;
       }
 
@@ -531,13 +531,13 @@ export function render(ctx){
         const total = objs.length;
         objs.slice(0,8).forEach((o,idx)=>{
           const angle = (idx/Math.max(total,1))*Math.PI*2;
-          const spread = Math.min(20, total*5);
+          const spread = Math.min(36, total*8);
           const ox2 = Math.round(bx + Math.cos(angle)*spread);
           const oy2 = Math.round(by + Math.sin(angle)*spread*0.5);
           const color = (o.identified||o.user_label) ? "#5eead4" : "#f59e0b";
-          s += `<circle cx="${ox2}" cy="${oy2}" r="5" fill="${color}" opacity="0.95"/>`;
-          const lbl = (o.user_label||o.name||"?").substring(0,7);
-          s += `<text x="${ox2}" y="${oy2-8}" text-anchor="middle" fill="${color}" font-size="8" opacity="0.9">${_esc(lbl)}</text>`;
+          s += `<circle cx="${ox2}" cy="${oy2}" r="8" fill="${color}" opacity="0.95"/>`;
+          const lbl = (o.user_label||o.name||"?").substring(0,8);
+          s += `<text x="${ox2}" y="${oy2-12}" text-anchor="middle" fill="${color}" font-size="12" opacity="0.9">${_esc(lbl)}</text>`;
         });
       }
 
@@ -550,34 +550,34 @@ export function render(ctx){
         const pos = (area && receiverIsoByRoom[area]) || (area && roomIsoPos[area]);
         let px,py;
         if(pos){ [px,py]=pos; }
-        else { const idx=drawn.size-1; px=40+idx*120; py=BASE_H-28; if(px>W-60) continue; }
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="#52b788" stroke-width="0.6" opacity="0.2"/>`;
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="8"  fill="none" stroke="#52b788" stroke-width="0.9" opacity="0.45"/>`;
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4.5" fill="#52b788" opacity="0.9"/>`;
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="2"  fill="#071008" opacity="0.7"/>`;
-        s += `<text x="${Math.round(px)}" y="${Math.round(py+21)}" text-anchor="middle" fill="#52b788" font-size="8" opacity="0.9">${_esc(name.substring(0,12))}</text>`;
+        else { const idx=drawn.size-1; px=50+idx*160; py=BASE_H-40; if(px>W-80) continue; }
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="22" fill="none" stroke="#52b788" stroke-width="1" opacity="0.2"/>`;
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="14" fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.45"/>`;
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="#52b788" opacity="0.9"/>`;
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="3"  fill="#071008" opacity="0.7"/>`;
+        s += `<text x="${Math.round(px)}" y="${Math.round(py+33)}" text-anchor="middle" fill="#52b788" font-size="12" opacity="0.9">${_esc(name.substring(0,14))}</text>`;
       }
 
       if(!hasBounds && sorted.length){
-        s += `<text x="${W/2}" y="${BASE_H-12}" text-anchor="middle" fill="#4a6052" font-size="11">Go to Maps → Edit to draw room boundaries</text>`;
+        s += `<text x="${W/2}" y="${BASE_H-20}" text-anchor="middle" fill="#4a6052" font-size="16">Go to Maps → Edit to draw room boundaries</text>`;
       }
 
       // Legend at bottom
-      s += `<line x1="10" y1="${BASE_H+4}" x2="${W-10}" y2="${BASE_H+4}" stroke="#1b3526" stroke-width="0.5"/>`;
+      s += `<line x1="10" y1="${BASE_H+4}" x2="${W-10}" y2="${BASE_H+4}" stroke="#1b3526" stroke-width="0.8"/>`;
       sortedIsoLevels.forEach((z, i)=>{
-        const ly = BASE_H + 10 + i * 22;
+        const ly = BASE_H + 10 + i * 30;
         const color = levelColor(z);
         const groupLabel = byLevel.get(z).map(m=>m.name||m.id).join(" + ");
-        s += `<circle cx="16" cy="${ly+7}" r="7" fill="${color}" opacity="0.9"/>`;
-        s += `<text x="16" y="${ly+11}" text-anchor="middle" fill="#071008" font-size="9" font-weight="700">${i+1}</text>`;
-        s += `<text x="30" y="${ly+11}" fill="${color}" font-size="12" font-weight="500">${_esc(groupLabel)}</text>`;
+        s += `<circle cx="18" cy="${ly+11}" r="11" fill="${color}" opacity="0.9"/>`;
+        s += `<text x="18" y="${ly+15}" text-anchor="middle" fill="#071008" font-size="12" font-weight="700">${i+1}</text>`;
+        s += `<text x="36" y="${ly+15}" fill="${color}" font-size="18" font-weight="500">${_esc(groupLabel)}</text>`;
       });
 
       s += `</svg>`;
       return s;
     };
 
-    // Wrapper with floor focus slider
+    // Wrapper with floor focus slider + room list toggle
     const outer = document.createElement("div");
     outer.style.cssText = "margin-bottom:16px";
 
@@ -608,6 +608,68 @@ export function render(ctx){
       isoDiv.innerHTML = buildIsoSVG(ctx.state._overviewIsoFocus);
     });
 
+    // Room list toggle
+    if(ctx.state._overviewShowRoomList === undefined) ctx.state._overviewShowRoomList = false;
+    const roomListPanel = document.createElement("div");
+    roomListPanel.style.cssText = `margin-top:10px;display:${ctx.state._overviewShowRoomList?"block":"none"}`;
+
+    // Build room list from all visible maps
+    const ovRoomRows = [];
+    for(const m of sorted){
+      const floorId = m.stack?.floor_id || m.floor_id || "";
+      const haFlr = haFloors2.find(f=>String(f.id)===String(floorId));
+      const flLbl = haFlr ? (haFlr.name||haFlr.id) : (floorId||"—");
+      for(const room of Object.keys(m.room_bounds||{})){
+        if(!ovRoomRows.find(r=>r.room===room)){
+          const objsInRoom = allObjects.filter(o=>o.room===room);
+          ovRoomRows.push({ room, map: m.name||m.id, floor: flLbl, count: objsInRoom.length });
+        }
+      }
+    }
+    ovRoomRows.sort((a,b)=>a.room.localeCompare(b.room));
+
+    if(ovRoomRows.length){
+      const tbl = document.createElement("table");
+      tbl.style.cssText = "width:100%;border-collapse:collapse;font-size:13px";
+      tbl.innerHTML = `<thead><tr style="border-bottom:1px solid #1b3526">
+        <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left;width:24px"></th>
+        <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left">Room</th>
+        <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left">Floor</th>
+        <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left">Map</th>
+        <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:right">Objects</th>
+      </tr></thead>`;
+      const tbody2 = document.createElement("tbody");
+      const roomColorFn2 = ctx.helpers.roomColor;
+      for(const rr of ovRoomRows){
+        const color = roomColorFn2(rr.room);
+        const tr2 = document.createElement("tr");
+        tr2.style.cssText = "border-bottom:1px solid #0f2017";
+        tr2.innerHTML = `<td style="padding:5px 8px"><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${color};vertical-align:middle"></span></td>
+          <td style="padding:5px 8px;font-weight:600;color:#e2e8f0">${rr.room}</td>
+          <td style="padding:5px 8px;color:#94a3b8">${rr.floor}</td>
+          <td style="padding:5px 8px;color:#94a3b8">${rr.map}</td>
+          <td style="padding:5px 8px;color:#94a3b8;text-align:right">${rr.count||""}</td>`;
+        tbody2.appendChild(tr2);
+      }
+      tbl.appendChild(tbody2);
+      roomListPanel.appendChild(tbl);
+    } else {
+      const msg = document.createElement("div");
+      msg.className = "muted"; msg.style.cssText = "font-size:12px;padding:8px";
+      msg.textContent = "No rooms drawn yet. Go to Maps → Edit to draw room boundaries.";
+      roomListPanel.appendChild(msg);
+    }
+
+    const roomToggleBtn = document.createElement("button");
+    roomToggleBtn.className = "btn inline";
+    roomToggleBtn.style.cssText = "margin-left:auto";
+    roomToggleBtn.textContent = ctx.state._overviewShowRoomList ? "☰ Hide Room List" : "☰ Room List";
+    roomToggleBtn.addEventListener("click", ()=>{
+      ctx.state._overviewShowRoomList = !ctx.state._overviewShowRoomList;
+      roomToggleBtn.textContent = ctx.state._overviewShowRoomList ? "☰ Hide Room List" : "☰ Room List";
+      roomListPanel.style.display = ctx.state._overviewShowRoomList ? "block" : "none";
+    });
+
     const ctrlRow = document.createElement("div");
     ctrlRow.style.cssText = "display:flex;align-items:center;gap:10px;flex-wrap:wrap";
     const floorLbl = document.createElement("span");
@@ -616,8 +678,10 @@ export function render(ctx){
     ctrlRow.appendChild(floorLbl);
     ctrlRow.appendChild(focusSlider);
     ctrlRow.appendChild(focusLbl);
+    ctrlRow.appendChild(roomToggleBtn);
     outer.appendChild(ctrlRow);
     outer.appendChild(isoDiv);
+    outer.appendChild(roomListPanel);
     return outer;
   }
 

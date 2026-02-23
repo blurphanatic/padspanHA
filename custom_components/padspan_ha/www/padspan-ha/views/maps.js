@@ -1318,8 +1318,15 @@ function _stack(ctx, maps, helpBtn){
   let tgtLayerRef = null;
   let stageAr = 1.0;
   let applyCurrentTransform = ()=>{ updateReadout(); };
+  // AbortController to clean up window listeners when buildStage() is called again
+  let _dragAbort = null;
 
   const buildStage = ()=>{
+    // Remove previous window listeners before attaching new ones
+    if(_dragAbort){ _dragAbort.abort(); }
+    _dragAbort = new AbortController();
+    const { signal } = _dragAbort;
+
     stageWrap.innerHTML = "";
     const refId = refSel.value;
     const tgtId = tgtSel.value;
@@ -1410,16 +1417,16 @@ function _stack(ctx, maps, helpBtn){
         alignState.x_offset = startOffX + (ev.clientX - dragStartX)/r.width;
         alignState.y_offset = startOffY + (ev.clientY - dragStartY)/r.height;
         applyCurrentTransform();
-      });
+      }, { signal });
       window.addEventListener("touchmove",(ev)=>{
         if(!dragging||!ev.touches[0]) return;
         const r = stageRect(); if(!r.width) return;
         alignState.x_offset = startOffX + (ev.touches[0].clientX - dragStartX)/r.width;
         alignState.y_offset = startOffY + (ev.touches[0].clientY - dragStartY)/r.height;
         applyCurrentTransform();
-      },{passive:false});
-      window.addEventListener("mouseup",()=>{ dragging=false; tgtLayer.style.cursor="grab"; });
-      window.addEventListener("touchend",()=>{ dragging=false; });
+      },{ passive:false, signal });
+      window.addEventListener("mouseup",()=>{ dragging=false; tgtLayer.style.cursor="grab"; }, { signal });
+      window.addEventListener("touchend",()=>{ dragging=false; }, { signal });
 
       stageWrap.appendChild(tgtLayer);
     } else {
@@ -1482,21 +1489,34 @@ function _stack(ctx, maps, helpBtn){
   ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; alignState.rotation=0; applyCurrentTransform(); }},"Reset"));
 
   // Save alignment
-  ctrlRow.appendChild(el("button",{class:"btn inline", onclick: async ()=>{
-    const tgtId = tgtSel.value;
-    const tgtMap = maps.find(m=>m.id===tgtId);
-    if(!tgtMap) return;
-    const newStk = Object.assign({}, tgtMap.stack||{},{
-      x_offset: alignState.x_offset, y_offset: alignState.y_offset,
-      scale: alignState.scale, rotation: alignState.rotation||0,
-    });
-    await ctx.actions.mapsUpdate({
-      map_id: tgtMap.id, receivers: tgtMap.receivers||[], calibration: tgtMap.calibration||{},
-      notes: tgtMap.notes||"", floor_id: tgtMap.floor_id||"", room_bounds: tgtMap.room_bounds||{},
-      stack: newStk,
-    });
-    ctx.actions.mapsRefresh();
-  }},"Save Alignment"));
+  const saveAlignBtn = el("button",{class:"btn inline", onclick: async (ev)=>{
+    const btn = ev.currentTarget;
+    const tgtId = alignState.targetId || tgtSel.value;
+    // Use freshest copy of the map from state (in case list was refreshed)
+    const tgtMap = (ctx.state.maps.list||[]).find(m=>m.id===tgtId) || maps.find(m=>m.id===tgtId);
+    if(!tgtMap){ ctx.toast("No target map selected.", true); return; }
+    btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      const newStk = Object.assign({}, tgtMap.stack||{},{
+        x_offset: alignState.x_offset, y_offset: alignState.y_offset,
+        scale: alignState.scale, rotation: alignState.rotation||0,
+      });
+      await ctx.actions.mapsUpdate({
+        map_id: tgtMap.id, receivers: tgtMap.receivers||[], calibration: tgtMap.calibration||{},
+        notes: tgtMap.notes||"", floor_id: tgtMap.floor_id||"", room_bounds: tgtMap.room_bounds||{},
+        stack: newStk,
+      });
+      // mapsUpdate already fetched fresh list + re-rendered the view;
+      // sync alignState rotation from saved value (backend now persists it)
+      const saved = (ctx.state.maps.list||[]).find(m=>m.id===tgtId);
+      if(saved?.stack) alignState.rotation = saved.stack.rotation ?? alignState.rotation;
+      ctx.toast("Alignment saved ✔");
+    } catch(e){
+      ctx.toast("Save failed: " + String(e), true);
+      try{ btn.disabled = false; btn.textContent = "Save Alignment"; } catch(_){}
+    }
+  }},"Save Alignment");
+  ctrlRow.appendChild(saveAlignBtn);
   card.appendChild(ctrlRow);
 
   // ── Section 3: 3D Isometric Preview ───────────────────────────────────────
@@ -1528,14 +1548,63 @@ function _stack(ctx, maps, helpBtn){
     }
     rebuildIso();
   });
+  if(ctx.state.maps._stackShowRoomList === undefined) ctx.state.maps._stackShowRoomList = false;
+
+  const roomListToggle = el("button",{class:"btn inline", style:"margin-left:auto", onclick:()=>{
+    ctx.state.maps._stackShowRoomList = !ctx.state.maps._stackShowRoomList;
+    roomListToggle.textContent = ctx.state.maps._stackShowRoomList ? "☰ Hide Room List" : "☰ Room List";
+    roomListPanel.style.display = ctx.state.maps._stackShowRoomList ? "block" : "none";
+  }}, ctx.state.maps._stackShowRoomList ? "☰ Hide Room List" : "☰ Room List");
+
   card.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap"},[
     el("span",{class:"muted",style:"font-size:12px"},"Floor:"),
     focusSlider,
     focusLbl,
+    roomListToggle,
   ]));
 
   rebuildIso();
   card.appendChild(isoWrap);
+
+  // Room list panel (all unique rooms across visible maps)
+  const roomListPanel = el("div",{style:`display:${ctx.state.maps._stackShowRoomList ? "block" : "none"};margin-top:10px`});
+  const visMaps2 = maps.filter(m=>!hiddenIds.has(m.id));
+  const roomRows = [];
+  for(const m of visMaps2){
+    const floorLbl = _floorName(ctx, m.stack?.floor_id || m.floor_id || "");
+    for(const room of Object.keys(m.room_bounds||{})){
+      if(!roomRows.find(r=>r.room===room))
+        roomRows.push({ room, map: m.name||m.id, floor: floorLbl });
+    }
+  }
+  roomRows.sort((a,b)=>a.room.localeCompare(b.room));
+  if(roomRows.length){
+    const tbl = document.createElement("table");
+    tbl.style.cssText = "width:100%;border-collapse:collapse;font-size:13px";
+    tbl.innerHTML = `<thead><tr style="border-bottom:1px solid #1b3526">
+      <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left;width:24px"></th>
+      <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left">Room</th>
+      <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left">Floor</th>
+      <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left">Map</th>
+    </tr></thead>`;
+    const tbody2 = document.createElement("tbody");
+    const roomColorFn = ctx.helpers.roomColor;
+    for(const rr of roomRows){
+      const color = roomColorFn(rr.room);
+      const tr2 = document.createElement("tr");
+      tr2.style.cssText = "border-bottom:1px solid #0f2017";
+      tr2.innerHTML = `<td style="padding:5px 8px"><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${color};vertical-align:middle"></span></td>
+        <td style="padding:5px 8px;font-weight:600;color:#e2e8f0">${rr.room}</td>
+        <td style="padding:5px 8px;color:#94a3b8">${rr.floor||"—"}</td>
+        <td style="padding:5px 8px;color:#94a3b8">${rr.map}</td>`;
+      tbody2.appendChild(tr2);
+    }
+    tbl.appendChild(tbody2);
+    roomListPanel.appendChild(tbl);
+  } else {
+    roomListPanel.appendChild(el("div",{class:"muted",style:"font-size:12px;padding:8px"},"No rooms drawn yet. Go to Maps → Edit to draw room boundaries."));
+  }
+  card.appendChild(roomListPanel);
 
   return card;
 }
@@ -1585,7 +1654,7 @@ function _stackMapSVGStr(map, ctx, isTarget, showBg=true){
 }
 
 function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
-  const TILE=140, FLOOR_GAP=80, CX=390, CY=360, W=780, BASE_H=520;
+  const TILE=260, FLOOR_GAP=150, CX=390, CY=680, W=780, BASE_H=1000;
   const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
   const roomColor = ctx.helpers.roomColor;
   const lvlLabel = (z)=>{ const opt=(levelOptions||[]).find(o=>o.value===z); return opt ? opt.label : `L${z}`; };
@@ -1611,7 +1680,7 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
   }
   const sortedLevels = [...byLevel.keys()].sort((a,b)=>a-b);
   const levelColor = (z) => LAYER_PAL[sortedLevels.indexOf(z) % LAYER_PAL.length];
-  const LEGEND_H = sortedLevels.length * 22 + 20;
+  const LEGEND_H = sortedLevels.length * 30 + 24;
   const HTOTAL = BASE_H + LEGEND_H;
 
   let s = `<svg viewBox="0 0 ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
@@ -1669,35 +1738,36 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
         const cx = b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
         const cy = b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
         const [lx,ly] = iso(ox+cx*sc, oy_+cy*sc*ar, z);
-        s += `<text x="${Math.round(lx)}" y="${Math.round(ly)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" font-weight="600" opacity="0.85">${_escSVG(room)}</text>`;
+        s += `<text x="${Math.round(lx)}" y="${Math.round(ly)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="16" font-weight="600" opacity="0.85">${_escSVG(room)}</text>`;
       }
       for(const r of (m.receivers||[])){
         const wx=ox+(r.x||0)*sc, wy=oy_+(r.y||0)*sc*ar;
         const [px,py]=iso(wx,wy,z);
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7" fill="none" stroke="#52b788" stroke-width="0.8" opacity="0.3"/>`;
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4" fill="none" stroke="#52b788" stroke-width="1"   opacity="0.6"/>`;
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="2.5" fill="#52b788" opacity="0.9"/>`;
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.3"/>`;
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.6"/>`;
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4"  fill="#52b788" opacity="0.9"/>`;
       }
     }
 
     // Colored index dot at bottom-left corner of slab top face
     const lidx = sortedLevels.indexOf(z);
-    s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="8" fill="${lyrColor}" opacity="0.95"/>`;
-    s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1])+4}" text-anchor="middle" fill="#071008" font-size="9" font-weight="700">${lidx+1}</text>`;
+    s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="15" fill="${lyrColor}" opacity="0.95"/>`;
+    s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1])+6}" text-anchor="middle" fill="#071008" font-size="14" font-weight="700">${lidx+1}</text>`;
     s += `</g>`;
   }
 
   // Legend at bottom
-  s += `<line x1="10" y1="${BASE_H+4}" x2="${W-10}" y2="${BASE_H+4}" stroke="#1b3526" stroke-width="0.5"/>`;
+  const LEGEND_ROW = 30;
+  s += `<line x1="10" y1="${BASE_H+4}" x2="${W-10}" y2="${BASE_H+4}" stroke="#1b3526" stroke-width="0.8"/>`;
   sortedLevels.forEach((z, i)=>{
-    const ly = BASE_H + 10 + i * 22;
+    const ly = BASE_H + 10 + i * LEGEND_ROW;
     const color = levelColor(z);
     const groupLabel = byLevel.get(z).map(m=>m.name||m.id).join(" + ");
     const ceil0 = byLevel.get(z)[0].stack?.ceiling_height_m || 2.4;
-    s += `<circle cx="16" cy="${ly+7}" r="7" fill="${color}" opacity="0.9"/>`;
-    s += `<text x="16" y="${ly+11}" text-anchor="middle" fill="#071008" font-size="9" font-weight="700">${i+1}</text>`;
-    s += `<text x="30" y="${ly+11}" fill="${color}" font-size="12" font-weight="500">${_escSVG(groupLabel)}</text>`;
-    s += `<text x="${W-10}" y="${ly+11}" text-anchor="end" fill="#94a3b8" font-size="11">${_escSVG(lvlLabel(z))} · ${ceil0}m</text>`;
+    s += `<circle cx="18" cy="${ly+11}" r="11" fill="${color}" opacity="0.9"/>`;
+    s += `<text x="18" y="${ly+15}" text-anchor="middle" fill="#071008" font-size="12" font-weight="700">${i+1}</text>`;
+    s += `<text x="36" y="${ly+15}" fill="${color}" font-size="18" font-weight="500">${_escSVG(groupLabel)}</text>`;
+    s += `<text x="${W-10}" y="${ly+15}" text-anchor="end" fill="#94a3b8" font-size="15">${_escSVG(lvlLabel(z))} · ${ceil0}m</text>`;
   });
 
   s += `</svg>`;
