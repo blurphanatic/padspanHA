@@ -406,9 +406,14 @@ export function render(ctx){
   // ---------- 3D Iso Floor Stack (uses uploaded maps data + live presence) ----------
   function renderIsoFloorStack(){
     const maps_list = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
-    if(!maps_list.length) return renderRoomGrid();
+    // Fallback: sample floor plan → room grid
+    if(!maps_list.length){
+      if(liveSnap && liveSnap.floor_plan) return renderFloorPlan(liveSnap.floor_plan);
+      return renderRoomGrid();
+    }
 
-    const TILE=120, FLOOR_GAP=78, CX=380, CY=340, W=760, H=500;
+    const TILE=120, FLOOR_GAP=78, CX=380, CY=320, W=760, BASE_H=470;
+    const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
     const roomColorFn = ctx.helpers.roomColor;
     const _esc = s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
     const iso = (wx,wy,wz)=>[CX+(wx-wy)*TILE*0.866, CY+(wx+wy)*TILE*0.5-wz*FLOOR_GAP];
@@ -418,12 +423,22 @@ export function render(ctx){
     const allObjects = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
     const allRadios_live = radios;
 
-    // Sort maps by z_level
-    const sorted = [...maps_list].sort((a,b)=>(a.stack?.z_level||0)-(b.stack?.z_level||0));
+    // Filter hidden maps
+    const hiddenIds = (ctx.state.maps && ctx.state.maps._hiddenMapIds) || new Set();
+    const sorted = [...maps_list].filter(m=>!hiddenIds.has(m.id)).sort((a,b)=>(a.stack?.z_level||0)-(b.stack?.z_level||0));
 
-    // Build room centroid → iso position lookup for live data overlay
-    const roomIsoPos = {};       // room → [px, py]
-    const receiverIsoByRoom = {}; // room → [px, py] (first receiver assigned to that room)
+    // Group maps by z_level
+    const byLevel = new Map();
+    for(const m of sorted){
+      const z=m.stack?.z_level??0;
+      if(!byLevel.has(z)) byLevel.set(z,[]);
+      byLevel.get(z).push(m);
+    }
+    const sortedIsoLevels = [...byLevel.keys()].sort((a,b)=>a-b);
+    const levelColor = (z) => LAYER_PAL[sortedIsoLevels.indexOf(z) % LAYER_PAL.length];
+
+    // Build room centroid + receiver iso positions for live data overlay
+    const roomIsoPos = {}, receiverIsoByRoom = {};
     for(const m of sorted){
       const stk=m.stack||{}, z=stk.z_level||0, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
@@ -439,29 +454,26 @@ export function render(ctx){
       }
     }
 
-    // Focus state — which floor to highlight (null = all)
     if(ctx.state._overviewIsoFocus === undefined) ctx.state._overviewIsoFocus = null;
-    const sortedIsoLevels = [...new Set(sorted.map(m=>m.stack?.z_level||0))].sort((a,b)=>a-b);
-
-    // Group maps by z_level
-    const byLevel = new Map();
-    for(const m of sorted){
-      const z=m.stack?.z_level??0;
-      if(!byLevel.has(z)) byLevel.set(z,[]);
-      byLevel.get(z).push(m);
-    }
     const slabWZ = 7/FLOOR_GAP;
-    const hasBounds = maps_list.some(m=>Object.keys(m.room_bounds||{}).length>0);
+    const hasBounds = sorted.some(m=>Object.keys(m.room_bounds||{}).length>0);
+    const LEGEND_H = sortedIsoLevels.length * 22 + 20;
 
     const buildIsoSVG = (focusZ)=>{
-      let s = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:500px;display:block;font-family:system-ui,sans-serif">`;
-      s += `<rect width="${W}" height="${H}" fill="#071008"/>`;
+      const HTOTAL = BASE_H + LEGEND_H;
+      let s = `<svg viewBox="0 0 ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
+      s += `<rect width="${W}" height="${HTOTAL}" fill="#071008"/>`;
+
+      if(!sorted.length){
+        s += `<text x="${W/2}" y="${BASE_H/2}" text-anchor="middle" fill="#4a6052" font-size="13">All layers hidden</text>`;
+        s += `</svg>`; return s;
+      }
 
       for(const [z,group] of [...byLevel.entries()].sort((a,b)=>a[0]-b[0])){
         const isFocused = focusZ===null || focusZ===z;
         const go = isFocused ? 1.0 : 0.1;
+        const lyrColor = levelColor(z);
 
-        // Merged bounding box
         let x0=Infinity,y0_=Infinity,x1=-Infinity,y1_=-Infinity;
         for(const m of group){
           const stk=m.stack||{}, ox=stk.x_offset||0, oy__=stk.y_offset||0, sc=stk.scale||1.0;
@@ -475,16 +487,9 @@ export function render(ctx){
         const TR_b=iso(x1,y0_,z-slabWZ), BR_b=iso(x1,y1_,z-slabWZ), BL_b=iso(x0,y1_,z-slabWZ);
 
         s += `<g opacity="${go}">`;
-        // See-through slab: very low fill, dashed top outline
         s += `<polygon points="${pts([TR,BR,BR_b,TR_b])}" fill="#0d2318" fill-opacity="0.35" stroke="#253e2e" stroke-width="0.8"/>`;
         s += `<polygon points="${pts([BL,BR,BR_b,BL_b])}" fill="#0a1a12" fill-opacity="0.3" stroke="#253e2e" stroke-width="0.8"/>`;
-        s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="#0f2017" fill-opacity="0.06" stroke="#2a5038" stroke-width="1.5" stroke-dasharray="10,5"/>`;
-
-        // Floor name ghost text
-        const centX=(TL[0]+TR[0]+BR[0]+BL[0])/4, centY=(TL[1]+TR[1]+BR[1]+BL[1])/4;
-        const lvlName = group.map(m=>m.name||m.id).join(" + ");
-        s += `<text x="${Math.round(centX)}" y="${Math.round(centY)}" text-anchor="middle" dominant-baseline="middle" fill="#1b3526" font-size="20" font-weight="700" opacity="0.5">${_esc(lvlName)}</text>`;
-        s += `<text x="${Math.round(TL[0]-8)}" y="${Math.round(TL[1])}" text-anchor="end" dominant-baseline="middle" fill="#52b788" font-size="9" font-weight="700">L${z}</text>`;
+        s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="#0f2017" fill-opacity="0.06" stroke="${lyrColor}" stroke-width="1.5" stroke-dasharray="10,5" opacity="0.5"/>`;
 
         // Room polygons
         for(const m of group){
@@ -500,19 +505,24 @@ export function render(ctx){
             const [lx,ly]=iso(ox+cx*sc, oy__+cy*sc*ar, z);
             s += `<text x="${Math.round(lx)}" y="${Math.round(ly)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" font-weight="600">${_esc(room)}</text>`;
           }
-          // Placed receivers as radio markers
+          // Placed receivers
           for(const r of (m.receivers||[])){
             const wx=ox+(r.x||0)*sc, wy=oy__+(r.y||0)*sc*ar;
             const [px,py]=iso(wx,wy,z);
-            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="8" fill="none" stroke="#52b788" stroke-width="0.7" opacity="0.3"/>`;
-            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="5" fill="none" stroke="#52b788" stroke-width="1"   opacity="0.6"/>`;
-            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="3" fill="#52b788" opacity="0.9"/>`;
+            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7" fill="none" stroke="#52b788" stroke-width="0.8" opacity="0.3"/>`;
+            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4" fill="none" stroke="#52b788" stroke-width="1"   opacity="0.6"/>`;
+            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="2.5" fill="#52b788" opacity="0.9"/>`;
           }
         }
+
+        // Layer index dot at bottom-left corner (BL = front-left of top face)
+        const lidx = sortedIsoLevels.indexOf(z);
+        s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="8" fill="${lyrColor}" opacity="0.95"/>`;
+        s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1])+4}" text-anchor="middle" fill="#071008" font-size="9" font-weight="700">${lidx+1}</text>`;
         s += `</g>`;
       }
 
-      // Live objects — render at room centroid positions (scattered within room)
+      // Live objects at room centroids
       const objsByRoom = {};
       for(const o of allObjects){ const r=o.room; if(r){(objsByRoom[r]=objsByRoom[r]||[]).push(o);} }
       for(const [room, objs] of Object.entries(objsByRoom)){
@@ -531,7 +541,7 @@ export function render(ctx){
         });
       }
 
-      // Live BLE radios — at receiver position, then room centroid, then floor center
+      // Live BLE radios
       const drawn = new Set();
       for(const radio of allRadios_live){
         const name = radio.name||radio.source||"";
@@ -540,31 +550,37 @@ export function render(ctx){
         const pos = (area && receiverIsoByRoom[area]) || (area && roomIsoPos[area]);
         let px,py;
         if(pos){ [px,py]=pos; }
-        else {
-          // Place unassigned radios at a row below the iso view
-          const idx = drawn.size - 1;
-          px = 40 + idx*120; py = H - 28;
-          if(px > W-60) continue;
-        }
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="14" fill="none" stroke="#52b788" stroke-width="0.6" opacity="0.2"/>`;
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="9"  fill="none" stroke="#52b788" stroke-width="0.9" opacity="0.45"/>`;
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="5"  fill="#52b788" opacity="0.9"/>`;
+        else { const idx=drawn.size-1; px=40+idx*120; py=BASE_H-28; if(px>W-60) continue; }
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="#52b788" stroke-width="0.6" opacity="0.2"/>`;
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="8"  fill="none" stroke="#52b788" stroke-width="0.9" opacity="0.45"/>`;
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4.5" fill="#52b788" opacity="0.9"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="2"  fill="#071008" opacity="0.7"/>`;
-        s += `<text x="${Math.round(px)}" y="${Math.round(py+22)}" text-anchor="middle" fill="#52b788" font-size="8" opacity="0.9">${_esc(name.substring(0,12))}</text>`;
+        s += `<text x="${Math.round(px)}" y="${Math.round(py+21)}" text-anchor="middle" fill="#52b788" font-size="8" opacity="0.9">${_esc(name.substring(0,12))}</text>`;
       }
 
-      if(!hasBounds){
-        s += `<text x="${W/2}" y="${H-14}" text-anchor="middle" fill="#4a6052" font-size="11">Go to Maps → Edit to draw room boundaries</text>`;
+      if(!hasBounds && sorted.length){
+        s += `<text x="${W/2}" y="${BASE_H-12}" text-anchor="middle" fill="#4a6052" font-size="11">Go to Maps → Edit to draw room boundaries</text>`;
       }
+
+      // Legend at bottom
+      s += `<line x1="10" y1="${BASE_H+4}" x2="${W-10}" y2="${BASE_H+4}" stroke="#1b3526" stroke-width="0.5"/>`;
+      sortedIsoLevels.forEach((z, i)=>{
+        const ly = BASE_H + 10 + i * 22;
+        const color = levelColor(z);
+        const groupLabel = byLevel.get(z).map(m=>m.name||m.id).join(" + ");
+        s += `<circle cx="16" cy="${ly+7}" r="7" fill="${color}" opacity="0.9"/>`;
+        s += `<text x="16" y="${ly+11}" text-anchor="middle" fill="#071008" font-size="9" font-weight="700">${i+1}</text>`;
+        s += `<text x="30" y="${ly+11}" fill="${color}" font-size="12" font-weight="500">${_esc(groupLabel)}</text>`;
+      });
+
       s += `</svg>`;
       return s;
     };
 
-    // Build wrapper with floor focus slider
+    // Wrapper with floor focus slider
     const outer = document.createElement("div");
     outer.style.cssText = "margin-bottom:16px";
 
-    // Focus slider controls
     const focusLbl = document.createElement("span");
     focusLbl.style.cssText = "font-size:12px;color:#94a3b8;min-width:80px;display:inline-block";
     focusLbl.textContent = ctx.state._overviewIsoFocus === null ? "All floors" : `L${ctx.state._overviewIsoFocus}`;
@@ -754,10 +770,8 @@ export function render(ctx){
     return wrap;
   }
 
-  // Use the sample floor plan if available (sample mode), otherwise iso stack from uploaded maps
-  const mapEl = (liveSnap && liveSnap.floor_plan)
-    ? renderFloorPlan(liveSnap.floor_plan)
-    : renderIsoFloorStack();
+  // Always try iso floor stack first; falls back to sample floor plan or room grid if no maps
+  const mapEl = renderIsoFloorStack();
 
   // ---------- Basic mode layout ----------
   if(isBasic){

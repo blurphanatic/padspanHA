@@ -902,7 +902,10 @@ function _export(ctx, active, maps_list){
   const dlIsoPng = el("button",{class:"btn inline", onclick:async()=>{
     dlIsoPng.disabled = true; isoStatus.textContent = "Rendering PNG…";
     try{
-      const blob = await _svgStringToPng(isoSvgStr, 780, 520);
+      const _vb = isoSvgStr.match(/viewBox="0 0 (\d+) (\d+)"/);
+      const _iw = _vb ? parseInt(_vb[1],10) : 780;
+      const _ih = _vb ? parseInt(_vb[2],10) : 520;
+      const blob = await _svgStringToPng(isoSvgStr, _iw, _ih);
       _downloadBlob(blob, "building_3d.png");
       isoStatus.textContent = "Downloaded ✓";
     }catch(e){ isoStatus.textContent = "Render failed: "+String(e); }
@@ -1172,6 +1175,9 @@ function _stack(ctx, maps, helpBtn){
   card.appendChild(el("div",{class:"muted",style:"margin-top:16px;font-size:13px;font-weight:600"},"Floor Assignment & Ceiling Heights"));
   card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:2px"},"Assign each map to an HA floor (auto-sets stack level) and set ceiling height."));
 
+  if(!ctx.state.maps._hiddenMapIds) ctx.state.maps._hiddenMapIds = new Set();
+  const hiddenIds = ctx.state.maps._hiddenMapIds;
+
   const tableWrap = el("div",{style:"overflow-x:auto;margin-top:8px"});
   const table = document.createElement("table");
   table.style.cssText = "width:100%;border-collapse:collapse;font-size:13px";
@@ -1181,6 +1187,7 @@ function _stack(ctx, maps, helpBtn){
     <th style="text-align:left;padding:6px 8px;color:#94a3b8;font-weight:500">HA Floor</th>
     <th style="text-align:left;padding:6px 8px;color:#94a3b8;font-weight:500">Stack Level</th>
     <th style="text-align:left;padding:6px 8px;color:#94a3b8;font-weight:500">Ceiling (m)</th>
+    <th style="text-align:center;padding:6px 8px;color:#94a3b8;font-weight:500">Show</th>
     <th style="padding:6px 8px"></th>
   </tr>`;
   table.appendChild(thead);
@@ -1243,6 +1250,19 @@ function _stack(ctx, maps, helpBtn){
     ceilInput.style.cssText = "width:70px;background:#0a150e;border:1px solid #1b3526;color:#e2e8f0;padding:4px 6px;border-radius:4px";
     tdCeil.appendChild(ceilInput);
     tr.appendChild(tdCeil);
+
+    const tdShow = document.createElement("td");
+    tdShow.style.cssText = "padding:6px 8px;text-align:center";
+    const showCb = document.createElement("input");
+    showCb.type = "checkbox";
+    showCb.checked = !hiddenIds.has(m.id);
+    showCb.style.cssText = "width:16px;height:16px;accent-color:#52b788;cursor:pointer";
+    showCb.addEventListener("change", () => {
+      if(!showCb.checked) hiddenIds.add(m.id); else hiddenIds.delete(m.id);
+      ctx.actions.renderRooms();
+    });
+    tdShow.appendChild(showCb);
+    tr.appendChild(tdShow);
 
     const tdSave = document.createElement("td");
     tdSave.style.cssText = "padding:6px 8px";
@@ -1565,7 +1585,8 @@ function _stackMapSVGStr(map, ctx, isTarget, showBg=true){
 }
 
 function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
-  const TILE=140, FLOOR_GAP=80, CX=390, CY=360, W=780, H=520;
+  const TILE=140, FLOOR_GAP=80, CX=390, CY=360, W=780, BASE_H=520;
+  const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
   const roomColor = ctx.helpers.roomColor;
   const lvlLabel = (z)=>{ const opt=(levelOptions||[]).find(o=>o.value===z); return opt ? opt.label : `L${z}`; };
 
@@ -1576,28 +1597,42 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
   const pt = (c)=>`${Math.round(c[0])},${Math.round(c[1])}`;
   const ptsStr = (corners)=>corners.map(pt).join(" ");
 
-  let s = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:520px;display:block;font-family:system-ui,sans-serif">`;
-  s += `<rect width="${W}" height="${H}" fill="#071008"/>`;
-  s += `<text x="12" y="20" fill="#52b788" font-size="11" font-weight="600">3D Floor Stack Preview</text>`;
+  // Filter hidden maps
+  const hiddenIds = (ctx.state.maps && ctx.state.maps._hiddenMapIds) || new Set();
+  const visMaps = maps.filter(m=>!hiddenIds.has(m.id));
 
-  if(!maps.length){
-    s += `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#4a6052" font-size="14">No floor plans uploaded yet.</text>`;
-    s += `</svg>`; return s;
-  }
-
-  // Group maps by z_level (lowest first)
-  const sorted = [...maps].sort((a,b)=>(a.stack?.z_level||0)-(b.stack?.z_level||0));
+  // Group by z_level
+  const sorted = [...visMaps].sort((a,b)=>(a.stack?.z_level||0)-(b.stack?.z_level||0));
   const byLevel = new Map();
   for(const m of sorted){
     const z = m.stack?.z_level ?? 0;
     if(!byLevel.has(z)) byLevel.set(z,[]);
     byLevel.get(z).push(m);
   }
+  const sortedLevels = [...byLevel.keys()].sort((a,b)=>a-b);
+  const levelColor = (z) => LAYER_PAL[sortedLevels.indexOf(z) % LAYER_PAL.length];
+  const LEGEND_H = sortedLevels.length * 22 + 20;
+  const HTOTAL = BASE_H + LEGEND_H;
+
+  let s = `<svg viewBox="0 0 ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
+  s += `<rect width="${W}" height="${HTOTAL}" fill="#071008"/>`;
+  s += `<text x="12" y="20" fill="#52b788" font-size="11" font-weight="600">3D Floor Stack Preview</text>`;
+
+  if(!maps.length){
+    s += `<text x="${W/2}" y="${BASE_H/2}" text-anchor="middle" fill="#4a6052" font-size="14">No floor plans uploaded yet.</text>`;
+    s += `</svg>`; return s;
+  }
+  if(!visMaps.length){
+    s += `<text x="${W/2}" y="${BASE_H/2}" text-anchor="middle" fill="#4a6052" font-size="13">All layers hidden.</text>`;
+    s += `</svg>`; return s;
+  }
+
   const slabWZ = 10/FLOOR_GAP;
 
   for(const [z, group] of [...byLevel.entries()].sort((a,b)=>a[0]-b[0])){
     const isFocused = focusLevel === null || focusLevel === z;
     const groupOpacity = isFocused ? 1.0 : 0.12;
+    const lyrColor = levelColor(z);
 
     // Merged bounding box for this level's group
     let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
@@ -1614,44 +1649,56 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
     const TR_b=iso(maxX,minY,z-slabWZ), BR_b=iso(maxX,maxY,z-slabWZ), BL_b=iso(minX,maxY,z-slabWZ);
 
     s += `<g opacity="${groupOpacity}">`;
-    // Slab faces
-    s += `<polygon points="${ptsStr([TR,BR,BR_b,TR_b])}" fill="#0d2318" stroke="#1b3526" stroke-width="0.5"/>`;
-    s += `<polygon points="${ptsStr([BL,BR,BR_b,BL_b])}" fill="#0a1a12" stroke="#1b3526" stroke-width="0.5"/>`;
-    s += `<polygon points="${ptsStr([TL,TR,BR,BL])}" fill="#0f2017" stroke="#1b3526" stroke-width="1"/>`;
+    // Slab side faces
+    s += `<polygon points="${ptsStr([TR,BR,BR_b,TR_b])}" fill="#0d2318" fill-opacity="0.35" stroke="#253e2e" stroke-width="0.8"/>`;
+    s += `<polygon points="${ptsStr([BL,BR,BR_b,BL_b])}" fill="#0a1a12" fill-opacity="0.3" stroke="#253e2e" stroke-width="0.8"/>`;
+    // Slab top face — see-through with colored outline
+    s += `<polygon points="${ptsStr([TL,TR,BR,BL])}" fill="#0f2017" fill-opacity="0.06" stroke="${lyrColor}" stroke-width="1.5" stroke-dasharray="10,5" opacity="0.5"/>`;
 
     // Room bounds + receivers for all maps in this group
     for(const m of group){
       const stk = m.stack||{};
       const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
-      const ceil_h = stk.ceiling_height_m || 2.4;
 
       for(const [room, b] of Object.entries(m.room_bounds||{})){
         if(!b || b.type!=="poly" || !Array.isArray(b.points) || b.points.length<3) continue;
         const color = roomColor(room);
         const polyPts = b.points.map(p=>{ const wx=ox+p[0]*sc, wy=oy_+p[1]*sc*ar; return pt(iso(wx,wy,z)); }).join(" ");
-        s += `<polygon points="${polyPts}" fill="${color}22" stroke="${color}" stroke-width="0.5" opacity="0.75"/>`;
+        s += `<polygon points="${polyPts}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9"/>`;
         const cx = b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
         const cy = b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
         const [lx,ly] = iso(ox+cx*sc, oy_+cy*sc*ar, z);
-        s += `<text x="${Math.round(lx)}" y="${Math.round(ly)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" opacity="0.85">${_escSVG(room)}</text>`;
+        s += `<text x="${Math.round(lx)}" y="${Math.round(ly)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" font-weight="600" opacity="0.85">${_escSVG(room)}</text>`;
       }
       for(const r of (m.receivers||[])){
         const wx=ox+(r.x||0)*sc, wy=oy_+(r.y||0)*sc*ar;
         const [px,py]=iso(wx,wy,z);
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4" fill="#52b788" opacity="0.9"/>`;
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7" fill="none" stroke="#52b788" stroke-width="0.8" opacity="0.3"/>`;
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4" fill="none" stroke="#52b788" stroke-width="1"   opacity="0.6"/>`;
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="2.5" fill="#52b788" opacity="0.9"/>`;
       }
     }
 
-    // Group label at slab centroid
-    const centX=(TL[0]+TR[0]+BR[0]+BL[0])/4, centY=(TL[1]+TR[1]+BR[1]+BL[1])/4;
-    const groupLabel = group.map(m=>m.name||m.id).join(" + ");
-    const ceil0 = group[0].stack?.ceiling_height_m || 2.4;
-    s += `<text x="${Math.round(centX)}" y="${Math.round(centY-7)}" text-anchor="middle" fill="#e2e8f0" font-size="11" font-weight="500">${_escSVG(groupLabel)}</text>`;
-    s += `<text x="${Math.round(centX)}" y="${Math.round(centY+8)}" text-anchor="middle" fill="#94a3b8" font-size="9">${_escSVG(lvlLabel(z))} · ${ceil0}m</text>`;
-    s += `<text x="${Math.round(TL[0]-6)}" y="${Math.round(TL[1])}" text-anchor="end" dominant-baseline="middle" fill="#52b788" font-size="10" font-weight="700">L${z}</text>`;
+    // Colored index dot at bottom-left corner of slab top face
+    const lidx = sortedLevels.indexOf(z);
+    s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="8" fill="${lyrColor}" opacity="0.95"/>`;
+    s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1])+4}" text-anchor="middle" fill="#071008" font-size="9" font-weight="700">${lidx+1}</text>`;
     s += `</g>`;
   }
+
+  // Legend at bottom
+  s += `<line x1="10" y1="${BASE_H+4}" x2="${W-10}" y2="${BASE_H+4}" stroke="#1b3526" stroke-width="0.5"/>`;
+  sortedLevels.forEach((z, i)=>{
+    const ly = BASE_H + 10 + i * 22;
+    const color = levelColor(z);
+    const groupLabel = byLevel.get(z).map(m=>m.name||m.id).join(" + ");
+    const ceil0 = byLevel.get(z)[0].stack?.ceiling_height_m || 2.4;
+    s += `<circle cx="16" cy="${ly+7}" r="7" fill="${color}" opacity="0.9"/>`;
+    s += `<text x="16" y="${ly+11}" text-anchor="middle" fill="#071008" font-size="9" font-weight="700">${i+1}</text>`;
+    s += `<text x="30" y="${ly+11}" fill="${color}" font-size="12" font-weight="500">${_escSVG(groupLabel)}</text>`;
+    s += `<text x="${W-10}" y="${ly+11}" text-anchor="end" fill="#94a3b8" font-size="11">${_escSVG(lvlLabel(z))} · ${ceil0}m</text>`;
+  });
 
   s += `</svg>`;
   return s;
