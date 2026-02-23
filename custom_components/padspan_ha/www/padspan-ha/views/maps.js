@@ -914,13 +914,118 @@ function _export(ctx, active, maps_list){
   sec4.appendChild(el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center"},[dlIsoSvg, dlIsoPng, isoStatus]));
   card.appendChild(sec4);
 
-  // ── Map Data JSON ─────────────────────────────────────────────────────────
+  // ── 5: Map Data Backup (JSON) ─────────────────────────────────────────────
   const secJ = el("div",{class:"card",style:"margin-top:10px"});
-  secJ.appendChild(el("div",{style:"font-weight:600;margin-bottom:4px"},"Map Data (JSON)"));
-  secJ.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:8px"},"Export all map data for backup or import."));
-  secJ.appendChild(el("button",{class:"btn inline", onclick:()=>{
-    _downloadBlob(new Blob([JSON.stringify(exportMap,null,2)],{type:"application/json"}), (exportMap.name||exportMap.id||"map")+".json");
-  }}, "Download JSON"));
+  secJ.appendChild(el("div",{style:"font-weight:600;margin-bottom:4px"},"5 · Map Data Backup (JSON)"));
+  secJ.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:8px"},
+    "Export a full backup of ALL maps including floor plan images. Use Restore to recover mapping data after reinstall."));
+
+  // ── Backup button
+  const backupStatus = el("div",{class:"muted",style:"font-size:12px;min-height:18px"});
+  const backupBtn = el("button",{class:"btn inline", onclick:async()=>{
+    backupBtn.disabled = true; backupStatus.textContent = "Building backup…";
+    try{
+      const allMaps = ctx.state.maps.list || [];
+      const backupMaps = [];
+      for(let i=0;i<allMaps.length;i++){
+        const m = allMaps[i];
+        backupStatus.textContent = `Fetching ${i+1}/${allMaps.length}: ${m.name||m.id}…`;
+        const entry = JSON.parse(JSON.stringify(m));
+        if(m.image?.filename){
+          try{
+            const resp = await fetch(`/local/padspan_ha/maps/${m.image.filename}`);
+            if(resp.ok){
+              const blob = await resp.blob();
+              entry.png_base64 = await new Promise((res,rej)=>{
+                const fr = new FileReader();
+                fr.onload = ()=>res(fr.result.split(",")[1]);
+                fr.onerror = rej; fr.readAsDataURL(blob);
+              });
+            }
+          }catch(e2){ /* skip image if unavailable */ }
+        }
+        backupMaps.push(entry);
+      }
+      const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,"");
+      const backup = { padspan_backup:"v1", exported_at:new Date().toISOString(), count:backupMaps.length, maps:backupMaps };
+      _downloadBlob(new Blob([JSON.stringify(backup,null,2)],{type:"application/json"}), `maps_backup_${dateStr}.json`);
+      backupStatus.textContent = `Backup downloaded (${backupMaps.length} map${backupMaps.length!==1?"s":""}) ✓`;
+    }catch(e){ backupStatus.textContent = "Backup failed: "+String(e); }
+    backupBtn.disabled = false;
+  }}, "Backup All Maps (JSON)");
+  secJ.appendChild(el("div",{style:"display:flex;gap:10px;align-items:center;flex-wrap:wrap"},[backupBtn, backupStatus]));
+
+  // ── Restore from backup
+  secJ.appendChild(el("div",{style:"margin-top:14px;border-top:1px solid #1b3526;padding-top:12px;font-weight:600;font-size:13px"},"Restore from Backup"));
+  secJ.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:8px"},
+    "Choose a maps_backup_*.json file. Maps whose names already exist will be skipped to prevent duplicates."));
+
+  const restoreInput = document.createElement("input");
+  restoreInput.type = "file"; restoreInput.accept = ".json,application/json"; restoreInput.style.display = "none";
+  const restorePreview = el("div",{style:"font-size:12px;color:#94a3b8;min-height:18px;margin-top:6px"});
+  const restoreStatus = el("div",{class:"muted",style:"font-size:12px;min-height:18px;margin-top:4px"});
+  const restoreBtn = el("button",{class:"btn inline",style:"display:none"},"Restore Maps");
+  let _restoreData = null;
+
+  restoreInput.addEventListener("change", async()=>{
+    const file = restoreInput.files?.[0]; if(!file) return;
+    restorePreview.textContent = "Reading…"; restoreBtn.style.display = "none"; _restoreData = null;
+    try{
+      const parsed = JSON.parse(await file.text());
+      if(!parsed.padspan_backup || !Array.isArray(parsed.maps)){
+        restorePreview.textContent = "❌ Not a valid PadSpan backup file."; return;
+      }
+      const existingNames = new Set((ctx.state.maps.list||[]).map(m=>m.name));
+      const toRestore = parsed.maps.filter(m=>!existingNames.has(m.name));
+      const skipCount = parsed.maps.length - toRestore.length;
+      restorePreview.textContent = `${parsed.maps.length} maps in backup: ${toRestore.length} to restore${skipCount ? `, ${skipCount} already exist (skipped)` : ""}.`;
+      if(toRestore.length){ _restoreData = toRestore; restoreBtn.style.display = ""; }
+    }catch(e){ restorePreview.textContent = "❌ Parse error: "+String(e); }
+  });
+
+  restoreBtn.addEventListener("click", async()=>{
+    if(!_restoreData?.length) return;
+    if(!confirm(`Restore ${_restoreData.length} map(s) into your system?`)) return;
+    restoreBtn.disabled = true; let ok=0, fail=0;
+    for(let i=0;i<_restoreData.length;i++){
+      const bm = _restoreData[i];
+      restoreStatus.textContent = `Restoring ${i+1}/${_restoreData.length}: ${bm.name}…`;
+      try{
+        await ctx.actions.mapsUpload({
+          name: bm.name||"Restored Map",
+          filename: bm.image?.filename||"map.png",
+          mime: bm.image?.mime||"image/png",
+          width: bm.image?.width||800,
+          height: bm.image?.height||600,
+          png_base64: bm.png_base64||"",
+          floor_id: bm.floor_id||"",
+        });
+        // mapsUpload refreshes ctx.state.maps.list — find the new map by name
+        const newMap = (ctx.state.maps.list||[]).find(m=>m.name===(bm.name||"Restored Map"));
+        if(newMap){
+          await ctx.actions.mapsUpdate({
+            map_id: newMap.id,
+            receivers: bm.receivers||[],
+            calibration: bm.calibration||{},
+            notes: bm.notes||"",
+            floor_id: bm.floor_id||"",
+            room_bounds: bm.room_bounds||{},
+            stack: bm.stack||{},
+          });
+        }
+        ok++;
+      }catch(e){ fail++; console.error("Restore failed for",bm.name,e); }
+    }
+    restoreStatus.textContent = `Restored ${ok} map${ok!==1?"s":""}${fail?` (${fail} failed)`:""} ✓`;
+    restoreBtn.disabled = false; _restoreData = null; restoreBtn.style.display = "none";
+    await ctx.actions.mapsRefresh();
+  });
+
+  const chooseBtn = el("button",{class:"btn inline", onclick:()=>restoreInput.click()}, "Choose Backup File…");
+  secJ.appendChild(el("div",{style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap"},[chooseBtn, restoreBtn]));
+  secJ.appendChild(restoreInput);
+  secJ.appendChild(restorePreview);
+  secJ.appendChild(restoreStatus);
   card.appendChild(secJ);
 
   return card;
@@ -1309,8 +1414,8 @@ function _stack(ctx, maps, helpBtn){
   updateReadout();
   card.appendChild(readoutDiv);
 
-  // stageOuter: scrollable so target can extend beyond stageWrap when offset/rotated
-  const stageOuter = el("div",{style:"margin-top:10px;overflow:auto;border-radius:8px;background:#071008;padding:4px"});
+  // stageOuter: scrollable canvas with 60px buffer so dragged target remains visible near edges
+  const stageOuter = el("div",{style:"margin-top:10px;overflow:auto;max-width:100%;border-radius:8px;background:#071008;padding:60px"});
   const stageWrap = el("div",{style:`position:relative;overflow:visible;border-radius:6px;background:#071008;width:${Math.round((ctx.state.maps._stackViewScale||1.0)*100)}%;min-width:220px`});
   stageOuter.appendChild(stageWrap);
   card.appendChild(stageOuter);
@@ -1725,24 +1830,31 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
     s += `<polygon points="${ptsStr([TL,TR,BR,BL])}" fill="#0f2017" fill-opacity="0.06" stroke="${lyrColor}" stroke-width="1.5" stroke-dasharray="10,5" opacity="0.5"/>`;
 
     // Room bounds + receivers for all maps in this group
+    const lidx = sortedLevels.indexOf(z);
     for(const m of group){
       const stk = m.stack||{};
       const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
+      const rotRad = (stk.rotation||0) * Math.PI / 180;
+      const rotPt = (px,py) => {
+        const dx=px-0.5, dy=py-0.5;
+        return [0.5+dx*Math.cos(rotRad)-dy*Math.sin(rotRad), 0.5+dx*Math.sin(rotRad)+dy*Math.cos(rotRad)];
+      };
 
       for(const [room, b] of Object.entries(m.room_bounds||{})){
         if(!b || b.type!=="poly" || !Array.isArray(b.points) || b.points.length<3) continue;
         const color = roomColor(room);
-        const polyPts = b.points.map(p=>{ const wx=ox+p[0]*sc, wy=oy_+p[1]*sc*ar; return pt(iso(wx,wy,z)); }).join(" ");
+        const polyPts = b.points.map(p=>{ const [rx,ry]=rotPt(p[0],p[1]); return pt(iso(ox+rx*sc, oy_+ry*sc*ar, z)); }).join(" ");
         s += `<polygon points="${polyPts}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9"/>`;
         const cx = b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
         const cy = b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
-        const [lx,ly] = iso(ox+cx*sc, oy_+cy*sc*ar, z);
-        s += `<text x="${Math.round(lx)}" y="${Math.round(ly)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="16" font-weight="600" opacity="0.85">${_escSVG(room)}</text>`;
+        const [rcx,rcy] = rotPt(cx,cy);
+        const [lx,ly] = iso(ox+rcx*sc, oy_+rcy*sc*ar, z);
+        s += `<text x="${Math.round(lx)}" y="${Math.round(ly)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="8" font-weight="600" opacity="0.9">${_escSVG(room)}</text>`;
       }
       for(const r of (m.receivers||[])){
-        const wx=ox+(r.x||0)*sc, wy=oy_+(r.y||0)*sc*ar;
-        const [px,py]=iso(wx,wy,z);
+        const [rx,ry]=rotPt(r.x||0, r.y||0);
+        const [px,py]=iso(ox+rx*sc, oy_+ry*sc*ar, z);
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.3"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.6"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4"  fill="#52b788" opacity="0.9"/>`;
@@ -1750,7 +1862,6 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
     }
 
     // Colored index dot at bottom-left corner of slab top face
-    const lidx = sortedLevels.indexOf(z);
     s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="15" fill="${lyrColor}" opacity="0.95"/>`;
     s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1])+6}" text-anchor="middle" fill="#071008" font-size="14" font-weight="700">${lidx+1}</text>`;
     s += `</g>`;

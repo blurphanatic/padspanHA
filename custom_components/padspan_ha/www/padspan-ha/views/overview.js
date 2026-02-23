@@ -492,23 +492,27 @@ export function render(ctx){
         s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="#0f2017" fill-opacity="0.06" stroke="${lyrColor}" stroke-width="1.5" stroke-dasharray="10,5" opacity="0.5"/>`;
 
         // Room polygons
+        const lidx = sortedIsoLevels.indexOf(z);
         for(const m of group){
           const stk=m.stack||{}, ox=stk.x_offset||0, oy__=stk.y_offset||0, sc=stk.scale||1.0;
           const ar=(m.image?.height||600)/(m.image?.width||800);
+          const rotRad=(stk.rotation||0)*Math.PI/180;
+          const rotPt=(px,py)=>{const dx=px-0.5,dy=py-0.5;return[0.5+dx*Math.cos(rotRad)-dy*Math.sin(rotRad),0.5+dx*Math.sin(rotRad)+dy*Math.cos(rotRad)];};
           for(const [room,b] of Object.entries(m.room_bounds||{})){
             if(!b||b.type!=="poly"||!Array.isArray(b.points)||b.points.length<3) continue;
             const color = roomColorFn(room);
-            const pp = b.points.map(p=>{const wx=ox+p[0]*sc,wy=oy__+p[1]*sc*ar;return pt(iso(wx,wy,z));}).join(" ");
+            const pp = b.points.map(p=>{const[rx,ry]=rotPt(p[0],p[1]);return pt(iso(ox+rx*sc,oy__+ry*sc*ar,z));}).join(" ");
             s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9"/>`;
             const cx=b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
             const cy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
-            const [lx,ly]=iso(ox+cx*sc, oy__+cy*sc*ar, z);
-            s += `<text x="${Math.round(lx)}" y="${Math.round(ly)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="16" font-weight="600">${_esc(room)}</text>`;
+            const[rcx,rcy]=rotPt(cx,cy);
+            const [lx,ly]=iso(ox+rcx*sc, oy__+rcy*sc*ar, z);
+            s += `<text x="${Math.round(lx)}" y="${Math.round(ly)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="8" font-weight="600">${_esc(room)}</text>`;
           }
           // Placed receivers
           for(const r of (m.receivers||[])){
-            const wx=ox+(r.x||0)*sc, wy=oy__+(r.y||0)*sc*ar;
-            const [px,py]=iso(wx,wy,z);
+            const[rx,ry]=rotPt(r.x||0,r.y||0);
+            const [px,py]=iso(ox+rx*sc, oy__+ry*sc*ar, z);
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.3"/>`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.6"/>`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4"  fill="#52b788" opacity="0.9"/>`;
@@ -516,7 +520,6 @@ export function render(ctx){
         }
 
         // Layer index dot at bottom-left corner (BL = front-left of top face)
-        const lidx = sortedIsoLevels.indexOf(z);
         s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="15" fill="${lyrColor}" opacity="0.95"/>`;
         s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1])+6}" text-anchor="middle" fill="#071008" font-size="14" font-weight="700">${lidx+1}</text>`;
         s += `</g>`;
