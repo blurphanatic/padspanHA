@@ -287,7 +287,9 @@ function _edit(ctx, map){
   const url = map.image && map.image.filename ? `/local/padspan_ha/maps/${map.image.filename}` : null;
 
   // Rooms eligible for this map's floor
-  const allRooms = Object.keys(ctx.state.roomTagMap||{}).sort();
+  const areaNames = (ctx.state.model?.areas || []).map(a => a.name);
+  const tagMapNames = Object.keys(ctx.state.roomTagMap || {});
+  const allRooms = [...new Set([...areaNames, ...tagMapNames])].sort();
   const mapFloorId = ctx.state.maps._draftFloorId || "main";
   const eligibleRooms = allRooms.filter(r=>{
     const meta = ctx.state.model?.room_meta?.[r];
@@ -1043,8 +1045,6 @@ function _stack(ctx, maps, helpBtn){
         .map((f, i) => ({ value: f.level ?? i, label: f.name || f.id }))
     : _LEVEL_NAMES.map((name, i) => ({ value: i, label: name }));
 
-  // Overlay mode: "bounds" (SVG room polygons) or "images" (actual PNG images)
-  if(!ctx.state.maps._stackOverlayMode) ctx.state.maps._stackOverlayMode = "bounds";
   // View zoom (scales the stage down so both maps fit on screen) and target opacity
   if(ctx.state.maps._stackViewScale  === undefined) ctx.state.maps._stackViewScale  = 1.0;
   if(ctx.state.maps._stackTgtOpacity === undefined) ctx.state.maps._stackTgtOpacity = 0.55;
@@ -1155,22 +1155,6 @@ function _stack(ctx, maps, helpBtn){
   updateReadout();
   card.appendChild(readoutDiv);
 
-  // Overlay mode toggle: Option 1 = Radio Boundaries (SVG), Option 2 = Images (PNG)
-  const boundsBtn = el("button",{
-    class:"btn inline" + (ctx.state.maps._stackOverlayMode==="bounds" ? " primary" : ""),
-    onclick:()=>{ ctx.state.maps._stackOverlayMode="bounds"; boundsBtn.className="btn inline primary"; imagesBtn.className="btn inline"; buildStage(); }
-  },"Option 1: Radio Boundaries");
-  const imagesBtn = el("button",{
-    class:"btn inline" + (ctx.state.maps._stackOverlayMode==="images" ? " primary" : ""),
-    onclick:()=>{ ctx.state.maps._stackOverlayMode="images"; imagesBtn.className="btn inline primary"; boundsBtn.className="btn inline"; buildStage(); }
-  },"Option 2: Images");
-  const modeToggleRow = el("div",{style:"display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap"},[
-    el("span",{class:"muted",style:"font-size:12px"},"Overlay view:"),
-    boundsBtn,
-    imagesBtn,
-  ]);
-  card.appendChild(modeToggleRow);
-
   // stageOuter: scrollable so target can extend beyond stageWrap when offset/rotated
   const stageOuter = el("div",{style:"margin-top:10px;overflow:auto;border-radius:8px;background:#071008;padding:4px"});
   const stageWrap = el("div",{style:`position:relative;border-radius:6px;background:#071008;width:${Math.round((ctx.state.maps._stackViewScale||1.0)*100)}%;min-width:220px`});
@@ -1178,6 +1162,7 @@ function _stack(ctx, maps, helpBtn){
   card.appendChild(stageOuter);
 
   let tgtLayerRef = null;
+  let stageAr = 1.0;
   let applyCurrentTransform = ()=>{ updateReadout(); };
 
   const buildStage = ()=>{
@@ -1203,38 +1188,50 @@ function _stack(ctx, maps, helpBtn){
     const iw = refMap.image?.width  || 800;
     const ih = refMap.image?.height || 600;
     const ar = ih / iw;
+    stageAr = ar;
 
-    stageWrap.style.paddingBottom = `${ar*100}%`;
+    stageWrap.style.paddingBottom = `${ar * (ctx.state.maps._stackViewScale||1.0) * 100}%`;
     stageWrap.style.height = "0";
 
-    const overlayMode = ctx.state.maps._stackOverlayMode || "bounds";
+    // Reference layer: image (if any) + SVG room bounds on top
     const refLayer = document.createElement("div");
     refLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none";
-    if(overlayMode === "images"){
-      const refUrl = refMap.image?.filename ? `/local/padspan_ha/maps/${refMap.image.filename}` : null;
-      if(refUrl){ const ri = document.createElement("img"); ri.src = refUrl; ri.style.cssText = "width:100%;height:100%;object-fit:fill;display:block"; refLayer.appendChild(ri); }
-      else { refLayer.style.cssText += ";display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:12px"; refLayer.textContent = "No image available for " + (refMap.name||refMap.id); }
-    } else {
-      refLayer.innerHTML = _stackMapSVGStr(refMap, ctx, false);
+    const refUrl = refMap.image?.filename ? `/local/padspan_ha/maps/${refMap.image.filename}` : null;
+    if(refUrl){
+      const ri = document.createElement("img");
+      ri.src = refUrl;
+      ri.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill;display:block";
+      refLayer.appendChild(ri);
     }
+    const refSvgDiv = document.createElement("div");
+    refSvgDiv.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%";
+    refSvgDiv.innerHTML = _stackMapSVGStr(refMap, ctx, false, !refUrl);
+    refLayer.appendChild(refSvgDiv);
     stageWrap.appendChild(refLayer);
 
     if(tgtMap && tgtMap.id !== refMap.id){
       const tgtLayer = document.createElement("div");
       tgtLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:grab;transform-origin:0 0";
-      if(overlayMode === "images"){
-        const tgtUrl = tgtMap.image?.filename ? `/local/padspan_ha/maps/${tgtMap.image.filename}` : null;
-        if(tgtUrl){ const ti = document.createElement("img"); ti.src = tgtUrl; ti.style.cssText = "width:100%;height:100%;object-fit:fill;display:block"; tgtLayer.appendChild(ti); }
-        else { tgtLayer.textContent = "No image for " + (tgtMap.name||tgtMap.id); }
-      } else {
-        tgtLayer.innerHTML = _stackMapSVGStr(tgtMap, ctx, true);
+
+      // Target layer: image (if any) + SVG room bounds on top
+      const tgtUrl = tgtMap.image?.filename ? `/local/padspan_ha/maps/${tgtMap.image.filename}` : null;
+      if(tgtUrl){
+        const ti = document.createElement("img");
+        ti.src = tgtUrl;
+        ti.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill;display:block";
+        tgtLayer.appendChild(ti);
       }
+      const tgtSvgDiv = document.createElement("div");
+      tgtSvgDiv.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%";
+      tgtSvgDiv.innerHTML = _stackMapSVGStr(tgtMap, ctx, true, !tgtUrl);
+      tgtLayer.appendChild(tgtSvgDiv);
 
       tgtLayer.style.opacity = String(ctx.state.maps._stackTgtOpacity || 0.55);
       tgtLayerRef = tgtLayer;
 
       applyCurrentTransform = ()=>{
-        tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) scale(${alignState.scale}) rotate(${alignState.rotation||0}deg)`;
+        // Rotate around visual center: translate to pos → shift to center → rotate → scale → shift back
+        tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) translate(50%,50%) rotate(${alignState.rotation||0}deg) scale(${alignState.scale}) translate(-50%,-50%)`;
         updateReadout();
       };
       applyCurrentTransform();
@@ -1297,16 +1294,19 @@ function _stack(ctx, maps, helpBtn){
   // View zoom controls (shrinks the stage canvas so both maps are visible)
   ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"View:"));
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
-    ctx.state.maps._stackViewScale = Math.max(0.25, Math.round(((ctx.state.maps._stackViewScale||1.0)-0.1)*100)/100);
+    ctx.state.maps._stackViewScale = Math.max(0.1, Math.round(((ctx.state.maps._stackViewScale||1.0)-0.1)*100)/100);
     stageWrap.style.width = `${Math.round(ctx.state.maps._stackViewScale*100)}%`;
+    stageWrap.style.paddingBottom = `${Math.round(stageAr * ctx.state.maps._stackViewScale * 100)}%`;
   }},"Zoom −"));
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
     ctx.state.maps._stackViewScale = 1.0;
     stageWrap.style.width = "100%";
+    stageWrap.style.paddingBottom = `${Math.round(stageAr * 100)}%`;
   }},"100%"));
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
-    ctx.state.maps._stackViewScale = Math.min(1.0, Math.round(((ctx.state.maps._stackViewScale||1.0)+0.1)*100)/100);
+    ctx.state.maps._stackViewScale = Math.min(2.0, Math.round(((ctx.state.maps._stackViewScale||1.0)+0.1)*100)/100);
     stageWrap.style.width = `${Math.round(ctx.state.maps._stackViewScale*100)}%`;
+    stageWrap.style.paddingBottom = `${Math.round(stageAr * ctx.state.maps._stackViewScale * 100)}%`;
   }},"Zoom +"));
 
   // Opacity controls (how transparent the draggable target layer is)
@@ -1355,14 +1355,19 @@ function _stack(ctx, maps, helpBtn){
   return card;
 }
 
-function _stackMapSVGStr(map, ctx, isTarget){
+function _stackMapSVGStr(map, ctx, isTarget, showBg=true){
   const roomColor = ctx.helpers.roomColor;
   const rb = map.room_bounds || {};
   const hasRooms = Object.keys(rb).length > 0;
   const borderCol = isTarget ? "#52b78888" : "#1b3526";
 
   let s = `<svg viewBox="0 0 1 1" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block">`;
-  s += `<rect x="0.005" y="0.005" width="0.99" height="0.99" fill="${isTarget?"#071008aa":"#071008"}" stroke="${borderCol}" stroke-width="0.012"/>`;
+  if(showBg){
+    s += `<rect x="0.005" y="0.005" width="0.99" height="0.99" fill="${isTarget?"#071008aa":"#071008"}" stroke="${borderCol}" stroke-width="0.012"/>`;
+  } else if(isTarget){
+    // Show a subtle border only so the target boundary is visible over the image
+    s += `<rect x="0.005" y="0.005" width="0.99" height="0.99" fill="none" stroke="${borderCol}" stroke-width="0.012" opacity="0.5"/>`;
+  }
 
   if(hasRooms){
     for(const [room, b] of Object.entries(rb)){

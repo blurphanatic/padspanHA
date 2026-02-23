@@ -116,6 +116,7 @@ def git_commit_tag_push(version, tag):
         "custom_components/padspan_ha/www/padspan-ha/views/objects.js",
         "custom_components/padspan_ha/www/padspan-ha/views/bluetooth.js",
         "custom_components/padspan_ha/www/padspan-ha/views/settings.js",
+        "custom_components/padspan_ha/www/padspan-ha/views/manage.js",
         "custom_components/padspan_ha/www/padspan-ha/views/maps.js",
         "scripts/release.py",
     ])

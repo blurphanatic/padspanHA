@@ -13,30 +13,31 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260222T230608Z";
-import { HELP } from "./help_content.js?b=20260222T230608Z";
-import * as Follow from "./views/follow.js?b=20260222T230608Z";
-import * as Overview from "./views/overview.js?b=20260222T230608Z";
-import * as Objects from "./views/objects.js?b=20260222T230608Z";
-import * as Devices from "./views/devices.js?b=20260222T230608Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260222T230608Z";
-import * as Presence from "./views/presence.js?b=20260222T230608Z";
-import * as Zones from "./views/zones.js?b=20260222T230608Z";
-import * as Insights from "./views/insights.js?b=20260222T230608Z";
-import * as History from "./views/history.js?b=20260222T230608Z";
-import * as Monitor from "./views/monitor.js?b=20260222T230608Z";
-import * as Maps from "./views/maps.js?b=20260222T230608Z";
-import * as Events from "./views/events.js?b=20260222T230608Z";
-import * as Health from "./views/health.js?b=20260222T230608Z";
-import * as Settings from "./views/settings.js?b=20260222T230608Z";
-import * as Debug from "./views/debug.js?b=20260222T230608Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260222T230608Z";
-import * as QA from "./views/qa.js?b=20260222T230608Z";
-import * as Sandbox from "./views/sandbox.js?b=20260222T230608Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260223T031520Z";
+import { HELP } from "./help_content.js?b=20260223T031520Z";
+import * as Follow from "./views/follow.js?b=20260223T031520Z";
+import * as Overview from "./views/overview.js?b=20260223T031520Z";
+import * as Objects from "./views/objects.js?b=20260223T031520Z";
+import * as Devices from "./views/devices.js?b=20260223T031520Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260223T031520Z";
+import * as Presence from "./views/presence.js?b=20260223T031520Z";
+import * as Zones from "./views/zones.js?b=20260223T031520Z";
+import * as Insights from "./views/insights.js?b=20260223T031520Z";
+import * as History from "./views/history.js?b=20260223T031520Z";
+import * as Monitor from "./views/monitor.js?b=20260223T031520Z";
+import * as Maps from "./views/maps.js?b=20260223T031520Z";
+import * as Events from "./views/events.js?b=20260223T031520Z";
+import * as Health from "./views/health.js?b=20260223T031520Z";
+import * as Settings from "./views/settings.js?b=20260223T031520Z";
+import * as Manage from "./views/manage.js?b=20260223T031520Z";
+import * as Debug from "./views/debug.js?b=20260223T031520Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260223T031520Z";
+import * as QA from "./views/qa.js?b=20260223T031520Z";
+import * as Sandbox from "./views/sandbox.js?b=20260223T031520Z";
 
-const APP_VERSION = "0.4.42";
+const APP_VERSION = "0.4.43";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260222T230608Z";
+const BUILD_ID = "20260223T031520Z";
 
 const VIEWS = {
   follow: Follow,
@@ -53,6 +54,7 @@ const VIEWS = {
   events: Events,
   health: Health,
   settings: Settings,
+  manage: Manage,
   diagnostics: Diagnostics,
   debug: Debug,
   qa: QA,
@@ -71,6 +73,7 @@ const MENU = [
   ["monitor","Monitor","mdi:monitor-dashboard"],
   ["maps","Mapping","mdi:map"],
   ["settings","Settings","mdi:cog-outline"],
+  ["manage","Manage","mdi:cog-wrench"],
   ["qa","QA","mdi:clipboard-check-outline"],
   ["sandbox","Sandbox","mdi:flask-outline"],
 ];
@@ -93,6 +96,7 @@ const MENU_COLORS = {
   events: "#ffb74d",
   health: "#e57373",
   settings: "#b0bec5",
+  manage: "#78909c",
   diagnostics: "#9575cd",
   debug: "#ef5350",
   qa: "#26c6da",
@@ -308,7 +312,7 @@ class PadSpanHaApp extends HTMLElement {
       this._updateBadges();
 
       // Re-render views that show live data.
-      const liveViews = new Set(["overview","objects","devices","bluetooth","presence","zones","insights","history","monitor","events","health","diagnostics","debug","qa","sandbox"]);
+      const liveViews = new Set(["overview","objects","devices","bluetooth","presence","zones","insights","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage"]);
       if(liveViews.has(this.state.view)) this._renderCurrentView();
     } catch(e){
       // Non-fatal; keep trying.
