@@ -1280,7 +1280,12 @@ function _stack(ctx, maps, helpBtn){
   card.appendChild(el("div",{class:"muted",style:"margin-top:16px;font-size:13px;font-weight:600"},"Floor Assignment & Ceiling Heights"));
   card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:2px"},"Assign each map to an HA floor (auto-sets stack level) and set ceiling height."));
 
-  if(!ctx.state.maps._hiddenMapIds) ctx.state.maps._hiddenMapIds = new Set();
+  if(!ctx.state.maps._hiddenMapIds){
+    try{
+      const stored = JSON.parse(localStorage.getItem("padspan_hiddenMapIds")||"[]");
+      ctx.state.maps._hiddenMapIds = new Set(Array.isArray(stored)?stored:[]);
+    }catch(e){ ctx.state.maps._hiddenMapIds = new Set(); }
+  }
   const hiddenIds = ctx.state.maps._hiddenMapIds;
 
   const tableWrap = el("div",{style:"overflow-x:auto;margin-top:8px"});
@@ -1364,6 +1369,7 @@ function _stack(ctx, maps, helpBtn){
     showCb.style.cssText = "width:16px;height:16px;accent-color:#52b788;cursor:pointer";
     showCb.addEventListener("change", () => {
       if(!showCb.checked) hiddenIds.add(m.id); else hiddenIds.delete(m.id);
+      try{ localStorage.setItem("padspan_hiddenMapIds", JSON.stringify([...hiddenIds])); }catch(e){}
       ctx.actions.renderRooms();
     });
     tdShow.appendChild(showCb);
@@ -1808,14 +1814,22 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
     const groupOpacity = isFocused ? 1.0 : 0.12;
     const lyrColor = levelColor(z);
 
-    // Merged bounding box for this level's group
+    // Merged bounding box using correct CSS-aligned world coords for all four corners of each map
     let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
     for(const m of group){
-      const stk = m.stack||{};
-      const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+      const stk=m.stack||{}, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
-      minX=Math.min(minX,ox); minY=Math.min(minY,oy_);
-      maxX=Math.max(maxX,ox+sc); maxY=Math.max(maxY,oy_+sc*ar);
+      const rot=(stk.rotation||0)*Math.PI/180;
+      const bbPt=(px,py)=>{
+        const dx=(px-0.5)*sc, dy=(py-0.5)*sc*ar;
+        const rx=dx*Math.cos(rot)-dy*Math.sin(rot), ry=dx*Math.sin(rot)+dy*Math.cos(rot);
+        return [(0.5+ox)+rx, ar*(0.5+oy_)+ry];
+      };
+      for(const [cx,cy] of [[0,0],[1,0],[1,1],[0,1]]){
+        const [wx,wy]=bbPt(cx,cy);
+        minX=Math.min(minX,wx); minY=Math.min(minY,wy);
+        maxX=Math.max(maxX,wx); maxY=Math.max(maxY,wy);
+      }
     }
     if(!isFinite(minX)){ minX=0; minY=0; maxX=1; maxY=0.75; }
 
@@ -1836,25 +1850,28 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
       const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
       const rotRad = (stk.rotation||0) * Math.PI / 180;
-      const rotPt = (px,py) => {
-        const dx=px-0.5, dy=py-0.5;
-        return [0.5+dx*Math.cos(rotRad)-dy*Math.sin(rotRad), 0.5+dx*Math.sin(rotRad)+dy*Math.cos(rotRad)];
+      // CSS-matching transform: scale centered, rotation in pixel space, then offset
+      const mapPt = (px,py) => {
+        const dx=(px-0.5)*sc, dy=(py-0.5)*sc*ar;
+        const rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad);
+        const ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);
+        return [(0.5+ox)+rx, ar*(0.5+oy_)+ry];
       };
 
       for(const [room, b] of Object.entries(m.room_bounds||{})){
         if(!b || b.type!=="poly" || !Array.isArray(b.points) || b.points.length<3) continue;
         const color = roomColor(room);
-        const polyPts = b.points.map(p=>{ const [rx,ry]=rotPt(p[0],p[1]); return pt(iso(ox+rx*sc, oy_+ry*sc*ar, z)); }).join(" ");
+        const polyPts = b.points.map(p=>{ const [wx,wy]=mapPt(p[0],p[1]); return pt(iso(wx,wy,z)); }).join(" ");
         s += `<polygon points="${polyPts}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9"/>`;
         const cx = b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
         const cy = b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
-        const [rcx,rcy] = rotPt(cx,cy);
-        const [lx,ly] = iso(ox+rcx*sc, oy_+rcy*sc*ar, z);
-        s += `<text x="${Math.round(lx)}" y="${Math.round(ly)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="8" font-weight="600" opacity="0.9">${_escSVG(room)}</text>`;
+        const [lwx,lwy] = mapPt(cx,cy);
+        const [lix,liy] = iso(lwx,lwy,z);
+        s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="8" font-weight="600" opacity="0.9">${_escSVG(room)}</text>`;
       }
       for(const r of (m.receivers||[])){
-        const [rx,ry]=rotPt(r.x||0, r.y||0);
-        const [px,py]=iso(ox+rx*sc, oy_+ry*sc*ar, z);
+        const [wx,wy]=mapPt(r.x||0, r.y||0);
+        const [px,py]=iso(wx,wy,z);
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.3"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.6"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4"  fill="#52b788" opacity="0.9"/>`;
