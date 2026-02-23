@@ -55,7 +55,7 @@ export function render(ctx){
     activeTab==="upload" ? _upload(ctx, helpBtn, isBasic) :
     activeTab==="edit" ? _edit(ctx, active) :
     activeTab==="stack" ? _stack(ctx, maps, helpBtn) :
-    activeTab==="export" ? _export(ctx, active) :
+    activeTab==="export" ? _export(ctx, active, maps) :
     _help(ctx),
   ]);
 
@@ -340,9 +340,9 @@ function _edit(ctx, map){
   // --- Right panel (tools) ---
   const right = el("div",{class:"card", style:"margin-top:10px"},[]);
   const modeRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center"},[
-    el("button",{class:"btn inline"+(ctx.state.maps._mode==="receivers"?" primary":""), onclick:()=>{ ctx.state.maps._mode="receivers"; ctx.state.maps._drawing=null; renderAll(); renderTools(); }}, "Receivers"),
+    el("button",{class:"btn inline"+(ctx.state.maps._mode==="receivers"?" primary":""), onclick:()=>{ ctx.state.maps._mode="receivers"; ctx.state.maps._drawing=null; renderAll(); renderTools(); }}, "Radios"),
     el("button",{class:"btn inline"+(ctx.state.maps._mode==="rooms"?" primary":""), onclick:()=>{ ctx.state.maps._mode="rooms"; ctx.state.maps._selectedRxId=null; renderAll(); renderTools(); }}, "Rooms"),
-    el("span",{class:"muted", style:"font-size:12px"}, ctx.state.maps._mode==="receivers" ? "Double-click map to add receiver" : "Click map to add points; double-click to finish"),
+    el("span",{class:"muted", style:"font-size:12px"}, ctx.state.maps._mode==="receivers" ? "Double-click map to place radio; drag to reposition" : "Click map to add points; double-click to finish"),
   ]);
 
   const saveRow = el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;margin-top:10px"},[
@@ -516,7 +516,43 @@ function _edit(ctx, map){
           }}, "Delete receiver"),
         ]));
       } else {
-        right.appendChild(el("div",{class:"muted", style:"margin-top:10px;font-size:12px"}, "Tip: click a receiver marker to edit its room assignment."));
+        right.appendChild(el("div",{class:"muted", style:"margin-top:10px;font-size:12px"}, "Tip: click a radio marker to edit its room assignment."));
+      }
+
+      // Live BLE Radios panel — shows actual HA BLE scanners for placement
+      const snap2 = (ctx.state.live && ctx.state.live.snapshot) || null;
+      const liveRadios = (snap2 && snap2.ble && Array.isArray(snap2.ble.radios)) ? snap2.ble.radios : [];
+      right.appendChild(el("div",{class:"muted", style:"margin-top:14px;font-size:12px;font-weight:600"}, "Live BLE Radios"));
+      if(liveRadios.length){
+        right.appendChild(el("div",{class:"muted", style:"font-size:11px;margin-top:2px;margin-bottom:6px"}, "Click Add to place on map, then drag to position."));
+        const radList = el("div",{style:"display:flex;flex-direction:column;gap:5px"});
+        for(const radio of liveRadios){
+          const alreadyPlaced = ctx.state.maps._draftReceivers.some(r => r.label === radio.name || r.id === radio.source);
+          const row = el("div",{style:"display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid #1b3526;border-radius:6px;background:#0a150e"});
+          const nameEl = el("div",{style:"flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, radio.name || radio.source || "Unknown");
+          const areaEl = el("div",{class:"muted", style:"font-size:10px;white-space:nowrap"}, radio.area_name || "—");
+          row.appendChild(nameEl);
+          row.appendChild(areaEl);
+          if(alreadyPlaced){
+            row.appendChild(el("span",{style:"font-size:10px;color:#52b788;white-space:nowrap"}, "✓ placed"));
+          } else {
+            row.appendChild(el("button",{class:"btn inline", style:"font-size:10px;padding:2px 8px;white-space:nowrap", onclick:()=>{
+              const id = `rx_${Date.now().toString(16)}`;
+              ctx.state.maps._draftReceivers.push({
+                id, label: radio.name || radio.source || id,
+                x: 0.5, y: 0.5,
+                room: radio.area_name || "",
+              });
+              ctx.state.maps._selectedRxId = id;
+              renderAll(); refreshList(); renderTools();
+            }}, "Add"));
+          }
+          radList.appendChild(row);
+        }
+        right.appendChild(radList);
+      } else {
+        right.appendChild(el("div",{class:"muted", style:"margin-top:4px;font-size:11px"},
+          snap2 ? "No live BLE radios detected. Enable Bluetooth proxy in HA." : "Switch to Live mode to see your BLE scanners."));
       }
     } else {
       right.appendChild(el("div",{class:"muted", style:"margin-top:10px;font-size:12px"}, "Room boundary tools"));
@@ -779,39 +815,111 @@ function clamp01(x){
   return Math.max(0, Math.min(1, x));
 }
 
-function _export(ctx, map){
+function _export(ctx, active, maps_list){
   const { el } = ctx.helpers;
-  const card = el("div",{class:"card"});
-  card.appendChild(el("div",{class:"muted"},"Export"));
 
-  if(!map){
-    card.appendChild(el("div",{class:"muted", style:"margin-top:10px"},"No map selected."));
+  if(!maps_list || !maps_list.length){
+    const card = el("div",{class:"card"});
+    card.appendChild(el("div",{class:"muted",style:"margin-top:10px"},"No maps uploaded yet. Go to Upload tab."));
     return card;
   }
 
-  const pngUrl = map.image?.filename ? `/local/padspan_ha/maps/${map.image.filename}` : null;
+  // Map selector state
+  if(!ctx.state.maps._exportMapId || !maps_list.find(m=>m.id===ctx.state.maps._exportMapId))
+    ctx.state.maps._exportMapId = maps_list[0].id;
+  const exportMap = maps_list.find(m=>m.id===ctx.state.maps._exportMapId) || maps_list[0];
 
-  const dlPng = el("a",{class:"btn inline", href: pngUrl || "#", download: (map.name||map.id||"map") + ".png", target:"_blank"}, "Download PNG");
+  const card = el("div",{class:"card"});
+  card.appendChild(el("div",{style:"font-weight:700;font-size:15px;margin-bottom:10px"},"Export"));
+
+  // Map selector
+  const mapSel = document.createElement("select");
+  mapSel.className = "select";
+  for(const m of maps_list){
+    const o = document.createElement("option");
+    o.value = m.id; o.textContent = m.name || m.id;
+    if(m.id === exportMap.id) o.selected = true;
+    mapSel.appendChild(o);
+  }
+  mapSel.addEventListener("change", () => { ctx.state.maps._exportMapId = mapSel.value; ctx.actions.renderRooms(); });
+  card.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px"},[
+    el("div",{class:"muted",style:"font-size:12px"},"Map:"), mapSel,
+  ]));
+
+  // ── 1: Floor Plan Image ───────────────────────────────────────────────────
+  const sec1 = el("div",{class:"card",style:"margin-top:0"});
+  sec1.appendChild(el("div",{style:"font-weight:600;margin-bottom:4px"},"1 · Floor Plan Image"));
+  sec1.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:8px"},"Download the raw floor plan PNG as uploaded."));
+  const pngUrl = exportMap.image?.filename ? `/local/padspan_ha/maps/${exportMap.image.filename}` : null;
+  const dlPng = el("a",{class:"btn inline", href:pngUrl||"#", download:(exportMap.name||exportMap.id||"map")+".png"}, "Download PNG");
   if(!pngUrl) dlPng.setAttribute("disabled","disabled");
-
-  const dlJson = el("button",{class:"btn inline", onclick:()=>{
-    const payload = JSON.stringify(map, null, 2);
-    const blob = new Blob([payload], {type:"application/json"});
-    const u = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = u;
-    a.download = (map.name||map.id||"map") + ".json";
-    a.click();
-    setTimeout(()=>URL.revokeObjectURL(u), 2500);
-  }}, "Download JSON");
-
-  const openPng = el("a",{class:"btn inline", href: pngUrl || "#", target:"_blank"}, "Open PNG in new tab");
+  const openPng = el("a",{class:"btn inline", href:pngUrl||"#", target:"_blank"}, "Open in new tab");
   if(!pngUrl) openPng.setAttribute("disabled","disabled");
+  sec1.appendChild(el("div",{style:"display:flex;gap:8px;flex-wrap:wrap"},[dlPng, openPng]));
+  card.appendChild(sec1);
 
-  card.appendChild(el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;margin-top:10px"},[dlPng, dlJson, openPng]));
-  card.appendChild(el("div",{class:"muted", style:"margin-top:10px;font-size:12px"},
-    "Industry best practice: keep raw map images in a library and export receiver placements separately (JSON). This allows iterative calibration without destroying history."
-  ));
+  // ── 2: Room Drawing SVG ───────────────────────────────────────────────────
+  const sec2 = el("div",{class:"card",style:"margin-top:10px"});
+  sec2.appendChild(el("div",{style:"font-weight:600;margin-bottom:4px"},"2 · Room Drawing (SVG)"));
+  sec2.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:8px"},"Scalable SVG of room boundaries and radio positions."));
+  const dlSvgBtn = el("button",{class:"btn inline", onclick:()=>{
+    const svgStr = _buildRoomBoundsSVG(exportMap, ctx, false);
+    _downloadBlob(new Blob([svgStr], {type:"image/svg+xml"}), (exportMap.name||exportMap.id||"map")+"_rooms.svg");
+  }}, "Download SVG");
+  sec2.appendChild(dlSvgBtn);
+  card.appendChild(sec2);
+
+  // ── 3: Combined PNG ───────────────────────────────────────────────────────
+  const sec3 = el("div",{class:"card",style:"margin-top:10px"});
+  sec3.appendChild(el("div",{style:"font-weight:600;margin-bottom:4px"},"3 · Combined (Floor Plan + Rooms)"));
+  sec3.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:8px"},"Floor plan image with room overlay rendered to PNG in your browser."));
+  const combStatus = el("div",{class:"muted",style:"font-size:12px;min-height:16px"});
+  const combBtn = el("button",{class:"btn inline", onclick:async()=>{
+    combBtn.disabled = true; combStatus.textContent = "Rendering…";
+    try{
+      const blob = await _combinedMapPng(exportMap, ctx);
+      _downloadBlob(blob, (exportMap.name||exportMap.id||"map")+"_combined.png");
+      combStatus.textContent = "Downloaded ✓";
+    }catch(e){ combStatus.textContent = "Render failed: "+String(e); }
+    combBtn.disabled = false;
+  }}, "Render & Download PNG");
+  sec3.appendChild(el("div",{style:"display:flex;gap:10px;align-items:center;flex-wrap:wrap"},[combBtn, combStatus]));
+  card.appendChild(sec3);
+
+  // ── 4: Full 3D Building ───────────────────────────────────────────────────
+  const sec4 = el("div",{class:"card",style:"margin-top:10px"});
+  sec4.appendChild(el("div",{style:"font-weight:600;margin-bottom:4px"},"4 · Full 3D Building"));
+  sec4.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:8px"},"Isometric rendering of all floors. Download as scalable SVG or browser-rendered PNG."));
+  const haFloors2 = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
+  const lvlOpts2 = haFloors2.length > 0
+    ? haFloors2.slice().sort((a,b)=>(a.level??999)-(b.level??999)).map((f,i)=>({value:f.level??i,label:f.name||f.id}))
+    : _LEVEL_NAMES.map((n,i)=>({value:i,label:n}));
+  const isoSvgStr = _stackIsoSVG(maps_list, ctx, lvlOpts2, null);
+  const isoStatus = el("div",{class:"muted",style:"font-size:12px;min-height:16px"});
+  const dlIsoSvg = el("button",{class:"btn inline", onclick:()=>{
+    _downloadBlob(new Blob([isoSvgStr], {type:"image/svg+xml"}), "building_3d.svg");
+  }}, "Download SVG");
+  const dlIsoPng = el("button",{class:"btn inline", onclick:async()=>{
+    dlIsoPng.disabled = true; isoStatus.textContent = "Rendering PNG…";
+    try{
+      const blob = await _svgStringToPng(isoSvgStr, 780, 520);
+      _downloadBlob(blob, "building_3d.png");
+      isoStatus.textContent = "Downloaded ✓";
+    }catch(e){ isoStatus.textContent = "Render failed: "+String(e); }
+    dlIsoPng.disabled = false;
+  }}, "Render PNG");
+  sec4.appendChild(el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center"},[dlIsoSvg, dlIsoPng, isoStatus]));
+  card.appendChild(sec4);
+
+  // ── Map Data JSON ─────────────────────────────────────────────────────────
+  const secJ = el("div",{class:"card",style:"margin-top:10px"});
+  secJ.appendChild(el("div",{style:"font-weight:600;margin-bottom:4px"},"Map Data (JSON)"));
+  secJ.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:8px"},"Export all map data for backup or import."));
+  secJ.appendChild(el("button",{class:"btn inline", onclick:()=>{
+    _downloadBlob(new Blob([JSON.stringify(exportMap,null,2)],{type:"application/json"}), (exportMap.name||exportMap.id||"map")+".json");
+  }}, "Download JSON"));
+  card.appendChild(secJ);
+
   return card;
 }
 
@@ -1060,9 +1168,9 @@ function _stack(ctx, maps, helpBtn){
     return card;
   }
 
-  // ── Section 1: Level & Ceiling Height Table ──────────────────────────────
-  card.appendChild(el("div",{class:"muted",style:"margin-top:16px;font-size:13px;font-weight:600"},"Floor Levels & Ceiling Heights"));
-  card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:2px"},"Set the building level and ceiling height for each map."));
+  // ── Section 1: Floor Assignment & Ceiling Height Table ───────────────────
+  card.appendChild(el("div",{class:"muted",style:"margin-top:16px;font-size:13px;font-weight:600"},"Floor Assignment & Ceiling Heights"));
+  card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:2px"},"Assign each map to an HA floor (auto-sets stack level) and set ceiling height."));
 
   const tableWrap = el("div",{style:"overflow-x:auto;margin-top:8px"});
   const table = document.createElement("table");
@@ -1070,7 +1178,8 @@ function _stack(ctx, maps, helpBtn){
   const thead = document.createElement("thead");
   thead.innerHTML = `<tr style="border-bottom:1px solid #1b3526">
     <th style="text-align:left;padding:6px 8px;color:#94a3b8;font-weight:500">Map</th>
-    <th style="text-align:left;padding:6px 8px;color:#94a3b8;font-weight:500">Level</th>
+    <th style="text-align:left;padding:6px 8px;color:#94a3b8;font-weight:500">HA Floor</th>
+    <th style="text-align:left;padding:6px 8px;color:#94a3b8;font-weight:500">Stack Level</th>
     <th style="text-align:left;padding:6px 8px;color:#94a3b8;font-weight:500">Ceiling (m)</th>
     <th style="padding:6px 8px"></th>
   </tr>`;
@@ -1087,20 +1196,45 @@ function _stack(ctx, maps, helpBtn){
     tdName.textContent = m.name || m.id;
     tr.appendChild(tdName);
 
-    const tdLevel = document.createElement("td");
-    tdLevel.style.cssText = "padding:6px 8px";
-    const levelSel = document.createElement("select");
-    levelSel.className = "select";
-    levelSel.style.minWidth = "110px";
-    levelOptions.forEach(({value, label})=>{
+    // HA Floor dropdown
+    const tdFloor = document.createElement("td");
+    tdFloor.style.cssText = "padding:6px 8px";
+    const floorSel2 = document.createElement("select");
+    floorSel2.className = "select";
+    floorSel2.style.minWidth = "120px";
+    const flOpt0 = document.createElement("option"); flOpt0.value = ""; flOpt0.textContent = "— None —";
+    floorSel2.appendChild(flOpt0);
+    haFloors.forEach(f => {
       const o = document.createElement("option");
-      o.value = value; o.textContent = label;
-      if(value === (stk.z_level || 0)) o.selected = true;
-      levelSel.appendChild(o);
+      o.value = f.id; o.textContent = f.name || f.id;
+      if(f.id === (m.floor_id||"")) o.selected = true;
+      floorSel2.appendChild(o);
     });
-    tdLevel.appendChild(levelSel);
+    tdFloor.appendChild(floorSel2);
+    tr.appendChild(tdFloor);
+
+    // Stack level: ↓ number ↑
+    const tdLevel = document.createElement("td");
+    tdLevel.style.cssText = "padding:6px 8px;white-space:nowrap";
+    const zLevelInput = document.createElement("input");
+    zLevelInput.type = "number"; zLevelInput.min = "0"; zLevelInput.max = "20"; zLevelInput.step = "1";
+    zLevelInput.value = String(stk.z_level ?? 0);
+    zLevelInput.style.cssText = "width:52px;background:#0a150e;border:1px solid #1b3526;color:#e2e8f0;padding:4px 6px;border-radius:4px;text-align:center";
+    const zDn = document.createElement("button"); zDn.className = "btn inline"; zDn.textContent = "↓"; zDn.style.padding = "2px 6px";
+    zDn.addEventListener("click", () => { zLevelInput.value = String(Math.max(0, parseInt(zLevelInput.value||"0",10)-1)); });
+    const zUp = document.createElement("button"); zUp.className = "btn inline"; zUp.textContent = "↑"; zUp.style.padding = "2px 6px";
+    zUp.addEventListener("click", () => { zLevelInput.value = String(Math.min(20, parseInt(zLevelInput.value||"0",10)+1)); });
+    // When HA floor changes, auto-sync z_level from floor.level attribute
+    floorSel2.addEventListener("change", () => {
+      const fl = haFloors.find(f => f.id === floorSel2.value);
+      if(fl && fl.level != null) zLevelInput.value = String(fl.level);
+    });
+    tdLevel.appendChild(zDn);
+    tdLevel.appendChild(zLevelInput);
+    tdLevel.appendChild(zUp);
     tr.appendChild(tdLevel);
 
+    // Ceiling input
     const tdCeil = document.createElement("td");
     tdCeil.style.cssText = "padding:6px 8px";
     const ceilInput = document.createElement("input");
@@ -1114,13 +1248,13 @@ function _stack(ctx, maps, helpBtn){
     tdSave.style.cssText = "padding:6px 8px";
     tdSave.appendChild(el("button",{class:"btn inline", onclick: async ()=>{
       const newStk = Object.assign({}, m.stack || {},{
-        z_level: parseInt(levelSel.value, 10),
+        z_level: parseInt(zLevelInput.value, 10) || 0,
         ceiling_height_m: parseFloat(ceilInput.value) || 2.4,
       });
       await ctx.actions.mapsUpdate({
         map_id: m.id, receivers: m.receivers||[], calibration: m.calibration||{},
-        notes: m.notes||"", floor_id: m.floor_id||"", room_bounds: m.room_bounds||{},
-        stack: newStk,
+        notes: m.notes||"", floor_id: floorSel2.value || m.floor_id||"",
+        room_bounds: m.room_bounds||{}, stack: newStk,
       });
       ctx.actions.mapsRefresh();
     }},"Save"));
@@ -1157,7 +1291,7 @@ function _stack(ctx, maps, helpBtn){
 
   // stageOuter: scrollable so target can extend beyond stageWrap when offset/rotated
   const stageOuter = el("div",{style:"margin-top:10px;overflow:auto;border-radius:8px;background:#071008;padding:4px"});
-  const stageWrap = el("div",{style:`position:relative;border-radius:6px;background:#071008;width:${Math.round((ctx.state.maps._stackViewScale||1.0)*100)}%;min-width:220px`});
+  const stageWrap = el("div",{style:`position:relative;overflow:visible;border-radius:6px;background:#071008;width:${Math.round((ctx.state.maps._stackViewScale||1.0)*100)}%;min-width:220px`});
   stageOuter.appendChild(stageWrap);
   card.appendChild(stageOuter);
 
@@ -1347,9 +1481,40 @@ function _stack(ctx, maps, helpBtn){
 
   // ── Section 3: 3D Isometric Preview ───────────────────────────────────────
   card.appendChild(el("div",{class:"muted",style:"margin-top:24px;font-size:13px;font-weight:600"},"3D Isometric Preview"));
-  card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:2px"},"Shows all uploaded floor plans stacked by their assigned level."));
+  card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:2px"},"Shows all uploaded floor plans stacked by their assigned level. Use the slider to focus on one floor."));
+
+  // Floor focus slider
+  if(ctx.state.maps._stackIsoFocus === undefined) ctx.state.maps._stackIsoFocus = null;
+  const sortedIsoLevels = [...new Set(maps.map(m=>m.stack?.z_level||0))].sort((a,b)=>a-b);
+  const focusLbl = el("span",{style:"font-size:12px;color:#94a3b8;min-width:80px;display:inline-block"}, "All floors");
+  const focusSlider = document.createElement("input");
+  focusSlider.type = "range"; focusSlider.min = "0"; focusSlider.max = String(sortedIsoLevels.length);
+  focusSlider.style.cssText = "width:130px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+  focusSlider.value = ctx.state.maps._stackIsoFocus === null ? "0"
+    : String(sortedIsoLevels.indexOf(ctx.state.maps._stackIsoFocus) + 1);
+
   const isoWrap = el("div",{style:"margin-top:8px;overflow:auto;border-radius:8px;background:#071008;padding:8px"});
-  isoWrap.innerHTML = _stackIsoSVG(maps, ctx, levelOptions);
+  const rebuildIso = () => {
+    isoWrap.innerHTML = _stackIsoSVG(maps, ctx, levelOptions, ctx.state.maps._stackIsoFocus);
+  };
+  focusSlider.addEventListener("input", () => {
+    const idx = parseInt(focusSlider.value, 10);
+    if(idx === 0){ ctx.state.maps._stackIsoFocus = null; focusLbl.textContent = "All floors"; }
+    else {
+      const z = sortedIsoLevels[idx-1];
+      ctx.state.maps._stackIsoFocus = z;
+      const opt = levelOptions.find(o=>o.value===z);
+      focusLbl.textContent = opt ? opt.label : `L${z}`;
+    }
+    rebuildIso();
+  });
+  card.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap"},[
+    el("span",{class:"muted",style:"font-size:12px"},"Floor:"),
+    focusSlider,
+    focusLbl,
+  ]));
+
+  rebuildIso();
   card.appendChild(isoWrap);
 
   return card;
@@ -1399,7 +1564,7 @@ function _stackMapSVGStr(map, ctx, isTarget, showBg=true){
   return s;
 }
 
-function _stackIsoSVG(maps, ctx, levelOptions){
+function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
   const TILE=140, FLOOR_GAP=80, CX=390, CY=360, W=780, H=520;
   const roomColor = ctx.helpers.roomColor;
   const lvlLabel = (z)=>{ const opt=(levelOptions||[]).find(o=>o.value===z); return opt ? opt.label : `L${z}`; };
@@ -1409,7 +1574,7 @@ function _stackIsoSVG(maps, ctx, levelOptions){
     CY + (wx+wy)*TILE*0.5 - wz*FLOOR_GAP,
   ];
   const pt = (c)=>`${Math.round(c[0])},${Math.round(c[1])}`;
-  const pts = (corners)=>corners.map(pt).join(" ");
+  const ptsStr = (corners)=>corners.map(pt).join(" ");
 
   let s = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:520px;display:block;font-family:system-ui,sans-serif">`;
   s += `<rect width="${W}" height="${H}" fill="#071008"/>`;
@@ -1420,66 +1585,72 @@ function _stackIsoSVG(maps, ctx, levelOptions){
     s += `</svg>`; return s;
   }
 
-  // Draw ascending z_level (lowest z first = behind)
+  // Group maps by z_level (lowest first)
   const sorted = [...maps].sort((a,b)=>(a.stack?.z_level||0)-(b.stack?.z_level||0));
-  const slabWZ = 10/FLOOR_GAP; // slab thickness in world z units
-
+  const byLevel = new Map();
   for(const m of sorted){
-    const stk = m.stack || {z_level:0,x_offset:0,y_offset:0,scale:1.0,ceiling_height_m:2.4};
-    const z   = stk.z_level || 0;
-    const ox  = stk.x_offset || 0;
-    const oy  = stk.y_offset || 0;
-    const sc  = stk.scale || 1.0;
-    const ceil_h = stk.ceiling_height_m || 2.4;
+    const z = m.stack?.z_level ?? 0;
+    if(!byLevel.has(z)) byLevel.set(z,[]);
+    byLevel.get(z).push(m);
+  }
+  const slabWZ = 10/FLOOR_GAP;
 
-    const iw = m.image?.width  || 800;
-    const ih = m.image?.height || 600;
-    const ar = ih / iw;
+  for(const [z, group] of [...byLevel.entries()].sort((a,b)=>a[0]-b[0])){
+    const isFocused = focusLevel === null || focusLevel === z;
+    const groupOpacity = isFocused ? 1.0 : 0.12;
 
-    const x0=ox, y0=oy, x1=ox+sc, y1=oy+sc*ar;
+    // Merged bounding box for this level's group
+    let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+    for(const m of group){
+      const stk = m.stack||{};
+      const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+      const ar=(m.image?.height||600)/(m.image?.width||800);
+      minX=Math.min(minX,ox); minY=Math.min(minY,oy_);
+      maxX=Math.max(maxX,ox+sc); maxY=Math.max(maxY,oy_+sc*ar);
+    }
+    if(!isFinite(minX)){ minX=0; minY=0; maxX=1; maxY=0.75; }
 
-    // 4 top-face corners
-    const TL = iso(x0,y0,z), TR = iso(x1,y0,z);
-    const BR = iso(x1,y1,z), BL = iso(x0,y1,z);
+    const TL=iso(minX,minY,z), TR=iso(maxX,minY,z), BR=iso(maxX,maxY,z), BL=iso(minX,maxY,z);
+    const TR_b=iso(maxX,minY,z-slabWZ), BR_b=iso(maxX,maxY,z-slabWZ), BL_b=iso(minX,maxY,z-slabWZ);
 
-    // Slab-bottom corners
-    const TR_b = iso(x1,y0,z-slabWZ), BR_b = iso(x1,y1,z-slabWZ);
-    const BL_b = iso(x0,y1,z-slabWZ);
+    s += `<g opacity="${groupOpacity}">`;
+    // Slab faces
+    s += `<polygon points="${ptsStr([TR,BR,BR_b,TR_b])}" fill="#0d2318" stroke="#1b3526" stroke-width="0.5"/>`;
+    s += `<polygon points="${ptsStr([BL,BR,BR_b,BL_b])}" fill="#0a1a12" stroke="#1b3526" stroke-width="0.5"/>`;
+    s += `<polygon points="${ptsStr([TL,TR,BR,BL])}" fill="#0f2017" stroke="#1b3526" stroke-width="1"/>`;
 
-    // Right slab face
-    s += `<polygon points="${pts([TR,BR,BR_b,TR_b])}" fill="#0d2318" stroke="#1b3526" stroke-width="0.5"/>`;
-    // Front slab face
-    s += `<polygon points="${pts([BL,BR,BR_b,BL_b])}" fill="#0a1a12" stroke="#1b3526" stroke-width="0.5"/>`;
-    // Top face
-    s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="#0f2017" stroke="#1b3526" stroke-width="1"/>`;
+    // Room bounds + receivers for all maps in this group
+    for(const m of group){
+      const stk = m.stack||{};
+      const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+      const ar=(m.image?.height||600)/(m.image?.width||800);
+      const ceil_h = stk.ceiling_height_m || 2.4;
 
-    // Project room_bounds onto top face
-    const rb = m.room_bounds || {};
-    for(const [room, b] of Object.entries(rb)){
-      if(!b || b.type!=="poly" || !Array.isArray(b.points) || b.points.length<3) continue;
-      const color = roomColor(room);
-      const polyPts = b.points.map(p=>{
-        const wx=ox+p[0]*sc, wy=oy+p[1]*sc*ar;
-        return pt(iso(wx,wy,z));
-      }).join(" ");
-      s += `<polygon points="${polyPts}" fill="${color}22" stroke="${color}" stroke-width="0.5" opacity="0.75"/>`;
+      for(const [room, b] of Object.entries(m.room_bounds||{})){
+        if(!b || b.type!=="poly" || !Array.isArray(b.points) || b.points.length<3) continue;
+        const color = roomColor(room);
+        const polyPts = b.points.map(p=>{ const wx=ox+p[0]*sc, wy=oy_+p[1]*sc*ar; return pt(iso(wx,wy,z)); }).join(" ");
+        s += `<polygon points="${polyPts}" fill="${color}22" stroke="${color}" stroke-width="0.5" opacity="0.75"/>`;
+        const cx = b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
+        const cy = b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
+        const [lx,ly] = iso(ox+cx*sc, oy_+cy*sc*ar, z);
+        s += `<text x="${Math.round(lx)}" y="${Math.round(ly)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" opacity="0.85">${_escSVG(room)}</text>`;
+      }
+      for(const r of (m.receivers||[])){
+        const wx=ox+(r.x||0)*sc, wy=oy_+(r.y||0)*sc*ar;
+        const [px,py]=iso(wx,wy,z);
+        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4" fill="#52b788" opacity="0.9"/>`;
+      }
     }
 
-    // Receiver dots on top face
-    for(const r of (m.receivers||[])){
-      const wx=ox+(r.x||0)*sc, wy=oy+(r.y||0)*sc*ar;
-      const [px,py] = iso(wx,wy,z);
-      s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4" fill="#52b788" opacity="0.9"/>`;
-    }
-
-    // Labels on top face (centroid)
-    const centX = (TL[0]+TR[0]+BR[0]+BL[0])/4;
-    const centY = (TL[1]+TR[1]+BR[1]+BL[1])/4;
-    s += `<text x="${Math.round(centX)}" y="${Math.round(centY-7)}" text-anchor="middle" fill="#e2e8f0" font-size="11" font-weight="500">${_escSVG(m.name||m.id)}</text>`;
-    s += `<text x="${Math.round(centX)}" y="${Math.round(centY+8)}" text-anchor="middle" fill="#94a3b8" font-size="9">${_escSVG(lvlLabel(z))} · ${ceil_h}m</text>`;
-
-    // Level marker on left edge
+    // Group label at slab centroid
+    const centX=(TL[0]+TR[0]+BR[0]+BL[0])/4, centY=(TL[1]+TR[1]+BR[1]+BL[1])/4;
+    const groupLabel = group.map(m=>m.name||m.id).join(" + ");
+    const ceil0 = group[0].stack?.ceiling_height_m || 2.4;
+    s += `<text x="${Math.round(centX)}" y="${Math.round(centY-7)}" text-anchor="middle" fill="#e2e8f0" font-size="11" font-weight="500">${_escSVG(groupLabel)}</text>`;
+    s += `<text x="${Math.round(centX)}" y="${Math.round(centY+8)}" text-anchor="middle" fill="#94a3b8" font-size="9">${_escSVG(lvlLabel(z))} · ${ceil0}m</text>`;
     s += `<text x="${Math.round(TL[0]-6)}" y="${Math.round(TL[1])}" text-anchor="end" dominant-baseline="middle" fill="#52b788" font-size="10" font-weight="700">L${z}</text>`;
+    s += `</g>`;
   }
 
   s += `</svg>`;
@@ -1488,4 +1659,83 @@ function _stackIsoSVG(maps, ctx, levelOptions){
 
 function _escSVG(s){
   return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+// ─── Export Helpers ───────────────────────────────────────────────────────────
+
+function _downloadBlob(blob, filename){
+  const u = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = u; a.download = filename; a.click();
+  setTimeout(()=>URL.revokeObjectURL(u), 3000);
+}
+
+function _buildRoomBoundsSVG(map, ctx, transparent=false){
+  const iw = map.image?.width || 800;
+  const ih = map.image?.height || 600;
+  const roomColor = ctx.helpers.roomColor;
+  const rb = map.room_bounds || {};
+  let s = `<svg viewBox="0 0 ${iw} ${ih}" xmlns="http://www.w3.org/2000/svg" width="${iw}" height="${ih}">`;
+  if(!transparent) s += `<rect width="${iw}" height="${ih}" fill="#071008"/>`;
+  for(const [room, b] of Object.entries(rb)){
+    if(!b || b.type!=="poly" || !Array.isArray(b.points) || b.points.length<3) continue;
+    const color = roomColor(room);
+    const pts = b.points.map(p=>`${p[0]*iw},${p[1]*ih}`).join(" ");
+    s += `<polygon points="${pts}" fill="${color}44" stroke="${color}" stroke-width="2"/>`;
+    const cx = b.points.reduce((a,p)=>a+p[0],0)/b.points.length*iw;
+    const cy = b.points.reduce((a,p)=>a+p[1],0)/b.points.length*ih;
+    const fs = Math.max(12, Math.round(iw*0.024));
+    s += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="${fs}" font-family="system-ui,sans-serif">${_escSVG(room)}</text>`;
+  }
+  for(const r of (map.receivers||[])){
+    const rx=(r.x||0)*iw, ry=(r.y||0)*ih;
+    const rr = Math.max(6, Math.round(iw*0.012));
+    s += `<circle cx="${rx}" cy="${ry}" r="${rr}" fill="#52b788" opacity="0.9"/>`;
+    if(r.label){
+      const fs = Math.max(9, Math.round(iw*0.014));
+      s += `<text x="${rx}" y="${ry-rr-3}" text-anchor="middle" fill="#52b788" font-size="${fs}" font-family="system-ui,sans-serif">${_escSVG(r.label)}</text>`;
+    }
+  }
+  s += `</svg>`;
+  return s;
+}
+
+async function _combinedMapPng(map, ctx){
+  const iw = map.image?.width || 800;
+  const ih = map.image?.height || 600;
+  const canvas = document.createElement("canvas");
+  canvas.width = iw; canvas.height = ih;
+  const g = canvas.getContext("2d");
+  const pngUrl = map.image?.filename ? `/local/padspan_ha/maps/${map.image.filename}` : null;
+  if(pngUrl){
+    try{ const img = await _loadImage(pngUrl); g.drawImage(img,0,0,iw,ih); }
+    catch(e){ g.fillStyle="#071008"; g.fillRect(0,0,iw,ih); }
+  } else {
+    g.fillStyle="#071008"; g.fillRect(0,0,iw,ih);
+  }
+  await _drawSvgOnCanvas(g, _buildRoomBoundsSVG(map, ctx, true), iw, ih, 0.8);
+  return new Promise(resolve=>canvas.toBlob(resolve,"image/png",0.92));
+}
+
+async function _svgStringToPng(svgStr, w, h){
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const g = canvas.getContext("2d");
+  g.fillStyle="#071008"; g.fillRect(0,0,w,h);
+  await _drawSvgOnCanvas(g, svgStr, w, h, 1.0);
+  return new Promise(resolve=>canvas.toBlob(resolve,"image/png",0.95));
+}
+
+async function _drawSvgOnCanvas(g, svgStr, w, h, alpha=1.0){
+  const blob = new Blob([svgStr],{type:"image/svg+xml;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  try{
+    const img = await _loadImage(url);
+    const prev = g.globalAlpha;
+    g.globalAlpha = alpha;
+    g.drawImage(img,0,0,w,h);
+    g.globalAlpha = prev;
+  }finally{
+    URL.revokeObjectURL(url);
+  }
 }
