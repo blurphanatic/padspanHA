@@ -13,33 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T161301Z";
-import { HELP } from "./help_content.js?b=20260224T161301Z";
-import * as Follow from "./views/follow.js?b=20260224T161301Z";
-import * as Overview from "./views/overview.js?b=20260224T161301Z";
-import * as Objects from "./views/objects.js?b=20260224T161301Z";
-import * as Devices from "./views/devices.js?b=20260224T161301Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260224T161301Z";
-import * as Presence from "./views/presence.js?b=20260224T161301Z";
-import * as Zones from "./views/zones.js?b=20260224T161301Z";
-import * as Insights from "./views/insights.js?b=20260224T161301Z";
-import * as History from "./views/history.js?b=20260224T161301Z";
-import * as Monitor from "./views/monitor.js?b=20260224T161301Z";
-import * as Maps from "./views/maps.js?b=20260224T161301Z";
-import * as Events from "./views/events.js?b=20260224T161301Z";
-import * as Health from "./views/health.js?b=20260224T161301Z";
-import * as Settings from "./views/settings.js?b=20260224T161301Z";
-import * as Manage from "./views/manage.js?b=20260224T161301Z";
-import * as Debug from "./views/debug.js?b=20260224T161301Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260224T161301Z";
-import * as QA from "./views/qa.js?b=20260224T161301Z";
-import * as Training from "./views/training.js?b=20260224T161301Z";
-import * as Calibration from "./views/calibration.js?b=20260224T161301Z";
-import * as Sandbox from "./views/sandbox.js?b=20260224T161301Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T163745Z";
+import { HELP } from "./help_content.js?b=20260224T163745Z";
+import * as Follow from "./views/follow.js?b=20260224T163745Z";
+import * as Overview from "./views/overview.js?b=20260224T163745Z";
+import * as Objects from "./views/objects.js?b=20260224T163745Z";
+import * as Devices from "./views/devices.js?b=20260224T163745Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260224T163745Z";
+import * as Presence from "./views/presence.js?b=20260224T163745Z";
+import * as Zones from "./views/zones.js?b=20260224T163745Z";
+import * as Insights from "./views/insights.js?b=20260224T163745Z";
+import * as History from "./views/history.js?b=20260224T163745Z";
+import * as Monitor from "./views/monitor.js?b=20260224T163745Z";
+import * as Maps from "./views/maps.js?b=20260224T163745Z";
+import * as Events from "./views/events.js?b=20260224T163745Z";
+import * as Health from "./views/health.js?b=20260224T163745Z";
+import * as Settings from "./views/settings.js?b=20260224T163745Z";
+import * as Manage from "./views/manage.js?b=20260224T163745Z";
+import * as Debug from "./views/debug.js?b=20260224T163745Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260224T163745Z";
+import * as QA from "./views/qa.js?b=20260224T163745Z";
+import * as Training from "./views/training.js?b=20260224T163745Z";
+import * as Calibration from "./views/calibration.js?b=20260224T163745Z";
+import * as Sandbox from "./views/sandbox.js?b=20260224T163745Z";
 
-const APP_VERSION = "0.4.57";
+const APP_VERSION = "0.4.58";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260224T161301Z";
+const BUILD_ID = "20260224T163745Z";
 
 const VIEWS = {
   follow: Follow,
@@ -235,9 +235,6 @@ class PadSpanHaApp extends HTMLElement {
           <div class="nav" id="nav"></div>
         </aside>
 
-        <!-- Mobile backdrop — tap to close drawer -->
-        <div id="sideBackdrop" class="side-backdrop"></div>
-
         <!-- ── Main content ── -->
         <main class="main">
 
@@ -276,27 +273,30 @@ class PadSpanHaApp extends HTMLElement {
           <div id="toast" class="toast hidden"></div>
           <div id="modal" class="modal hidden"></div>
           <div id="content"></div>
+
+          <!-- Mobile backdrop — tap to close drawer (position:fixed in CSS, DOM placement here avoids grid disruption) -->
+          <div id="sideBackdrop" class="side-backdrop"></div>
+
+          <!-- ═══════════════════════════════════════════════════════
+               MOBILE BOTTOM NAV BAR  (hidden on desktop via CSS; position:fixed)
+               ═══════════════════════════════════════════════════════
+               Built dynamically by _renderNav() in panel.js.
+               Contains 4 pinned view buttons + 1 "More" button.
+
+               To change which views are pinned:
+                 Edit the `pinned` array in _renderNav() — two versions:
+                   isBasic=true  → ["follow","overview","objects","maps"]
+                   isBasic=false → ["follow","overview","objects","calibration"]
+
+               Each button: .mobile-bottom-nav-btn  (styles.css)
+                 - .bn-dot  : colored circle (color from MENU_COLORS)
+                 - <span>   : short label text
+
+               "More" button opens the full sidebar drawer.
+               Active tab is highlighted with --navcolor CSS variable.
+               ═══════════════════════════════════════════════════════ -->
+          <nav class="mobile-bottom-nav" id="mobileBottomNav"></nav>
         </main>
-
-        <!-- ═══════════════════════════════════════════════════════
-             MOBILE BOTTOM NAV BAR  (hidden on desktop via CSS)
-             ═══════════════════════════════════════════════════════
-             Built dynamically by _renderNav() in panel.js.
-             Contains 4 pinned view buttons + 1 "More" button.
-
-             To change which views are pinned:
-               Edit the `pinned` array in _renderNav() — two versions:
-                 isBasic=true  → ["follow","overview","objects","maps"]
-                 isBasic=false → ["follow","overview","objects","calibration"]
-
-             Each button: .mobile-bottom-nav-btn  (styles.css)
-               - .bn-dot  : colored circle (color from MENU_COLORS)
-               - <span>   : short label text
-
-             "More" button opens the full sidebar drawer.
-             Active tab is highlighted with --navcolor CSS variable.
-             ═══════════════════════════════════════════════════════ -->
-        <nav class="mobile-bottom-nav" id="mobileBottomNav"></nav>
       </div>
     `;
 

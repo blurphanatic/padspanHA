@@ -112,6 +112,7 @@ def git_commit_tag_push(version, tag):
         "custom_components/padspan_ha/calibration_store.py",
         "custom_components/padspan_ha/const.py",
         "custom_components/padspan_ha/www/padspan-ha/panel.js",
+        "custom_components/padspan_ha/www/padspan-ha/styles.css",
         "custom_components/padspan_ha/www/padspan-ha/help_content.js",
         "custom_components/padspan_ha/www/padspan-ha/views/follow.js",
         "custom_components/padspan_ha/www/padspan-ha/views/overview.js",

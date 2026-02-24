@@ -296,3 +296,260 @@
 
 /* Basic mode nav — slightly bigger buttons */
 .basic-nav .navbtn{padding:11px 14px;font-size:14px}
+
+/* ═══════════════════════════════════════════════════════════════════
+   MOBILE / RESPONSIVE LAYOUT  (v0.4.57)
+   ═══════════════════════════════════════════════════════════════════
+
+   STRUCTURE OVERVIEW (mobile layout has 3 new regions):
+   ┌─────────────────────────────────────────────────┐
+   │  .mobile-topbar  (sticky, 56px)                  │  ← hamburger + view title + data-mode + basic/adv pills
+   ├─────────────────────────────────────────────────┤
+   │  .main  (scrollable content)                     │
+   │    rendered by panel.js _renderCurrentView()     │
+   │                                                  │
+   │                                                  │
+   ├─────────────────────────────────────────────────┤
+   │  .mobile-bottom-nav  (fixed, 52px + safe-area)  │  ← 4 pinned tabs + "More" opens sidebar drawer
+   └─────────────────────────────────────────────────┘
+
+   SIDEBAR DRAWER:  .left  (off-screen by default on mobile)
+     - Opens when .app has class "mobile-open"
+     - .side-backdrop overlay appears behind it (tap to close)
+     - .sidebar-mobile-header (hidden on desktop) shows ✕ close button
+
+   BREAKPOINTS:
+     > 900px  = desktop layout  (left sidebar always visible, no top/bottom bar)
+     ≤ 900px  = mobile layout   (drawer + top bar + bottom nav)
+     ≤ 480px  = small phone     (reduced padding, smaller pills)
+
+   TO MODIFY THE BOTTOM NAV tabs:
+     → Edit the `pinned` array in panel.js _renderNav() (~line 565)
+     → Basic mode:    ["follow","overview","objects","maps"]
+     → Advanced mode: ["follow","overview","objects","calibration"]
+     → Max 4 pinned tabs (5th slot is always "More")
+
+   TO MODIFY THE TOP BAR content (pills, title, buttons):
+     → Edit the .mobile-topbar div in panel.js connectedCallback HTML
+     → Update _updateBadges() for pill text/color logic
+     → Update _renderNav() for title text
+
+   TO CHANGE THE BREAKPOINT (900px default):
+     → Replace every occurrence of 900px in this file
+     → Also update the @media in the original block at line ~26 and ~59
+
+   TO CHANGE BOTTOM NAV HEIGHT:
+     → Change min-height on .mobile-bottom-nav-btn (currently 52px)
+     → Update .main padding-bottom to match (calc(Xpx + env(...)))
+
+   TO ADD A NEW MOBILE-ONLY ELEMENT:
+     → Add it to .mobile-topbar or create a new region
+     → Wrap it in @media(max-width:900px) if it should only show on mobile
+     → Use display:none on desktop and display:flex/block in the media query
+
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Mobile top bar ─────────────────────────────────────────────── */
+.mobile-topbar{
+  display:none;
+  position:sticky;
+  top:0;
+  z-index:45;
+  background:linear-gradient(180deg,#1a0d05 0%,#151f18 100%);
+  border-bottom:1px solid var(--line);
+  padding:8px 12px;
+  align-items:center;
+  gap:10px;
+  /* bleed to edges — margin compensates for .main padding */
+  margin:-0px -10px 10px -10px;
+  box-shadow:0 2px 12px rgba(0,0,0,.4);
+}
+.mobile-topbar-btn{
+  all:unset;
+  box-sizing:border-box;
+  width:44px;
+  height:44px;
+  min-width:44px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:rgba(82,183,136,.1);
+  color:var(--text);
+  font-size:20px;
+  cursor:pointer;
+  flex-shrink:0;
+}
+.mobile-topbar-btn:active{background:rgba(82,183,136,.22)}
+.mobile-topbar-title{
+  flex:1;
+  font-weight:700;
+  font-size:16px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.mobile-topbar-pill{
+  all:unset;
+  box-sizing:border-box;
+  font-size:11px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background:rgba(82,183,136,.08);
+  color:var(--text);
+  cursor:pointer;
+  white-space:nowrap;
+  flex-shrink:0;
+}
+.mobile-topbar-pill.live{border-color:rgba(82,183,136,.6);background:rgba(82,183,136,.18);color:#52b788}
+.mobile-topbar-pill.basic{border-color:rgba(94,234,212,.5);background:rgba(94,234,212,.12);color:#5eead4}
+
+/* ── Sidebar close button (mobile-only, inside drawer) ───────────── */
+.sidebar-mobile-header{
+  display:none;
+  align-items:center;
+  gap:10px;
+  padding-bottom:12px;
+  margin-bottom:12px;
+  border-bottom:1px solid var(--line);
+}
+
+/* ── Sidebar backdrop ───────────────────────────────────────────── */
+.side-backdrop{
+  display:none;
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.55);
+  z-index:55;
+  -webkit-backdrop-filter:blur(2px);
+  backdrop-filter:blur(2px);
+}
+.side-backdrop.active{display:block}
+
+/* ── Desktop top bar (hidden on mobile) ─────────────────────────── */
+.desktop-topbar{display:flex}
+
+/* ── Mobile bottom navigation bar ──────────────────────────────── */
+.mobile-bottom-nav{
+  display:none;
+  position:fixed;
+  bottom:0;
+  left:0;
+  right:0;
+  background:linear-gradient(0deg,#130d06 0%,#1a120a 100%);
+  border-top:1px solid var(--line);
+  z-index:45;
+  align-items:stretch;
+  /* safe-area for notched phones (iPhone X+) */
+  padding-bottom:env(safe-area-inset-bottom,0px);
+  box-shadow:0 -2px 16px rgba(0,0,0,.5);
+}
+.mobile-bottom-nav-btn{
+  all:unset;
+  box-sizing:border-box;
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:3px;
+  padding:8px 4px;
+  cursor:pointer;
+  border-right:1px solid var(--line);
+  font-size:10px;
+  color:#78909c;
+  transition:color .15s,background .15s;
+  min-height:52px;
+}
+.mobile-bottom-nav-btn:last-child{border-right:none}
+.mobile-bottom-nav-btn.active{color:var(--navcolor,var(--accent))}
+.mobile-bottom-nav-btn:active{background:rgba(82,183,136,.08)}
+.bn-dot{
+  width:9px;
+  height:9px;
+  border-radius:999px;
+  margin-bottom:1px;
+  transition:background .15s;
+}
+.mobile-bottom-nav-btn.active .bn-dot{
+  box-shadow:0 0 0 2px rgba(255,255,255,.15);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   RESPONSIVE BREAKPOINTS
+   ═══════════════════════════════════════════════════════════════════ */
+@media(max-width:900px){
+  /* Show/hide mobile vs desktop chrome */
+  .mobile-topbar{display:flex}
+  .desktop-topbar{display:none !important}
+  .mobile-bottom-nav{display:flex}
+  .sidebar-mobile-header{display:flex}
+
+  /* Sidebar becomes a drawer */
+  .app{grid-template-columns:1fr}
+  .left{
+    position:fixed;
+    inset:0 auto 0 0;
+    width:min(320px, 85vw);
+    transform:translateX(-100%);
+    transition:transform .22s cubic-bezier(.4,0,.2,1);
+    z-index:60;
+    overflow-y:auto;
+    overflow-x:hidden;
+  }
+  .app.mobile-open .left{transform:translateX(0)}
+  /* Hide desktop brand block when mobile header is showing */
+  .app.mobile-open .brand{display:none}
+
+  /* Content area: padding for bottom nav + no horizontal scroll */
+  .main{
+    padding:0 10px calc(60px + env(safe-area-inset-bottom,0px)) 10px;
+    overflow-x:hidden;
+    min-width:0;
+  }
+
+  /* Touch-friendly interactive elements */
+  .btn{min-height:44px}
+  .btn.tiny{min-height:32px}
+  .tab{min-height:40px;padding:8px 14px}
+  .navbtn{min-height:52px;padding:12px 14px;font-size:14px}
+
+  /* Prevent iOS font-size zoom on input focus */
+  input[type="text"],input[type="number"],input[type="email"],
+  select,textarea{font-size:16px !important}
+
+  /* Tables scroll horizontally rather than overflow */
+  .table-wrap,.list-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .table{min-width:360px}
+
+  /* Cards full-width, no wrapping issues */
+  .card{word-break:break-word}
+  .grid{grid-template-columns:1fr}
+  .grid-2{grid-template-columns:1fr}
+  .controls input[type="text"]{min-width:unset;width:100%}
+
+  /* Row wrapping on narrow screens */
+  .row{flex-wrap:wrap}
+  .bt-adv-right{flex-wrap:wrap}
+
+  /* Modal full-screen on phone */
+  .modal .overlay{padding:0;align-items:flex-end}
+  .modal .panel{
+    width:100%;
+    max-height:92vh;
+    border-radius:16px 16px 0 0;
+  }
+
+  /* SVG maps: prevent overflow */
+  svg{max-width:100%;height:auto}
+}
+
+/* Very small screens (e.g. 360px width) */
+@media(max-width:480px){
+  .mobile-topbar-pill{padding:5px 7px;font-size:10px}
+  .mobile-topbar{gap:7px;padding:7px 10px}
+  .card{padding:10px}
+  .kpi-num,.kpi{font-size:20px}
+}
