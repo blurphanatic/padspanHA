@@ -142,7 +142,7 @@ export function render(ctx){
     sel.appendChild(el("option",{value:""},"— No area (clear) —"));
     for(const a of areas){
       const opt = el("option",{value:a}, a);
-      if(a === radio.area_name && !radio.lost) opt.selected = true;
+      if(a === radio.area_name && !radio.lost && !radio.disabled) opt.selected = true;
       sel.appendChild(opt);
     }
     // Lost sentinel — always at bottom, visually distinct
@@ -150,6 +150,11 @@ export function render(ctx){
     lostOpt.style.color = "#f59e0b";
     if(radio.lost) lostOpt.selected = true;
     sel.appendChild(lostOpt);
+    // Disabled sentinel — below Lost
+    const disabledOpt = el("option",{value:"__disabled__"}, "⊘  Disabled  —  intentionally off");
+    disabledOpt.style.color = "#c084fc";
+    if(radio.disabled) disabledOpt.selected = true;
+    sel.appendChild(disabledOpt);
 
     const status = el("div",{class:"muted", style:"min-height:20px;margin-top:6px"});
     const saveBtn = el("button",{class:"btn"}, "Save");
@@ -160,12 +165,19 @@ export function render(ctx){
       saveBtn.disabled = true;
       try {
         if(v === "__lost__"){
+          if(radio.disabled) await ctx.actions.radioDisabledSet(radio.source, false);
           await ctx.actions.radioLostSet(radio.source, true);
           ctx.actions.closeModal();
           ctx.toast(`"${radio.name || radio.source}" marked as Lost`);
-        } else {
-          // Restore from lost if needed, then set area
+        } else if(v === "__disabled__"){
           if(radio.lost) await ctx.actions.radioLostSet(radio.source, false);
+          await ctx.actions.radioDisabledSet(radio.source, true);
+          ctx.actions.closeModal();
+          ctx.toast(`"${radio.name || radio.source}" marked as Disabled`);
+        } else {
+          // Restore from lost/disabled if needed, then set area
+          if(radio.lost)     await ctx.actions.radioLostSet(radio.source, false);
+          if(radio.disabled) await ctx.actions.radioDisabledSet(radio.source, false);
           const payload = { area_name: v };
           if(radio.device_id) payload.device_id = radio.device_id;
           else if(radio.source) payload.source = radio.source;
@@ -182,7 +194,8 @@ export function render(ctx){
     const radioLabel = [sid, radio.name || radio.source].filter(Boolean).join("  ·  ");
     const body = el("div",{},[
       el("div",{class:"muted", style:"margin-bottom:8px"}, `Radio: ${radioLabel}`),
-      radio.lost ? el("div",{style:"color:#f59e0b;font-size:12px;margin-bottom:8px"}, "⚠ Currently marked as Lost. Select a room to restore it.") : null,
+      radio.lost     ? el("div",{style:"color:#f59e0b;font-size:12px;margin-bottom:8px"}, "⚠ Currently marked as Lost. Select a room to restore it.") : null,
+      radio.disabled ? el("div",{style:"color:#c084fc;font-size:12px;margin-bottom:8px"}, "⊘ Currently Disabled. Select a room to re-enable it.") : null,
       el("div",{style:"color:#94a3b8;font-size:12px;margin-bottom:10px"}, areas.length ? "Select an HA area for this scanner:" : "No HA areas found. Add areas in HA Settings → Areas & Zones."),
       el("div",{class:"row",style:"gap:8px;flex-wrap:wrap"},[sel, saveBtn, cancelBtn]),
       status,

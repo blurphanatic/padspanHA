@@ -13,33 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T195822Z";
-import { HELP } from "./help_content.js?b=20260224T195822Z";
-import * as Follow from "./views/follow.js?b=20260224T195822Z";
-import * as Overview from "./views/overview.js?b=20260224T195822Z";
-import * as Objects from "./views/objects.js?b=20260224T195822Z";
-import * as Devices from "./views/devices.js?b=20260224T195822Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260224T195822Z";
-import * as Presence from "./views/presence.js?b=20260224T195822Z";
-import * as Zones from "./views/zones.js?b=20260224T195822Z";
-import * as Insights from "./views/insights.js?b=20260224T195822Z";
-import * as History from "./views/history.js?b=20260224T195822Z";
-import * as Monitor from "./views/monitor.js?b=20260224T195822Z";
-import * as Maps from "./views/maps.js?b=20260224T195822Z";
-import * as Events from "./views/events.js?b=20260224T195822Z";
-import * as Health from "./views/health.js?b=20260224T195822Z";
-import * as Settings from "./views/settings.js?b=20260224T195822Z";
-import * as Manage from "./views/manage.js?b=20260224T195822Z";
-import * as Debug from "./views/debug.js?b=20260224T195822Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260224T195822Z";
-import * as QA from "./views/qa.js?b=20260224T195822Z";
-import * as Training from "./views/training.js?b=20260224T195822Z";
-import * as Calibration from "./views/calibration.js?b=20260224T195822Z";
-import * as Sandbox from "./views/sandbox.js?b=20260224T195822Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T201332Z";
+import { HELP } from "./help_content.js?b=20260224T201332Z";
+import * as Follow from "./views/follow.js?b=20260224T201332Z";
+import * as Overview from "./views/overview.js?b=20260224T201332Z";
+import * as Objects from "./views/objects.js?b=20260224T201332Z";
+import * as Devices from "./views/devices.js?b=20260224T201332Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260224T201332Z";
+import * as Presence from "./views/presence.js?b=20260224T201332Z";
+import * as Zones from "./views/zones.js?b=20260224T201332Z";
+import * as Insights from "./views/insights.js?b=20260224T201332Z";
+import * as History from "./views/history.js?b=20260224T201332Z";
+import * as Monitor from "./views/monitor.js?b=20260224T201332Z";
+import * as Maps from "./views/maps.js?b=20260224T201332Z";
+import * as Events from "./views/events.js?b=20260224T201332Z";
+import * as Health from "./views/health.js?b=20260224T201332Z";
+import * as Settings from "./views/settings.js?b=20260224T201332Z";
+import * as Manage from "./views/manage.js?b=20260224T201332Z";
+import * as Debug from "./views/debug.js?b=20260224T201332Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260224T201332Z";
+import * as QA from "./views/qa.js?b=20260224T201332Z";
+import * as Training from "./views/training.js?b=20260224T201332Z";
+import * as Calibration from "./views/calibration.js?b=20260224T201332Z";
+import * as Sandbox from "./views/sandbox.js?b=20260224T201332Z";
 
-const APP_VERSION = "0.4.64";
+const APP_VERSION = "0.4.65";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260224T195822Z";
+const BUILD_ID = "20260224T201332Z";
 
 const VIEWS = {
   follow: Follow,
@@ -592,6 +592,7 @@ class PadSpanHaApp extends HTMLElement {
         tagObjectPrompt: (addr, currentLabel)=>this._tagObjectPrompt(addr, currentLabel),
         radioAreaSet: async (payload)=>await this._callWS({ type:"padspan_ha/radio_area_set", ...payload }),
         radioLostSet: async (source, lost)=>await this._callWS({ type:"padspan_ha/radio_lost_set", source, lost }),
+        radioDisabledSet: async (source, disabled)=>await this._callWS({ type:"padspan_ha/radio_disabled_set", source, disabled }),
         refreshSnapshot: async ()=>{ await this._getLiveSnapshot(); this._renderCurrentView(); },
         followAlertSave: async (payload)=>await this._callWS({ type:"padspan_ha/follow_alert_save", ...payload }),
         showHelp: (key)=>this._showHelp(key),
@@ -990,7 +991,8 @@ class PadSpanHaApp extends HTMLElement {
     // Status badges (include short ID and lost status)
     const statusRow = el("div", {style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center"});
     statusRow.appendChild(el("span", {class:"pill", style:"font-family:monospace;font-weight:700;font-size:13px;letter-spacing:.04em"}, sid));
-    if(scanner.lost) statusRow.appendChild(el("span", {class:"badge warn", style:"background:rgba(245,158,11,.18)"}, "⚠ Lost"));
+    if(scanner.lost)     statusRow.appendChild(el("span", {class:"badge warn", style:"background:rgba(245,158,11,.18)"}, "⚠ Lost"));
+    if(scanner.disabled) statusRow.appendChild(el("span", {class:"badge warn", style:"background:rgba(148,100,220,.18);color:#c084fc"}, "⊘ Disabled"));
     if(scanner.scanning != null) statusRow.appendChild(el("span", {class:scanner.scanning?"badge":"badge warn"}, scanner.scanning?"scanning":"not scanning"));
     if(scanner.connectable != null) statusRow.appendChild(el("span", {class:"badge"}, scanner.connectable?"connectable":"not connectable"));
     if(scanner.adapter) statusRow.appendChild(el("span", {class:"muted", style:"font-family:monospace;font-size:12px"}, `adapter: ${scanner.adapter}`));
@@ -1023,10 +1025,32 @@ class PadSpanHaApp extends HTMLElement {
       }
     });
     areaRow.appendChild(lostBtn);
+    // Disabled toggle button
+    const disabledBtn = el("button", {class:"btn tiny"+(scanner.disabled?" primary":""),
+      style: scanner.disabled ? "border-color:#c084fc;color:#c084fc" : "border-color:#5b3b7a"
+    }, scanner.disabled ? "Re-enable Radio" : "Mark as Disabled");
+    disabledBtn.addEventListener("click", async ()=>{
+      disabledBtn.disabled = true;
+      try {
+        await this._callWS({ type:"padspan_ha/radio_disabled_set", source: scanner.source||"", disabled: !scanner.disabled });
+        this._closeModal();
+        this._toast(scanner.disabled ? "Radio re-enabled." : "Radio marked as Disabled.");
+        await this._getLiveSnapshot();
+        this._renderCurrentView();
+      } catch(e) {
+        disabledBtn.disabled = false;
+        this._toast("Failed to update disabled status.", true);
+      }
+    });
+    areaRow.appendChild(disabledBtn);
     areaSection.appendChild(areaRow);
     if(scanner.lost && scanner.lost_since){
       areaSection.appendChild(el("div", {class:"muted", style:"font-size:11px;margin-top:4px"},
         `Marked lost: ${new Date(scanner.lost_since).toLocaleString()}`));
+    }
+    if(scanner.disabled && scanner.disabled_since){
+      areaSection.appendChild(el("div", {class:"muted", style:"font-size:11px;margin-top:4px"},
+        `Disabled since: ${new Date(scanner.disabled_since).toLocaleString()}`));
     }
     body.appendChild(areaSection);
 

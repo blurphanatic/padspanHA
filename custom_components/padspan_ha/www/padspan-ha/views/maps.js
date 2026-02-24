@@ -530,9 +530,9 @@ function _edit(ctx, map){
         for(const radio of liveRadios){
           const alreadyPlaced = ctx.state.maps._draftReceivers.some(r => r.label === radio.name || r.id === radio.source);
           const sid = _sid(radio.source || "");
-          const borderColor = radio.lost ? "#7d5c2b" : "#1b3526";
-          const bg = radio.lost ? "rgba(245,158,11,.06)" : "#0a150e";
-          const row = el("div",{style:`display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid ${borderColor};border-radius:6px;background:${bg};opacity:${radio.lost?0.75:1}`});
+          const borderColor = radio.disabled ? "#5b3b7a" : radio.lost ? "#7d5c2b" : "#1b3526";
+          const bg = radio.disabled ? "rgba(148,100,220,.06)" : radio.lost ? "rgba(245,158,11,.06)" : "#0a150e";
+          const row = el("div",{style:`display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid ${borderColor};border-radius:6px;background:${bg};opacity:${(radio.lost||radio.disabled)?0.75:1}`});
           // ID pill
           row.appendChild(el("span",{style:"font-family:monospace;font-weight:700;font-size:10px;color:#94a3b8;white-space:nowrap"}, sid));
           // Name + room
@@ -540,7 +540,9 @@ function _edit(ctx, map){
           info.appendChild(el("div",{style:"font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, radio.name || radio.source || "Unknown"));
           info.appendChild(el("div",{class:"muted",style:"font-size:10px"}, radio.area_name || "no room"));
           row.appendChild(info);
-          if(radio.lost){
+          if(radio.disabled){
+            row.appendChild(el("span",{style:"font-size:10px;color:#c084fc;white-space:nowrap"}, "⊘ Disabled"));
+          } else if(radio.lost){
             row.appendChild(el("span",{style:"font-size:10px;color:#f59e0b;white-space:nowrap"}, "⚠ Lost"));
           } else if(alreadyPlaced){
             row.appendChild(el("span",{style:"font-size:10px;color:#52b788;white-space:nowrap"}, "✓ placed"));

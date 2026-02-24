@@ -44,6 +44,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_object_label_delete)
     websocket_api.async_register_command(hass, ws_radio_area_set)
     websocket_api.async_register_command(hass, ws_radio_lost_set)
+    websocket_api.async_register_command(hass, ws_radio_disabled_set)
     websocket_api.async_register_command(hass, ws_follow_alert_save)
     websocket_api.async_register_command(hass, ws_area_delete)
     websocket_api.async_register_command(hass, ws_entity_delete)
@@ -549,16 +550,19 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception:
         pass
 
-    # Mark radios flagged as "lost" in PadSpan settings
+    # Mark radios flagged as "lost" or "disabled" in PadSpan settings
     try:
-        lost_radios = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS, None)
-        lost_set = (lost_radios.data.get("lost_radios", {}) if lost_radios else {})
-        if lost_set:
-            for radio in ((snapshot.get("ble") or {}).get("radios") or []):
-                src = str(radio.get("source") or "")
-                if src in lost_set:
-                    radio["lost"] = True
-                    radio["lost_since"] = lost_set[src].get("marked_at", "")
+        _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS, None)
+        lost_set     = (_st.data.get("lost_radios",     {}) if _st else {})
+        disabled_set = (_st.data.get("disabled_radios", {}) if _st else {})
+        for radio in ((snapshot.get("ble") or {}).get("radios") or []):
+            src = str(radio.get("source") or "")
+            if src in lost_set:
+                radio["lost"] = True
+                radio["lost_since"] = lost_set[src].get("marked_at", "")
+            if src in disabled_set:
+                radio["disabled"] = True
+                radio["disabled_since"] = disabled_set[src].get("marked_at", "")
     except Exception:
         pass
 
@@ -1059,6 +1063,34 @@ async def ws_radio_lost_set(hass: HomeAssistant, connection, msg) -> None:
         lost_radios.pop(source, None)
     await st.async_set(lost_radios=lost_radios)
     connection.send_result(msg["id"], {"ok": True, "source": source, "lost": lost})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/radio_disabled_set",
+        "source": str,
+        "disabled": bool,
+    }
+)
+@websocket_api.async_response
+async def ws_radio_disabled_set(hass: HomeAssistant, connection, msg) -> None:
+    """Mark or unmark a BLE radio as 'disabled' (intentionally excluded from location math)."""
+    source = str(msg.get("source") or "").strip()
+    disabled = bool(msg.get("disabled", True))
+    if not source:
+        connection.send_error(msg["id"], "invalid_source", "source is required")
+        return
+    st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    if not st:
+        connection.send_error(msg["id"], "no_settings", "Settings store not initialized")
+        return
+    disabled_radios = dict(st.data.get("disabled_radios", {}))
+    if disabled:
+        disabled_radios[source] = {"marked_at": dt_util.utcnow().isoformat()}
+    else:
+        disabled_radios.pop(source, None)
+    await st.async_set(disabled_radios=disabled_radios)
+    connection.send_result(msg["id"], {"ok": True, "source": source, "disabled": disabled})
 
 
 @websocket_api.websocket_command(
