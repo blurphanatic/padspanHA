@@ -16,7 +16,8 @@ from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers import area_registry, device_registry, entity_registry
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DATA_OBJECTS, DEFAULT_FLOOR_ID, DATA_COORDINATOR
+from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DATA_OBJECTS, DEFAULT_FLOOR_ID, DATA_COORDINATOR, DATA_CALIBRATION
+from .calibration_store import CalibrationStore
 from .build_info import BUILD_ID, BUILD_VERSION
 from .bluetooth_live import get_bluetooth_live
 from .vendor_lookup import async_lookup_vendor
@@ -47,6 +48,11 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_entity_delete)
     websocket_api.async_register_command(hass, ws_room_tag_purge_missing)
     websocket_api.async_register_command(hass, ws_integration_reload)
+    websocket_api.async_register_command(hass, ws_calibration_get)
+    websocket_api.async_register_command(hass, ws_calibration_save_point)
+    websocket_api.async_register_command(hass, ws_calibration_delete_point)
+    websocket_api.async_register_command(hass, ws_calibration_clear)
+    websocket_api.async_register_command(hass, ws_calibration_compute_model)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -1120,3 +1126,89 @@ async def ws_integration_reload(hass: HomeAssistant, connection, msg) -> None:
         except Exception as e:
             _LOGGER.warning("PadSpan HA reload failed for %s: %s", entry.entry_id, e)
     connection.send_result(msg["id"], {"ok": True, "reloaded": reloaded})
+
+
+# ── Calibration WebSocket Handlers ────────────────────────────────────────────
+
+async def _get_cal_store(hass: HomeAssistant) -> CalibrationStore:
+    """Lazily initialize and return the CalibrationStore."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if DATA_CALIBRATION not in domain_data:
+        store = CalibrationStore(hass)
+        await store.async_setup()
+        domain_data[DATA_CALIBRATION] = store
+    return domain_data[DATA_CALIBRATION]
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/calibration_get"})
+@websocket_api.async_response
+async def ws_calibration_get(hass: HomeAssistant, connection, msg) -> None:
+    """Return all calibration points and the cached model stats."""
+    cal = await _get_cal_store(hass)
+    connection.send_result(msg["id"], {
+        "points": cal.list_points(),
+        "model": cal.data.get("model") or {},
+    })
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/calibration_save_point",
+        vol.Required("point"): dict,
+    }
+)
+@websocket_api.async_response
+async def ws_calibration_save_point(hass: HomeAssistant, connection, msg) -> None:
+    """Save one calibration point (position + per-scanner RSSI readings)."""
+    cal = await _get_cal_store(hass)
+    try:
+        saved = await cal.async_add_point(msg["point"])
+        connection.send_result(msg["id"], {"ok": True, "point": saved})
+    except Exception as e:
+        connection.send_error(msg["id"], "save_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/calibration_delete_point",
+        "point_id": str,
+    }
+)
+@websocket_api.async_response
+async def ws_calibration_delete_point(hass: HomeAssistant, connection, msg) -> None:
+    """Delete a single calibration point by ID."""
+    cal = await _get_cal_store(hass)
+    point_id = (msg.get("point_id") or "").strip()
+    if not point_id:
+        connection.send_error(msg["id"], "invalid_id", "point_id required")
+        return
+    deleted = await cal.async_delete_point(point_id)
+    connection.send_result(msg["id"], {"ok": deleted, "point_id": point_id})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/calibration_clear"})
+@websocket_api.async_response
+async def ws_calibration_clear(hass: HomeAssistant, connection, msg) -> None:
+    """Delete all calibration points and reset the model."""
+    cal = await _get_cal_store(hass)
+    count = await cal.async_clear_all()
+    connection.send_result(msg["id"], {"ok": True, "deleted": count})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/calibration_compute_model"})
+@websocket_api.async_response
+async def ws_calibration_compute_model(hass: HomeAssistant, connection, msg) -> None:
+    """
+    Trigger full model computation: coverage grids, path-loss fits (if scanner
+    positions available from MapsStore), and LOO cross-validation accuracy.
+    """
+    cal = await _get_cal_store(hass)
+    maps_store = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+    maps_data = maps_store.list_maps() if maps_store else None
+    try:
+        model = cal.compute_model(maps_data=maps_data)
+        await cal.store.async_save(cal.data)
+        connection.send_result(msg["id"], {"ok": True, "model": model})
+    except Exception as e:
+        _LOGGER.error("PadSpan HA calibration_compute_model failed: %s", e)
+        connection.send_error(msg["id"], "compute_failed", str(e))

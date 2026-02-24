@@ -109,6 +109,8 @@ def git_commit_tag_push(version, tag):
         "custom_components/padspan_ha/build_info.py",
         "custom_components/padspan_ha/websocket.py",
         "custom_components/padspan_ha/maps_store.py",
+        "custom_components/padspan_ha/calibration_store.py",
+        "custom_components/padspan_ha/const.py",
         "custom_components/padspan_ha/www/padspan-ha/panel.js",
         "custom_components/padspan_ha/www/padspan-ha/help_content.js",
         "custom_components/padspan_ha/www/padspan-ha/views/follow.js",
@@ -119,6 +121,7 @@ def git_commit_tag_push(version, tag):
         "custom_components/padspan_ha/www/padspan-ha/views/manage.js",
         "custom_components/padspan_ha/www/padspan-ha/views/maps.js",
         "custom_components/padspan_ha/www/padspan-ha/views/training.js",
+        "custom_components/padspan_ha/www/padspan-ha/views/calibration.js",
         "scripts/release.py",
     ])
     run(f"git add {files}")
