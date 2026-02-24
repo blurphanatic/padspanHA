@@ -87,30 +87,62 @@ function _setup(ctx, el, cs, calData) {
     ]),
   ]));
 
-  // Device selector
+  // Device selector — merge objects.list + raw advertisements so the user can pick ANY BLE device
   const bleObjs = (snap?.objects?.list || [])
     .filter(o => o.kind === "ble" || o.kind === "entity")
     .sort((a, b) => (b.rssi || -100) - (a.rssi || -100));
+
+  // Build unique-address map from raw advertisements (one entry per MAC)
+  const adAddrMap = {};
+  for (const ad of (snap?.ble?.advertisements || [])) {
+    const addr = (ad.address || "").toUpperCase();
+    if (!addr) continue;
+    if (!adAddrMap[addr]) {
+      adAddrMap[addr] = { address: addr, name: ad.name || addr, rssi: ad.rssi };
+    } else if ((ad.rssi || -200) > (adAddrMap[addr].rssi || -200)) {
+      adAddrMap[addr].rssi = ad.rssi;
+    }
+  }
+  // Only show addresses not already covered by bleObjs
+  const knownAddrs = new Set(bleObjs.map(o => (o.address || "").toUpperCase()));
+  const adOnlyDevices = Object.values(adAddrMap).filter(d => !knownAddrs.has(d.address));
+  adOnlyDevices.sort((a, b) => (b.rssi || -200) - (a.rssi || -200));
+
+  const allDevices = bleObjs.length + adOnlyDevices.length;
 
   const deviceCard = el("div", { class: "card" });
   deviceCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;margin-bottom:8px" }, "Beacon Device"));
   deviceCard.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:10px" },
     "Select the phone or tag that will act as your calibration beacon. It must be visible to your scanners (Bluetooth on, HA companion app running)."));
 
-  if (bleObjs.length) {
+  if (allDevices) {
     const sel = document.createElement("select");
     sel.style.cssText = "width:100%;margin-bottom:10px;";
     const placeholder = document.createElement("option");
     placeholder.value = "";
     placeholder.textContent = cs.deviceId ? "" : "— choose device —";
     sel.appendChild(placeholder);
+    // Tracked objects
     for (const o of bleObjs) {
-      const opt = document.createElement("option");
       const addr = o.address || o.entity_id || "";
+      const opt = document.createElement("option");
       opt.value = addr;
       opt.textContent = (o.user_label || o.name || addr) + (o.rssi ? ` (${o.rssi} dBm)` : "");
       if (addr === cs.deviceId) opt.selected = true;
       sel.appendChild(opt);
+    }
+    // Raw advertisement devices not already in objects.list
+    if (adOnlyDevices.length) {
+      const grp = document.createElement("optgroup");
+      grp.label = "── Raw BLE advertisements ──";
+      for (const d of adOnlyDevices) {
+        const opt = document.createElement("option");
+        opt.value = d.address;
+        opt.textContent = (d.name !== d.address ? d.name + "  " : "") + d.address + (d.rssi ? ` (${d.rssi} dBm)` : "");
+        if (d.address === (cs.deviceId || "").toUpperCase()) opt.selected = true;
+        grp.appendChild(opt);
+      }
+      sel.appendChild(grp);
     }
     sel.addEventListener("change", () => {
       cs.deviceId = sel.value;
@@ -143,33 +175,29 @@ function _setup(ctx, el, cs, calData) {
   manualRow.appendChild(applyBtn);
   deviceCard.appendChild(manualRow);
 
-  // Show selected device live data
+  // Show selected device live data using advertisements for real per-radio RSSI
   if (cs.deviceId && snap) {
+    const { perRadio, targetAddr } = _findBeaconAds(snap, cs.deviceId);
+    const radioCount = Object.keys(perRadio).length;
     const obj = (snap?.objects?.list || []).find(o =>
-      (o.address || "").toUpperCase() === cs.deviceId.toUpperCase() ||
+      (o.address || "").toUpperCase() === (targetAddr || cs.deviceId).toUpperCase() ||
       (o.entity_id || "") === cs.deviceId
     );
-    if (obj) {
-      const sources = obj.sources || [];
-      deviceCard.appendChild(el("div", {
-        style: "background:#0a150e;border:1px solid #1b3526;border-radius:8px;padding:10px;margin-top:6px"
-      }, [
-        el("div", { style: "font-weight:600;font-size:13px;color:#52b788;margin-bottom:6px" },
-          `✓ ${obj.user_label || obj.name || cs.deviceId} — detected`),
-        el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:6px" },
-          `Room: ${obj.room || "—"} | RSSI: ${obj.rssi ?? "—"} dBm | Scanners: ${sources.length}`),
-        ...(sources.length ? [
-          el("div", { style: "font-size:11px;color:#78909c;margin-bottom:4px" }, "Scanner signals:"),
-          ...sources.slice(0, 6).map(s => _rssiRow(el, s.name || s.source, s.rssi)),
-        ] : [
-          el("div", { style: "font-size:12px;color:#f59e0b" },
-            "Device found but no scanner readings. Move closer to a BLE scanner."),
-        ]),
-      ]));
+    if (radioCount > 0) {
+      const box = el("div", { style: "background:#0a150e;border:1px solid #1b3526;border-radius:8px;padding:10px;margin-top:6px" });
+      box.appendChild(el("div", { style: "font-weight:600;font-size:13px;color:#52b788;margin-bottom:6px" },
+        `✓ ${obj?.user_label || obj?.name || cs.deviceId} — seen by ${radioCount} radio${radioCount > 1 ? "s" : ""}`));
+      if (obj?.room) box.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:6px" }, `Room: ${obj.room}`));
+      box.appendChild(el("div", { style: "font-size:11px;color:#78909c;margin-bottom:4px" }, "Per-radio RSSI:"));
+      const sorted = Object.entries(perRadio).sort((a, b) => (b[1].rssi || -200) - (a[1].rssi || -200));
+      for (const [src, info] of sorted) {
+        box.appendChild(_rssiRow(el, info.name || src, info.rssi));
+      }
+      deviceCard.appendChild(box);
     } else {
       deviceCard.appendChild(el("div", {
         style: "font-size:12px;color:#f59e0b;margin-top:6px;padding:8px;background:#0a150e;border-radius:6px"
-      }, `⚠ "${cs.deviceId}" not currently visible in snapshot. Make sure Bluetooth is on and the device is near a scanner.`));
+      }, `⚠ "${cs.deviceId}" not seen in any radio advertisement. Make sure Bluetooth is on and the device is near a scanner.`));
     }
   }
   wrap.appendChild(deviceCard);
@@ -218,6 +246,38 @@ function _setup(ctx, el, cs, calData) {
   }
   durCard.appendChild(durRow);
   wrap.appendChild(durCard);
+
+  // Radio status — show all radios and how many BLE devices each sees
+  if (snap) {
+    const radios = snap?.ble?.radios || [];
+    const radioCard = el("div", { class: "card" });
+    radioCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px" }, "Radio Status"));
+    if (radios.length) {
+      const ads = snap?.ble?.advertisements || [];
+      for (const r of radios) {
+        const seen = ads.filter(a => a.source === r.source).length;
+        const beaconHere = cs.deviceId ? ads.some(a =>
+          a.source === r.source &&
+          (a.address || "").toUpperCase() === (cs.deviceId || "").toUpperCase()
+        ) : false;
+        const row = el("div", { style: "display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid #0d1f12;flex-wrap:wrap" }, [
+          el("span", { style: "font-size:12px;font-weight:600;flex:1;min-width:80px" }, r.name || r.source || "?"),
+          r.scanning ? el("span", { class: "badge", style: "font-size:10px" }, "scanning") : el("span", { class: "badge warn", style: "font-size:10px" }, "idle"),
+          el("span", { class: "muted", style: "font-size:11px;white-space:nowrap" }, `${seen} device${seen !== 1 ? "s" : ""}`),
+          beaconHere ? el("span", { style: "font-size:10px;color:#52b788;white-space:nowrap" }, "✓ beacon") : null,
+        ].filter(Boolean));
+        radioCard.appendChild(row);
+      }
+    } else {
+      radioCard.appendChild(el("div", { class: "muted", style: "font-size:12px" },
+        "No radios in snapshot. Switch to Live mode."));
+    }
+    // Total advertisement count
+    const totalAds = (snap?.ble?.advertisements || []).length;
+    radioCard.appendChild(el("div", { class: "muted", style: "font-size:11px;margin-top:6px" },
+      `${totalAds} total BLE advertisement${totalAds !== 1 ? "s" : ""} in snapshot`));
+    wrap.appendChild(radioCard);
+  }
 
   // Readiness check
   const ready = cs.deviceId && cs.mapId;
@@ -389,6 +449,25 @@ function _pinAndListen(ctx, el, cs, calData) {
       lblRow.appendChild(lblInput);
       pinPanel.appendChild(lblRow);
 
+      // Live beacon signal status
+      const { perRadio: pinPerRadio } = _findBeaconAds(snap, cs.deviceId);
+      const pinRadioCount = Object.keys(pinPerRadio).length;
+      const signalBox = el("div", { style: `padding:8px 10px;border-radius:8px;margin-bottom:10px;background:#071008;border:1px solid ${pinRadioCount > 0 ? "#1b3526" : "#7d5c2b"}` });
+      if (pinRadioCount > 0) {
+        signalBox.appendChild(el("div", { style: "font-size:12px;color:#52b788;font-weight:600;margin-bottom:4px" },
+          `✓ Beacon visible on ${pinRadioCount} radio${pinRadioCount > 1 ? "s" : ""}`));
+        const sorted = Object.entries(pinPerRadio).sort((a, b) => (b[1].rssi || -200) - (a[1].rssi || -200));
+        for (const [src, info] of sorted) {
+          signalBox.appendChild(_rssiRow(el, info.name || src, info.rssi));
+        }
+      } else {
+        signalBox.appendChild(el("div", { style: "font-size:12px;color:#f59e0b;font-weight:600" },
+          "⚠ Beacon not currently detected by any radio"));
+        signalBox.appendChild(el("div", { class: "muted", style: "font-size:11px;margin-top:3px" },
+          "Collection will start but may capture no data. Verify beacon is broadcasting."));
+      }
+      pinPanel.appendChild(signalBox);
+
       // Start button
       const startBtn = el("button", {
         class: "btn",
@@ -413,17 +492,30 @@ function _buildCollectionUI(ctx, el, cs) {
   // Countdown — updated by collection loop via direct DOM ref stored on cs
   const timerDiv = el("div", {
     id: "collect-timer",
-    style: "font-size:48px;font-weight:900;text-align:center;color:#52b788;font-family:monospace;margin-bottom:12px",
+    style: "font-size:48px;font-weight:900;text-align:center;color:#52b788;font-family:monospace;margin-bottom:4px",
   }, "…");
   cs._timerEl = timerDiv;   // store ref so loop can update without document.getElementById
   wrap.appendChild(timerDiv);
 
-  wrap.appendChild(el("div", { style: "font-size:12px;color:#78909c;text-align:center;margin-bottom:14px" },
-    "RSSI readings from each scanner (updating live):"));
+  // Poll counter — proves the loop is running
+  const pollDiv = el("div", {
+    style: "font-size:11px;text-align:center;color:#78909c;margin-bottom:12px;font-family:monospace",
+  }, `Poll #${cs._pollCount || 0}  ·  ${_totalSamples(cs)} sample${_totalSamples(cs) !== 1 ? "s" : ""} collected`);
+  cs._pollCountEl = pollDiv;
+  wrap.appendChild(pollDiv);
+
+  wrap.appendChild(el("div", { style: "font-size:12px;color:#78909c;text-align:center;margin-bottom:8px" },
+    "Per-radio RSSI (updating live):"));
 
   // Scanner RSSI container — updated by collection loop
   const scanDiv = el("div", { id: "collect-scanners", style: "display:flex;flex-direction:column;gap:6px" });
   cs._scanEl = scanDiv;     // store ref so loop can update without document.getElementById
+  // Populate immediately from any readings already accumulated
+  const { el: elHelper } = ctx.helpers;
+  for (const [src, rd] of Object.entries(cs.readings || {})) {
+    const mean = rd.samples.length ? rd.samples.reduce((a, b) => a + b, 0) / rd.samples.length : -100;
+    scanDiv.appendChild(_rssiRow(elHelper, rd.name || src, Math.round(mean), rd.samples.length));
+  }
   wrap.appendChild(scanDiv);
 
   // Stop button
@@ -444,9 +536,10 @@ function _buildCollectionUI(ctx, el, cs) {
 
 // ── Start collection loop ─────────────────────────────────────────────────────
 function _startCollection(ctx, cs, _snap, _mapData) {
-  cs.collecting = true;
-  cs.stopFlag   = false;
-  cs.readings   = {};
+  cs.collecting  = true;
+  cs.stopFlag    = false;
+  cs.readings    = {};
+  cs._pollCount  = 0;
   ctx.actions.renderRooms();
 
   const endTime = Date.now() + cs.duration * 1000;
@@ -456,56 +549,52 @@ function _startCollection(ctx, cs, _snap, _mapData) {
 
     // Poll snapshot
     try { await ctx.actions.refreshSnapshot(); } catch (_) { /**/ }
+    cs._pollCount = (cs._pollCount || 0) + 1;
 
     const snap = ctx.state.live?.snapshot;
-    const deviceId = cs.deviceId || "";
-    const obj = (snap?.objects?.list || []).find(o =>
-      (o.address || "").toUpperCase() === deviceId.toUpperCase() ||
-      (o.entity_id || "") === deviceId
-    );
 
-    if (obj?.sources) {
-      for (const src of obj.sources) {
-        if (typeof src.rssi !== "number") continue;
-        if (!cs.readings[src.source]) {
-          cs.readings[src.source] = {
-            name: src.name || src.scanner_name || src.source,
-            samples: [],
-          };
-        }
-        cs.readings[src.source].samples.push(src.rssi);
+    // ── Collect per-radio RSSI from BLE advertisements (primary source) ──────
+    // snap.objects.list[].sources is just a list of source-ID strings, NOT RSSI data.
+    // The real per-radio RSSI lives in snap.ble.advertisements, one entry per {device,radio}.
+    const { perRadio } = _findBeaconAds(snap, cs.deviceId);
+    for (const [src, info] of Object.entries(perRadio)) {
+      if (typeof info.rssi !== "number") continue;
+      if (!cs.readings[src]) {
+        cs.readings[src] = { name: info.name || src, samples: [] };
       }
+      cs.readings[src].samples.push(info.rssi);
     }
 
     const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+    const total = _totalSamples(cs);
+    const { el } = ctx.helpers;
 
-    // Update DOM directly via refs stored on cs (works in shadow DOM too)
-    const timerEl = cs._timerEl || null;
-    if (timerEl) timerEl.textContent = remaining + "s";
-    const scanEl = cs._scanEl || null;
-    if (scanEl) {
-      scanEl.innerHTML = "";
-      const { el } = ctx.helpers;
-      for (const [src, rd] of Object.entries(cs.readings)) {
-        const mean = rd.samples.length ? rd.samples.reduce((a,b) => a + b, 0) / rd.samples.length : -100;
-        scanEl.appendChild(_rssiRow(el, rd.name || src, Math.round(mean), rd.samples.length));
-      }
-      if (!Object.keys(cs.readings).length) {
-        const msg = el("div", { style: "font-size:12px;color:#f59e0b;text-align:center" },
-          "Device not visible yet. Check Bluetooth is on.");
-        scanEl.appendChild(msg);
+    // Update DOM directly via refs stored on cs (works in shadow DOM)
+    if (cs._timerEl) cs._timerEl.textContent = remaining + "s";
+    if (cs._pollCountEl) cs._pollCountEl.textContent =
+      `Poll #${cs._pollCount}  ·  ${total} sample${total !== 1 ? "s" : ""} collected`;
+    if (cs._scanEl) {
+      cs._scanEl.innerHTML = "";
+      const sorted = Object.entries(cs.readings).sort((a, b) => {
+        const ma = a[1].samples.length ? a[1].samples.reduce((x,y)=>x+y,0)/a[1].samples.length : -200;
+        const mb = b[1].samples.length ? b[1].samples.reduce((x,y)=>x+y,0)/b[1].samples.length : -200;
+        return mb - ma;
+      });
+      if (sorted.length) {
+        for (const [src, rd] of sorted) {
+          const mean = rd.samples.reduce((a, b) => a + b, 0) / rd.samples.length;
+          cs._scanEl.appendChild(_rssiRow(el, rd.name || src, Math.round(mean), rd.samples.length));
+        }
+      } else {
+        cs._scanEl.appendChild(el("div", { style: "font-size:12px;color:#f59e0b;text-align:center;padding:8px" },
+          "Beacon not detected yet. Make sure Bluetooth is on and device is near a scanner."));
       }
     }
 
     if (Date.now() >= endTime || cs.stopFlag) {
       cs.collecting = false;
-      if (!cs.stopFlag && Object.keys(cs.readings).length > 0) {
-        // Collection complete with data
-        ctx.actions.renderRooms();
-      } else {
-        cs.readings = null;
-        ctx.actions.renderRooms();
-      }
+      cs.readings = (!cs.stopFlag && Object.keys(cs.readings).length > 0) ? cs.readings : null;
+      ctx.actions.renderRooms();
       return;
     }
 
@@ -1025,6 +1114,49 @@ function _modelTab(ctx, el, cs, calData) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// ── Find all BLE advertisements for the given device ID ───────────────────────
+// Returns { myAds, perRadio, targetAddr } where perRadio is {source→{name,rssi,age_s}}.
+// Handles both MAC addresses and entity_id values.
+function _findBeaconAds(snap, deviceId) {
+  if (!snap || !deviceId) return { myAds: [], perRadio: {}, targetAddr: "" };
+  const rawId = String(deviceId).trim();
+  const upperId = rawId.toUpperCase();
+
+  // If it looks like a MAC address, use it directly; otherwise resolve via objects.list
+  let targetAddr = upperId.match(/^[0-9A-F:]{17}$/) ? upperId : "";
+  if (!targetAddr) {
+    const entity = (snap?.objects?.list || []).find(o =>
+      (o.entity_id || "") === rawId ||
+      (o.entity_id || "").toUpperCase() === upperId
+    );
+    targetAddr = (entity?.address || "").toUpperCase();
+  }
+
+  // Filter raw advertisements by address
+  const myAds = (snap?.ble?.advertisements || []).filter(ad =>
+    (ad.address || "").toUpperCase() === (targetAddr || upperId)
+  );
+
+  // Build per-radio map — keep strongest/most recent reading per radio
+  const perRadio = {};
+  for (const ad of myAds) {
+    const src = String(ad.source || "");
+    if (!src) continue;
+    if (!perRadio[src] || (ad.rssi || -200) > (perRadio[src].rssi || -200)) {
+      perRadio[src] = {
+        name: ad.scanner_name || ad.name || src,
+        rssi: ad.rssi,
+        age_s: ad.age_s,
+      };
+    }
+  }
+  return { myAds, perRadio, targetAddr };
+}
+
+function _totalSamples(cs) {
+  return Object.values(cs.readings || {}).reduce((t, r) => t + r.samples.length, 0);
+}
 
 function _rssiRow(el, name, rssi, samples) {
   const pct = Math.max(0, Math.min(100, ((rssi ?? -100) + 100) / 60 * 100));
