@@ -45,6 +45,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_follow_alert_save)
     websocket_api.async_register_command(hass, ws_area_delete)
     websocket_api.async_register_command(hass, ws_entity_delete)
+    websocket_api.async_register_command(hass, ws_room_tag_purge_missing)
     websocket_api.async_register_command(hass, ws_integration_reload)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -1086,6 +1087,25 @@ async def ws_entity_delete(hass: HomeAssistant, connection, msg) -> None:
         return
     er.async_remove(entity_id)
     connection.send_result(msg["id"], {"deleted": entity_id})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/room_tag_purge_missing"})
+@websocket_api.async_response
+async def ws_room_tag_purge_missing(hass: HomeAssistant, connection, msg) -> None:
+    """Remove entity_ids from room_tag_map that have no current HA state (phantom/sample entities)."""
+    coord = hass.data.get(DOMAIN, {}).get("coordinator")
+    if not coord:
+        connection.send_result(msg["id"], {"removed": 0, "rooms": 0})
+        return
+    removed = 0
+    new_map: dict = {}
+    for room, ids in (coord.room_tag_map or {}).items():
+        valid = [eid for eid in (ids or []) if hass.states.get(str(eid)) is not None]
+        removed += len(ids or []) - len(valid)
+        if valid:
+            new_map[room] = valid
+    coord.room_tag_map = new_map
+    connection.send_result(msg["id"], {"removed": removed, "rooms": len(new_map)})
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/integration_reload"})

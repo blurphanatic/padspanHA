@@ -258,11 +258,70 @@ export function render(ctx){
 
   // ── HA Entities ──────────────────────────────────────────────────────────────
   const entityObjs = allObjs.filter(o => o.kind === "entity" && o.entity_id);
+  // Split into phantom (missing from HA state) vs real HA entities
+  const phantomObjs = entityObjs.filter(o => o.missing === true);
+  const realObjs    = entityObjs.filter(o => !o.missing);
+
+  // Phantom entities card — these come from coord.room_tag_map with no HA state
+  if(phantomObjs.length){
+    const phantomCard = el("div",{class:"card",style:"border-color:#f59e0b"});
+    phantomCard.appendChild(el("div",{class:"row",style:"margin-bottom:6px"},[
+      el("div",{style:"font-weight:700;font-size:14px"},"Phantom Room Entries"),
+      el("span",{class:"badge warn",style:"margin-left:8px"},`${phantomObjs.length} found`),
+    ]));
+    phantomCard.appendChild(el("div",{style:"font-size:12px;color:#f59e0b;margin-bottom:4px"},
+      "These entity IDs appear in PadSpan's room map but do not exist in Home Assistant. They are typically leftover sample data or stale entries from a previous install."
+    ));
+    phantomCard.appendChild(el("div",{style:"font-size:11px;color:#78909c;margin-bottom:10px;padding:6px 8px;background:#0a150e;border-radius:6px;border:1px solid #2a1f00"},
+      "Removing them clears the phantom entries from PadSpan's room tracking — no HA entities are modified or deleted."
+    ));
+
+    const phantomList = el("div",{style:"display:flex;flex-direction:column;gap:3px;max-height:200px;overflow-y:auto;margin-bottom:10px"});
+    for(const o of phantomObjs){
+      phantomList.appendChild(el("div",{style:"display:flex;align-items:center;gap:6px;padding:4px 8px;background:#0a150e;border:1px solid #2a1f00;border-radius:6px"},[
+        el("span",{style:"font-family:monospace;font-size:11px;color:#94a3b8;flex:1"},o.entity_id),
+        o.room ? el("span",{style:"font-size:11px;color:#f59e0b"},o.room) : null,
+      ].filter(Boolean)));
+    }
+    phantomCard.appendChild(phantomList);
+
+    const purgeWrap = el("div",{style:"display:flex;gap:8px;align-items:center"});
+    const makePurgeBtn = ()=>{
+      const b = el("button",{class:"btn"+(disabled?" disabled":"")},"Clear phantom room data");
+      if(disabled) b.disabled = true;
+      b.addEventListener("click", ()=>{
+        purgeWrap.innerHTML = "";
+        const yes = el("button",{class:"btn",style:"background:#7f1d1d;border-color:#dc2626;white-space:nowrap"},`Yes, remove ${phantomObjs.length} phantom entr${phantomObjs.length===1?"y":"ies"}`);
+        const no  = el("button",{class:"btn inline"},"Cancel");
+        yes.addEventListener("click", async()=>{
+          purgeWrap.innerHTML = "";
+          purgeWrap.appendChild(el("span",{class:"muted",style:"font-size:12px"},"Clearing…"));
+          try {
+            const result = await ctx.actions.roomTagPurgeMissing();
+            await ctx.actions.refreshSnapshot();
+            ctx.toast(`Cleared ${result?.removed ?? phantomObjs.length} phantom entr${(result?.removed??0)===1?"y":"ies"} from room map.`);
+            ctx.actions.renderRooms();
+          } catch(e){
+            ctx.toast("Failed: "+String(e), true);
+            purgeWrap.innerHTML = ""; purgeWrap.appendChild(makePurgeBtn());
+          }
+        });
+        no.addEventListener("click", ()=>{ purgeWrap.innerHTML = ""; purgeWrap.appendChild(makePurgeBtn()); });
+        purgeWrap.appendChild(yes); purgeWrap.appendChild(no);
+      });
+      return b;
+    };
+    purgeWrap.appendChild(makePurgeBtn());
+    phantomCard.appendChild(purgeWrap);
+    root.appendChild(phantomCard);
+  }
+
+  // Real HA entities card
   const entCard = el("div",{class:"card"});
   entCard.appendChild(el("div",{class:"row",style:"margin-bottom:8px"},[
     el("div",{style:"font-weight:700;font-size:14px"},"HA Entities"),
     el("span",{class:"badge warn",style:"margin-left:8px"},"Destructive"),
-    el("span",{class:"badge",style:"margin-left:4px"},`${entityObjs.length} found`),
+    el("span",{class:"badge",style:"margin-left:4px"},`${realObjs.length} found`),
   ]));
   entCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:4px"},
     "Permanently remove entities from Home Assistant's entity registry. Use this to clean up stale or duplicate tracker entities. Automations that reference removed entities will break."
@@ -270,12 +329,12 @@ export function render(ctx){
   entCard.appendChild(el("div",{style:"font-size:11px;color:#78909c;margin-bottom:10px;padding:6px 8px;background:#0a150e;border-radius:6px;border:1px solid #1b3526"},
     "⚠ Entities managed by active integrations (e.g. Bermuda) will be recreated on the next integration poll. To remove permanently, disable the device or integration in HA."
   ));
-  if(entityObjs.length){
+  if(realObjs.length){
     const entSearch = el("input",{type:"text",placeholder:"Filter entities…",style:"margin-bottom:8px;width:100%;box-sizing:border-box"});
     const entList   = el("div",{style:"display:flex;flex-direction:column;gap:4px;max-height:360px;overflow-y:auto"});
     const renderEntList = (filter) => {
       entList.innerHTML = "";
-      const filtered = entityObjs.filter(o => !filter || o.entity_id.toLowerCase().includes(filter.toLowerCase()) || (o.name||"").toLowerCase().includes(filter.toLowerCase()));
+      const filtered = realObjs.filter(o => !filter || o.entity_id.toLowerCase().includes(filter.toLowerCase()) || (o.name||"").toLowerCase().includes(filter.toLowerCase()));
       for(const o of filtered){
         let row;
         const statusDiv = el("div",{style:"font-size:10px;margin-top:2px;display:none"});
@@ -294,32 +353,12 @@ export function render(ctx){
             ctx.toast(`Deleted: ${o.entity_id}`);
             ctx.actions.refreshSnapshot().then(()=>ctx.actions.renderRooms()).catch(()=>{});
           } catch(e){
-            if(String(e).includes("not_found")){
-              // Not in HA registry — fall back to purging from PadSpan's object store
-              // (common for phantom sample-data entities that were stored as BLE labels)
-              try {
-                await ctx.actions.objectLabelDelete(o.entity_id);
-                if(row){ row.style.opacity = "0.35"; row.style.transition = "opacity 0.4s"; }
-                statusDiv.textContent = "✓ Purged from PadSpan tracking (was sample / phantom data)";
-                statusDiv.style.color = "#52b788";
-                statusDiv.style.display = "";
-                btnWrap.innerHTML = "";
-                ctx.toast(`Purged: ${o.entity_id}`);
-                ctx.actions.refreshSnapshot().then(()=>ctx.actions.renderRooms()).catch(()=>{});
-              } catch(e2){
-                statusDiv.textContent = "✗ Not found in HA or PadSpan — may already be gone";
-                statusDiv.style.color = "#94a3b8";
-                statusDiv.style.display = "";
-                btnWrap.innerHTML = "";
-              }
-            } else {
-              statusDiv.textContent = "✗ " + String(e).slice(0,80);
-              statusDiv.style.color = "#f59e0b";
-              statusDiv.style.display = "";
-              btnWrap.innerHTML = "";
-              btnWrap.appendChild(makeDelBtn());
-              ctx.toast(`Delete failed: ${o.entity_id}`, true);
-            }
+            statusDiv.textContent = "✗ " + String(e).slice(0,80);
+            statusDiv.style.color = "#f59e0b";
+            statusDiv.style.display = "";
+            btnWrap.innerHTML = "";
+            btnWrap.appendChild(makeDelBtn());
+            ctx.toast(`Delete failed: ${o.entity_id}`, true);
           }
         };
 
@@ -327,7 +366,6 @@ export function render(ctx){
           const btn = el("button",{class:"btn tiny"+(disabled?" disabled":"")},"Delete");
           if(disabled) btn.disabled = true;
           btn.addEventListener("click", ()=>{
-            // inline 2-click confirm — no window.confirm() needed
             btnWrap.innerHTML = "";
             const yesBtn = el("button",{class:"btn tiny",style:"background:#7f1d1d;border-color:#dc2626;white-space:nowrap"},"Yes, delete");
             const noBtn  = el("button",{class:"btn tiny"},"Cancel");
@@ -357,44 +395,8 @@ export function render(ctx){
     renderEntList("");
     entCard.appendChild(entSearch);
     entCard.appendChild(entList);
-
-    // Bulk purge — tries HA entityDelete first, falls back to objectLabelDelete for phantom/sample entities
-    const purgeAllWrap = el("div",{style:"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"});
-    const makePurgeAllBtn = ()=>{
-      const b = el("button",{class:"btn"+(disabled?" disabled":"")},`Purge All (${entityObjs.length})`);
-      if(disabled) b.disabled = true;
-      b.addEventListener("click", ()=>{
-        purgeAllWrap.innerHTML = "";
-        const yes = el("button",{class:"btn",style:"background:#7f1d1d;border-color:#dc2626;white-space:nowrap"},`Yes, purge all ${entityObjs.length}`);
-        const no  = el("button",{class:"btn inline"},"Cancel");
-        yes.addEventListener("click", async()=>{
-          purgeAllWrap.innerHTML = "";
-          purgeAllWrap.appendChild(el("span",{class:"muted",style:"font-size:12px"},"Purging all…"));
-          let ok=0, fail=0;
-          for(const o of entityObjs){
-            try {
-              await ctx.actions.entityDelete(o.entity_id);
-              ok++;
-            } catch(e){
-              if(String(e).includes("not_found")){
-                // Phantom / sample entity — purge from PadSpan object store
-                try { await ctx.actions.objectLabelDelete(o.entity_id); ok++; } catch(e2){ fail++; }
-              } else { fail++; }
-            }
-          }
-          await ctx.actions.refreshSnapshot();
-          ctx.toast(`Purged ${ok} entit${ok===1?"y":"ies"}${fail?` (${fail} failed)`:""}.`);
-          ctx.actions.renderRooms();
-        });
-        no.addEventListener("click", ()=>{ purgeAllWrap.innerHTML = ""; purgeAllWrap.appendChild(makePurgeAllBtn()); });
-        purgeAllWrap.appendChild(yes); purgeAllWrap.appendChild(no);
-      });
-      return b;
-    };
-    purgeAllWrap.appendChild(makePurgeAllBtn());
-    entCard.appendChild(purgeAllWrap);
   } else {
-    entCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},"No entities found in snapshot. Switch to Live mode to see real entities."));
+    entCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},"No HA entities found in snapshot. Switch to Live mode to see real entities."));
   }
   root.appendChild(entCard);
 
