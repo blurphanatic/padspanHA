@@ -43,6 +43,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_object_label_set)
     websocket_api.async_register_command(hass, ws_object_label_delete)
     websocket_api.async_register_command(hass, ws_radio_area_set)
+    websocket_api.async_register_command(hass, ws_radio_lost_set)
     websocket_api.async_register_command(hass, ws_follow_alert_save)
     websocket_api.async_register_command(hass, ws_area_delete)
     websocket_api.async_register_command(hass, ws_entity_delete)
@@ -548,6 +549,19 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception:
         pass
 
+    # Mark radios flagged as "lost" in PadSpan settings
+    try:
+        lost_radios = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS, None)
+        lost_set = (lost_radios.data.get("lost_radios", {}) if lost_radios else {})
+        if lost_set:
+            for radio in ((snapshot.get("ble") or {}).get("radios") or []):
+                src = str(radio.get("source") or "")
+                if src in lost_set:
+                    radio["lost"] = True
+                    radio["lost_since"] = lost_set[src].get("marked_at", "")
+    except Exception:
+        pass
+
     # ---- Backwards-compatible aliases for the frontend ----
     # Some UI modules (overview, legacy panels) expect these keys.
     if "rooms" not in snapshot:
@@ -1017,6 +1031,34 @@ async def ws_radio_area_set(hass: HomeAssistant, connection, msg) -> None:
         connection.send_result(msg["id"], {"ok": True, "device_id": dev_id, "area_id": area_id, "area_name": area_name or None})
     except Exception as e:
         connection.send_error(msg["id"], "update_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/radio_lost_set",
+        "source": str,
+        "lost": bool,
+    }
+)
+@websocket_api.async_response
+async def ws_radio_lost_set(hass: HomeAssistant, connection, msg) -> None:
+    """Mark or unmark a BLE radio as 'lost' (excluded from location math)."""
+    source = str(msg.get("source") or "").strip()
+    lost = bool(msg.get("lost", True))
+    if not source:
+        connection.send_error(msg["id"], "invalid_source", "source is required")
+        return
+    st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    if not st:
+        connection.send_error(msg["id"], "no_settings", "Settings store not initialized")
+        return
+    lost_radios = dict(st.data.get("lost_radios", {}))
+    if lost:
+        lost_radios[source] = {"marked_at": dt_util.utcnow().isoformat()}
+    else:
+        lost_radios.pop(source, None)
+    await st.async_set(lost_radios=lost_radios)
+    connection.send_result(msg["id"], {"ok": True, "source": source, "lost": lost})
 
 
 @websocket_api.websocket_command(

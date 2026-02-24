@@ -13,33 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T193343Z";
-import { HELP } from "./help_content.js?b=20260224T193343Z";
-import * as Follow from "./views/follow.js?b=20260224T193343Z";
-import * as Overview from "./views/overview.js?b=20260224T193343Z";
-import * as Objects from "./views/objects.js?b=20260224T193343Z";
-import * as Devices from "./views/devices.js?b=20260224T193343Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260224T193343Z";
-import * as Presence from "./views/presence.js?b=20260224T193343Z";
-import * as Zones from "./views/zones.js?b=20260224T193343Z";
-import * as Insights from "./views/insights.js?b=20260224T193343Z";
-import * as History from "./views/history.js?b=20260224T193343Z";
-import * as Monitor from "./views/monitor.js?b=20260224T193343Z";
-import * as Maps from "./views/maps.js?b=20260224T193343Z";
-import * as Events from "./views/events.js?b=20260224T193343Z";
-import * as Health from "./views/health.js?b=20260224T193343Z";
-import * as Settings from "./views/settings.js?b=20260224T193343Z";
-import * as Manage from "./views/manage.js?b=20260224T193343Z";
-import * as Debug from "./views/debug.js?b=20260224T193343Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260224T193343Z";
-import * as QA from "./views/qa.js?b=20260224T193343Z";
-import * as Training from "./views/training.js?b=20260224T193343Z";
-import * as Calibration from "./views/calibration.js?b=20260224T193343Z";
-import * as Sandbox from "./views/sandbox.js?b=20260224T193343Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T195240Z";
+import { HELP } from "./help_content.js?b=20260224T195240Z";
+import * as Follow from "./views/follow.js?b=20260224T195240Z";
+import * as Overview from "./views/overview.js?b=20260224T195240Z";
+import * as Objects from "./views/objects.js?b=20260224T195240Z";
+import * as Devices from "./views/devices.js?b=20260224T195240Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260224T195240Z";
+import * as Presence from "./views/presence.js?b=20260224T195240Z";
+import * as Zones from "./views/zones.js?b=20260224T195240Z";
+import * as Insights from "./views/insights.js?b=20260224T195240Z";
+import * as History from "./views/history.js?b=20260224T195240Z";
+import * as Monitor from "./views/monitor.js?b=20260224T195240Z";
+import * as Maps from "./views/maps.js?b=20260224T195240Z";
+import * as Events from "./views/events.js?b=20260224T195240Z";
+import * as Health from "./views/health.js?b=20260224T195240Z";
+import * as Settings from "./views/settings.js?b=20260224T195240Z";
+import * as Manage from "./views/manage.js?b=20260224T195240Z";
+import * as Debug from "./views/debug.js?b=20260224T195240Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260224T195240Z";
+import * as QA from "./views/qa.js?b=20260224T195240Z";
+import * as Training from "./views/training.js?b=20260224T195240Z";
+import * as Calibration from "./views/calibration.js?b=20260224T195240Z";
+import * as Sandbox from "./views/sandbox.js?b=20260224T195240Z";
 
-const APP_VERSION = "0.4.62";
+const APP_VERSION = "0.4.63";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260224T193343Z";
+const BUILD_ID = "20260224T195240Z";
 
 const VIEWS = {
   follow: Follow,
@@ -131,6 +131,18 @@ function el(tag, attrs={}, children=[]){
     else n.appendChild(c);
   }
   return n;
+}
+
+// Deterministic short ID for a BLE radio: letter-number-letter (e.g. "A3B")
+// Stable across sessions — derived solely from the source string.
+function radioShortId(source){
+  let h = 5381;
+  const s = String(source || "");
+  for(let i = 0; i < s.length; i++) h = (((h * 33) >>> 0) ^ s.charCodeAt(i)) >>> 0;
+  const L1 = String.fromCharCode(65 + (h % 26));
+  const N  = (h >>> 5) % 10;
+  const L2 = String.fromCharCode(65 + ((h >>> 9) % 26));
+  return `${L1}${N}${L2}`;
 }
 
 function _hash32(str){
@@ -540,6 +552,7 @@ class PadSpanHaApp extends HTMLElement {
       helpers: {
         el, esc, pill,
         HELP,
+        radioShortId,
         roomColor: (n)=>roomColor(n, this.state.model),
         helpBtn: (key)=>{
           const b = document.createElement("button");
@@ -578,6 +591,7 @@ class PadSpanHaApp extends HTMLElement {
         },
         tagObjectPrompt: (addr, currentLabel)=>this._tagObjectPrompt(addr, currentLabel),
         radioAreaSet: async (payload)=>await this._callWS({ type:"padspan_ha/radio_area_set", ...payload }),
+        radioLostSet: async (source, lost)=>await this._callWS({ type:"padspan_ha/radio_lost_set", source, lost }),
         refreshSnapshot: async ()=>{ await this._getLiveSnapshot(); this._renderCurrentView(); },
         followAlertSave: async (payload)=>await this._callWS({ type:"padspan_ha/follow_alert_save", ...payload }),
         showHelp: (key)=>this._showHelp(key),
@@ -970,22 +984,51 @@ class PadSpanHaApp extends HTMLElement {
     }).sort((a,b) => (b.srcRssi ?? -999) - (a.srcRssi ?? -999));
 
     const name = scanner.name || scanner.source || "Scanner";
+    const sid  = radioShortId(scanner.source || "");
     const body = el("div", {style:"display:flex;flex-direction:column;gap:14px"});
 
-    // Status badges
-    const statusRow = el("div", {style:"display:flex;gap:8px;flex-wrap:wrap"});
+    // Status badges (include short ID and lost status)
+    const statusRow = el("div", {style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center"});
+    statusRow.appendChild(el("span", {class:"pill", style:"font-family:monospace;font-weight:700;font-size:13px;letter-spacing:.04em"}, sid));
+    if(scanner.lost) statusRow.appendChild(el("span", {class:"badge warn", style:"background:rgba(245,158,11,.18)"}, "⚠ Lost"));
     if(scanner.scanning != null) statusRow.appendChild(el("span", {class:scanner.scanning?"badge":"badge warn"}, scanner.scanning?"scanning":"not scanning"));
     if(scanner.connectable != null) statusRow.appendChild(el("span", {class:"badge"}, scanner.connectable?"connectable":"not connectable"));
     if(scanner.adapter) statusRow.appendChild(el("span", {class:"muted", style:"font-family:monospace;font-size:12px"}, `adapter: ${scanner.adapter}`));
     body.appendChild(statusRow);
 
-    // Area
-    body.appendChild(el("div", {}, [
-      el("div", {style:"font-weight:600;margin-bottom:4px"}, "Area assignment"),
+    // Area + Lost toggle
+    const areaSection = el("div", {});
+    areaSection.appendChild(el("div", {style:"font-weight:600;margin-bottom:6px"}, "Area assignment"));
+    const areaRow = el("div", {style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap"});
+    areaRow.appendChild(
       scanner.area_name
         ? el("span", {class:"badge"}, scanner.area_name)
-        : el("span", {class:"muted"}, "Not assigned to an area"),
-    ]));
+        : el("span", {class:"muted"}, "Not assigned to an area")
+    );
+    // Lost toggle button
+    const lostBtn = el("button", {class:"btn tiny"+(scanner.lost?" primary":""),
+      style: scanner.lost ? "border-color:#f59e0b;color:#f59e0b" : "border-color:#7d5c2b"
+    }, scanner.lost ? "Restore Radio" : "Mark as Lost");
+    lostBtn.addEventListener("click", async ()=>{
+      lostBtn.disabled = true;
+      try {
+        await this._callWS({ type:"padspan_ha/radio_lost_set", source: scanner.source||"", lost: !scanner.lost });
+        this._closeModal();
+        this._toast(scanner.lost ? "Radio restored." : "Radio marked as Lost.");
+        await this._getLiveSnapshot();
+        this._renderCurrentView();
+      } catch(e) {
+        lostBtn.disabled = false;
+        this._toast("Failed to update lost status.", true);
+      }
+    });
+    areaRow.appendChild(lostBtn);
+    areaSection.appendChild(areaRow);
+    if(scanner.lost && scanner.lost_since){
+      areaSection.appendChild(el("div", {class:"muted", style:"font-size:11px;margin-top:4px"},
+        `Marked lost: ${new Date(scanner.lost_since).toLocaleString()}`));
+    }
+    body.appendChild(areaSection);
 
     // Visible devices
     const devSection = el("div", {}, [

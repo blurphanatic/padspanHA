@@ -132,6 +132,8 @@ export function render(ctx){
   }
 
   function openAreaAssign(radio, areas){
+    const { radioShortId } = ctx.helpers;
+    const sid = radioShortId ? radioShortId(radio.source||"") : "";
     if(dataMode !== "live"){
       ctx.toast("Area assignment requires Live mode.", true);
       return;
@@ -140,35 +142,51 @@ export function render(ctx){
     sel.appendChild(el("option",{value:""},"— No area (clear) —"));
     for(const a of areas){
       const opt = el("option",{value:a}, a);
-      if(a === radio.area_name) opt.selected = true;
+      if(a === radio.area_name && !radio.lost) opt.selected = true;
       sel.appendChild(opt);
     }
+    // Lost sentinel — always at bottom, visually distinct
+    const lostOpt = el("option",{value:"__lost__"}, "⚠  Lost  —  exclude from location math");
+    lostOpt.style.color = "#f59e0b";
+    if(radio.lost) lostOpt.selected = true;
+    sel.appendChild(lostOpt);
+
     const status = el("div",{class:"muted", style:"min-height:20px;margin-top:6px"});
     const saveBtn = el("button",{class:"btn"}, "Save");
     const cancelBtn = el("button",{class:"btn inline"}, "Cancel");
     cancelBtn.addEventListener("click", ()=>ctx.actions.closeModal());
     saveBtn.addEventListener("click", async ()=>{
-      const area_name = sel.value;
+      const v = sel.value;
       saveBtn.disabled = true;
       try {
-        const payload = { area_name };
-        if(radio.device_id) payload.device_id = radio.device_id;
-        else if(radio.source) payload.source = radio.source;
-        await ctx.actions.radioAreaSet(payload);
-        ctx.actions.closeModal();
-        ctx.toast(area_name ? `Area set to "${area_name}"` : "Area cleared");
+        if(v === "__lost__"){
+          await ctx.actions.radioLostSet(radio.source, true);
+          ctx.actions.closeModal();
+          ctx.toast(`"${radio.name || radio.source}" marked as Lost`);
+        } else {
+          // Restore from lost if needed, then set area
+          if(radio.lost) await ctx.actions.radioLostSet(radio.source, false);
+          const payload = { area_name: v };
+          if(radio.device_id) payload.device_id = radio.device_id;
+          else if(radio.source) payload.source = radio.source;
+          await ctx.actions.radioAreaSet(payload);
+          ctx.actions.closeModal();
+          ctx.toast(v ? `Area set to "${v}"` : "Area cleared");
+        }
         await ctx.actions.refreshSnapshot();
       } catch(e) {
-        status.textContent = "Failed to update area. Check HA logs.";
+        status.textContent = "Failed to update. Check HA logs.";
         saveBtn.disabled = false;
       }
     });
+    const radioLabel = [sid, radio.name || radio.source].filter(Boolean).join("  ·  ");
     const body = el("div",{},[
-      el("div",{class:"muted", style:"margin-bottom:8px"}, `Radio: ${radio.name || radio.source}`),
+      el("div",{class:"muted", style:"margin-bottom:8px"}, `Radio: ${radioLabel}`),
+      radio.lost ? el("div",{style:"color:#f59e0b;font-size:12px;margin-bottom:8px"}, "⚠ Currently marked as Lost. Select a room to restore it.") : null,
       el("div",{style:"color:#94a3b8;font-size:12px;margin-bottom:10px"}, areas.length ? "Select an HA area for this scanner:" : "No HA areas found. Add areas in HA Settings → Areas & Zones."),
       el("div",{class:"row",style:"gap:8px;flex-wrap:wrap"},[sel, saveBtn, cancelBtn]),
       status,
-    ]);
+    ].filter(Boolean));
     ctx.actions.openModal("Assign Area", body, `HA area for "${radio.name || radio.source}"`);
   }
 

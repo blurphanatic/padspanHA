@@ -93,8 +93,8 @@ def update_version_files(version, build_id):
     # calibration_panel.js — same stamp updates
     if CALIB_JS.exists():
         content = CALIB_JS.read_text(encoding="utf-8")
-        content = re.sub(r'const APP_VERSION = "[^"]+"', f'const APP_VERSION = "{version}"', content)
-        content = re.sub(r'const BUILD_ID = "[^"]+"',    f'const BUILD_ID = "{build_id}"',    content)
+        content = re.sub(r'const APP_VERSION\s*=\s*"[^"]+"', f'const APP_VERSION = "{version}"', content)
+        content = re.sub(r'const BUILD_ID\s*=\s*"[^"]+"',    f'const BUILD_ID = "{build_id}"',    content)
         content = re.sub(r'\?b=\w+', f'?b={build_id}', content)
         CALIB_JS.write_text(content, encoding="utf-8")
         print(f"  calibration_panel.js -> {version} / {build_id}")

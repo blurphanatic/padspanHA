@@ -522,18 +522,27 @@ function _edit(ctx, map){
       // Live BLE Radios panel — shows actual HA BLE scanners for placement
       const snap2 = (ctx.state.live && ctx.state.live.snapshot) || null;
       const liveRadios = (snap2 && snap2.ble && Array.isArray(snap2.ble.radios)) ? snap2.ble.radios : [];
+      const _sid = ctx.helpers.radioShortId || (src => src.slice(0,3).toUpperCase());
       right.appendChild(el("div",{class:"muted", style:"margin-top:14px;font-size:12px;font-weight:600"}, "Live BLE Radios"));
       if(liveRadios.length){
         right.appendChild(el("div",{class:"muted", style:"font-size:11px;margin-top:2px;margin-bottom:6px"}, "Click Add to place on map, then drag to position."));
         const radList = el("div",{style:"display:flex;flex-direction:column;gap:5px"});
         for(const radio of liveRadios){
           const alreadyPlaced = ctx.state.maps._draftReceivers.some(r => r.label === radio.name || r.id === radio.source);
-          const row = el("div",{style:"display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid #1b3526;border-radius:6px;background:#0a150e"});
-          const nameEl = el("div",{style:"flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, radio.name || radio.source || "Unknown");
-          const areaEl = el("div",{class:"muted", style:"font-size:10px;white-space:nowrap"}, radio.area_name || "—");
-          row.appendChild(nameEl);
-          row.appendChild(areaEl);
-          if(alreadyPlaced){
+          const sid = _sid(radio.source || "");
+          const borderColor = radio.lost ? "#7d5c2b" : "#1b3526";
+          const bg = radio.lost ? "rgba(245,158,11,.06)" : "#0a150e";
+          const row = el("div",{style:`display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid ${borderColor};border-radius:6px;background:${bg};opacity:${radio.lost?0.75:1}`});
+          // ID pill
+          row.appendChild(el("span",{style:"font-family:monospace;font-weight:700;font-size:10px;color:#94a3b8;white-space:nowrap"}, sid));
+          // Name + room
+          const info = el("div",{style:"flex:1;min-width:0"});
+          info.appendChild(el("div",{style:"font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, radio.name || radio.source || "Unknown"));
+          info.appendChild(el("div",{class:"muted",style:"font-size:10px"}, radio.area_name || "no room"));
+          row.appendChild(info);
+          if(radio.lost){
+            row.appendChild(el("span",{style:"font-size:10px;color:#f59e0b;white-space:nowrap"}, "⚠ Lost"));
+          } else if(alreadyPlaced){
             row.appendChild(el("span",{style:"font-size:10px;color:#52b788;white-space:nowrap"}, "✓ placed"));
           } else {
             row.appendChild(el("button",{class:"btn inline", style:"font-size:10px;padding:2px 8px;white-space:nowrap", onclick:()=>{

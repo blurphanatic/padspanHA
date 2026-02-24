@@ -146,7 +146,7 @@ export function render(ctx) {
 }
 
 function renderScanners(ctx, radios, sources) {
-  const { el } = ctx.helpers;
+  const { el, radioShortId } = ctx.helpers;
 
   if (!radios.length) {
     return el("div", { class: "card" }, [
@@ -156,20 +156,30 @@ function renderScanners(ctx, radios, sources) {
   }
 
   const row = r => {
-    const src = String(r.source || "");
+    const src  = String(r.source || "");
     const name = String(r.name || "");
+    const sid  = radioShortId ? radioShortId(src) : "";
     const meta = [];
     if (r.adapter) meta.push(`adapter: ${r.adapter}`);
     if (r.scanning != null) meta.push(`scanning: ${r.scanning ? "yes" : "no"}`);
     if (r.connectable != null) meta.push(`connectable: ${r.connectable ? "yes" : "no"}`);
 
-    const div = el("div", { class: "bt-scanner-row" }, [
-      el("div", { class: "bt-scanner-main" }, [
-        el("div", { class: "bt-scanner-name" }, name || src || "Scanner"),
-        el("div", { class: "bt-scanner-src" }, src || "—"),
-      ]),
+    const nameRow = el("div", { style: "display:flex;align-items:center;gap:6px;flex-wrap:wrap" }, [
+      sid ? el("span", { class: "pill", style: "font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px" }, sid) : null,
+      el("div", { class: "bt-scanner-name" }, name || src || "Scanner"),
+      r.lost ? el("span", { class: "badge warn", style: "font-size:10px;background:rgba(245,158,11,.18);color:#f59e0b" }, "⚠ Lost") : null,
+    ].filter(Boolean));
+
+    const subRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px" }, [
+      r.area_name ? el("span", { class: "pill", style: "font-size:10px" }, r.area_name) : el("span", { class: "muted", style: "font-size:10px" }, "no room"),
+      el("div", { class: "bt-scanner-src", style: "font-size:10px" }, src || "—"),
+    ]);
+
+    const div = el("div", { class: "bt-scanner-row" + (r.lost ? " warn" : "") }, [
+      el("div", { class: "bt-scanner-main" }, [ nameRow, subRow ]),
       el("div", { class: "bt-scanner-meta" }, meta.join(" • ") || "—"),
     ]);
+    if(r.lost) div.style.opacity = "0.7";
     div.style.cursor = "pointer";
     div.title = "Click for scanner details";
     div.addEventListener("click", () => ctx.actions.showScannerDetail(r));
