@@ -562,7 +562,7 @@ export function render(ctx){
             const cy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
             const [lwx,lwy]=mapPt(cx,cy);
             const [lix,liy]=iso(lwx,lwy,z);
-            s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="8" font-weight="600">${_esc(room)}</text>`;
+            s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
           }
           // Placed receivers
           for(const r of (m.receivers||[])){
