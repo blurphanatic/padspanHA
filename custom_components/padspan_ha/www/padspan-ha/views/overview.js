@@ -510,6 +510,98 @@ export function render(ctx){
     if(ctx.state._overviewIsoFocus === undefined) ctx.state._overviewIsoFocus = null;
     const slabWZ = 7/FLOOR_GAP;
     const hasBounds = sorted.some(m=>Object.keys(m.room_bounds||{}).length>0);
+
+    // ── Fingerprint positioning ─────────────────────────────────────────────
+    // Load calibration data the first time (non-blocking; re-renders when ready)
+    if(!ctx.state.calibration){
+      ctx.actions.calibrationGet().then(d=>{
+        ctx.state.calibration = d;
+        ctx.actions.renderRooms();
+      }).catch(()=>{});
+    }
+    const calPoints = (ctx.state.calibration?.points) || [];
+
+    // Per-map coord transform: image-fraction (0-1) → ISO screen pixel
+    // Uses the same mapPt formula as the room-polygon renderer so positions align exactly.
+    const mapTransforms = {};
+    for(const m of sorted){
+      const stk=m.stack||{}, z=stk.z_level||0, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+      const ar=(m.image?.height||600)/(m.image?.width||800);
+      const rotRad=(stk.rotation||0)*Math.PI/180;
+      mapTransforms[m.id]={z, mapPt:(px,py)=>{
+        const dx=(px-0.5)*sc, dy=(py-0.5)*sc*ar;
+        const rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad);
+        const ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);
+        return[(0.5+ox)+rx, ar*(0.5+oy_)+ry];
+      }};
+    }
+
+    // Collect per-source RSSI for an object from the live advertisement stream.
+    // obj.sources in the snapshot is a string array; the actual RSSI values are in
+    // snap.ble.advertisements (one row per {address, source}).
+    function _getObjReadings(obj){
+      const addr = obj.address||"";
+      if(!addr) return {};
+      const readings={};
+      for(const ad of (liveSnap?.ble?.advertisements||[])){
+        if(ad.address!==addr || !ad.source || ad.rssi==null) continue;
+        if(!readings[ad.source] || (ad.age_s||0) < readings[ad.source].age_s)
+          readings[ad.source]={rssi:ad.rssi, age_s:ad.age_s||0};
+      }
+      return readings;
+    }
+
+    // k-NN fingerprint match across all calibration points visible on current maps.
+    // Returns {sx, sy, z, dist, confidence} (ISO screen coords) or null.
+    // Age-decay: readings >45 s old contribute less weight.
+    // Missing-source penalty: 28 dBm per calibration source absent from current scan.
+    function _matchFingerprint(readings){
+      if(!calPoints.length) return null;
+      const obsSrcs = Object.keys(readings);
+      if(!obsSrcs.length) return null;
+      const scored=[];
+      for(const p of calPoints){
+        if(!mapTransforms[p.map_id]) continue;
+        const cal=p.scanner_readings||{};
+        let sumSq=0, count=0;
+        for(const src of obsSrcs){
+          if(cal[src]?.rssi!=null){
+            const ageW = Math.exp(-(readings[src].age_s||0)/45);
+            const diff  = readings[src].rssi - cal[src].rssi;
+            sumSq += diff*diff * Math.max(ageW, 0.1);
+            count++;
+          }
+        }
+        if(count<1) continue;
+        const missing = Object.keys(cal).length - count;
+        const dist = Math.sqrt(sumSq/count) + missing*28;
+        scored.push({p, dist});
+      }
+      if(!scored.length) return null;
+      scored.sort((a,b)=>a.dist-b.dist);
+      const k=Math.min(5, scored.length);
+      // Find dominant map (highest total weight among top-k)
+      const mapW={};
+      for(let i=0;i<k;i++){
+        const {p,dist}=scored[i]; const w=1/Math.max(dist*dist,0.01);
+        mapW[p.map_id]=(mapW[p.map_id]||0)+w;
+      }
+      let bestMap=scored[0].p.map_id, bestW=0;
+      for(const [mid,w] of Object.entries(mapW)){if(w>bestW){bestW=w;bestMap=mid;}}
+      // Weighted centroid using only points on the dominant map
+      let wx=0, wy=0, wTotal=0;
+      for(let i=0;i<k;i++){
+        const {p,dist}=scored[i];
+        if(p.map_id!==bestMap) continue;
+        const w=1/Math.max(dist*dist,0.01);
+        wx+=p.x_frac*w; wy+=p.y_frac*w; wTotal+=w;
+      }
+      if(!wTotal) return null;
+      const tf=mapTransforms[bestMap];
+      const [lwx,lwy]=tf.mapPt(wx/wTotal, wy/wTotal);
+      const [sx,sy]=iso(lwx, lwy, tf.z);
+      return{sx, sy, z:tf.z, dist:scored[0].dist, confidence:Math.max(0,1-scored[0].dist/50)};
+    }
     const LEGEND_H = sortedIsoLevels.length * 30 + 24;
 
     const buildIsoSVG = (focusZ)=>{
@@ -580,26 +672,27 @@ export function render(ctx){
         s += `</g>`;
       }
 
-      // Live objects — only show followed beacons on the 3D map
+      // Followed beacons — fingerprint-positioned using all live RSSI data
       const followedAddrs = ctx.state.followedAddrs || new Set();
       const followedObjects = allObjects.filter(o =>
         followedAddrs.has(o.address || "") || followedAddrs.has(o.entity_id || "")
       );
-      const objsByRoom = {};
-      for(const o of followedObjects){ const r=o.room; if(r){(objsByRoom[r]=objsByRoom[r]||[]).push(o);} }
-      for(const [room, objs] of Object.entries(objsByRoom)){
-        const basePos = roomIsoPos[room]; if(!basePos) continue;
-        const [bx,by] = basePos;
-        const total = objs.length;
-        objs.slice(0,8).forEach((o,idx)=>{
-          const angle = (idx/Math.max(total,1))*Math.PI*2;
-          const spread = Math.min(36, total*8);
-          const ox2 = Math.round(bx + Math.cos(angle)*spread);
-          const oy2 = Math.round(by + Math.sin(angle)*spread*0.5);
-          s += `<circle cx="${ox2}" cy="${oy2}" r="9" fill="#5eead4" opacity="0.95"/>`;
-          const lbl = (o.user_label||o.name||"?").substring(0,10);
-          s += `<text x="${ox2}" y="${oy2-13}" text-anchor="middle" fill="#5eead4" font-size="12" font-weight="600" opacity="0.95" paint-order="stroke" stroke="#071008" stroke-width="2">${_esc(lbl)}</text>`;
-        });
+      for(const o of followedObjects){
+        const readings = _getObjReadings(o);
+        const match    = _matchFingerprint(readings);
+        const lbl = (o.user_label||o.name||"?").substring(0,12);
+        let bx, by;
+        if(match){
+          bx=match.sx; by=match.sy;
+          // Dashed uncertainty ring: tight+bright = confident; wide+faint = uncertain
+          const cr = Math.round(8 + (1-match.confidence)*22);
+          const op = (0.25 + match.confidence*0.6).toFixed(2);
+          s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="#5eead4" stroke-width="1.2" stroke-dasharray="4,3" opacity="${op}"/>`;
+        } else if(o.room && roomIsoPos[o.room]){
+          [bx,by] = roomIsoPos[o.room];
+        } else { continue; }
+        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="8" fill="#5eead4" opacity="0.95"/>`;
+        s += `<text x="${Math.round(bx)}" y="${Math.round(by)-12}" text-anchor="middle" fill="#5eead4" font-size="10" font-weight="600" opacity="0.95" paint-order="stroke" stroke="#071008" stroke-width="2">${_esc(lbl)}</text>`;
       }
 
       // Live BLE radios — rings only, no text labels
