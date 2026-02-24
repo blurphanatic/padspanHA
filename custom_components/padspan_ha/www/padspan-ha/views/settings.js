@@ -277,6 +277,95 @@ function _scannerMap(ctx, el, haFloors){
     wrap.appendChild(unplacedCard);
   }
 
+  // ── Replace Scanner card ─────────────────────────────────────────────────
+  // Collects all source IDs ever seen in calibration data + live radios
+  const calSources = new Set();
+  for(const pt of calData.points || []){
+    for(const sr of pt.scanner_readings || []){ if(sr.source) calSources.add(sr.source); }
+  }
+  for(const r of radios){ if(r.source) calSources.add(r.source); }
+
+  if(calSources.size >= 2){
+    const swapCard = el("div",{class:"card",style:"padding:10px"});
+    swapCard.appendChild(el("div",{style:"font-weight:700;font-size:12px;margin-bottom:4px"},"Replace Scanner"));
+    swapCard.appendChild(el("div",{style:"font-size:10px;color:#78909c;margin-bottom:8px;line-height:1.5"},
+      "Reassign all calibration data from one scanner to another — useful when a physical device is swapped out."));
+
+    // Helper: build an option element
+    const mkOpt = (val, label) => {
+      const o = document.createElement("option"); o.value=val; o.textContent=label; return o;
+    };
+    // Name lookup helper
+    const radioName = (src) => {
+      const r = radios.find(r=>r.source===src);
+      return r ? (r.area_name||r.area||r.name||src) : src;
+    };
+    const sortedSources = [...calSources].sort((a,b)=>radioName(a).localeCompare(radioName(b)));
+
+    const rowEl = el("div",{style:"display:grid;grid-template-columns:1fr auto 1fr;gap:6px;align-items:center;margin-bottom:8px"});
+
+    const oldSel = document.createElement("select");
+    oldSel.style.cssText = "font-size:11px;width:100%";
+    oldSel.appendChild(mkOpt("","— old radio —"));
+    for(const src of sortedSources) oldSel.appendChild(mkOpt(src, radioName(src)));
+
+    const arrowEl = el("div",{style:"font-size:14px;color:#78909c;text-align:center"},"→");
+
+    const newSel = document.createElement("select");
+    newSel.style.cssText = "font-size:11px;width:100%";
+    newSel.appendChild(mkOpt("","— new radio —"));
+    for(const src of sortedSources) newSel.appendChild(mkOpt(src, radioName(src)));
+
+    rowEl.appendChild(oldSel);
+    rowEl.appendChild(arrowEl);
+    rowEl.appendChild(newSel);
+    swapCard.appendChild(rowEl);
+
+    // Summary line (updates when selects change)
+    const summaryEl = el("div",{style:"font-size:10px;color:#78909c;margin-bottom:8px;min-height:14px"});
+    const updateSummary = () => {
+      if(!oldSel.value || !newSel.value || oldSel.value === newSel.value){
+        summaryEl.textContent = "";
+        return;
+      }
+      const pts = (calData.points||[]).filter(pt =>
+        (pt.scanner_readings||[]).some(sr=>sr.source===oldSel.value)
+      ).length;
+      summaryEl.textContent = `Will update ${pts} calibration point${pts!==1?"s":""}. This cannot be undone.`;
+      summaryEl.style.color = pts > 0 ? "#f59e0b" : "#78909c";
+    };
+    oldSel.addEventListener("change", updateSummary);
+    newSel.addEventListener("change", updateSummary);
+    swapCard.appendChild(summaryEl);
+
+    // Swap button
+    const swapBtnWrap = el("div");
+    const makeSwapBtn = () => {
+      const btn = el("button",{class:"btn inline",style:"font-size:11px;width:100%"},"Swap Readings");
+      btn.addEventListener("click", async () => {
+        const old_source = oldSel.value;
+        const new_source = newSel.value;
+        if(!old_source || !new_source){ ctx.toast("Select both radios first.", true); return; }
+        if(old_source === new_source){ ctx.toast("Old and new radio must be different.", true); return; }
+        btn.disabled = true; btn.textContent = "Swapping…";
+        try {
+          const res = await ctx.actions.calibrationSwapRadio(old_source, new_source);
+          ctx.state.calibration = null;  // force reload
+          ctx.toast(`Swapped ${res.updated_readings} reading${res.updated_readings!==1?"s":""} from ${radioName(old_source)} → ${radioName(new_source)}.`);
+          ctx.actions.renderRooms();
+        } catch(e){
+          ctx.toast("Swap failed: " + String(e), true);
+          swapBtnWrap.innerHTML = "";
+          swapBtnWrap.appendChild(makeSwapBtn());
+        }
+      });
+      return btn;
+    };
+    swapBtnWrap.appendChild(makeSwapBtn());
+    swapCard.appendChild(swapBtnWrap);
+    wrap.appendChild(swapCard);
+  }
+
   // Reload button
   wrap.appendChild(el("div",{style:"text-align:center"},[
     el("button",{class:"btn inline",style:"font-size:11px",

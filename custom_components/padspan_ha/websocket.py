@@ -55,6 +55,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_calibration_delete_point)
     websocket_api.async_register_command(hass, ws_calibration_clear)
     websocket_api.async_register_command(hass, ws_calibration_compute_model)
+    websocket_api.async_register_command(hass, ws_calibration_swap_radio)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -1286,3 +1287,52 @@ async def ws_calibration_compute_model(hass: HomeAssistant, connection, msg) -> 
     except Exception as e:
         _LOGGER.error("PadSpan HA calibration_compute_model failed: %s", e)
         connection.send_error(msg["id"], "compute_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/calibration_swap_radio",
+        vol.Required("old_source"): str,
+        vol.Required("new_source"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_calibration_swap_radio(hass: HomeAssistant, connection, msg) -> None:
+    """Replace every occurrence of old_source with new_source in calibration data.
+
+    Useful when a physical scanner is replaced — all fingerprint readings recorded
+    under the old source ID are re-attributed to the new source ID.
+    """
+    old_source = str(msg.get("old_source") or "").strip()
+    new_source = str(msg.get("new_source") or "").strip()
+
+    if not old_source or not new_source:
+        connection.send_error(msg["id"], "invalid", "old_source and new_source are required")
+        return
+    if old_source == new_source:
+        connection.send_error(msg["id"], "invalid", "old_source and new_source must be different")
+        return
+
+    cal = await _get_cal_store(hass)
+    updated_readings = 0
+
+    for pt in cal.data.get("points", []):
+        for sr in pt.get("scanner_readings", []):
+            if sr.get("source") == old_source:
+                sr["source"] = new_source
+                updated_readings += 1
+
+    # Re-key model sub-dicts that are keyed by source
+    model = cal.data.get("model", {})
+    for section in ("path_loss", "scanner_stats"):
+        sec = model.get(section, {})
+        if old_source in sec:
+            sec[new_source] = sec.pop(old_source)
+
+    await cal.store.async_save(cal.data)
+    connection.send_result(msg["id"], {
+        "ok": True,
+        "old_source": old_source,
+        "new_source": new_source,
+        "updated_readings": updated_readings,
+    })
