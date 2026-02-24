@@ -287,22 +287,39 @@ export function render(ctx){
           try {
             await ctx.actions.entityDelete(o.entity_id);
             if(row){ row.style.opacity = "0.35"; row.style.transition = "opacity 0.4s"; }
-            statusDiv.textContent = "✓ Removed from registry";
+            statusDiv.textContent = "✓ Removed from HA registry";
             statusDiv.style.color = "#52b788";
             statusDiv.style.display = "";
             btnWrap.innerHTML = "";
             ctx.toast(`Deleted: ${o.entity_id}`);
             ctx.actions.refreshSnapshot().then(()=>ctx.actions.renderRooms()).catch(()=>{});
           } catch(e){
-            const errMsg = String(e).includes("not_found")
-              ? "Not found in entity registry (may be recreated by its integration)"
-              : String(e).slice(0,80);
-            statusDiv.textContent = "✗ " + errMsg;
-            statusDiv.style.color = "#f59e0b";
-            statusDiv.style.display = "";
-            btnWrap.innerHTML = "";
-            btnWrap.appendChild(makeDelBtn());
-            ctx.toast(`Delete failed: ${o.entity_id}`, true);
+            if(String(e).includes("not_found")){
+              // Not in HA registry — fall back to purging from PadSpan's object store
+              // (common for phantom sample-data entities that were stored as BLE labels)
+              try {
+                await ctx.actions.objectLabelDelete(o.entity_id);
+                if(row){ row.style.opacity = "0.35"; row.style.transition = "opacity 0.4s"; }
+                statusDiv.textContent = "✓ Purged from PadSpan tracking (was sample / phantom data)";
+                statusDiv.style.color = "#52b788";
+                statusDiv.style.display = "";
+                btnWrap.innerHTML = "";
+                ctx.toast(`Purged: ${o.entity_id}`);
+                ctx.actions.refreshSnapshot().then(()=>ctx.actions.renderRooms()).catch(()=>{});
+              } catch(e2){
+                statusDiv.textContent = "✗ Not found in HA or PadSpan — may already be gone";
+                statusDiv.style.color = "#94a3b8";
+                statusDiv.style.display = "";
+                btnWrap.innerHTML = "";
+              }
+            } else {
+              statusDiv.textContent = "✗ " + String(e).slice(0,80);
+              statusDiv.style.color = "#f59e0b";
+              statusDiv.style.display = "";
+              btnWrap.innerHTML = "";
+              btnWrap.appendChild(makeDelBtn());
+              ctx.toast(`Delete failed: ${o.entity_id}`, true);
+            }
           }
         };
 
@@ -340,6 +357,42 @@ export function render(ctx){
     renderEntList("");
     entCard.appendChild(entSearch);
     entCard.appendChild(entList);
+
+    // Bulk purge — tries HA entityDelete first, falls back to objectLabelDelete for phantom/sample entities
+    const purgeAllWrap = el("div",{style:"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"});
+    const makePurgeAllBtn = ()=>{
+      const b = el("button",{class:"btn"+(disabled?" disabled":"")},`Purge All (${entityObjs.length})`);
+      if(disabled) b.disabled = true;
+      b.addEventListener("click", ()=>{
+        purgeAllWrap.innerHTML = "";
+        const yes = el("button",{class:"btn",style:"background:#7f1d1d;border-color:#dc2626;white-space:nowrap"},`Yes, purge all ${entityObjs.length}`);
+        const no  = el("button",{class:"btn inline"},"Cancel");
+        yes.addEventListener("click", async()=>{
+          purgeAllWrap.innerHTML = "";
+          purgeAllWrap.appendChild(el("span",{class:"muted",style:"font-size:12px"},"Purging all…"));
+          let ok=0, fail=0;
+          for(const o of entityObjs){
+            try {
+              await ctx.actions.entityDelete(o.entity_id);
+              ok++;
+            } catch(e){
+              if(String(e).includes("not_found")){
+                // Phantom / sample entity — purge from PadSpan object store
+                try { await ctx.actions.objectLabelDelete(o.entity_id); ok++; } catch(e2){ fail++; }
+              } else { fail++; }
+            }
+          }
+          await ctx.actions.refreshSnapshot();
+          ctx.toast(`Purged ${ok} entit${ok===1?"y":"ies"}${fail?` (${fail} failed)`:""}.`);
+          ctx.actions.renderRooms();
+        });
+        no.addEventListener("click", ()=>{ purgeAllWrap.innerHTML = ""; purgeAllWrap.appendChild(makePurgeAllBtn()); });
+        purgeAllWrap.appendChild(yes); purgeAllWrap.appendChild(no);
+      });
+      return b;
+    };
+    purgeAllWrap.appendChild(makePurgeAllBtn());
+    entCard.appendChild(purgeAllWrap);
   } else {
     entCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},"No entities found in snapshot. Switch to Live mode to see real entities."));
   }
