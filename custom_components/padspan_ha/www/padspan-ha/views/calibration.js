@@ -9,7 +9,7 @@
 
 const GRID_N    = 10;    // 10×10 coverage grid
 const SIGMA_C   = 1.8;   // Gaussian sigma in cell units
-const POLL_MS   = 2500;  // RSSI poll interval during collection
+const POLL_MS   = 1000;  // RSSI poll interval during collection (1s = ~60 samples in 60s)
 
 // ── Exports ──────────────────────────────────────────────────────────────────
 export function render(ctx) {
@@ -234,9 +234,9 @@ function _setup(ctx, el, cs, calData) {
   const durCard = el("div", { class: "card" });
   durCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;margin-bottom:8px" }, "Collection Duration"));
   durCard.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:10px" },
-    "How long to sample RSSI at each calibration point. Longer = more samples = better accuracy. 15s is a good default."));
+    "How long to sample RSSI at each calibration point. Sampled every 1s — 30s gives ~30 samples, 60s gives ~60. 60s recommended for best accuracy."));
   const durRow = el("div", { style: "display:flex;gap:10px;flex-wrap:wrap" });
-  for (const d of [10, 15, 20, 30]) {
+  for (const d of [15, 30, 60, 90]) {
     const btn = el("button", {
       class: "btn" + (cs.duration === d ? "" : " inline"),
       style: "min-width:60px",
