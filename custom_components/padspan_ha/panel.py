@@ -21,7 +21,8 @@ _LOGGER = logging.getLogger(__name__)
 
 STATIC_URL = "/padspan_ha_static"
 ICON_STATIC_URL = "/padspan_ha_int"
-WEB_COMPONENT = "padspan-ha-app"
+WEB_COMPONENT       = "padspan-ha-app"
+CALIB_WEB_COMPONENT = "padspan-calib-app"
 
 async def _register_static(hass: HomeAssistant, static_dir: Path, url: str = STATIC_URL) -> None:
     try:
@@ -72,6 +73,20 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
             "title": "PadSpan HA",
             "icon": f"{STATIC_URL}/padspan-ha/assets/padspan-mark.svg",
             "logo": f"{STATIC_URL}/padspan-ha/assets/padspan-logo.svg",
+            "version": VERSION,
+        },
+    )
+
+    await _register_panel(
+        hass=hass,
+        webcomponent_name=CALIB_WEB_COMPONENT,
+        frontend_url_path="padspan-calibration",
+        sidebar_title="PadSpan Calib",
+        sidebar_icon="mdi:crosshairs-gps",
+        require_admin=False,
+        module_url=f"{STATIC_URL}/padspan-ha/calibration_panel.js?v={VERSION}&b={BUILD_ID}",
+        config={
+            "title": "PadSpan Calibration",
             "version": VERSION,
         },
     )
