@@ -783,6 +783,51 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     # Frontend "radios" should reflect actual Bluetooth scanners/adapters (not Bermuda tag devices).
     if "radios" not in snapshot:
         snapshot["radios"] = (snapshot.get("ble") or {}).get("radios") or []
+
+    # --- BLE room assignment ---
+    # BLE objects don't get a room from entity state.  Assign it here: the room is
+    # the HA area of whichever scanner hears the device with the strongest RSSI.
+    try:
+        radios = (snapshot.get("ble") or {}).get("radios") or []
+        source_to_area: dict[str, str] = {}
+        for r in radios:
+            src = r.get("source")
+            area = r.get("area_name") or r.get("area")
+            if src and area:
+                source_to_area[str(src)] = str(area)
+
+        if source_to_area:
+            ads_raw = (snapshot.get("ble") or {}).get("advertisements") or []
+            # Build {addr: {source: rssi}} from raw advertisements
+            addr_src_rssi: dict[str, dict[str, float]] = {}
+            for ad in ads_raw:
+                addr = str(ad.get("address") or "").upper()
+                src  = ad.get("source")
+                rssi = ad.get("rssi")
+                if addr and src and rssi is not None:
+                    addr_src_rssi.setdefault(addr, {})[str(src)] = float(rssi)
+
+            objects_list = (snapshot.get("objects") or {}).get("list") or []
+            for obj in objects_list:
+                if obj.get("room") or obj.get("kind") != "ble":
+                    continue
+                addr = str(obj.get("address") or "").upper()
+                if not addr:
+                    continue
+                src_map = addr_src_rssi.get(addr, {})
+                # Pick source with highest RSSI that has an area mapping
+                best_rssi: float | None = None
+                best_area: str | None = None
+                for src, rssi in src_map.items():
+                    area = source_to_area.get(src)
+                    if area and (best_rssi is None or rssi > best_rssi):
+                        best_rssi = rssi
+                        best_area = area
+                if best_area:
+                    obj["room"] = best_area
+    except Exception:
+        pass
+
     return snapshot
 
 @websocket_api.websocket_command({"type": "padspan_ha/settings_get"})

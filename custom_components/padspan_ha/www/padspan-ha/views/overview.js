@@ -677,22 +677,33 @@ export function render(ctx){
       const followedObjects = allObjects.filter(o =>
         followedAddrs.has(o.address || "") || followedAddrs.has(o.entity_id || "")
       );
+      // Bright gold (#fbbf24) — intentionally distinct from all other map elements:
+      // radios are green, rooms are per-room color, floor badges are LAYER_PAL.
+      const BEACON_CLR = "#fbbf24";
       for(const o of followedObjects){
         const readings = _getObjReadings(o);
         const match    = _matchFingerprint(readings);
-        const lbl = (o.user_label||o.name||"?").substring(0,12);
+        const lbl = (o.user_label||o.name||"?").substring(0,14);
         let bx, by;
         if(match){
           bx=match.sx; by=match.sy;
-          // Dashed uncertainty ring: tight+bright = confident; wide+faint = uncertain
-          const cr = Math.round(8 + (1-match.confidence)*22);
-          const op = (0.25 + match.confidence*0.6).toFixed(2);
-          s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="#5eead4" stroke-width="1.2" stroke-dasharray="4,3" opacity="${op}"/>`;
+          // Dashed uncertainty ring: tight+opaque = confident; wide+faint = uncertain
+          const cr = Math.round(10 + (1-match.confidence)*24);
+          const op = (0.3 + match.confidence*0.55).toFixed(2);
+          s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
         } else if(o.room && roomIsoPos[o.room]){
           [bx,by] = roomIsoPos[o.room];
         } else { continue; }
-        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="8" fill="#5eead4" opacity="0.95"/>`;
-        s += `<text x="${Math.round(bx)}" y="${Math.round(by)-12}" text-anchor="middle" fill="#5eead4" font-size="10" font-weight="600" opacity="0.95" paint-order="stroke" stroke="#071008" stroke-width="2">${_esc(lbl)}</text>`;
+        // Outer glow ring
+        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="14" fill="${BEACON_CLR}" opacity="0.18"/>`;
+        // Main dot
+        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="10" fill="${BEACON_CLR}" stroke="#071008" stroke-width="1.5" opacity="0.97"/>`;
+        // Dark centre pip
+        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="3" fill="#071008" opacity="0.7"/>`;
+        // Label: dark backing rect + bright text
+        const lblW = Math.min(lbl.length * 7 + 10, 110);
+        s += `<rect x="${Math.round(bx)-lblW/2}" y="${Math.round(by)-30}" width="${lblW}" height="14" rx="3" fill="#071008" opacity="0.7"/>`;
+        s += `<text x="${Math.round(bx)}" y="${Math.round(by)-19}" text-anchor="middle" fill="${BEACON_CLR}" font-size="11" font-weight="700">${_esc(lbl)}</text>`;
       }
 
       // Live BLE radios — rings only, no text labels
