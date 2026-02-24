@@ -21,6 +21,7 @@ from .calibration_store import CalibrationStore
 from .build_info import BUILD_ID, BUILD_VERSION
 from .bluetooth_live import get_bluetooth_live
 from .vendor_lookup import async_lookup_vendor
+from .private_ble_resolver import get_resolver as _get_ble_resolver
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -687,6 +688,27 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 pfx = ":".join(parts[:3])
                 prefix_counts[pfx] = prefix_counts.get(pfx, 0) + 1
 
+        # --- Private BLE Device / IRK resolution ---
+        # Resolve Resolvable Private Addresses (RPAs) from modern phones to canonical
+        # identities registered in HA's built-in 'private_ble_device' component.
+        # Also parse Apple iBeacon UUIDs from manufacturer data for HA Companion App.
+        canonical_by_addr: dict[str, dict[str, Any]] = {}   # addr → {canonical_id, name, kind}
+        ibeacon_by_addr: dict[str, dict[str, Any]] = {}     # addr → {uuid, major, minor}
+        try:
+            resolver = await _get_ble_resolver(hass)
+            if resolver.has_devices():
+                for addr, rec in ble_by_addr.items():
+                    resolved = resolver.resolve_address(addr)
+                    if resolved:
+                        canonical_by_addr[addr] = resolved
+            # Parse iBeacon from every advertisement (independent of IRK resolution)
+            for addr, rec in ble_by_addr.items():
+                ib = resolver.parse_ibeacon(rec.get("manufacturer_data") or {})
+                if ib:
+                    ibeacon_by_addr[addr] = ib
+        except Exception:
+            pass
+
         objects: list[dict[str, Any]] = []
 
         # (A) Entity-based objects (bermuda tags, device_trackers, etc.)
@@ -726,11 +748,18 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             prefix = ":".join(parts[:3]) if len(parts) >= 3 else ""
             identified = (addr in addr_to_device) or (addr in addr_to_entities)
 
-            objects.append({
+            canonical = canonical_by_addr.get(addr)
+            ibeacon   = ibeacon_by_addr.get(addr)
+
+            # If this address resolved to a Private BLE Device identity, promote it.
+            if canonical:
+                identified = True
+
+            obj: dict[str, Any] = {
                 "key": f"ble:{addr}",
-                "kind": "ble",
+                "kind": "private_ble" if canonical else "ble",
                 "address": addr,
-                "name": rec.get("name") or addr,
+                "name": (canonical or {}).get("name") or rec.get("name") or addr,
                 "rssi": rec.get("rssi"),
                 "last_seen": rec.get("last_seen"),
                 "age_s": rec.get("age_s"),
@@ -743,7 +772,15 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "identified": bool(identified),
                 "linked_entities": sorted(list(set(addr_to_entities.get(addr, [])))),
                 "device": addr_to_device.get(addr),
-            })
+            }
+            if canonical:
+                obj["canonical_id"]   = canonical["canonical_id"]
+                obj["private_ble_name"] = canonical["name"]
+            if ibeacon:
+                obj["ibeacon_uuid"]  = ibeacon["uuid"]
+                obj["ibeacon_major"] = ibeacon["major"]
+                obj["ibeacon_minor"] = ibeacon["minor"]
+            objects.append(obj)
 
         # Attach user labels from ObjectStore (labels make BLE objects "identified")
         try:
@@ -771,7 +808,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "identified": len(identified),
                 "unidentified": len(unidentified),
                 "entities": len([o for o in objects if o.get("kind") == "entity"]),
-                "ble": len([o for o in objects if o.get("kind") == "ble"]),
+                "ble": len([o for o in objects if o.get("kind") in ("ble", "private_ble")]),
+                "private_ble": len([o for o in objects if o.get("kind") == "private_ble"]),
                 "common_prefixes": common_prefixes,  # prefix -> count (>=3)
             },
         }
@@ -809,7 +847,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
             objects_list = (snapshot.get("objects") or {}).get("list") or []
             for obj in objects_list:
-                if obj.get("room") or obj.get("kind") != "ble":
+                if obj.get("room") or obj.get("kind") not in ("ble", "private_ble"):
                     continue
                 addr = str(obj.get("address") or "").upper()
                 if not addr:
