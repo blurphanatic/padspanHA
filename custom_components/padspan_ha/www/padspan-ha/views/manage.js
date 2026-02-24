@@ -50,6 +50,134 @@ export function render(ctx){
 
   const disabled = dataMode !== "live";
 
+  // ── Orphan Room Polygons ──────────────────────────────────────────────────────
+  {
+    const allMaps = ctx.state.maps?.list || [];
+    const validRooms = new Set([
+      ...(ctx.state.model?.areas || []).map(a => a.name),
+      ...Object.keys(ctx.state.roomTagMap || {}),
+    ]);
+
+    const orphans = []; // {map, room, b}
+    for(const m of allMaps){
+      for(const [room, b] of Object.entries(m.room_bounds || {})){
+        if(b && b.type === "poly" && !validRooms.has(room)){
+          orphans.push({map: m, room, b});
+        }
+      }
+    }
+
+    if(orphans.length){
+      const orphCard = el("div",{class:"card",style:"border-color:#f59e0b"});
+      orphCard.appendChild(el("div",{class:"row",style:"margin-bottom:6px"},[
+        el("div",{style:"font-weight:700;font-size:14px"},"Orphan Room Polygons"),
+        el("span",{class:"badge warn",style:"margin-left:8px"},`${orphans.length} found`),
+      ]));
+      orphCard.appendChild(el("div",{style:"font-size:12px;color:#f59e0b;margin-bottom:10px"},
+        "These room polygons are in your map data but the room name does not exist in your HA area registry. They are likely ghost entries from sample mode."
+      ));
+
+      const tbody = el("tbody");
+      for(const {map, room, b} of orphans){
+        const bw = el("div",{style:"display:flex;gap:4px"});
+        const makeBtn = ()=>{
+          const btn = el("button",{class:"btn tiny"+(disabled?" disabled":"")},"Delete");
+          if(disabled) btn.disabled = true;
+          btn.addEventListener("click", ()=>{
+            bw.innerHTML = "";
+            const yes = el("button",{class:"btn tiny",style:"background:#7f1d1d;border-color:#dc2626;white-space:nowrap"},"Yes, delete");
+            const no  = el("button",{class:"btn tiny"},"No");
+            yes.addEventListener("click", async()=>{
+              bw.innerHTML = "";
+              bw.appendChild(el("span",{class:"muted",style:"font-size:11px"},"Deleting…"));
+              try {
+                const newBounds = Object.fromEntries(
+                  Object.entries(map.room_bounds || {}).filter(([r]) => r !== room)
+                );
+                await ctx.actions.mapsUpdate({
+                  map_id: map.id,
+                  receivers: map.receivers || [],
+                  room_bounds: newBounds,
+                  floor_id: map.floor_id || "",
+                  calibration: map.calibration || {},
+                  notes: map.notes || "",
+                  stack: map.stack || {},
+                });
+                await ctx.actions.mapsRefresh();
+                ctx.toast(`Deleted orphan "${room}" from ${map.name||map.id}`);
+                ctx.actions.renderRooms();
+              } catch(e){ bw.innerHTML = ""; bw.appendChild(makeBtn()); ctx.toast("Failed: "+String(e), true); }
+            });
+            no.addEventListener("click", ()=>{ bw.innerHTML = ""; bw.appendChild(makeBtn()); });
+            bw.appendChild(yes); bw.appendChild(no);
+          });
+          return btn;
+        };
+        bw.appendChild(makeBtn());
+        tbody.appendChild(el("tr",{},[
+          el("td",{style:"font-weight:600;color:#f59e0b"},room),
+          el("td",{class:"muted",style:"font-size:11px"},map.name||map.id),
+          el("td",{class:"muted",style:"font-size:11px"},`${(b.points||[]).length} pts`),
+          el("td",{},bw),
+        ]));
+      }
+      orphCard.appendChild(el("table",{class:"table"},[
+        el("thead",{},el("tr",{},[el("th",{},"Orphan room"),el("th",{},"Map"),el("th",{},"Points"),el("th",{},"")])),
+        tbody,
+      ]));
+
+      if(orphans.length > 1){
+        const delAllWrap = el("div",{style:"margin-top:10px;display:flex;gap:8px;align-items:center"});
+        const makeDelAll = ()=>{
+          const b = el("button",{class:"btn"+(disabled?" disabled":"")},"Delete ALL orphans");
+          if(disabled) b.disabled = true;
+          b.addEventListener("click", ()=>{
+            delAllWrap.innerHTML = "";
+            const yes = el("button",{class:"btn",style:"background:#7f1d1d;border-color:#dc2626"},`Yes, delete all ${orphans.length}`);
+            const no  = el("button",{class:"btn inline"},"Cancel");
+            yes.addEventListener("click", async()=>{
+              delAllWrap.innerHTML = "";
+              delAllWrap.appendChild(el("span",{class:"muted",style:"font-size:12px"},"Cleaning up…"));
+              // Group by map so we do one update per map
+              const byMap = new Map();
+              for(const {map, room} of orphans){
+                if(!byMap.has(map.id)) byMap.set(map.id, {map, rooms: []});
+                byMap.get(map.id).rooms.push(room);
+              }
+              let fail = 0;
+              for(const {map, rooms} of byMap.values()){
+                try {
+                  const newBounds = Object.fromEntries(
+                    Object.entries(map.room_bounds || {}).filter(([r]) => !rooms.includes(r))
+                  );
+                  await ctx.actions.mapsUpdate({
+                    map_id: map.id,
+                    receivers: map.receivers || [],
+                    room_bounds: newBounds,
+                    floor_id: map.floor_id || "",
+                    calibration: map.calibration || {},
+                    notes: map.notes || "",
+                    stack: map.stack || {},
+                  });
+                } catch(e){ fail++; }
+              }
+              await ctx.actions.mapsRefresh();
+              ctx.toast(`Removed ${orphans.length} orphan polygon${orphans.length===1?"":"s"}${fail?` (${fail} maps failed)`:""}.`);
+              ctx.actions.renderRooms();
+            });
+            no.addEventListener("click", ()=>{ delAllWrap.innerHTML = ""; delAllWrap.appendChild(makeDelAll()); });
+            delAllWrap.appendChild(yes); delAllWrap.appendChild(no);
+          });
+          return b;
+        };
+        delAllWrap.appendChild(makeDelAll());
+        orphCard.appendChild(delAllWrap);
+      }
+
+      root.appendChild(orphCard);
+    }
+  }
+
   // ── BLE Device Labels ────────────────────────────────────────────────────────
   const allObjs   = snap?.objects?.list || [];
   const taggedObjs = allObjs.filter(o => o.kind === "ble" && o.user_label);
