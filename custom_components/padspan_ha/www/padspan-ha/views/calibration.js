@@ -260,8 +260,15 @@ function _setup(ctx, el, cs, calData) {
           a.source === r.source &&
           (a.address || "").toUpperCase() === (cs.deviceId || "").toUpperCase()
         ) : false;
+        // Prefer area name (room) over raw adapter name
+        const displayName = r.area_name || r.area || r.name || r.source || "?";
+        const subLabel = (r.area_name || r.area) && r.name && r.name !== r.source ? r.name : "";
+        const nameEl = el("div", { style: "flex:1;min-width:80px" }, [
+          el("span", { style: "font-size:12px;font-weight:600" }, displayName),
+          ...(subLabel ? [el("span", { style: "font-size:10px;color:#78909c;display:block;font-family:monospace" }, subLabel)] : []),
+        ]);
         const row = el("div", { style: "display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid #0d1f12;flex-wrap:wrap" }, [
-          el("span", { style: "font-size:12px;font-weight:600;flex:1;min-width:80px" }, r.name || r.source || "?"),
+          nameEl,
           r.scanning ? el("span", { class: "badge", style: "font-size:10px" }, "scanning") : el("span", { class: "badge warn", style: "font-size:10px" }, "idle"),
           el("span", { class: "muted", style: "font-size:11px;white-space:nowrap" }, `${seen} device${seen !== 1 ? "s" : ""}`),
           beaconHere ? el("span", { style: "font-size:10px;color:#52b788;white-space:nowrap" }, "✓ beacon") : null,
@@ -561,6 +568,8 @@ function _startCollection(ctx, cs, _snap, _mapData) {
       if (typeof info.rssi !== "number") continue;
       if (!cs.readings[src]) {
         cs.readings[src] = { name: info.name || src, samples: [] };
+      } else if (info.name && info.name !== src) {
+        cs.readings[src].name = info.name; // update to area name if now available
       }
       cs.readings[src].samples.push(info.rssi);
     }
@@ -1133,6 +1142,12 @@ function _findBeaconAds(snap, deviceId) {
     targetAddr = (entity?.address || "").toUpperCase();
   }
 
+  // Build source → display name from snap.ble.radios (prefer area/room over adapter name)
+  const radioNameMap = {};
+  for (const r of (snap?.ble?.radios || [])) {
+    if (r.source) radioNameMap[r.source] = r.area_name || r.area || r.name || r.source;
+  }
+
   // Filter raw advertisements by address
   const myAds = (snap?.ble?.advertisements || []).filter(ad =>
     (ad.address || "").toUpperCase() === (targetAddr || upperId)
@@ -1145,7 +1160,7 @@ function _findBeaconAds(snap, deviceId) {
     if (!src) continue;
     if (!perRadio[src] || (ad.rssi || -200) > (perRadio[src].rssi || -200)) {
       perRadio[src] = {
-        name: ad.scanner_name || ad.name || src,
+        name: radioNameMap[src] || src,
         rssi: ad.rssi,
         age_s: ad.age_s,
       };
