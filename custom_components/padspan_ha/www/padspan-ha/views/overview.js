@@ -98,13 +98,20 @@ export function render(ctx){
         e.stopPropagation();
         openAreaAssign(x, areas);
       });
+      const areaCell = el("td",{});
+      if(x.disabled){
+        areaCell.appendChild(el("span",{class:"badge warn",style:"background:rgba(148,100,220,.18);color:#c084fc;margin-right:4px"},"⊘ Disabled"));
+      } else if(x.lost){
+        areaCell.appendChild(el("span",{class:"badge warn",style:"background:rgba(245,158,11,.18);color:#f59e0b;margin-right:4px"},"⚠ Lost"));
+      }
+      areaCell.appendChild(document.createTextNode(x.area_name || (x.disabled||x.lost ? "" : "—")));
       const tr = el("tr",{},[
         el("td",{}, x.name || ""),
         el("td",{}, x.source || ""),
         el("td",{}, (x.adapter!=null?String(x.adapter):"")),
         el("td",{}, (x.scanning==null?"":String(x.scanning))),
         el("td",{}, (x.connectable==null?"":String(x.connectable))),
-        el("td",{}, x.area_name || "—"),
+        areaCell,
         el("td",{}, assignBtn),
       ]);
       tr.style.cursor = "pointer";
