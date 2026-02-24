@@ -337,8 +337,10 @@ function _pinAndListen(ctx, el, cs, calData) {
   if (svgEl && !cs.collecting) {
     const onTap = (ev) => {
       const rect = svgEl.getBoundingClientRect();
-      const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
-      const clientY = ev.touches ? ev.touches[0].clientY : ev.clientY;
+      // touchend: use changedTouches (the lifted finger); click: use clientX/Y directly
+      const touch = (ev.changedTouches && ev.changedTouches[0]) || null;
+      const clientX = touch ? touch.clientX : ev.clientX;
+      const clientY = touch ? touch.clientY : ev.clientY;
       cs.pinX = (clientX - rect.left) / rect.width;
       cs.pinY = (clientY - rect.top) / rect.height;
       cs.readings = null;
@@ -408,11 +410,12 @@ function _buildCollectionUI(ctx, el, cs) {
   wrap.appendChild(el("div", { style: "font-weight:700;font-size:15px;text-align:center;margin-bottom:10px" },
     "Collecting — hold still!"));
 
-  // Countdown — updated by collection loop via direct DOM
+  // Countdown — updated by collection loop via direct DOM ref stored on cs
   const timerDiv = el("div", {
     id: "collect-timer",
     style: "font-size:48px;font-weight:900;text-align:center;color:#52b788;font-family:monospace;margin-bottom:12px",
   }, "…");
+  cs._timerEl = timerDiv;   // store ref so loop can update without document.getElementById
   wrap.appendChild(timerDiv);
 
   wrap.appendChild(el("div", { style: "font-size:12px;color:#78909c;text-align:center;margin-bottom:14px" },
@@ -420,6 +423,7 @@ function _buildCollectionUI(ctx, el, cs) {
 
   // Scanner RSSI container — updated by collection loop
   const scanDiv = el("div", { id: "collect-scanners", style: "display:flex;flex-direction:column;gap:6px" });
+  cs._scanEl = scanDiv;     // store ref so loop can update without document.getElementById
   wrap.appendChild(scanDiv);
 
   // Stop button
@@ -475,10 +479,10 @@ function _startCollection(ctx, cs, _snap, _mapData) {
 
     const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
 
-    // Update DOM directly (avoid full re-render during collection)
-    const timerEl = document.getElementById("collect-timer");
+    // Update DOM directly via refs stored on cs (works in shadow DOM too)
+    const timerEl = cs._timerEl || null;
     if (timerEl) timerEl.textContent = remaining + "s";
-    const scanEl = document.getElementById("collect-scanners");
+    const scanEl = cs._scanEl || null;
     if (scanEl) {
       scanEl.innerHTML = "";
       const { el } = ctx.helpers;

@@ -11,10 +11,10 @@
   - BUILD_ID / APP_VERSION are updated automatically by scripts/release.py.
 */
 
-import * as Calibration from "./views/calibration.js?b=20260224T201515Z";
+import * as Calibration from "./views/calibration.js?b=20260224T204149Z";
 
-const APP_VERSION = "0.4.66";
-const BUILD_ID = "20260224T201515Z";
+const APP_VERSION = "0.4.67";
+const BUILD_ID = "20260224T204149Z";
 
 // ── Minimal DOM helpers (same signatures as panel.js) ──────────────────────
 function el(tag, attrs={}, children=[]){
@@ -113,6 +113,17 @@ class PadSpanCalibApp extends HTMLElement {
       hass:  this._hass,
       state: this.state,
       helpers: { el, esc, pill },
+      toast: (msg, isError) => {
+        const t = document.createElement("div");
+        t.textContent = msg;
+        t.style.cssText = `position:fixed;bottom:24px;left:50%;transform:translateX(-50%);`
+          + `padding:10px 18px;border-radius:8px;font-size:13px;color:#e2e8f0;z-index:9999;`
+          + `background:${isError ? "#7f1d1d" : "#1a3a2a"};`
+          + `border:1px solid ${isError ? "#dc2626" : "#52b788"};`
+          + `box-shadow:0 2px 12px rgba(0,0,0,.5);white-space:pre-wrap;max-width:320px;text-align:center`;
+        document.body.appendChild(t);
+        setTimeout(() => { try { document.body.removeChild(t); } catch(_) {} }, 3500);
+      },
       actions: {
         renderRooms:             ()=> self._render(),
         refreshSnapshot:         async ()=>{ await self._pollSnapshot(); self._render(); },
