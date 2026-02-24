@@ -13,33 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T170209Z";
-import { HELP } from "./help_content.js?b=20260224T170209Z";
-import * as Follow from "./views/follow.js?b=20260224T170209Z";
-import * as Overview from "./views/overview.js?b=20260224T170209Z";
-import * as Objects from "./views/objects.js?b=20260224T170209Z";
-import * as Devices from "./views/devices.js?b=20260224T170209Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260224T170209Z";
-import * as Presence from "./views/presence.js?b=20260224T170209Z";
-import * as Zones from "./views/zones.js?b=20260224T170209Z";
-import * as Insights from "./views/insights.js?b=20260224T170209Z";
-import * as History from "./views/history.js?b=20260224T170209Z";
-import * as Monitor from "./views/monitor.js?b=20260224T170209Z";
-import * as Maps from "./views/maps.js?b=20260224T170209Z";
-import * as Events from "./views/events.js?b=20260224T170209Z";
-import * as Health from "./views/health.js?b=20260224T170209Z";
-import * as Settings from "./views/settings.js?b=20260224T170209Z";
-import * as Manage from "./views/manage.js?b=20260224T170209Z";
-import * as Debug from "./views/debug.js?b=20260224T170209Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260224T170209Z";
-import * as QA from "./views/qa.js?b=20260224T170209Z";
-import * as Training from "./views/training.js?b=20260224T170209Z";
-import * as Calibration from "./views/calibration.js?b=20260224T170209Z";
-import * as Sandbox from "./views/sandbox.js?b=20260224T170209Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T180107Z";
+import { HELP } from "./help_content.js?b=20260224T180107Z";
+import * as Follow from "./views/follow.js?b=20260224T180107Z";
+import * as Overview from "./views/overview.js?b=20260224T180107Z";
+import * as Objects from "./views/objects.js?b=20260224T180107Z";
+import * as Devices from "./views/devices.js?b=20260224T180107Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260224T180107Z";
+import * as Presence from "./views/presence.js?b=20260224T180107Z";
+import * as Zones from "./views/zones.js?b=20260224T180107Z";
+import * as Insights from "./views/insights.js?b=20260224T180107Z";
+import * as History from "./views/history.js?b=20260224T180107Z";
+import * as Monitor from "./views/monitor.js?b=20260224T180107Z";
+import * as Maps from "./views/maps.js?b=20260224T180107Z";
+import * as Events from "./views/events.js?b=20260224T180107Z";
+import * as Health from "./views/health.js?b=20260224T180107Z";
+import * as Settings from "./views/settings.js?b=20260224T180107Z";
+import * as Manage from "./views/manage.js?b=20260224T180107Z";
+import * as Debug from "./views/debug.js?b=20260224T180107Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260224T180107Z";
+import * as QA from "./views/qa.js?b=20260224T180107Z";
+import * as Training from "./views/training.js?b=20260224T180107Z";
+import * as Calibration from "./views/calibration.js?b=20260224T180107Z";
+import * as Sandbox from "./views/sandbox.js?b=20260224T180107Z";
 
-const APP_VERSION = "0.4.59";
+const APP_VERSION = "0.4.60";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260224T170209Z";
+const BUILD_ID = "20260224T180107Z";
 
 const VIEWS = {
   follow: Follow,
@@ -111,6 +111,26 @@ const MENU_COLORS = {
   sandbox: "#9ccc65",
 };
 
+
+// ── Trusted Types helper ────────────────────────────────────────────────────
+// HA 2024.x enforces CSP "require-trusted-types-for 'script'" which blocks
+// setting innerHTML with a plain string.  This helper wraps the string in a
+// pass-through TrustedHTML policy so the assignment is allowed.  Falls back
+// to the raw string on older HA / browsers that don't support Trusted Types.
+let _ttPolicy = null;
+function _setHtml(el, html){
+  if(typeof trustedTypes !== "undefined"){
+    try {
+      if(!_ttPolicy) _ttPolicy = trustedTypes.createPolicy("padspan-ha", { createHTML: s => s });
+      el.innerHTML = _ttPolicy.createHTML(html);
+      return;
+    } catch(e) { /* policy exists or blocked — fall through */ }
+  }
+  el.innerHTML = html;
+}
+function _clearEl(el){
+  while(el && el.firstChild) el.removeChild(el.firstChild);
+}
 
 function esc(s){
   return String(s ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
@@ -213,7 +233,7 @@ class PadSpanHaApp extends HTMLElement {
     this.style.display = "block";
     this.style.minHeight = "100vh";
 
-    this.shadowRoot.innerHTML = `
+    _setHtml(this.shadowRoot, `
       <link rel="stylesheet" href="/padspan_ha_static/padspan-ha/styles.css?v=${APP_VERSION}&b=${BUILD_ID}">
       <style>
         /* Critical fallback — overridden by styles.css once it loads */
@@ -316,7 +336,7 @@ class PadSpanHaApp extends HTMLElement {
           <nav class="mobile-bottom-nav" id="mobileBottomNav"></nav>
         </main>
       </div>
-    `;
+    `);
 
     this.$ = (q)=>this.shadowRoot.querySelector(q);
     this.$nav = this.$("#nav");
@@ -614,7 +634,7 @@ class PadSpanHaApp extends HTMLElement {
   // ---------- Nav + rendering ----------
   _renderNav(){
     const isBasic = this.state.complexity === "basic";
-    this.$nav.innerHTML = "";
+    _clearEl(this.$nav);
     this.$nav.className = isBasic ? "nav basic-nav" : "nav";
     const navLabel = this.shadowRoot.querySelector("#navLabel");
     if(navLabel) navLabel.textContent = isBasic ? "Basic Menu" : "Menu";
@@ -648,7 +668,7 @@ class PadSpanHaApp extends HTMLElement {
 
     const bottomNav = this.$("#mobileBottomNav");
     if(bottomNav){
-      bottomNav.innerHTML = "";
+      _clearEl(bottomNav);
       // BOTTOM NAV PINNED TABS
       // Edit these arrays to change which tabs appear in the bottom bar.
       // Max 4 items (the 5th slot is reserved for "More" which opens the drawer).
@@ -798,7 +818,7 @@ class PadSpanHaApp extends HTMLElement {
   _openModal(title, bodyNode, subtitle=""){
     if(!this.$modal) return;
     this.$modal.classList.remove("hidden");
-    this.$modal.innerHTML = "";
+    _clearEl(this.$modal);
 
     const overlay = el("div",{class:"overlay"});
     const panel = el("div",{class:"panel"});
@@ -814,7 +834,7 @@ class PadSpanHaApp extends HTMLElement {
 
     const body = el("div",{class:"body"});
     if(typeof bodyNode === "string"){
-      body.innerHTML = bodyNode;
+      _setHtml(body, bodyNode);
     } else if(bodyNode){
       body.appendChild(bodyNode);
     }
@@ -835,7 +855,7 @@ class PadSpanHaApp extends HTMLElement {
   _closeModal(){
     if(!this.$modal) return;
     this.$modal.classList.add("hidden");
-    this.$modal.innerHTML = "";
+    _clearEl(this.$modal);
   }
 
 
@@ -1216,7 +1236,7 @@ class PadSpanHaApp extends HTMLElement {
       }
     } catch(e) { /* ignore */ }
 
-    this.$content.innerHTML = "";
+    _clearEl(this.$content);
     if(!mod || typeof mod.render !== "function") {
       this.$content.appendChild(el("div",{class:"card"}, `View missing: ${v}`));
       return;
