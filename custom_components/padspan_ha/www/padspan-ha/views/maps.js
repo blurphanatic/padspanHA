@@ -1299,6 +1299,7 @@ function _stack(ctx, maps, helpBtn){
   // View zoom (scales the stage down so both maps fit on screen) and target opacity
   if(ctx.state.maps._stackViewScale  === undefined) ctx.state.maps._stackViewScale  = 1.0;
   if(ctx.state.maps._stackTgtOpacity === undefined) ctx.state.maps._stackTgtOpacity = 0.55;
+  if(ctx.state.maps._stackOutsideMode === undefined) ctx.state.maps._stackOutsideMode = false;
 
   const card = el("div",{class:"card"});
   card.appendChild(el("div",{class:"card-head"},[
@@ -1589,8 +1590,37 @@ function _stack(ctx, maps, helpBtn){
 
   // Scale controls
   ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap"},"Scale:"));
-  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.scale = Math.min(5.0, Math.round((alignState.scale+0.05)*1000)/1000); applyCurrentTransform(); }},"Scale +"));
-  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.scale = Math.max(0.1, Math.round((alignState.scale-0.05)*1000)/1000); applyCurrentTransform(); }},"Scale −"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
+    const outside = ctx.state.maps._stackOutsideMode;
+    const step = outside ? 0.5 : 0.05;
+    const maxScale = outside ? 100.0 : 5.0;
+    alignState.scale = Math.min(maxScale, Math.round((alignState.scale + step) * 1000) / 1000);
+    applyCurrentTransform();
+  }},"Scale +"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
+    const outside = ctx.state.maps._stackOutsideMode;
+    const step = outside ? 0.5 : 0.05;
+    const minScale = outside ? 0.01 : 0.1;
+    alignState.scale = Math.max(minScale, Math.round((alignState.scale - step) * 1000) / 1000);
+    applyCurrentTransform();
+  }},"Scale −"));
+
+  // Outside map toggle — lifts scale limits for very large or outdoor spaces
+  const outsideBtn = el("button",{
+    class:"btn inline",
+    style: ctx.state.maps._stackOutsideMode
+      ? "background:#52b788;color:#071008;font-weight:700"
+      : "color:#94a3b8",
+    title: "Outside map mode: larger scale range (0.01–100×) and bigger steps (0.5 per click)",
+    onclick: ()=>{
+      ctx.state.maps._stackOutsideMode = !ctx.state.maps._stackOutsideMode;
+      outsideBtn.style.background = ctx.state.maps._stackOutsideMode ? "#52b788" : "";
+      outsideBtn.style.color      = ctx.state.maps._stackOutsideMode ? "#071008" : "#94a3b8";
+      outsideBtn.style.fontWeight = ctx.state.maps._stackOutsideMode ? "700"     : "";
+      outsideBtn.textContent      = ctx.state.maps._stackOutsideMode ? "Outside ✓" : "Outside map";
+    }
+  }, ctx.state.maps._stackOutsideMode ? "Outside ✓" : "Outside map");
+  ctrlRow.appendChild(outsideBtn);
 
   // Rotate controls
   ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"Rotate:"));
