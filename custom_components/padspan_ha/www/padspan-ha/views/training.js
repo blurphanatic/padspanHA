@@ -1,0 +1,945 @@
+// views/training.js — PadSpan HA Training Hub
+// Walkthroughs: animated step-by-step SVG guides
+// Manual: auto-generated from HELP dict in help_content.js + supplement content
+// Auto-update: manual sections read HELP at render time — update help_content.js = manual updates too
+
+// ─── Animated SVG Builders ────────────────────────────────────────────────────
+
+function _svgBleSignals() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes wave{0%{r:8;opacity:0.8}100%{r:44;opacity:0}}
+.w1{animation:wave 2s ease-out infinite}
+.w2{animation:wave 2s ease-out 0.67s infinite}
+.w3{animation:wave 2s ease-out 1.33s infinite}
+@keyframes scanPulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.sc{animation:scanPulse 1.5s ease-in-out infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">3 scanners detect the same phone</text>
+<circle class="w1" cx="200" cy="110" fill="none" stroke="#52b788" stroke-width="1.5" r="8"/>
+<circle class="w2" cx="200" cy="110" fill="none" stroke="#52b788" stroke-width="1.5" r="8"/>
+<circle class="w3" cx="200" cy="110" fill="none" stroke="#52b788" stroke-width="1.5" r="8"/>
+<rect x="183" y="85" width="34" height="50" rx="5" fill="#1b3526" stroke="#52b788" stroke-width="2"/>
+<rect x="190" y="92" width="20" height="30" rx="2" fill="#071008"/>
+<circle cx="200" cy="128" r="3" fill="#52b788"/>
+<g class="sc" transform="translate(60,44)">
+  <rect x="-18" y="-18" width="36" height="36" rx="6" fill="#0d2318" stroke="#43a047" stroke-width="1.5"/>
+  <circle cx="0" cy="-3" r="8" fill="none" stroke="#43a047" stroke-width="2"/>
+  <circle cx="0" cy="-3" r="4" fill="none" stroke="#43a047" stroke-width="1.5"/>
+  <circle cx="0" cy="-3" r="2" fill="#43a047"/>
+</g>
+<text x="60" y="78" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Living Room</text>
+<g class="sc" transform="translate(340,44)">
+  <rect x="-18" y="-18" width="36" height="36" rx="6" fill="#0d2318" stroke="#43a047" stroke-width="1.5"/>
+  <circle cx="0" cy="-3" r="8" fill="none" stroke="#43a047" stroke-width="2"/>
+  <circle cx="0" cy="-3" r="4" fill="none" stroke="#43a047" stroke-width="1.5"/>
+  <circle cx="0" cy="-3" r="2" fill="#43a047"/>
+</g>
+<text x="340" y="78" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Kitchen</text>
+<g class="sc" transform="translate(200,190)">
+  <rect x="-18" y="-18" width="36" height="36" rx="6" fill="#0d2318" stroke="#43a047" stroke-width="1.5"/>
+  <circle cx="0" cy="-3" r="8" fill="none" stroke="#43a047" stroke-width="2"/>
+  <circle cx="0" cy="-3" r="4" fill="none" stroke="#43a047" stroke-width="1.5"/>
+  <circle cx="0" cy="-3" r="2" fill="#43a047"/>
+</g>
+<text x="200" y="215" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Hallway</text>
+<line x1="200" y1="110" x2="60" y2="44" stroke="#52b788" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.4"/>
+<line x1="200" y1="110" x2="340" y2="44" stroke="#52b788" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.4"/>
+<line x1="200" y1="110" x2="200" y2="172" stroke="#52b788" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.4"/>
+</svg>`;
+}
+
+function _svgRssiComparison() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes highlight{0%,100%{fill:#0d2318;stroke:#43a047}50%{fill:#1b4a2e;stroke:#52b788}}
+.winner{animation:highlight 2s ease-in-out infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Strongest signal = nearest room</text>
+<rect x="20" y="28" width="100" height="155" rx="8" fill="#071008" stroke="#1b3526" stroke-width="1.5"/>
+<text x="70" y="48" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="system-ui">Kitchen</text>
+<text x="70" y="62" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">−82 dBm</text>
+<rect x="46" y="78" width="48" height="80" rx="3" fill="#1b3526"/>
+<rect x="46" y="138" width="48" height="20" rx="3" fill="#ef4444" opacity="0.7"/>
+<text x="70" y="174" text-anchor="middle" fill="#ef4444" font-size="9" font-family="system-ui">Weak</text>
+<rect class="winner" x="150" y="28" width="100" height="155" rx="8" fill="#0d2318" stroke="#52b788" stroke-width="2"/>
+<text x="200" y="48" text-anchor="middle" fill="#52b788" font-size="10" font-family="system-ui">Living Room</text>
+<text x="200" y="62" text-anchor="middle" fill="#52b788" font-size="9" font-family="system-ui">−52 dBm</text>
+<rect x="176" y="78" width="48" height="80" rx="3" fill="#1b3526"/>
+<rect x="176" y="84" width="48" height="74" rx="3" fill="#52b788" opacity="0.85"/>
+<text x="200" y="174" text-anchor="middle" fill="#52b788" font-size="9" font-family="system-ui">★ Nearest</text>
+<rect x="280" y="28" width="100" height="155" rx="8" fill="#071008" stroke="#1b3526" stroke-width="1.5"/>
+<text x="330" y="48" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="system-ui">Hallway</text>
+<text x="330" y="62" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">−71 dBm</text>
+<rect x="306" y="78" width="48" height="80" rx="3" fill="#1b3526"/>
+<rect x="306" y="120" width="48" height="38" rx="3" fill="#fbbf24" opacity="0.7"/>
+<text x="330" y="174" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="system-ui">Medium</text>
+<text x="200" y="208" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">→ Device placed in Living Room</text>
+</svg>`;
+}
+
+function _svgRoomAssignment() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes dotPulse{0%,100%{r:10;opacity:1}50%{r:16;opacity:0.5}}
+.dot{animation:dotPulse 2s ease-in-out infinite}
+@keyframes roomGlow{0%,100%{stroke:#52b788;fill:#0d2318}50%{stroke:#81c784;fill:#142e1a}}
+.activeRoom{animation:roomGlow 2s ease-in-out infinite}
+@keyframes refreshTick{0%{opacity:0.3}45%{opacity:0.3}50%{opacity:1}55%{opacity:1}100%{opacity:0.3}}
+.refreshTxt{animation:refreshTick 5s ease-in-out infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Device assigned to room — updates every 5s</text>
+<rect x="10" y="28" width="116" height="76" rx="6" fill="#071008" stroke="#1b3526" stroke-width="1.5"/>
+<text x="68" y="48" text-anchor="middle" fill="#4a6052" font-size="10" font-family="system-ui">Kitchen</text>
+<rect class="activeRoom" x="138" y="28" width="124" height="76" rx="6" fill="#0d2318" stroke="#52b788" stroke-width="2"/>
+<text x="200" y="48" text-anchor="middle" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Living Room</text>
+<circle class="dot" cx="200" cy="78" r="10" fill="#14b8a6"/>
+<text x="200" y="82" text-anchor="middle" fill="white" font-size="8" font-weight="700" font-family="system-ui">AL</text>
+<rect x="274" y="28" width="116" height="76" rx="6" fill="#071008" stroke="#1b3526" stroke-width="1.5"/>
+<text x="332" y="48" text-anchor="middle" fill="#4a6052" font-size="10" font-family="system-ui">Hallway</text>
+<rect x="10" y="116" width="116" height="76" rx="6" fill="#071008" stroke="#1b3526" stroke-width="1.5"/>
+<text x="68" y="136" text-anchor="middle" fill="#4a6052" font-size="10" font-family="system-ui">Bedroom</text>
+<rect x="138" y="116" width="124" height="76" rx="6" fill="#071008" stroke="#1b3526" stroke-width="1.5"/>
+<text x="200" y="136" text-anchor="middle" fill="#4a6052" font-size="10" font-family="system-ui">Bathroom</text>
+<rect x="274" y="116" width="116" height="76" rx="6" fill="#071008" stroke="#1b3526" stroke-width="1.5"/>
+<text x="332" y="136" text-anchor="middle" fill="#4a6052" font-size="10" font-family="system-ui">Office</text>
+<text class="refreshTxt" x="200" y="210" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">↻ Auto-refreshes in Live mode</text>
+</svg>`;
+}
+
+function _svgDeviceTypes() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes fadeUp{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:translateY(0)}}
+.d1{animation:fadeUp 0.4s ease-out 0.1s both}
+.d2{animation:fadeUp 0.4s ease-out 0.35s both}
+.d3{animation:fadeUp 0.4s ease-out 0.6s both}
+.d4{animation:fadeUp 0.4s ease-out 0.85s both}
+.d5{animation:fadeUp 0.4s ease-out 1.1s both}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Any Bluetooth device can be tracked</text>
+<g class="d1">
+  <circle cx="36" cy="52" r="14" fill="#14b8a6" opacity="0.15" stroke="#14b8a6" stroke-width="1.5"/>
+  <text x="36" y="57" text-anchor="middle" fill="#14b8a6" font-size="14" font-family="system-ui">📱</text>
+  <text x="60" y="47" fill="#cbd5e1" font-size="11" font-weight="600" font-family="system-ui">Smartphones</text>
+  <text x="60" y="60" fill="#4a6052" font-size="9" font-family="system-ui">Via Home Assistant companion app</text>
+</g>
+<g class="d2">
+  <circle cx="36" cy="98" r="14" fill="#14b8a6" opacity="0.15" stroke="#14b8a6" stroke-width="1.5"/>
+  <text x="36" y="103" text-anchor="middle" fill="#14b8a6" font-size="14" font-family="system-ui">🏷️</text>
+  <text x="60" y="93" fill="#cbd5e1" font-size="11" font-weight="600" font-family="system-ui">AirTags &amp; Tile</text>
+  <text x="60" y="106" fill="#4a6052" font-size="9" font-family="system-ui">Apple &amp; Tile Bluetooth trackers</text>
+</g>
+<g class="d3">
+  <circle cx="36" cy="144" r="14" fill="#fb923c" opacity="0.15" stroke="#fb923c" stroke-width="1.5"/>
+  <text x="36" y="149" text-anchor="middle" fill="#fb923c" font-size="14" font-family="system-ui">🔑</text>
+  <text x="60" y="139" fill="#cbd5e1" font-size="11" font-weight="600" font-family="system-ui">Key Fobs &amp; Tags</text>
+  <text x="60" y="152" fill="#4a6052" font-size="9" font-family="system-ui">Any small BLE beacon or tracker</text>
+</g>
+<g class="d4">
+  <circle cx="236" cy="52" r="14" fill="#14b8a6" opacity="0.15" stroke="#14b8a6" stroke-width="1.5"/>
+  <text x="236" y="57" text-anchor="middle" fill="#14b8a6" font-size="14" font-family="system-ui">⌚</text>
+  <text x="260" y="47" fill="#cbd5e1" font-size="11" font-weight="600" font-family="system-ui">Smartwatches</text>
+  <text x="260" y="60" fill="#4a6052" font-size="9" font-family="system-ui">Apple Watch, Fitbit, Garmin</text>
+</g>
+<g class="d5">
+  <circle cx="236" cy="98" r="14" fill="#fb923c" opacity="0.15" stroke="#fb923c" stroke-width="1.5"/>
+  <text x="236" y="103" text-anchor="middle" fill="#fb923c" font-size="14" font-family="system-ui">📡</text>
+  <text x="260" y="93" fill="#cbd5e1" font-size="11" font-weight="600" font-family="system-ui">Unknown BLE</text>
+  <text x="260" y="106" fill="#4a6052" font-size="9" font-family="system-ui">Any BLE signal — tap Tag to name it</text>
+</g>
+<rect x="10" y="175" width="180" height="36" rx="6" fill="#071008" stroke="#14b8a6" stroke-width="1" opacity="0.7"/>
+<circle cx="26" cy="193" r="6" fill="#14b8a6" opacity="0.5"/><text x="40" y="197" fill="#14b8a6" font-size="9" font-family="system-ui">Teal = Identified (named)</text>
+<rect x="210" y="175" width="180" height="36" rx="6" fill="#071008" stroke="#fb923c" stroke-width="1" opacity="0.7"/>
+<circle cx="226" cy="193" r="6" fill="#fb923c" opacity="0.5"/><text x="240" y="197" fill="#fb923c" font-size="9" font-family="system-ui">Orange = Unidentified</text>
+</svg>`;
+}
+
+function _svgObjectsList() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes rowHighlight{0%,100%{fill:#071008}50%{fill:#1a1000}}
+.unidRow{animation:rowHighlight 2s ease-in-out infinite}
+@keyframes badgePulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.badge{animation:badgePulse 1.5s ease-in-out infinite}
+</style>
+<text x="200" y="14" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Find an unidentified device</text>
+<rect x="10" y="22" width="380" height="24" rx="4" fill="#0d2318"/>
+<text x="30" y="38" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Name / Address</text>
+<text x="210" y="38" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Room</text>
+<text x="295" y="38" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Status</text>
+<text x="360" y="38" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Tag</text>
+<rect x="10" y="50" width="380" height="30" rx="4" fill="#071008" stroke="#1b3526" stroke-width="0.5"/>
+<circle cx="24" cy="65" r="7" fill="#14b8a6" opacity="0.25" stroke="#14b8a6" stroke-width="1"/>
+<circle cx="24" cy="65" r="3" fill="#14b8a6"/>
+<text x="38" y="69" fill="#cbd5e1" font-size="10" font-family="system-ui">Alice's Phone</text>
+<text x="210" y="69" fill="#94a3b8" font-size="10" font-family="system-ui">Living Room</text>
+<rect x="291" y="58" width="54" height="16" rx="8" fill="#14b8a6" opacity="0.15"/>
+<text x="318" y="70" text-anchor="middle" fill="#14b8a6" font-size="9" font-family="system-ui">Identified</text>
+<rect class="unidRow" x="10" y="84" width="380" height="34" rx="4" fill="#071008" stroke="#fb923c" stroke-width="1.2"/>
+<circle cx="24" cy="101" r="7" fill="#fb923c" opacity="0.25" stroke="#fb923c" stroke-width="1"/>
+<circle cx="24" cy="101" r="3" fill="#fb923c"/>
+<text x="38" y="97" fill="#94a3b8" font-size="9" font-family="monospace">AA:BB:CC:11:22:33</text>
+<text x="38" y="111" fill="#4a6052" font-size="8" font-family="system-ui">Unknown device</text>
+<text x="210" y="104" fill="#94a3b8" font-size="10" font-family="system-ui">Hallway</text>
+<rect class="badge" x="289" y="92" width="62" height="16" rx="8" fill="#fb923c" opacity="0.15"/>
+<text x="320" y="104" text-anchor="middle" fill="#fb923c" font-size="9" font-family="system-ui">Unidentified</text>
+<rect x="352" y="92" width="32" height="16" rx="4" fill="#1b3526" stroke="#52b788" stroke-width="1"/>
+<text x="368" y="104" text-anchor="middle" fill="#52b788" font-size="9" font-family="system-ui">Tag</text>
+<rect x="10" y="122" width="380" height="30" rx="4" fill="#071008" stroke="#1b3526" stroke-width="0.5"/>
+<circle cx="24" cy="137" r="7" fill="#14b8a6" opacity="0.25" stroke="#14b8a6" stroke-width="1"/>
+<circle cx="24" cy="137" r="3" fill="#14b8a6"/>
+<text x="38" y="141" fill="#cbd5e1" font-size="10" font-family="system-ui">Car Keys</text>
+<text x="210" y="141" fill="#94a3b8" font-size="10" font-family="system-ui">Kitchen</text>
+<rect x="291" y="129" width="54" height="16" rx="8" fill="#14b8a6" opacity="0.15"/>
+<text x="318" y="141" text-anchor="middle" fill="#14b8a6" font-size="9" font-family="system-ui">Identified</text>
+<text x="200" y="210" text-anchor="middle" fill="#fb923c" font-size="10" font-family="system-ui">↑ Click Tag on the orange row to name this device</text>
+</svg>`;
+}
+
+function _svgTagModal() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.cursor{animation:blink 1s step-end infinite}
+@keyframes typeIn{0%{clip-path:inset(0 100% 0 0)}100%{clip-path:inset(0 0% 0 0)}}
+.typed{animation:typeIn 1.5s steps(12) 0.4s both}
+@keyframes modalIn{0%{opacity:0;transform:scale(0.95)}100%{opacity:1;transform:scale(1)}}
+.modal{animation:modalIn 0.3s ease-out both}
+</style>
+<rect x="0" y="0" width="400" height="220" fill="#000" opacity="0.45"/>
+<g class="modal">
+  <rect x="80" y="20" width="240" height="180" rx="10" fill="#0d2318" stroke="#52b788" stroke-width="1.5"/>
+  <text x="200" y="48" text-anchor="middle" fill="#52b788" font-size="12" font-weight="700" font-family="system-ui">Tag Device</text>
+  <text x="200" y="64" text-anchor="middle" fill="#4a6052" font-size="9" font-family="monospace">AA:BB:CC:11:22:33</text>
+  <text x="100" y="90" fill="#94a3b8" font-size="10" font-family="system-ui">Friendly name</text>
+  <rect x="96" y="98" width="208" height="28" rx="5" fill="#071008" stroke="#52b788" stroke-width="1.5"/>
+  <g class="typed"><text x="104" y="117" fill="#cbd5e1" font-size="11" font-family="system-ui">My AirTag</text></g>
+  <text class="cursor" x="170" y="117" fill="#52b788" font-size="13" font-family="system-ui">|</text>
+  <rect x="96" y="142" width="95" height="28" rx="5" fill="#1b3526" stroke="#52b788" stroke-width="1.5"/>
+  <text x="143" y="161" text-anchor="middle" fill="#52b788" font-size="11" font-family="system-ui">Save</text>
+  <rect x="204" y="142" width="95" height="28" rx="5" fill="#071008" stroke="#1b3526" stroke-width="1"/>
+  <text x="251" y="161" text-anchor="middle" fill="#4a6052" font-size="11" font-family="system-ui">Cancel</text>
+</g>
+</svg>`;
+}
+
+function _svgTaggedDevice() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes popIn{0%{transform:scale(0);opacity:0}70%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
+.popIn{animation:popIn 0.5s ease-out both}
+.popIn2{animation:popIn 0.5s ease-out 0.3s both}
+.popIn3{animation:popIn 0.5s ease-out 0.6s both}
+@keyframes sweep{0%,100%{opacity:0.4}50%{opacity:1}}
+.sweep{animation:sweep 2s ease-in-out infinite}
+</style>
+<text x="200" y="14" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Your name appears everywhere instantly</text>
+<g class="popIn">
+  <rect x="10" y="24" width="185" height="88" rx="8" fill="#0a150e" stroke="#5eead4" stroke-width="1.5"/>
+  <text x="22" y="42" fill="#5eead4" font-size="10" font-weight="600" font-family="system-ui">Follow</text>
+  <rect x="18" y="48" width="170" height="26" rx="5" fill="#071008" stroke="#1b3526" stroke-width="1"/>
+  <circle class="sweep" cx="32" cy="61" r="6" fill="#14b8a6" opacity="0.4"/>
+  <circle cx="32" cy="61" r="3" fill="#14b8a6"/>
+  <text x="44" y="65" fill="#cbd5e1" font-size="10" font-family="system-ui">My AirTag ▾</text>
+  <text x="22" y="88" fill="#4a6052" font-size="9" font-family="system-ui">Location: Living Room</text>
+  <text x="22" y="102" fill="#4a6052" font-size="9" font-family="system-ui">Signal: −54 dBm · 2s ago</text>
+</g>
+<g class="popIn2">
+  <rect x="205" y="24" width="185" height="88" rx="8" fill="#0a150e" stroke="#52b788" stroke-width="1.5"/>
+  <text x="218" y="42" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Overview</text>
+  <rect x="214" y="48" width="170" height="56" rx="5" fill="#0d2318" stroke="#52b788" stroke-width="1"/>
+  <text x="299" y="66" text-anchor="middle" fill="#52b788" font-size="9" font-family="system-ui">Living Room</text>
+  <circle cx="299" cy="88" r="11" fill="#14b8a6" opacity="0.2" stroke="#14b8a6" stroke-width="1.5"/>
+  <circle cx="299" cy="88" r="5" fill="#14b8a6"/>
+  <text x="299" y="91" text-anchor="middle" fill="#071008" font-size="6" font-weight="700" font-family="system-ui">MA</text>
+</g>
+<g class="popIn3">
+  <rect x="10" y="124" width="185" height="72" rx="8" fill="#0a150e" stroke="#ff8a65" stroke-width="1.5"/>
+  <text x="22" y="142" fill="#ff8a65" font-size="10" font-weight="600" font-family="system-ui">Objects</text>
+  <circle cx="28" cy="168" r="7" fill="#14b8a6" opacity="0.25" stroke="#14b8a6" stroke-width="1"/>
+  <circle cx="28" cy="168" r="3" fill="#14b8a6"/>
+  <text x="42" y="172" fill="#cbd5e1" font-size="10" font-family="system-ui">My AirTag</text>
+  <rect x="116" y="161" width="54" height="15" rx="7" fill="#14b8a6" opacity="0.15"/>
+  <text x="143" y="172" text-anchor="middle" fill="#14b8a6" font-size="8" font-family="system-ui">Identified ✓</text>
+</g>
+<rect x="205" y="124" width="185" height="72" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1.5"/>
+<text x="218" y="142" fill="#4a6052" font-size="10" font-weight="600" font-family="system-ui">Tip</text>
+<text x="218" y="158" fill="#4a6052" font-size="9" font-family="system-ui">Click Relabel any time to</text>
+<text x="218" y="171" fill="#4a6052" font-size="9" font-family="system-ui">rename the device.</text>
+<text x="218" y="184" fill="#4a6052" font-size="9" font-family="system-ui">Changes apply everywhere.</text>
+</svg>`;
+}
+
+function _svgUpload() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes uploadArrow{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+.upArrow{animation:uploadArrow 1.2s ease-in-out infinite;transform-origin:200px 120px}
+@keyframes progressFill{0%{width:0}100%{width:200px}}
+.progress{animation:progressFill 2s ease-out 1s both}
+</style>
+<rect x="40" y="14" width="320" height="196" rx="10" fill="#0a150e" stroke="#1b3526" stroke-width="1.5"/>
+<text x="200" y="38" text-anchor="middle" fill="#52b788" font-size="12" font-weight="700" font-family="system-ui">Upload a Floor Plan</text>
+<text x="60" y="62" fill="#94a3b8" font-size="10" font-family="system-ui">Map name</text>
+<rect x="60" y="68" width="160" height="24" rx="5" fill="#071008" stroke="#1b3526" stroke-width="1"/>
+<text x="72" y="85" fill="#cbd5e1" font-size="10" font-family="system-ui">Ground Floor</text>
+<rect x="60" y="102" width="280" height="60" rx="6" fill="#071008" stroke="#253e2e" stroke-width="1" stroke-dasharray="6,4"/>
+<g class="upArrow">
+  <text x="200" y="128" text-anchor="middle" fill="#52b788" font-size="22" font-family="system-ui">⬆</text>
+</g>
+<text x="200" y="148" text-anchor="middle" fill="#4a6052" font-size="10" font-family="system-ui">Drop image here or click to browse</text>
+<text x="200" y="160" text-anchor="middle" fill="#253e2e" font-size="9" font-family="system-ui">PNG · JPG · max 10 MB</text>
+<rect x="130" y="176" width="140" height="26" rx="5" fill="#1b3526" stroke="#52b788" stroke-width="1.5"/>
+<text x="200" y="193" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Upload &amp; Convert</text>
+</svg>`;
+}
+
+function _svgDrawRooms() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes drawPoly{0%{stroke-dashoffset:400}100%{stroke-dashoffset:0}}
+.poly{animation:drawPoly 3s ease-out infinite;stroke-dasharray:400}
+@keyframes ptPop{0%{r:0;opacity:0}100%{r:5;opacity:1}}
+.pt1{animation:ptPop 0.3s ease-out 0.3s both}
+.pt2{animation:ptPop 0.3s ease-out 0.8s both}
+.pt3{animation:ptPop 0.3s ease-out 1.3s both}
+.pt4{animation:ptPop 0.3s ease-out 1.8s both}
+</style>
+<rect x="10" y="14" width="248" height="194" rx="6" fill="#0a1a0f" stroke="#1b3526" stroke-width="1"/>
+<polygon class="poly" points="28,32 200,32 200,148 28,148" fill="#52b788" fill-opacity="0.12" stroke="#52b788" stroke-width="2"/>
+<circle class="pt1" cx="28" cy="32" r="5" fill="#52b788"/>
+<circle class="pt2" cx="200" cy="32" r="5" fill="#52b788"/>
+<circle class="pt3" cx="200" cy="148" r="5" fill="#52b788"/>
+<circle class="pt4" cx="28" cy="148" r="5" fill="#52b788"/>
+<text x="114" y="96" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Living Room</text>
+<rect x="268" y="14" width="124" height="194" rx="6" fill="#050e08" stroke="#1b3526" stroke-width="1"/>
+<text x="280" y="36" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Draw Room</text>
+<text x="280" y="54" fill="#4a6052" font-size="9" font-family="system-ui">Select room:</text>
+<rect x="278" y="60" width="108" height="22" rx="4" fill="#071008" stroke="#1b3526" stroke-width="1"/>
+<text x="290" y="75" fill="#cbd5e1" font-size="9" font-family="system-ui">Living Room ▾</text>
+<text x="280" y="106" fill="#4a6052" font-size="9" font-family="system-ui">Click map to</text>
+<text x="280" y="119" fill="#4a6052" font-size="9" font-family="system-ui">place points.</text>
+<text x="280" y="132" fill="#4a6052" font-size="9" font-family="system-ui">Click first point</text>
+<text x="280" y="145" fill="#4a6052" font-size="9" font-family="system-ui">to close shape.</text>
+<rect x="278" y="178" width="108" height="22" rx="4" fill="#1b3526" stroke="#52b788" stroke-width="1"/>
+<text x="332" y="193" text-anchor="middle" fill="#52b788" font-size="9" font-family="system-ui">Save Polygon</text>
+</svg>`;
+}
+
+function _svgPlaceScanners() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes scannerPop{0%{transform:scale(0);opacity:0}100%{transform:scale(1);opacity:1}}
+.sc1{animation:scannerPop 0.4s ease-out 0.3s both}
+.sc2{animation:scannerPop 0.4s ease-out 0.8s both}
+.sc3{animation:scannerPop 0.4s ease-out 1.3s both}
+@keyframes ringP{0%,100%{r:20;opacity:0.4}50%{r:28;opacity:0.12}}
+.ring{animation:ringP 2s ease-in-out infinite}
+</style>
+<rect x="10" y="14" width="255" height="196" rx="6" fill="#0a1a0f" stroke="#1b3526" stroke-width="1"/>
+<rect x="18" y="24" width="114" height="86" rx="4" fill="#1b3526" opacity="0.25" stroke="#253e2e" stroke-width="1"/>
+<text x="75" y="72" text-anchor="middle" fill="#4a6052" font-size="10" font-family="system-ui">Living Room</text>
+<rect x="140" y="24" width="118" height="86" rx="4" fill="#1b3526" opacity="0.15" stroke="#253e2e" stroke-width="1"/>
+<text x="199" y="72" text-anchor="middle" fill="#4a6052" font-size="10" font-family="system-ui">Kitchen</text>
+<rect x="18" y="120" width="240" height="84" rx="4" fill="#1b3526" opacity="0.15" stroke="#253e2e" stroke-width="1"/>
+<text x="138" y="166" text-anchor="middle" fill="#4a6052" font-size="10" font-family="system-ui">Hallway</text>
+<g class="sc1">
+  <circle class="ring" cx="58" cy="62" fill="none" stroke="#43a047" stroke-width="1.2"/>
+  <circle cx="58" cy="62" r="10" fill="#0d2318" stroke="#43a047" stroke-width="2"/>
+  <circle cx="58" cy="62" r="5" fill="none" stroke="#43a047" stroke-width="1.5"/>
+  <circle cx="58" cy="62" r="2" fill="#43a047"/>
+</g>
+<g class="sc2">
+  <circle class="ring" cx="175" cy="62" fill="none" stroke="#43a047" stroke-width="1.2"/>
+  <circle cx="175" cy="62" r="10" fill="#0d2318" stroke="#43a047" stroke-width="2"/>
+  <circle cx="175" cy="62" r="5" fill="none" stroke="#43a047" stroke-width="1.5"/>
+  <circle cx="175" cy="62" r="2" fill="#43a047"/>
+</g>
+<g class="sc3">
+  <circle class="ring" cx="88" cy="156" fill="none" stroke="#43a047" stroke-width="1.2"/>
+  <circle cx="88" cy="156" r="10" fill="#0d2318" stroke="#43a047" stroke-width="2"/>
+  <circle cx="88" cy="156" r="5" fill="none" stroke="#43a047" stroke-width="1.5"/>
+  <circle cx="88" cy="156" r="2" fill="#43a047"/>
+</g>
+<rect x="274" y="14" width="118" height="196" rx="6" fill="#050e08" stroke="#1b3526" stroke-width="1"/>
+<text x="285" y="36" fill="#43a047" font-size="10" font-weight="600" font-family="system-ui">Receivers</text>
+<text x="285" y="56" fill="#4a6052" font-size="9" font-family="system-ui">Click map to</text>
+<text x="285" y="69" fill="#4a6052" font-size="9" font-family="system-ui">place a scanner</text>
+<text x="285" y="96" fill="#94a3b8" font-size="9" font-family="system-ui">3 placed:</text>
+<circle cx="290" cy="114" r="4" fill="#43a047"/><text x="300" y="118" fill="#4a6052" font-size="9" font-family="system-ui">Living Room</text>
+<circle cx="290" cy="132" r="4" fill="#43a047"/><text x="300" y="136" fill="#4a6052" font-size="9" font-family="system-ui">Kitchen</text>
+<circle cx="290" cy="150" r="4" fill="#43a047"/><text x="300" y="154" fill="#4a6052" font-size="9" font-family="system-ui">Hallway</text>
+</svg>`;
+}
+
+function _svgKpiCards() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes countUp{0%{opacity:0;transform:translateY(6px)}100%{opacity:1;transform:translateY(0)}}
+.k1{animation:countUp 0.4s ease-out 0.1s both}
+.k2{animation:countUp 0.4s ease-out 0.3s both}
+.k3{animation:countUp 0.4s ease-out 0.5s both}
+@keyframes clickHint{0%,100%{opacity:0.35}50%{opacity:1}}
+.hint{animation:clickHint 1.5s ease-in-out infinite}
+</style>
+<text x="200" y="14" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Click any number to see a full list</text>
+<g class="k1">
+  <rect x="16" y="24" width="112" height="78" rx="8" fill="#0d2318" stroke="#52b788" stroke-width="1.5"/>
+  <text x="72" y="48" text-anchor="middle" fill="#52b788" font-size="11" font-family="system-ui">Rooms</text>
+  <text x="72" y="80" text-anchor="middle" fill="#52b788" font-size="30" font-weight="700" font-family="system-ui">6</text>
+  <text class="hint" x="72" y="96" text-anchor="middle" fill="#52b788" font-size="9" font-family="system-ui">↗ tap to list</text>
+</g>
+<g class="k2">
+  <rect x="144" y="24" width="112" height="78" rx="8" fill="#0d2318" stroke="#ff8a65" stroke-width="1.5"/>
+  <text x="200" y="48" text-anchor="middle" fill="#ff8a65" font-size="11" font-family="system-ui">Objects</text>
+  <text x="200" y="80" text-anchor="middle" fill="#ff8a65" font-size="30" font-weight="700" font-family="system-ui">12</text>
+  <text class="hint" x="200" y="96" text-anchor="middle" fill="#ff8a65" font-size="9" font-family="system-ui">↗ tap to list</text>
+</g>
+<g class="k3">
+  <rect x="272" y="24" width="112" height="78" rx="8" fill="#0d2318" stroke="#43a047" stroke-width="1.5"/>
+  <text x="328" y="48" text-anchor="middle" fill="#43a047" font-size="11" font-family="system-ui">Radios</text>
+  <text x="328" y="80" text-anchor="middle" fill="#43a047" font-size="30" font-weight="700" font-family="system-ui">3</text>
+  <text class="hint" x="328" y="96" text-anchor="middle" fill="#43a047" font-size="9" font-family="system-ui">↗ tap to list</text>
+</g>
+<rect x="50" y="118" width="300" height="54" rx="8" fill="#0d2318" stroke="#253e2e" stroke-width="1"/>
+<text x="200" y="138" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="system-ui">Clicking opens a detail list — then click</text>
+<text x="200" y="152" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="system-ui">any row for full device / room / scanner info</text>
+<text x="200" y="200" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Advanced mode shows all KPI cards</text>
+</svg>`;
+}
+
+function _svgRoomGrid() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes dp{0%,100%{r:7;opacity:1}50%{r:11;opacity:0.5}}
+.teal{animation:dp 2s ease-in-out infinite}
+@keyframes dp2{0%,100%{r:6;opacity:1}50%{r:9;opacity:0.5}}
+.orange{animation:dp2 2.5s ease-in-out 0.5s infinite}
+</style>
+<text x="200" y="14" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Room grid — see what's in each room</text>
+<rect x="8" y="22" width="188" height="90" rx="6" fill="#0d2318" stroke="#52b788" stroke-width="1.5"/>
+<text x="20" y="38" fill="#52b788" font-size="9" font-weight="600" font-family="system-ui">Living Room</text>
+<circle cx="46" cy="68" r="17" fill="none" stroke="#43a047" stroke-width="1.5" opacity="0.4"/>
+<circle cx="46" cy="68" r="9" fill="none" stroke="#43a047" stroke-width="1.5" opacity="0.7"/>
+<circle cx="46" cy="68" r="4" fill="#43a047"/>
+<circle class="teal" cx="120" cy="62" r="7" fill="#14b8a6"/>
+<text x="134" y="66" fill="#14b8a6" font-size="8" font-family="system-ui">Alice</text>
+<circle class="orange" cx="155" cy="80" r="6" fill="#fb923c"/>
+<rect x="204" y="22" width="188" height="90" rx="6" fill="#071008" stroke="#1b3526" stroke-width="1.5"/>
+<text x="216" y="38" fill="#94a3b8" font-size="9" font-weight="600" font-family="system-ui">Kitchen</text>
+<circle cx="270" cy="66" r="14" fill="none" stroke="#43a047" stroke-width="1.5" opacity="0.4"/>
+<circle cx="270" cy="66" r="7" fill="none" stroke="#43a047" stroke-width="1" opacity="0.6"/>
+<circle cx="270" cy="66" r="3" fill="#43a047" opacity="0.8"/>
+<rect x="8" y="120" width="188" height="90" rx="6" fill="#071008" stroke="#1b3526" stroke-width="1.5"/>
+<text x="20" y="136" fill="#94a3b8" font-size="9" font-weight="600" font-family="system-ui">Bedroom</text>
+<rect x="204" y="120" width="188" height="90" rx="6" fill="#071008" stroke="#1b3526" stroke-width="1.5"/>
+<text x="216" y="136" fill="#94a3b8" font-size="9" font-weight="600" font-family="system-ui">Hallway</text>
+<circle class="teal" cx="312" cy="172" r="7" fill="#14b8a6" style="animation-delay:1s"/>
+<text x="326" y="176" fill="#14b8a6" font-size="8" font-family="system-ui">Bob</text>
+<circle cx="14" cy="217" r="5" fill="#14b8a6" opacity="0.7"/>
+<text x="24" y="220" fill="#14b8a6" font-size="8" font-family="system-ui">Identified person/device</text>
+<circle cx="168" cy="217" r="5" fill="#fb923c" opacity="0.7"/>
+<text x="178" y="220" fill="#fb923c" font-size="8" font-family="system-ui">Unknown BLE signal</text>
+</svg>`;
+}
+
+function _svgFollowTab() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes locPulse{0%,100%{r:13;opacity:0.7}50%{r:20;opacity:0.25}}
+.locPulse{animation:locPulse 2s ease-in-out infinite}
+@keyframes histFade{0%{opacity:0;transform:translateY(3px)}100%{opacity:1;transform:translateY(0)}}
+.h1{animation:histFade 0.3s ease-out 0.5s both}
+.h2{animation:histFade 0.3s ease-out 0.9s both}
+.h3{animation:histFade 0.3s ease-out 1.3s both}
+</style>
+<rect x="8" y="8" width="384" height="26" rx="6" fill="#0d2318" stroke="#1b3526" stroke-width="1"/>
+<circle cx="26" cy="21" r="7" fill="#14b8a6" opacity="0.25" stroke="#14b8a6" stroke-width="1"/>
+<circle cx="26" cy="21" r="3" fill="#14b8a6"/>
+<text x="42" y="25" fill="#cbd5e1" font-size="11" font-family="system-ui">Alice's Phone</text>
+<text x="368" y="25" fill="#4a6052" font-size="14" font-family="system-ui">▾</text>
+<rect x="8" y="42" width="190" height="76" rx="6" fill="#0d2318" stroke="#52b788" stroke-width="1.5"/>
+<text x="20" y="60" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Current Location</text>
+<text x="20" y="78" fill="#cbd5e1" font-size="13" font-weight="700" font-family="system-ui">Living Room</text>
+<text x="20" y="94" fill="#4a6052" font-size="9" font-family="system-ui">Floor: Ground  ·  −54 dBm  ·  2s</text>
+<rect x="206" y="42" width="186" height="76" rx="6" fill="#0a1a0f" stroke="#1b3526" stroke-width="1"/>
+<rect x="214" y="50" width="80" height="58" rx="4" fill="#1b3526" opacity="0.45" stroke="#52b788" stroke-width="1.5"/>
+<text x="254" y="68" text-anchor="middle" fill="#52b788" font-size="8" font-family="system-ui">Living Room</text>
+<circle class="locPulse" cx="254" cy="96" fill="none" stroke="#14b8a6" stroke-width="1.5"/>
+<circle cx="254" cy="96" r="7" fill="#14b8a6"/>
+<rect x="302" y="50" width="84" height="58" rx="4" fill="#1b3526" opacity="0.15" stroke="#253e2e" stroke-width="1"/>
+<text x="344" y="68" text-anchor="middle" fill="#253e2e" font-size="8" font-family="system-ui">Kitchen</text>
+<rect x="8" y="126" width="384" height="84" rx="6" fill="#0a150e" stroke="#1b3526" stroke-width="1"/>
+<text x="20" y="144" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Movement History</text>
+<g class="h1"><text x="20" y="162" fill="#4a6052" font-size="9" font-family="system-ui">14:32  Kitchen → Living Room</text></g>
+<g class="h2"><text x="20" y="177" fill="#4a6052" font-size="9" font-family="system-ui">14:18  Hallway → Kitchen</text></g>
+<g class="h3"><text x="20" y="192" fill="#4a6052" font-size="9" font-family="system-ui">13:55  Bedroom → Hallway</text></g>
+</svg>`;
+}
+
+function _svgManageOverview() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes tabHL{0%,100%{fill:#0d2318;stroke:#78909c}50%{fill:#1a2020;stroke:#b0bec5}}
+.activeTab{animation:tabHL 2s ease-in-out infinite}
+</style>
+<rect x="0" y="0" width="108" height="220" fill="#050e08"/>
+<text x="8" y="20" fill="#52b788" font-size="9" font-weight="700" font-family="system-ui">PadSpan HA</text>
+<rect x="3" y="28" width="102" height="22" rx="5" fill="#071008"/>
+<text x="16" y="43" fill="#94a3b8" font-size="9" font-family="system-ui">Settings</text>
+<rect class="activeTab" x="3" y="54" width="102" height="22" rx="5" fill="#0d2318" stroke="#78909c" stroke-width="1.5"/>
+<text x="16" y="69" fill="#b0bec5" font-size="9" font-weight="600" font-family="system-ui">Manage</text>
+<rect x="3" y="80" width="102" height="22" rx="5" fill="#071008"/>
+<text x="16" y="95" fill="#94a3b8" font-size="9" font-family="system-ui">Training</text>
+<rect x="118" y="14" width="274" height="196" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1"/>
+<rect x="128" y="24" width="58" height="20" rx="4" fill="#0d2318" stroke="#78909c" stroke-width="1"/>
+<text x="157" y="38" text-anchor="middle" fill="#b0bec5" font-size="9" font-family="system-ui">BLE Tags</text>
+<rect x="192" y="24" width="58" height="20" rx="4" fill="#071008" stroke="#1b3526" stroke-width="1"/>
+<text x="221" y="38" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Rooms</text>
+<rect x="256" y="24" width="48" height="20" rx="4" fill="#071008" stroke="#1b3526" stroke-width="1"/>
+<text x="280" y="38" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Data</text>
+<rect x="128" y="52" width="256" height="26" rx="4" fill="#071008" stroke="#1b3526" stroke-width="0.5"/>
+<circle cx="146" cy="65" r="5" fill="#14b8a6" opacity="0.6"/>
+<text x="160" y="69" fill="#94a3b8" font-size="9" font-family="system-ui">Alice's AirTag</text>
+<rect x="336" y="58" width="40" height="14" rx="3" fill="#1b3526" stroke="#52b788" stroke-width="1"/>
+<text x="356" y="69" text-anchor="middle" fill="#52b788" font-size="8" font-family="system-ui">Delete</text>
+<rect x="128" y="82" width="256" height="26" rx="4" fill="#071008" stroke="#1b3526" stroke-width="0.5"/>
+<circle cx="146" cy="95" r="5" fill="#14b8a6" opacity="0.6"/>
+<text x="160" y="99" fill="#94a3b8" font-size="9" font-family="system-ui">Car Keys</text>
+<rect x="336" y="88" width="40" height="14" rx="3" fill="#1b3526" stroke="#52b788" stroke-width="1"/>
+<text x="356" y="99" text-anchor="middle" fill="#52b788" font-size="8" font-family="system-ui">Delete</text>
+<text x="255" y="168" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Advanced mode only</text>
+<text x="255" y="184" text-anchor="middle" fill="#253e2e" font-size="9" font-family="system-ui">Toggle ⚡ Advanced in the top bar</text>
+</svg>`;
+}
+
+function _svgUntagDevice() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes fadeRow{0%,60%{opacity:1;transform:translateX(0)}100%{opacity:0;transform:translateX(30px)}}
+.fadeRow{animation:fadeRow 1.2s ease-in 2.5s both}
+@keyframes confirmPop{0%{opacity:0;transform:scale(0.85)}100%{opacity:1;transform:scale(1)}}
+.confirm{animation:confirmPop 0.25s ease-out 1s both}
+</style>
+<rect x="8" y="14" width="384" height="22" rx="4" fill="#0d2318"/>
+<text x="28" y="29" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">BLE Tags</text>
+<text x="200" y="29" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Last seen</text>
+<text x="336" y="29" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Action</text>
+<g class="fadeRow">
+  <rect x="8" y="40" width="384" height="30" rx="4" fill="#071008" stroke="#dc2626" stroke-width="1"/>
+  <text x="28" y="59" fill="#94a3b8" font-size="10" font-family="system-ui">Sample AirTag</text>
+  <text x="200" y="59" fill="#4a6052" font-size="9" font-family="system-ui">Sample data</text>
+  <g class="confirm">
+    <rect x="292" y="47" width="52" height="17" rx="4" fill="#7f1d1d" stroke="#dc2626" stroke-width="1"/>
+    <text x="318" y="59" text-anchor="middle" fill="#fca5a5" font-size="8" font-family="system-ui">Yes, delete</text>
+    <rect x="350" y="47" width="36" height="17" rx="4" fill="#071008" stroke="#1b3526" stroke-width="1"/>
+    <text x="368" y="59" text-anchor="middle" fill="#4a6052" font-size="8" font-family="system-ui">Cancel</text>
+  </g>
+</g>
+<rect x="8" y="74" width="384" height="30" rx="4" fill="#071008" stroke="#1b3526" stroke-width="0.5"/>
+<text x="28" y="93" fill="#cbd5e1" font-size="10" font-family="system-ui">Alice's AirTag</text>
+<text x="200" y="93" fill="#4a6052" font-size="9" font-family="system-ui">2 min ago</text>
+<rect x="342" y="81" width="44" height="16" rx="4" fill="#1b3526" stroke="#52b788" stroke-width="1"/>
+<text x="364" y="93" text-anchor="middle" fill="#52b788" font-size="8" font-family="system-ui">Delete</text>
+<rect x="8" y="108" width="384" height="30" rx="4" fill="#071008" stroke="#1b3526" stroke-width="0.5"/>
+<text x="28" y="127" fill="#cbd5e1" font-size="10" font-family="system-ui">Car Keys</text>
+<text x="200" y="127" fill="#4a6052" font-size="9" font-family="system-ui">18 min ago</text>
+<rect x="342" y="115" width="44" height="16" rx="4" fill="#1b3526" stroke="#52b788" stroke-width="1"/>
+<text x="364" y="127" text-anchor="middle" fill="#52b788" font-size="8" font-family="system-ui">Delete</text>
+<text x="200" y="180" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Two-click confirm prevents accidental deletes.</text>
+<text x="200" y="196" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Device goes back to showing its hardware address.</text>
+</svg>`;
+}
+
+function _svgOrphanClean() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes orphanGlow{0%,100%{stroke:#f59e0b;opacity:0.7}50%{stroke:#fbbf24;opacity:1}}
+.orphan{animation:orphanGlow 1.5s ease-in-out infinite}
+@keyframes sweepAway{0%,60%{transform:translateX(0);opacity:1}100%{transform:translateX(220px);opacity:0}}
+.sweep{animation:sweepAway 1.2s ease-in 3s both}
+</style>
+<rect x="8" y="8" width="384" height="92" rx="8" fill="#1a0e00" stroke="#f59e0b" stroke-width="1.5"/>
+<text x="26" y="28" fill="#f59e0b" font-size="11" font-weight="600" font-family="system-ui">⚠ Orphan Room Polygons Found</text>
+<text x="20" y="44" fill="#94a3b8" font-size="9" font-family="system-ui">These room shapes exist in your maps but don't match any HA area.</text>
+<rect class="orphan sweep" x="18" y="52" width="370" height="22" rx="3" fill="#071008" stroke="#f59e0b" stroke-width="1"/>
+<text x="28" y="67" fill="#fbbf24" font-size="10" font-family="system-ui">⚠ Sample Room</text>
+<text x="188" y="67" fill="#4a6052" font-size="9" font-family="system-ui">Ground Floor map · 6 pts</text>
+<rect x="326" y="56" width="54" height="15" rx="3" fill="#7f1d1d" stroke="#dc2626" stroke-width="1" class="sweep"/>
+<text x="353" y="67" text-anchor="middle" fill="#fca5a5" font-size="8" font-family="system-ui">Delete</text>
+<rect class="orphan" x="18" y="78" width="370" height="22" rx="3" fill="#071008" stroke="#f59e0b" stroke-width="1"/>
+<text x="28" y="93" fill="#fbbf24" font-size="10" font-family="system-ui">⚠ Demo Area</text>
+<text x="188" y="93" fill="#4a6052" font-size="9" font-family="system-ui">Level 2 map · 4 pts</text>
+<rect x="326" y="82" width="54" height="15" rx="3" fill="#7f1d1d" stroke="#dc2626" stroke-width="1"/>
+<text x="353" y="93" text-anchor="middle" fill="#fca5a5" font-size="8" font-family="system-ui">Delete</text>
+<rect x="8" y="110" width="384" height="34" rx="8" fill="#071008" stroke="#dc2626" stroke-width="1.5"/>
+<text x="200" y="132" text-anchor="middle" fill="#fca5a5" font-size="11" font-weight="600" font-family="system-ui">Delete ALL 2 orphans</text>
+<text x="200" y="170" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Found in Manage → Data → Orphan Room Polygons</text>
+<text x="200" y="186" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Usually leftover from sample mode or deleted rooms</text>
+</svg>`;
+}
+
+// ─── Walkthrough Definitions ──────────────────────────────────────────────────
+
+const WALKTHROUGHS = [
+  {
+    id: "how_it_works",
+    title: "How BLE Tracking Works",
+    icon: "📡",
+    summary: "Understand the technology behind PadSpan — BLE scanners, signal strength, and room detection.",
+    steps: [
+      { title: "Bluetooth Scanners Detect Devices",       text: "PadSpan uses Bluetooth Low Energy (BLE) scanners placed around your home. Each scanner continuously listens for nearby Bluetooth signals from phones, tags, key fobs, and any other BLE device.", svg: _svgBleSignals },
+      { title: "Signal Strength Pinpoints the Room",      text: "Each scanner reports signal strength (RSSI) in dBm — more negative = weaker signal. The scanner with the strongest (least negative) reading is physically nearest to the device. That room is assigned as the device's location.", svg: _svgRssiComparison },
+      { title: "Room Assignment Updates Live",            text: "PadSpan maps the signal data to your Home Assistant Areas. The location is recalculated every 5 seconds automatically — no manual refresh needed. In Sample mode you can explore with demo data before going live.", svg: _svgRoomAssignment },
+      { title: "Track Anything Bluetooth",                text: "Phones tracked by the HA companion app, AirTags, Tile trackers, key fobs, smartwatches, fitness bands — if it emits a BLE signal, PadSpan can see it. Tag devices with friendly names so you always know what's what.", svg: _svgDeviceTypes },
+    ],
+  },
+  {
+    id: "tag_device",
+    title: "Tag Your First Device",
+    icon: "🏷️",
+    summary: "Name an unidentified BLE device so it shows up with a friendly label across all of PadSpan.",
+    steps: [
+      { title: "Open the Objects Tab",                   text: "Click Objects in the sidebar. This lists every Bluetooth device currently visible to your scanners — including unidentified ones showing only a hardware address like AA:BB:CC:11:22:33.", svg: _svgObjectsList },
+      { title: "Find an Unidentified Device",            text: "Look for an orange Unidentified badge next to a hardware address. That's a real BLE device your scanners can see but hasn't been named yet. You can use the search box to filter by address if you have many devices.", svg: _svgObjectsList },
+      { title: "Click Tag and Enter a Name",             text: "Click the Tag button next to the device. A prompt appears — type a friendly name like 'Alice's AirTag', 'Car Keys', or 'Backpack Tracker'. Click Save. The name is stored permanently in Home Assistant.", svg: _svgTagModal },
+      { title: "Your Named Device Appears Everywhere",   text: "The name instantly appears in Follow, Overview, Objects, and all other panels. The badge turns teal to show it's identified. You can rename it at any time using the Relabel button.", svg: _svgTaggedDevice },
+    ],
+  },
+  {
+    id: "floor_plan",
+    title: "Set Up a Floor Plan",
+    icon: "🗺️",
+    summary: "Upload a floor plan image, draw room boundaries, and place your Bluetooth scanners on the map.",
+    steps: [
+      { title: "Upload Your Floor Plan",                 text: "Go to Mapping → Upload tab. Give the map a name like 'Ground Floor', choose your image file (PNG, JPG, or even a photo of a hand-drawn plan), and click Upload & Convert. PadSpan automatically resizes and stores it.", svg: _svgUpload },
+      { title: "Draw Room Boundaries",                   text: "In the Edit tab, select Rooms mode then pick a room from the dropdown. Click on the floor plan image to place polygon points around that room. Click the first point again to close the shape. Repeat for each room.", svg: _svgDrawRooms },
+      { title: "Place Your Bluetooth Scanners",          text: "Switch to Receivers mode in the Edit tab. Click anywhere on the floor plan to place a scanner icon where a physical Bluetooth radio is located. PadSpan uses these positions for distance calculations and visualisation.", svg: _svgPlaceScanners },
+      { title: "Assign Scanners to Rooms (Bluetooth)",   text: "Go to Bluetooth → Scanners tab to see all detected radios. Use the Area dropdown on each scanner row to assign it to the correct room. This links the scanner's RSSI readings to the right room in the system.", svg: _svgPlaceScanners },
+    ],
+  },
+  {
+    id: "dashboard",
+    title: "Reading the Dashboard",
+    icon: "📊",
+    summary: "Understand the Overview dashboard — KPI cards, room grid, and the Follow tracker.",
+    steps: [
+      { title: "Overview — Summary Counts",              text: "The Overview tab shows live counts of rooms, objects, and radios. In Advanced mode these appear as clickable KPI cards — tap any number to see a full list. Click any row in the list for detailed info on that item.", svg: _svgKpiCards },
+      { title: "Room Grid — What's in Each Room",        text: "Scroll down to see the room grid. Each coloured box is a room. Inside: green antenna rings are Bluetooth scanners, teal dots are identified (named) devices, orange dots are unidentified BLE signals. Counts shown in the corner.", svg: _svgRoomGrid },
+      { title: "Follow — Track a Specific Tag",          text: "Switch to the Follow tab and pick any tracked device from the dropdown. You'll see its current room, signal strength, age of last detection, and a room map with a pulsing location dot. Advanced mode adds a movement history log.", svg: _svgFollowTab },
+    ],
+  },
+  {
+    id: "manage",
+    title: "Manage Your Setup",
+    icon: "⚙️",
+    summary: "Clean up tags, delete HA areas, remove orphaned map data, and keep your system tidy.",
+    steps: [
+      { title: "The Manage Tab (Advanced Mode)",         text: "The Manage tab gives you full control over your PadSpan data. Switch to Advanced mode (⚡ toggle in the top bar) then click Manage in the sidebar. You'll find tabs for BLE Tags, Rooms (HA Areas), Maps, and Data.", svg: _svgManageOverview },
+      { title: "Untag or Remove BLE Devices",           text: "Under BLE Tags, every named BLE device is listed with its last-seen time. Click Delete to remove the name — the device reverts to showing its hardware address. A two-click confirm prevents accidental deletes.", svg: _svgUntagDevice },
+      { title: "Clean Up Orphan Polygons",              text: "The Data tab's Orphan Room Polygons scanner finds room boundaries in your maps that no longer match a real HA area — commonly leftover from sample mode or rooms that were deleted. Delete them individually or all at once.", svg: _svgOrphanClean },
+    ],
+  },
+];
+
+// ─── Manual Section Definitions ───────────────────────────────────────────────
+// Auto-update: sections that reference helpKeys pull their text from the HELP dict
+// at render time. Update help_content.js → the manual automatically reflects it.
+
+const MANUAL_SECTIONS = [
+  {
+    id: "intro",
+    title: "What is PadSpan HA?",
+    icon: "🏠",
+    paragraphs: [
+      "PadSpan HA is a custom Home Assistant integration that adds whole-home Bluetooth Low Energy (BLE) presence tracking. It turns your existing Bluetooth scanners (ESPresense, Bermuda, or similar) into a real-time people and object tracking system.",
+      "Unlike basic presence detection that only knows if someone is home or away, PadSpan tells you which room a person or device is in — and updates every 5 seconds.",
+      "PadSpan shows all tracked devices on a live room map, lets you follow a specific tag, draw floor plans with room boundaries, and build multi-floor 3D visualisations. Everything runs locally inside Home Assistant — no cloud required.",
+    ],
+  },
+  {
+    id: "concepts",
+    title: "Key Concepts",
+    icon: "💡",
+    paragraphs: [
+      "BLE (Bluetooth Low Energy) — a low-power radio standard used by phones, AirTags, Tile trackers, key fobs, smartwatches, and many other devices. BLE devices broadcast a signal that nearby scanners can detect.",
+      "RSSI (Received Signal Strength Indicator) — measured in dBm (e.g. −55 dBm). More negative = weaker signal = further away. PadSpan uses RSSI from multiple scanners to determine which room a device is in.",
+      "Scanner / Radio — a Bluetooth receiver placed in a room. ESPresense on an ESP32 or a Bermuda-tracked device are common choices. Multiple scanners per floor give better accuracy.",
+      "Area — a room defined in Home Assistant's Areas & Zones. PadSpan uses your HA areas as its room list. Create and rename rooms in HA Settings → Areas & Zones.",
+      "Object — anything PadSpan is tracking. Could be a phone (via HA companion app), an AirTag, a Tile tracker, a key fob, or any unnamed BLE signal.",
+      "Tag — a friendly name you assign to an unidentified BLE device. Tagged devices show up with their name everywhere in PadSpan.",
+      "Sample Mode — a demo mode using fictional data (the Smith Residence). Great for exploring PadSpan without live hardware. Toggle between Sample and Live in the top bar.",
+    ],
+  },
+  {
+    id: "getting_started",
+    title: "Getting Started",
+    icon: "🚀",
+    paragraphs: [
+      "1. Install PadSpan HA via HACS as a custom repository. After adding the repository, install the integration and restart Home Assistant completely (not just reload — a full restart is required).",
+      "2. Make sure your Bluetooth scanners are set up and reporting to Home Assistant. ESPresense and Bermuda are the most popular options and work out of the box with PadSpan.",
+      "3. Create your rooms in HA Settings → Areas & Zones. PadSpan reads your areas directly — no separate room setup needed.",
+      "4. Open PadSpan HA from the sidebar. Use Sample mode first to familiarise yourself with the interface, then switch to Live mode to see your real devices.",
+      "5. Go to Objects and tag your key devices with friendly names. Then switch to Follow to track them in real time.",
+      "Tip: If the Bluetooth tab shows 'No live data', make sure HA was fully restarted after install — not just reloaded.",
+    ],
+  },
+  {
+    id: "help_follow",
+    title: "Follow Tab",
+    icon: "🎯",
+    helpKeys: ["follow", "follow_selector", "follow_map", "follow_alerts"],
+  },
+  {
+    id: "help_overview",
+    title: "Overview Tab",
+    icon: "📋",
+    helpKeys: ["overview", "overview_grid"],
+  },
+  {
+    id: "help_objects",
+    title: "Objects Tab",
+    icon: "🏷️",
+    helpKeys: ["objects", "objects_tag"],
+  },
+  {
+    id: "help_maps",
+    title: "Mapping",
+    icon: "🗺️",
+    helpKeys: ["maps", "maps_library", "maps_upload", "maps_stack"],
+  },
+  {
+    id: "help_settings",
+    title: "Settings",
+    icon: "⚙️",
+    helpKeys: ["settings", "settings_colors"],
+  },
+  {
+    id: "manage_section",
+    title: "Manage Tab (Advanced)",
+    icon: "🔧",
+    paragraphs: [
+      "The Manage tab is only visible in Advanced mode. Toggle ⚡ Advanced using the button in the top bar.",
+      "BLE Tags — lists every named BLE device. Click Delete (two-click confirm) to remove a name. The device reverts to its hardware address but is still tracked.",
+      "Rooms — lists all HA areas. Click Delete to remove an area from Home Assistant entirely. This cannot be undone from within PadSpan — if deleted by mistake, re-add the area in HA Settings → Areas & Zones.",
+      "Maps — lists all uploaded floor plans. Delete individual maps or all maps at once. Also manage the integration config entry from here.",
+      "Data → Orphan Room Polygons — scans all your map room boundaries and flags any that don't match a current HA area. These are usually leftover from sample mode or rooms that were deleted. Safe to remove.",
+      "Data → HA Entities — lists all entities PadSpan can see in your HA entity registry. Note: entities managed by other integrations (like Bermuda) will be recreated automatically after deletion.",
+    ],
+  },
+  {
+    id: "troubleshooting",
+    title: "Troubleshooting",
+    icon: "🔍",
+    paragraphs: [
+      "No live Bluetooth data after install — HA needs a full restart (not just integration reload) after first install via HACS. Go to HA Settings → System → Restart.",
+      "Devices not appearing in Objects — the device must be in range of at least one scanner and actively transmitting BLE. Check your scanner's integration (ESPresense / Bermuda) is working first.",
+      "Location seems wrong (device in wrong room) — signal strength can be affected by walls, interference, or scanner placement. Adding more scanners improves accuracy. Make sure scanners are assigned to the correct HA area in Bluetooth → Scanners.",
+      "UI changes not showing — hard refresh your browser (Ctrl+F5 or Cmd+Shift+R). Check the build stamp in Diagnostics to confirm the installed version.",
+      "Email alerts not sending — email is sent via HA's notify service. Confirm a notification integration (Gmail, SMTP, etc.) is configured in HA Settings → Integrations.",
+      "Sample data lingering in Manage — use the Delete buttons in Manage → BLE Tags, or use the Orphan Polygons cleaner in Manage → Data to remove sample-mode leftovers.",
+      "3D floor alignment looks wrong — after setting alignment in Maps → 3D Stack, click Save Alignment. The 3D preview will then use the correct reference aspect ratio. Re-open and re-save if alignment was set in an older version.",
+    ],
+  },
+];
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+
+export function render(ctx) {
+  const { el } = ctx.helpers;
+  const HELP = ctx.helpers.HELP || {};
+
+  if (!ctx.state._training) ctx.state._training = { tab: "walkthroughs", walkId: null, walkStep: 0, manualOpen: {} };
+  const ts = ctx.state._training;
+
+  const root = el("section", { id: "training" });
+  root.className = ctx.state.view === "training" ? "" : "hidden";
+
+  // ── Page header ────────────────────────────────────────────────────────────
+  const header = el("div", { style: "display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap" });
+  header.appendChild(el("div", { style: "font-size:20px;font-weight:700;color:#52b788" }, "Training Hub"));
+  header.appendChild(el("div", { class: "muted", style: "font-size:13px" }, "Walkthroughs, animated guides, and the full PadSpan manual."));
+  root.appendChild(header);
+
+  // ── Tab bar ────────────────────────────────────────────────────────────────
+  const tabBar = el("div", { style: "display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid #1b3526;padding-bottom:10px;flex-wrap:wrap" });
+  for (const [id, label, icon] of [["walkthroughs","Walkthroughs","📡"],["manual","Manual","📖"]]) {
+    const active = ts.tab === id;
+    const btn = el("button", {
+      class: "btn" + (active ? "" : " inline"),
+      style: active ? "border-color:#52b788;font-weight:600" : "",
+      onclick: () => { ts.tab = id; ctx.actions.renderRooms(); },
+    }, icon + "  " + label);
+    tabBar.appendChild(btn);
+  }
+  root.appendChild(tabBar);
+
+  // ── Content ────────────────────────────────────────────────────────────────
+  if (ts.tab === "walkthroughs") {
+    root.appendChild(_renderWalkthroughs(ctx, el, ts));
+  } else {
+    root.appendChild(_renderManual(ctx, el, ts, HELP));
+  }
+
+  return root;
+}
+
+// ─── Walkthroughs Tab ─────────────────────────────────────────────────────────
+
+function _renderWalkthroughs(ctx, el, ts) {
+  const wrap = el("div", {});
+
+  if (!ts.walkId) {
+    // ── Walkthrough selector grid ────────────────────────────────────────────
+    wrap.appendChild(el("div", { class: "muted", style: "font-size:13px;margin-bottom:14px" },
+      "Choose a topic to get started. Each walkthrough is step-by-step with animated diagrams."));
+    const grid = el("div", { style: "display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px" });
+    for (const wt of WALKTHROUGHS) {
+      const card = el("div", {
+        style: "background:#0a150e;border:1px solid #1b3526;border-radius:10px;padding:16px;cursor:pointer;transition:border-color 0.15s",
+        onclick: () => { ts.walkId = wt.id; ts.walkStep = 0; ctx.actions.renderRooms(); },
+      });
+      card.addEventListener("mouseenter", () => card.style.borderColor = "#52b788");
+      card.addEventListener("mouseleave", () => card.style.borderColor = "#1b3526");
+      card.appendChild(el("div", { style: "font-size:26px;margin-bottom:8px" }, wt.icon));
+      card.appendChild(el("div", { style: "font-size:14px;font-weight:600;color:#cbd5e1;margin-bottom:6px" }, wt.title));
+      card.appendChild(el("div", { class: "muted", style: "font-size:12px;line-height:1.5" }, wt.summary));
+      card.appendChild(el("div", { style: "margin-top:10px;font-size:11px;color:#52b788" }, `${wt.steps.length} steps →`));
+      grid.appendChild(card);
+    }
+    wrap.appendChild(grid);
+    return wrap;
+  }
+
+  // ── Step view ──────────────────────────────────────────────────────────────
+  const wt = WALKTHROUGHS.find(w => w.id === ts.walkId);
+  if (!wt) { ts.walkId = null; ctx.actions.renderRooms(); return wrap; }
+  const step = wt.steps[ts.walkStep] || wt.steps[0];
+  const stepCount = wt.steps.length;
+
+  // Back button
+  const backBtn = el("button", { class: "btn inline", style: "margin-bottom:14px", onclick: () => { ts.walkId = null; ctx.actions.renderRooms(); } },
+    "← All Walkthroughs");
+  wrap.appendChild(backBtn);
+
+  const card = el("div", { class: "card", style: "max-width:700px" });
+
+  // Header
+  const cardHeader = el("div", { style: "display:flex;align-items:center;gap:10px;margin-bottom:14px" });
+  cardHeader.appendChild(el("span", { style: "font-size:22px" }, wt.icon));
+  const hgroup = el("div", {});
+  hgroup.appendChild(el("div", { style: "font-size:15px;font-weight:700;color:#cbd5e1" }, wt.title));
+  hgroup.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-top:2px" }, `Step ${ts.walkStep + 1} of ${stepCount}`));
+  cardHeader.appendChild(hgroup);
+  card.appendChild(cardHeader);
+
+  // Step title
+  card.appendChild(el("div", { style: "font-size:14px;font-weight:600;color:#52b788;margin-bottom:10px" }, step.title));
+
+  // SVG diagram
+  const svgWrap = el("div", { style: "margin-bottom:14px;border-radius:8px;overflow:hidden" });
+  svgWrap.innerHTML = step.svg();
+  card.appendChild(svgWrap);
+
+  // Step text
+  card.appendChild(el("div", { style: "font-size:13px;line-height:1.75;color:#94a3b8;margin-bottom:16px" }, step.text));
+
+  // Step dots + nav
+  const navRow = el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap" });
+
+  const prevBtn = el("button", { class: "btn inline" + (ts.walkStep === 0 ? " disabled" : ""), onclick: () => {
+    if (ts.walkStep > 0) { ts.walkStep--; ctx.actions.renderRooms(); }
+  }}, "← Previous");
+  if (ts.walkStep === 0) prevBtn.disabled = true;
+  navRow.appendChild(prevBtn);
+
+  // Step dots
+  const dots = el("div", { style: "display:flex;gap:6px;align-items:center;flex:1;justify-content:center" });
+  for (let i = 0; i < stepCount; i++) {
+    const dot = el("button", {
+      style: `width:10px;height:10px;border-radius:50%;border:none;cursor:pointer;padding:0;background:${i === ts.walkStep ? "#52b788" : "#1b3526"};transition:background 0.15s`,
+      onclick: () => { ts.walkStep = i; ctx.actions.renderRooms(); },
+    });
+    dots.appendChild(dot);
+  }
+  navRow.appendChild(dots);
+
+  if (ts.walkStep < stepCount - 1) {
+    navRow.appendChild(el("button", { class: "btn", onclick: () => { ts.walkStep++; ctx.actions.renderRooms(); } }, "Next →"));
+  } else {
+    navRow.appendChild(el("button", { class: "btn", style: "border-color:#52b788", onclick: () => { ts.walkId = null; ts.walkStep = 0; ctx.actions.renderRooms(); } }, "Done ✓"));
+  }
+
+  card.appendChild(navRow);
+  wrap.appendChild(card);
+  return wrap;
+}
+
+// ─── Manual Tab ───────────────────────────────────────────────────────────────
+
+function _renderManual(ctx, el, ts, HELP) {
+  const wrap = el("div", {});
+
+  wrap.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:16px;line-height:1.6" },
+    "This manual is generated automatically from PadSpan's help content. When a new feature is added and its help text is updated, it appears here without any manual editing."));
+
+  for (const section of MANUAL_SECTIONS) {
+    const isOpen = ts.manualOpen[section.id] !== false; // default open
+    const sectionEl = el("div", { style: "margin-bottom:10px" });
+
+    // Section header (accordion toggle)
+    const headerBtn = el("button", {
+      style: [
+        "display:flex;align-items:center;gap:10px;width:100%;background:#0a150e",
+        "border:1px solid #1b3526;border-radius:8px;padding:12px 14px;cursor:pointer",
+        "text-align:left;transition:border-color 0.15s",
+        isOpen ? "border-bottom-left-radius:0;border-bottom-right-radius:0;border-color:#253e2e" : "",
+      ].join(";"),
+      onclick: () => {
+        ts.manualOpen[section.id] = !isOpen;
+        ctx.actions.renderRooms();
+      },
+    });
+    headerBtn.appendChild(el("span", { style: "font-size:16px" }, section.icon));
+    headerBtn.appendChild(el("span", { style: "font-size:13px;font-weight:600;color:#cbd5e1;flex:1" }, section.title));
+    headerBtn.appendChild(el("span", { style: "font-size:12px;color:#4a6052" }, isOpen ? "▲" : "▼"));
+    sectionEl.appendChild(headerBtn);
+
+    if (isOpen) {
+      const body = el("div", { style: "background:#071008;border:1px solid #253e2e;border-top:none;border-radius:0 0 8px 8px;padding:14px 16px" });
+
+      // Render HELP-sourced subsections
+      if (section.helpKeys && section.helpKeys.length) {
+        for (const key of section.helpKeys) {
+          const h = HELP[key];
+          if (!h) continue;
+          body.appendChild(el("div", { style: "font-size:12px;font-weight:700;color:#52b788;margin-bottom:6px;margin-top:12px" }, h.title));
+          const paras = Array.isArray(h.body) ? h.body : [h.body];
+          for (const p of paras) {
+            body.appendChild(el("div", { style: "font-size:13px;line-height:1.75;color:#94a3b8;margin-bottom:8px" }, p));
+          }
+        }
+      }
+
+      // Render hardcoded paragraphs
+      if (section.paragraphs && section.paragraphs.length) {
+        for (const p of section.paragraphs) {
+          body.appendChild(el("div", { style: "font-size:13px;line-height:1.75;color:#94a3b8;margin-bottom:8px" }, p));
+        }
+      }
+
+      sectionEl.appendChild(body);
+    }
+
+    wrap.appendChild(sectionEl);
+  }
+
+  // Footer note
+  const footer = el("div", { style: "margin-top:20px;padding:12px;background:#050e08;border:1px solid #1b3526;border-radius:8px" });
+  footer.appendChild(el("div", { style: "font-size:11px;color:#4a6052;line-height:1.6" },
+    "Manual version: auto-generated from help_content.js. Content marked with a feature section heading reflects the current help text for that tab. To contribute corrections or additions, update help_content.js in the PadSpan HA source."));
+  wrap.appendChild(footer);
+
+  return wrap;
+}

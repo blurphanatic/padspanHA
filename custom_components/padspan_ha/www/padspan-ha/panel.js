@@ -13,31 +13,32 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T025530Z";
-import { HELP } from "./help_content.js?b=20260224T025530Z";
-import * as Follow from "./views/follow.js?b=20260224T025530Z";
-import * as Overview from "./views/overview.js?b=20260224T025530Z";
-import * as Objects from "./views/objects.js?b=20260224T025530Z";
-import * as Devices from "./views/devices.js?b=20260224T025530Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260224T025530Z";
-import * as Presence from "./views/presence.js?b=20260224T025530Z";
-import * as Zones from "./views/zones.js?b=20260224T025530Z";
-import * as Insights from "./views/insights.js?b=20260224T025530Z";
-import * as History from "./views/history.js?b=20260224T025530Z";
-import * as Monitor from "./views/monitor.js?b=20260224T025530Z";
-import * as Maps from "./views/maps.js?b=20260224T025530Z";
-import * as Events from "./views/events.js?b=20260224T025530Z";
-import * as Health from "./views/health.js?b=20260224T025530Z";
-import * as Settings from "./views/settings.js?b=20260224T025530Z";
-import * as Manage from "./views/manage.js?b=20260224T025530Z";
-import * as Debug from "./views/debug.js?b=20260224T025530Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260224T025530Z";
-import * as QA from "./views/qa.js?b=20260224T025530Z";
-import * as Sandbox from "./views/sandbox.js?b=20260224T025530Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T031817Z";
+import { HELP } from "./help_content.js?b=20260224T031817Z";
+import * as Follow from "./views/follow.js?b=20260224T031817Z";
+import * as Overview from "./views/overview.js?b=20260224T031817Z";
+import * as Objects from "./views/objects.js?b=20260224T031817Z";
+import * as Devices from "./views/devices.js?b=20260224T031817Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260224T031817Z";
+import * as Presence from "./views/presence.js?b=20260224T031817Z";
+import * as Zones from "./views/zones.js?b=20260224T031817Z";
+import * as Insights from "./views/insights.js?b=20260224T031817Z";
+import * as History from "./views/history.js?b=20260224T031817Z";
+import * as Monitor from "./views/monitor.js?b=20260224T031817Z";
+import * as Maps from "./views/maps.js?b=20260224T031817Z";
+import * as Events from "./views/events.js?b=20260224T031817Z";
+import * as Health from "./views/health.js?b=20260224T031817Z";
+import * as Settings from "./views/settings.js?b=20260224T031817Z";
+import * as Manage from "./views/manage.js?b=20260224T031817Z";
+import * as Debug from "./views/debug.js?b=20260224T031817Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260224T031817Z";
+import * as QA from "./views/qa.js?b=20260224T031817Z";
+import * as Training from "./views/training.js?b=20260224T031817Z";
+import * as Sandbox from "./views/sandbox.js?b=20260224T031817Z";
 
-const APP_VERSION = "0.4.52";
+const APP_VERSION = "0.4.53";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260224T025530Z";
+const BUILD_ID = "20260224T031817Z";
 
 const VIEWS = {
   follow: Follow,
@@ -55,6 +56,7 @@ const VIEWS = {
   health: Health,
   settings: Settings,
   manage: Manage,
+  training: Training,
   diagnostics: Diagnostics,
   debug: Debug,
   qa: QA,
@@ -74,12 +76,13 @@ const MENU = [
   ["maps","Mapping","mdi:map"],
   ["settings","Settings","mdi:cog-outline"],
   ["manage","Manage","mdi:cog-wrench"],
+  ["training","Training","mdi:school-outline"],
   ["qa","QA","mdi:clipboard-check-outline"],
   ["sandbox","Sandbox","mdi:flask-outline"],
 ];
 
 // Tabs shown in Basic (simplified) mode
-const BASIC_TABS = new Set(["follow", "overview", "objects", "maps", "settings"]);
+const BASIC_TABS = new Set(["follow", "overview", "objects", "maps", "settings", "training"]);
 
 const MENU_COLORS = {
   follow: "#5eead4",
@@ -97,6 +100,7 @@ const MENU_COLORS = {
   health: "#e57373",
   settings: "#b0bec5",
   manage: "#78909c",
+  training: "#4dd0e1",
   diagnostics: "#9575cd",
   debug: "#ef5350",
   qa: "#26c6da",
@@ -531,6 +535,7 @@ class PadSpanHaApp extends HTMLElement {
       state: this.state,
       helpers: {
         el, esc, pill,
+        HELP,
         roomColor: (n)=>roomColor(n, this.state.model),
         helpBtn: (key)=>{
           const b = document.createElement("button");
