@@ -1634,9 +1634,12 @@ function _stack(ctx, maps, helpBtn){
     if(!tgtMap){ ctx.toast("No target map selected.", true); return; }
     btn.disabled = true; btn.textContent = "Saving…";
     try {
+      const refId2 = alignState.refId || refSel.value;
+      const refMap2 = (ctx.state.maps.list||[]).find(m=>m.id===refId2) || maps.find(m=>m.id===refId2);
       const newStk = Object.assign({}, tgtMap.stack||{},{
         x_offset: alignState.x_offset, y_offset: alignState.y_offset,
         scale: alignState.scale, rotation: alignState.rotation||0,
+        ref_ar: refMap2 ? (refMap2.image?.height||600)/(refMap2.image?.width||800) : undefined,
       });
       await ctx.actions.mapsUpdate({
         map_id: tgtMap.id, receivers: tgtMap.receivers||[], calibration: tgtMap.calibration||{},
@@ -1845,11 +1848,12 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
     for(const m of group){
       const stk=m.stack||{}, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
+      const arRef = stk.ref_ar || ar;
       const rot=(stk.rotation||0)*Math.PI/180;
       const bbPt=(px,py)=>{
-        const dx=(px-0.5)*sc, dy=(py-0.5)*sc*ar;
+        const dx=(px-0.5)*sc, dy=(py-0.5)*sc*arRef;
         const rx=dx*Math.cos(rot)-dy*Math.sin(rot), ry=dx*Math.sin(rot)+dy*Math.cos(rot);
-        return [(0.5+ox)+rx, ar*(0.5+oy_)+ry];
+        return [(0.5+ox)+rx, arRef*(0.5+oy_)+ry];
       };
       for(const [cx,cy] of [[0,0],[1,0],[1,1],[0,1]]){
         const [wx,wy]=bbPt(cx,cy);
@@ -1875,13 +1879,14 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
       const stk = m.stack||{};
       const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
+      const arRef = stk.ref_ar || ar;
       const rotRad = (stk.rotation||0) * Math.PI / 180;
-      // CSS-matching transform: scale centered, rotation in pixel space, then offset
+      // CSS-matching transform: uses ref_ar (the reference map's AR) to match alignment overlay math
       const mapPt = (px,py) => {
-        const dx=(px-0.5)*sc, dy=(py-0.5)*sc*ar;
+        const dx=(px-0.5)*sc, dy=(py-0.5)*sc*arRef;
         const rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad);
         const ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);
-        return [(0.5+ox)+rx, ar*(0.5+oy_)+ry];
+        return [(0.5+ox)+rx, arRef*(0.5+oy_)+ry];
       };
 
       for(const [room, b] of Object.entries(m.room_bounds||{})){
