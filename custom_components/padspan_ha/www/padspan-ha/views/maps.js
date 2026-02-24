@@ -640,6 +640,32 @@ function _edit(ctx, map){
         right.appendChild(tagBox);
 
       }
+
+      // --- Polygon Layers ---
+      const polyEntries = Object.entries(ctx.state.maps._draftRoomBounds || {}).filter(([,b]) => b && b.type === "poly");
+      if(polyEntries.length){
+        const layersDiv = el("div",{style:"margin-top:14px"});
+        layersDiv.appendChild(el("div",{class:"muted",style:"font-size:12px;font-weight:600;margin-bottom:6px"},`Polygon layers (${polyEntries.length})`));
+        for(const [room, b] of polyEntries){
+          const isOrphan = !allRooms.includes(room);
+          const c = roomColor(room);
+          const delBtn = el("button",{class:"btn tiny"},"Delete");
+          delBtn.addEventListener("click", ()=>{
+            delete ctx.state.maps._draftRoomBounds[room];
+            renderAll(); refreshList(); renderTools();
+          });
+          const row = el("div",{style:"display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid #1b3526;border-radius:6px;background:#0a150e;margin-bottom:4px"},[
+            el("span",{style:`width:10px;height:10px;border-radius:50%;background:${c};flex-shrink:0`}),
+            el("div",{style:"flex:1"},[
+              el("div",{style:`font-size:12px;font-weight:600${isOrphan?";color:#f59e0b":""}`},room+(isOrphan?" ⚠ orphan":"")),
+              el("div",{class:"muted",style:"font-size:10px"},`${(b.points||[]).length} points${isOrphan?" · not in room registry":""}`),
+            ]),
+            delBtn,
+          ]);
+          layersDiv.appendChild(row);
+        }
+        right.appendChild(layersDiv);
+      }
     }
 
     right.appendChild(saveRow);
@@ -1726,7 +1752,7 @@ function _stackMapSVGStr(map, ctx, isTarget, showBg=true){
   const hasRooms = Object.keys(rb).length > 0;
   const borderCol = isTarget ? "#52b78888" : "#1b3526";
 
-  let s = `<svg viewBox="0 0 1 1" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block">`;
+  let s = `<svg viewBox="0 0 1 1" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block">`;
   if(showBg){
     s += `<rect x="0.005" y="0.005" width="0.99" height="0.99" fill="${isTarget?"#071008aa":"#071008"}" stroke="${borderCol}" stroke-width="0.012"/>`;
   } else if(isTarget){
