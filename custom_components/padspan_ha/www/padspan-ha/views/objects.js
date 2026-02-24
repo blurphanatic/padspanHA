@@ -181,6 +181,7 @@ export function render(ctx){
       el("th",{},"Signal"),
       el("th",{},"Last seen"),
       el("th",{},"Scanner"),
+      el("th",{},"Follow"),
       el("th",{},"Tag"),
     ])),
     objTbody,
@@ -196,6 +197,19 @@ export function render(ctx){
     const age = o.age_s != null ? fmtAgo(o.age_s) : "";
     const scanner = kind==="ble" && Array.isArray(o.sources) && o.sources.length
       ? o.sources.join(", ") : (o.room || "");
+
+    // Follow button
+    const followKey = addr || o.entity_id || "";
+    const followCell = (() => {
+      if (!followKey) return el("td",{}, "");
+      const isF = ctx.actions.followedHas(followKey);
+      const btn = el("button",{
+        class:"btn tiny",
+        style: isF ? "background:#1a3a2a;border-color:#52b788;color:#52b788" : "",
+      }, isF ? "✓ Following" : "Follow");
+      btn.addEventListener("click",(e)=>{ e.stopPropagation(); ctx.actions.followedToggle(followKey); });
+      return el("td",{}, btn);
+    })();
 
     const tagCell = (() => {
       if (kind !== "ble" || !addr) return el("td",{}, "");
@@ -222,6 +236,7 @@ export function render(ctx){
       el("td",{}, rssi ? el("span",{class:"badge"}, rssi) : "—"),
       el("td",{}, age || "—"),
       el("td",{class:"muted",style:"font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis"}, scanner || "—"),
+      followCell,
       tagCell,
     ]);
     tr.style.cursor = "pointer";
@@ -277,6 +292,17 @@ export function render(ctx){
       const kind = o.kind === "entity" ? "HA Entity" : (o.identified ? "Tagged BLE" : "Unknown BLE");
 
       const actions = el("div",{class:"basic-obj-actions"});
+      // Follow toggle
+      const followKey = addr || o.entity_id || "";
+      if(followKey){
+        const isF = ctx.actions.followedHas(followKey);
+        const fBtn = el("button",{
+          class:"btn tiny",
+          style: isF ? "background:#1a3a2a;border-color:#52b788;color:#52b788" : "",
+        }, isF ? "✓ Following" : "Follow");
+        fBtn.addEventListener("click", ()=> ctx.actions.followedToggle(followKey));
+        actions.appendChild(fBtn);
+      }
       if(o.kind === "ble" && addr){
         const btn = el("button",{class:"btn tiny"}, o.user_label ? "Relabel" : "Tag");
         btn.addEventListener("click", ()=> ctx.actions.tagObjectPrompt(addr, o.user_label || ""));

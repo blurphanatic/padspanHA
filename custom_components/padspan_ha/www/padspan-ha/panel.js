@@ -13,33 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T221746Z";
-import { HELP } from "./help_content.js?b=20260224T221746Z";
-import * as Follow from "./views/follow.js?b=20260224T221746Z";
-import * as Overview from "./views/overview.js?b=20260224T221746Z";
-import * as Objects from "./views/objects.js?b=20260224T221746Z";
-import * as Devices from "./views/devices.js?b=20260224T221746Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260224T221746Z";
-import * as Presence from "./views/presence.js?b=20260224T221746Z";
-import * as Zones from "./views/zones.js?b=20260224T221746Z";
-import * as Insights from "./views/insights.js?b=20260224T221746Z";
-import * as History from "./views/history.js?b=20260224T221746Z";
-import * as Monitor from "./views/monitor.js?b=20260224T221746Z";
-import * as Maps from "./views/maps.js?b=20260224T221746Z";
-import * as Events from "./views/events.js?b=20260224T221746Z";
-import * as Health from "./views/health.js?b=20260224T221746Z";
-import * as Settings from "./views/settings.js?b=20260224T221746Z";
-import * as Manage from "./views/manage.js?b=20260224T221746Z";
-import * as Debug from "./views/debug.js?b=20260224T221746Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260224T221746Z";
-import * as QA from "./views/qa.js?b=20260224T221746Z";
-import * as Training from "./views/training.js?b=20260224T221746Z";
-import * as Calibration from "./views/calibration.js?b=20260224T221746Z";
-import * as Sandbox from "./views/sandbox.js?b=20260224T221746Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T223058Z";
+import { HELP } from "./help_content.js?b=20260224T223058Z";
+import * as Follow from "./views/follow.js?b=20260224T223058Z";
+import * as Overview from "./views/overview.js?b=20260224T223058Z";
+import * as Objects from "./views/objects.js?b=20260224T223058Z";
+import * as Devices from "./views/devices.js?b=20260224T223058Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260224T223058Z";
+import * as Presence from "./views/presence.js?b=20260224T223058Z";
+import * as Zones from "./views/zones.js?b=20260224T223058Z";
+import * as Insights from "./views/insights.js?b=20260224T223058Z";
+import * as History from "./views/history.js?b=20260224T223058Z";
+import * as Monitor from "./views/monitor.js?b=20260224T223058Z";
+import * as Maps from "./views/maps.js?b=20260224T223058Z";
+import * as Events from "./views/events.js?b=20260224T223058Z";
+import * as Health from "./views/health.js?b=20260224T223058Z";
+import * as Settings from "./views/settings.js?b=20260224T223058Z";
+import * as Manage from "./views/manage.js?b=20260224T223058Z";
+import * as Debug from "./views/debug.js?b=20260224T223058Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260224T223058Z";
+import * as QA from "./views/qa.js?b=20260224T223058Z";
+import * as Training from "./views/training.js?b=20260224T223058Z";
+import * as Calibration from "./views/calibration.js?b=20260224T223058Z";
+import * as Sandbox from "./views/sandbox.js?b=20260224T223058Z";
 
-const APP_VERSION = "0.4.75";
+const APP_VERSION = "0.4.76";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260224T221746Z";
+const BUILD_ID = "20260224T223058Z";
 
 const VIEWS = {
   follow: Follow,
@@ -193,6 +193,8 @@ class PadSpanHaApp extends HTMLElement {
       timing: { lastRefreshMs: null, lastDiagMs: null },
       lastToast: null,
       versionInfo: null,
+      // Followed beacons — persisted to localStorage
+      followedAddrs: new Set(JSON.parse(localStorage.getItem("padspan_followed") || "[]")),
     };
 
     this.$ = null;
@@ -629,6 +631,15 @@ class PadSpanHaApp extends HTMLElement {
         calibrationClear: async () => await this._callWS({ type: "padspan_ha/calibration_clear" }),
         calibrationComputeModel: async () => await this._callWS({ type: "padspan_ha/calibration_compute_model" }),
         calibrationSwapRadio: async (old_source, new_source) => await this._callWS({ type: "padspan_ha/calibration_swap_radio", old_source, new_source }),
+        // Followed beacons
+        followedHas: (addr) => !!addr && this.state.followedAddrs.has(String(addr)),
+        followedToggle: (addr) => {
+          if(!addr) return;
+          const s = this.state.followedAddrs;
+          s.has(String(addr)) ? s.delete(String(addr)) : s.add(String(addr));
+          localStorage.setItem("padspan_followed", JSON.stringify([...s]));
+          this._renderCurrentView();
+        },
       },
       toast: (m, isErr=false)=>this._toast(m, isErr),
     };

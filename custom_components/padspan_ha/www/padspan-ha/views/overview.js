@@ -306,6 +306,7 @@ export function render(ctx){
       el("th",{}, "Signal"),
       el("th",{}, "Last seen"),
       el("th",{}, "OUI freq"),
+      el("th",{}, "Follow"),
       el("th",{}, "Tag"),
       el("th",{}, "Vendor (online)"),
     ]));
@@ -328,6 +329,19 @@ export function render(ctx){
       const isCommon = pfx && (commonPrefixes[pfx] || 0) >= 3;
 
       const vendorCell = el("td",{}, kind==="ble" ? el("span",{class:"badge"}, "—") : el("span",{class:"badge"}, "n/a"));
+
+      // Follow button
+      const followKey = addr || o.entity_id || "";
+      const followCell = (() => {
+        if (!followKey) return el("td",{}, "");
+        const isF = ctx.actions.followedHas(followKey);
+        const btn = el("button",{
+          class: "btn tiny",
+          style: isF ? "background:#1a3a2a;border-color:#52b788;color:#52b788" : "",
+        }, isF ? "✓ Following" : "Follow");
+        btn.addEventListener("click",(e)=>{ e.stopPropagation(); ctx.actions.followedToggle(followKey); });
+        return el("td",{}, btn);
+      })();
 
       // Tag button for BLE rows
       const tagCell = (() => {
@@ -366,6 +380,7 @@ export function render(ctx){
         el("td",{}, rssi ? `${rssi} dBm` : "—"),
         el("td",{}, lastSeen || "—"),
         el("td",{}, pfxCount>=3 ? el("span",{class:"badge warn"}, `${pfxCount}×`) : (pfxCount? String(pfxCount):"")),
+        followCell,
         tagCell,
         vendorCell,
       ]);
@@ -565,9 +580,13 @@ export function render(ctx){
         s += `</g>`;
       }
 
-      // Live objects at room centroids
+      // Live objects — only show followed beacons on the 3D map
+      const followedAddrs = ctx.state.followedAddrs || new Set();
+      const followedObjects = allObjects.filter(o =>
+        followedAddrs.has(o.address || "") || followedAddrs.has(o.entity_id || "")
+      );
       const objsByRoom = {};
-      for(const o of allObjects){ const r=o.room; if(r){(objsByRoom[r]=objsByRoom[r]||[]).push(o);} }
+      for(const o of followedObjects){ const r=o.room; if(r){(objsByRoom[r]=objsByRoom[r]||[]).push(o);} }
       for(const [room, objs] of Object.entries(objsByRoom)){
         const basePos = roomIsoPos[room]; if(!basePos) continue;
         const [bx,by] = basePos;
@@ -577,14 +596,13 @@ export function render(ctx){
           const spread = Math.min(36, total*8);
           const ox2 = Math.round(bx + Math.cos(angle)*spread);
           const oy2 = Math.round(by + Math.sin(angle)*spread*0.5);
-          const color = (o.identified||o.user_label) ? "#5eead4" : "#f59e0b";
-          s += `<circle cx="${ox2}" cy="${oy2}" r="8" fill="${color}" opacity="0.95"/>`;
-          const lbl = (o.user_label||o.name||"?").substring(0,8);
-          s += `<text x="${ox2}" y="${oy2-12}" text-anchor="middle" fill="${color}" font-size="12" opacity="0.9">${_esc(lbl)}</text>`;
+          s += `<circle cx="${ox2}" cy="${oy2}" r="9" fill="#5eead4" opacity="0.95"/>`;
+          const lbl = (o.user_label||o.name||"?").substring(0,10);
+          s += `<text x="${ox2}" y="${oy2-13}" text-anchor="middle" fill="#5eead4" font-size="12" font-weight="600" opacity="0.95" paint-order="stroke" stroke="#071008" stroke-width="2">${_esc(lbl)}</text>`;
         });
       }
 
-      // Live BLE radios
+      // Live BLE radios — rings only, no text labels
       const drawn = new Set();
       for(const radio of allRadios_live){
         const name = radio.name||radio.source||"";
@@ -598,7 +616,6 @@ export function render(ctx){
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="14" fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.45"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="#52b788" opacity="0.9"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="3"  fill="#071008" opacity="0.7"/>`;
-        s += `<text x="${Math.round(px)}" y="${Math.round(py+33)}" text-anchor="middle" fill="#52b788" font-size="12" opacity="0.9">${_esc(name.substring(0,14))}</text>`;
       }
 
       if(!hasBounds && sorted.length){
