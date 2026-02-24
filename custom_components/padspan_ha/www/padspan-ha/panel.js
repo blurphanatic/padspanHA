@@ -13,33 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T152002Z";
-import { HELP } from "./help_content.js?b=20260224T152002Z";
-import * as Follow from "./views/follow.js?b=20260224T152002Z";
-import * as Overview from "./views/overview.js?b=20260224T152002Z";
-import * as Objects from "./views/objects.js?b=20260224T152002Z";
-import * as Devices from "./views/devices.js?b=20260224T152002Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260224T152002Z";
-import * as Presence from "./views/presence.js?b=20260224T152002Z";
-import * as Zones from "./views/zones.js?b=20260224T152002Z";
-import * as Insights from "./views/insights.js?b=20260224T152002Z";
-import * as History from "./views/history.js?b=20260224T152002Z";
-import * as Monitor from "./views/monitor.js?b=20260224T152002Z";
-import * as Maps from "./views/maps.js?b=20260224T152002Z";
-import * as Events from "./views/events.js?b=20260224T152002Z";
-import * as Health from "./views/health.js?b=20260224T152002Z";
-import * as Settings from "./views/settings.js?b=20260224T152002Z";
-import * as Manage from "./views/manage.js?b=20260224T152002Z";
-import * as Debug from "./views/debug.js?b=20260224T152002Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260224T152002Z";
-import * as QA from "./views/qa.js?b=20260224T152002Z";
-import * as Training from "./views/training.js?b=20260224T152002Z";
-import * as Calibration from "./views/calibration.js?b=20260224T152002Z";
-import * as Sandbox from "./views/sandbox.js?b=20260224T152002Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T161301Z";
+import { HELP } from "./help_content.js?b=20260224T161301Z";
+import * as Follow from "./views/follow.js?b=20260224T161301Z";
+import * as Overview from "./views/overview.js?b=20260224T161301Z";
+import * as Objects from "./views/objects.js?b=20260224T161301Z";
+import * as Devices from "./views/devices.js?b=20260224T161301Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260224T161301Z";
+import * as Presence from "./views/presence.js?b=20260224T161301Z";
+import * as Zones from "./views/zones.js?b=20260224T161301Z";
+import * as Insights from "./views/insights.js?b=20260224T161301Z";
+import * as History from "./views/history.js?b=20260224T161301Z";
+import * as Monitor from "./views/monitor.js?b=20260224T161301Z";
+import * as Maps from "./views/maps.js?b=20260224T161301Z";
+import * as Events from "./views/events.js?b=20260224T161301Z";
+import * as Health from "./views/health.js?b=20260224T161301Z";
+import * as Settings from "./views/settings.js?b=20260224T161301Z";
+import * as Manage from "./views/manage.js?b=20260224T161301Z";
+import * as Debug from "./views/debug.js?b=20260224T161301Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260224T161301Z";
+import * as QA from "./views/qa.js?b=20260224T161301Z";
+import * as Training from "./views/training.js?b=20260224T161301Z";
+import * as Calibration from "./views/calibration.js?b=20260224T161301Z";
+import * as Sandbox from "./views/sandbox.js?b=20260224T161301Z";
 
-const APP_VERSION = "0.4.56";
+const APP_VERSION = "0.4.57";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260224T152002Z";
+const BUILD_ID = "20260224T161301Z";
 
 const VIEWS = {
   follow: Follow,
@@ -207,7 +207,16 @@ class PadSpanHaApp extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <link rel="stylesheet" href="/padspan_ha_static/padspan-ha/styles.css?v=${APP_VERSION}&b=${BUILD_ID}">
       <div id="app" class="app">
+
+        <!-- ── Sidebar (desktop: always visible; mobile: drawer) ── -->
         <aside class="left">
+          <!-- Mobile-only close header inside drawer -->
+          <div class="sidebar-mobile-header">
+            <button class="mobile-topbar-btn" id="sideClose" title="Close menu">✕</button>
+            <span style="font-weight:700;font-size:15px">PadSpan HA</span>
+            <span class="muted" style="font-size:11px;margin-left:auto">v${APP_VERSION}</span>
+          </div>
+
           <div class="brand">
             <img src="/padspan_ha_static/padspan-ha/assets/padspan-mark.svg?b=${BUILD_ID}" alt="PadSpan" onerror="this.style.display='none'">
             <div>
@@ -217,32 +226,77 @@ class PadSpanHaApp extends HTMLElement {
           </div>
 
           <div class="toolbar" style="margin-top:10px">
-            <button class="btn inline" id="mobileMenu">☰ Menu</button>
             <button class="btn inline" id="refresh">Refresh</button>
             <button class="btn inline" id="autodiag">Auto Diagnostics</button>
-            <button class="btn inline" id="toggleSide">Toggle</button>
+            <button class="btn inline" id="toggleSide">Collapse</button>
           </div>
 
           <div style="margin-top:12px;margin-bottom:8px" class="muted" id="navLabel">Menu</div>
           <div class="nav" id="nav"></div>
         </aside>
 
+        <!-- Mobile backdrop — tap to close drawer -->
+        <div id="sideBackdrop" class="side-backdrop"></div>
+
+        <!-- ── Main content ── -->
         <main class="main">
-          <div class="row" style="margin-bottom:10px;align-items:center">
+
+            <!-- ═══════════════════════════════════════════════════════
+               MOBILE TOP BAR  (hidden on desktop via CSS)
+               ═══════════════════════════════════════════════════════
+               Elements:
+                 #mobileMenu        → hamburger; toggles .app.mobile-open + backdrop
+                 #mobileTitle       → current view name; updated by _renderNav()
+                 #mobileDataMode    → Sample/Live pill; synced by _updateBadges()
+                 #mobileComplexity  → Basic/Adv pill; synced by _updateBadges()
+
+               To add more controls: append buttons/pills here.
+               Styling: .mobile-topbar-btn (square icon btn), .mobile-topbar-pill (rounded text btn)
+               Both classes are in styles.css under "Mobile top bar".
+               ═══════════════════════════════════════════════════════ -->
+          <div class="mobile-topbar">
+            <button class="mobile-topbar-btn" id="mobileMenu" title="Open menu">☰</button>
+            <span class="mobile-topbar-title" id="mobileTitle">Overview</span>
+            <button class="mobile-topbar-pill" id="mobileDataMode">Sample</button>
+            <button class="mobile-topbar-pill" id="mobileComplexity">Adv</button>
+          </div>
+
+          <!-- Desktop top bar (hidden on mobile) -->
+          <div class="desktop-topbar row" style="margin-bottom:10px;align-items:center">
             <span class="pill" id="cloudBadge">Cloud disabled</span>
             <span class="pill" id="scanBadge">Scan: —</span>
             <span class="pill" id="statusBadge">Status: —</span>
-
             <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
               <span class="muted" style="font-size:12px">Data</span>
               <button class="btn inline" id="dataModeToggle" title="Toggle sample vs live data">Sample</button>
-              <button class="btn inline" id="complexityToggle" title="Switch between Basic (simplified) and Advanced layout">Advanced</button>
+              <button class="btn inline" id="complexityToggle" title="Switch between Basic and Advanced layout">Advanced</button>
             </span>
           </div>
+
           <div id="toast" class="toast hidden"></div>
           <div id="modal" class="modal hidden"></div>
           <div id="content"></div>
         </main>
+
+        <!-- ═══════════════════════════════════════════════════════
+             MOBILE BOTTOM NAV BAR  (hidden on desktop via CSS)
+             ═══════════════════════════════════════════════════════
+             Built dynamically by _renderNav() in panel.js.
+             Contains 4 pinned view buttons + 1 "More" button.
+
+             To change which views are pinned:
+               Edit the `pinned` array in _renderNav() — two versions:
+                 isBasic=true  → ["follow","overview","objects","maps"]
+                 isBasic=false → ["follow","overview","objects","calibration"]
+
+             Each button: .mobile-bottom-nav-btn  (styles.css)
+               - .bn-dot  : colored circle (color from MENU_COLORS)
+               - <span>   : short label text
+
+             "More" button opens the full sidebar drawer.
+             Active tab is highlighted with --navcolor CSS variable.
+             ═══════════════════════════════════════════════════════ -->
+        <nav class="mobile-bottom-nav" id="mobileBottomNav"></nav>
       </div>
     `;
 
@@ -251,10 +305,38 @@ class PadSpanHaApp extends HTMLElement {
     this.$content = this.$("#content");
     this.$modal = this.$("#modal");
 
+    // ── Mobile sidebar helpers ────────────────────────────────────────────────
+    // openSidebar()  : adds .mobile-open to #app (CSS slides .left in) + shows backdrop
+    // closeSidebar() : removes both — called by backdrop tap, ✕ button, and nav item click
+    // toggleSidebar(): used by hamburger button
+    // To add another trigger: call openSidebar() / closeSidebar() from any event handler.
+    const openSidebar  = ()=>{ this.$("#app").classList.add("mobile-open");    this.$("#sideBackdrop").classList.add("active"); };
+    const closeSidebar = ()=>{ this.$("#app").classList.remove("mobile-open"); this.$("#sideBackdrop").classList.remove("active"); };
+    const toggleSidebar = ()=>{ this.$("#app").classList.contains("mobile-open") ? closeSidebar() : openSidebar(); };
+
     this.$("#refresh").addEventListener("click", ()=>this._refreshAll(true));
     this.$("#autodiag").addEventListener("click", ()=>this._runAutoDiag(true));
     this.$("#toggleSide").addEventListener("click", ()=>this.$("#app").classList.toggle("mini"));
-    this.$("#mobileMenu").addEventListener("click", ()=>this.$("#app").classList.toggle("mobile-open"));
+
+    // Mobile menu button (in mobile top bar — always reachable)
+    this.$("#mobileMenu").addEventListener("click", toggleSidebar);
+    // Close button inside drawer
+    this.$("#sideClose").addEventListener("click", closeSidebar);
+    // Backdrop tap closes drawer
+    this.$("#sideBackdrop").addEventListener("click", closeSidebar);
+
+    // Mobile data mode pill
+    this.$("#mobileDataMode").addEventListener("click", async ()=>{
+      const next = (this.state.dataMode === "sample") ? "live" : "sample";
+      await this._setDataMode(next);
+    });
+    // Mobile complexity pill
+    this.$("#mobileComplexity").addEventListener("click", ()=>{
+      this.state.complexity = (this.state.complexity === "basic") ? "advanced" : "basic";
+      try { localStorage.setItem("padspan_complexity", this.state.complexity); } catch(e) {}
+      if (this.state.complexity === "basic" && !BASIC_TABS.has(this.state.view)) this.state.view = "follow";
+      this._updateBadges(); this._renderNav(); this._renderCurrentView();
+    });
 
     this.$("#dataModeToggle").addEventListener("click", async ()=>{
       const next = (this.state.dataMode === "sample") ? "live" : "sample";
@@ -480,7 +562,7 @@ class PadSpanHaApp extends HTMLElement {
   }
 
   _updateBadges(){
-    // Top badges
+    // Desktop top badges
     const scan = this.state.status?.scan_interval ?? "—";
     const st = this.state.status?.status ?? "—";
     this.$("#scanBadge").textContent = `Scan: ${scan}s`;
@@ -494,6 +576,20 @@ class PadSpanHaApp extends HTMLElement {
       const isBasic = this.state.complexity === "basic";
       cb.textContent = isBasic ? "Basic" : "Advanced";
       cb.style.outline = isBasic ? "2px solid rgba(94,234,212,.6)" : "";
+    }
+
+    // Mobile top bar pills
+    const mmd = this.$("#mobileDataMode");
+    if(mmd){
+      const isLive = this.state.dataMode === "live";
+      mmd.textContent = isLive ? "Live" : "Sample";
+      mmd.className = "mobile-topbar-pill" + (isLive ? " live" : "");
+    }
+    const mmc = this.$("#mobileComplexity");
+    if(mmc){
+      const isBasic = this.state.complexity === "basic";
+      mmc.textContent = isBasic ? "Basic" : "Adv";
+      mmc.className = "mobile-topbar-pill" + (isBasic ? " basic" : "");
     }
   }
 
@@ -511,9 +607,69 @@ class PadSpanHaApp extends HTMLElement {
       const btn = el("button",{
         class:"navbtn"+(this.state.view===id?" active":""),
         style:`--navcolor:${color}`,
-        onclick:()=>{ this.state.view=id; this._renderNav(); this._renderCurrentView(); }
+        onclick:()=>{
+          this.state.view=id;
+          this._renderNav();
+          this._renderCurrentView();
+          // Auto-close drawer on mobile after navigation
+          this.$("#app").classList.remove("mobile-open");
+          const bd = this.$("#sideBackdrop");
+          if(bd) bd.classList.remove("active");
+        }
       }, [el("span",{class:"navdot"}), el("span",{}, label)]);
       this.$nav.appendChild(btn);
+    }
+
+    // ── Mobile: update title + build bottom nav ──────────────────────────────
+    // MOBILE TOP BAR TITLE: reflects the currently active view.
+    const titleEl = this.$("#mobileTitle");
+    if(titleEl){
+      const cur = MENU.find(m => m[0] === this.state.view);
+      titleEl.textContent = cur ? cur[1] : "PadSpan HA";
+    }
+
+    const bottomNav = this.$("#mobileBottomNav");
+    if(bottomNav){
+      bottomNav.innerHTML = "";
+      // BOTTOM NAV PINNED TABS
+      // Edit these arrays to change which tabs appear in the bottom bar.
+      // Max 4 items (the 5th slot is reserved for "More" which opens the drawer).
+      // Use any key from the MENU array and MENU_COLORS for automatic coloring.
+      const pinned = isBasic
+        ? ["follow","overview","objects","maps"]          // Basic mode bottom tabs
+        : ["follow","overview","objects","calibration"];  // Advanced mode bottom tabs
+      for(const vid of pinned){
+        const mItem = MENU.find(m => m[0] === vid);
+        if(!mItem) continue;
+        const color = MENU_COLORS[vid] || "#52b788";
+        const isAct = this.state.view === vid;
+        const btn = el("button",{
+          class:"mobile-bottom-nav-btn"+(isAct?" active":""),
+          style:`--navcolor:${color}`,
+        },[
+          el("div",{class:"bn-dot",style:`background:${isAct?color:"#344a3a"}`}),
+          el("span",{},mItem[1]),
+        ]);
+        btn.addEventListener("click",()=>{
+          this.state.view=vid;
+          this._renderNav();
+          this._renderCurrentView();
+          this.$("#app").classList.remove("mobile-open");
+          const bd=this.$("#sideBackdrop"); if(bd) bd.classList.remove("active");
+        });
+        bottomNav.appendChild(btn);
+      }
+      // "More" button — opens full sidebar drawer
+      const moreBtn = el("button",{class:"mobile-bottom-nav-btn"},[
+        el("div",{class:"bn-dot",style:"background:#3a4a40"}),
+        el("span",{},"More"),
+      ]);
+      moreBtn.addEventListener("click",()=>{
+        this.$("#app").classList.toggle("mobile-open");
+        const bd=this.$("#sideBackdrop");
+        if(bd) bd.classList.toggle("active");
+      });
+      bottomNav.appendChild(moreBtn);
     }
   }
 
