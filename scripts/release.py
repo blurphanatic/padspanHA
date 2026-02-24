@@ -107,6 +107,7 @@ def git_commit_tag_push(version, tag):
         "custom_components/padspan_ha/manifest.json",
         "custom_components/padspan_ha/const.py",
         "custom_components/padspan_ha/build_info.py",
+        "custom_components/padspan_ha/coordinator.py",
         "custom_components/padspan_ha/websocket.py",
         "custom_components/padspan_ha/maps_store.py",
         "custom_components/padspan_ha/calibration_store.py",

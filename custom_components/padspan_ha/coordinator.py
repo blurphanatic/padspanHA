@@ -29,14 +29,7 @@ class PadSpanCoordinator:
 
     def ensure_defaults(self) -> None:
         if not self.room_tag_map:
-            self.room_tag_map = {
-                "Kitchen": ["tag.keys","tag.wallet","tag.phone_anna","tag.dog_collar"],
-                "Living Room": ["tag.remote","tag.phone_anna","tag.tablet","tag.keys"],
-                "Garage": ["tag.bike","tag.toolbox","tag.keys","tag.car_fob"],
-                "Primary Bedroom": ["tag.watch","tag.phone_garry","tag.tablet"],
-                "Office": ["tag.laptop","tag.headset","tag.phone_garry","tag.keys"],
-                "Entry": ["tag.keys","tag.mailbag","tag.car_fob"],
-            }
+            self.room_tag_map = {}
 
     def mark_success(self) -> None:
         self.last_success = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

@@ -13,33 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T163745Z";
-import { HELP } from "./help_content.js?b=20260224T163745Z";
-import * as Follow from "./views/follow.js?b=20260224T163745Z";
-import * as Overview from "./views/overview.js?b=20260224T163745Z";
-import * as Objects from "./views/objects.js?b=20260224T163745Z";
-import * as Devices from "./views/devices.js?b=20260224T163745Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260224T163745Z";
-import * as Presence from "./views/presence.js?b=20260224T163745Z";
-import * as Zones from "./views/zones.js?b=20260224T163745Z";
-import * as Insights from "./views/insights.js?b=20260224T163745Z";
-import * as History from "./views/history.js?b=20260224T163745Z";
-import * as Monitor from "./views/monitor.js?b=20260224T163745Z";
-import * as Maps from "./views/maps.js?b=20260224T163745Z";
-import * as Events from "./views/events.js?b=20260224T163745Z";
-import * as Health from "./views/health.js?b=20260224T163745Z";
-import * as Settings from "./views/settings.js?b=20260224T163745Z";
-import * as Manage from "./views/manage.js?b=20260224T163745Z";
-import * as Debug from "./views/debug.js?b=20260224T163745Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260224T163745Z";
-import * as QA from "./views/qa.js?b=20260224T163745Z";
-import * as Training from "./views/training.js?b=20260224T163745Z";
-import * as Calibration from "./views/calibration.js?b=20260224T163745Z";
-import * as Sandbox from "./views/sandbox.js?b=20260224T163745Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260224T170209Z";
+import { HELP } from "./help_content.js?b=20260224T170209Z";
+import * as Follow from "./views/follow.js?b=20260224T170209Z";
+import * as Overview from "./views/overview.js?b=20260224T170209Z";
+import * as Objects from "./views/objects.js?b=20260224T170209Z";
+import * as Devices from "./views/devices.js?b=20260224T170209Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260224T170209Z";
+import * as Presence from "./views/presence.js?b=20260224T170209Z";
+import * as Zones from "./views/zones.js?b=20260224T170209Z";
+import * as Insights from "./views/insights.js?b=20260224T170209Z";
+import * as History from "./views/history.js?b=20260224T170209Z";
+import * as Monitor from "./views/monitor.js?b=20260224T170209Z";
+import * as Maps from "./views/maps.js?b=20260224T170209Z";
+import * as Events from "./views/events.js?b=20260224T170209Z";
+import * as Health from "./views/health.js?b=20260224T170209Z";
+import * as Settings from "./views/settings.js?b=20260224T170209Z";
+import * as Manage from "./views/manage.js?b=20260224T170209Z";
+import * as Debug from "./views/debug.js?b=20260224T170209Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260224T170209Z";
+import * as QA from "./views/qa.js?b=20260224T170209Z";
+import * as Training from "./views/training.js?b=20260224T170209Z";
+import * as Calibration from "./views/calibration.js?b=20260224T170209Z";
+import * as Sandbox from "./views/sandbox.js?b=20260224T170209Z";
 
-const APP_VERSION = "0.4.58";
+const APP_VERSION = "0.4.59";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260224T163745Z";
+const BUILD_ID = "20260224T170209Z";
 
 const VIEWS = {
   follow: Follow,
@@ -204,8 +204,26 @@ class PadSpanHaApp extends HTMLElement {
 
   connectedCallback(){
     if(!this.shadowRoot) this.attachShadow({mode:"open"});
+
+    // ── Critical inline styles ──────────────────────────────────────────────
+    // These minimal rules ensure the two-column grid layout works even if the
+    // external styles.css fails to load (e.g. first install, HA static path
+    // mis-registration, or slow CSS fetch before first paint).
+    // Full styling still comes from the external stylesheet below.
+    this.style.display = "block";
+    this.style.minHeight = "100vh";
+
     this.shadowRoot.innerHTML = `
       <link rel="stylesheet" href="/padspan_ha_static/padspan-ha/styles.css?v=${APP_VERSION}&b=${BUILD_ID}">
+      <style>
+        /* Critical fallback — overridden by styles.css once it loads */
+        :host{display:block;min-height:100vh;background:#0a150e;color:#e2e8f0;font-family:Inter,system-ui,Arial,sans-serif}
+        .app{display:grid;grid-template-columns:300px 1fr;min-height:100vh;background:#0a150e}
+        .left{background:#1a0d05;border-right:1px solid #1b3526;padding:14px;overflow:auto}
+        .main{padding:16px;min-width:0;background:#0a150e}
+        .side-backdrop,.mobile-topbar,.mobile-bottom-nav,.sidebar-mobile-header{display:none}
+        @media(max-width:1100px){.app{grid-template-columns:1fr}.left{display:none}}
+      </style>
       <div id="app" class="app">
 
         <!-- ── Sidebar (desktop: always visible; mobile: drawer) ── -->
