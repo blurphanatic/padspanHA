@@ -2276,40 +2276,57 @@ function _stack(ctx, maps, helpBtn){
     tieInListDiv.appendChild(row2);
   };
 
-  // Save alignment — checks for conflicts first
+  // Save alignment — checks upstream conflicts and lists downstream dependents
   const saveAlignBtn = el("button",{class:"btn inline", onclick: async (ev)=>{
     const btn = ev.currentTarget;
     const tId = alignState.targetId || tgtSel.value;
     const tM  = (ctx.state.maps.list||[]).find(m=>m.id===tId) || maps.find(m=>m.id===tId);
     if(!tM){ ctx.toast("No target map selected.", true); return; }
     const allM = ctx.state.maps.list||maps;
+    const escN = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+    // Upstream: tie-ins stored on this map pointing to reference maps
     const conflicts = _checkAlignConflicts(
       alignState.x_offset, alignState.y_offset,
       alignState.scale, alignState.rotation||0, tM, allM
     );
-    // No conflicts — save immediately
+    // Downstream: other maps that have a tie-in pointing TO this map
+    const downstream = allM.filter(m =>
+      m.id !== tM.id && (m.stack?.tie_ins||[]).some(ti => ti.ref_map_id === tM.id)
+    );
+    const downstreamNames = downstream.map(m => m.name||m.id);
+
+    // No upstream conflicts — save immediately, note downstream if any
     if(!conflicts.length){
       btn.disabled = true; btn.textContent = "Saving…";
-      try { await performSave(); ctx.toast("Alignment saved ✔"); }
+      try {
+        await performSave();
+        const note = downstreamNames.length
+          ? `Alignment saved ✔\n↳ Downstream maps may need re-checking: ${downstreamNames.join(", ")}`
+          : "Alignment saved ✔";
+        ctx.toast(note);
+      }
       catch(e){ ctx.toast("Save failed: "+String(e), true); }
       finally { try{ btn.disabled=false; btn.textContent="Save Alignment"; }catch(_){} }
       return;
     }
-    // All tiny (<5%) — auto-average silently
+    // All tiny (<5%) — auto-average silently, note downstream if any
     if(conflicts.every(c=>c.variancePct < 5)){
       btn.disabled = true; btn.textContent = "Saving…";
       try {
         const tIns = (tM?.stack?.tie_ins)||[];
         const avg = _averageAlignWithTieIns(alignState.x_offset, alignState.y_offset, alignState.scale, alignState.rotation||0, tIns);
         await performSave(avg.x_offset, avg.y_offset, avg.scale, avg.rotation);
-        ctx.toast("Alignment saved ✔ (minor variance averaged with tie-ins)");
+        const note = downstreamNames.length
+          ? `Alignment saved ✔ (minor variance averaged)\n↳ Downstream maps may need re-checking: ${downstreamNames.join(", ")}`
+          : "Alignment saved ✔ (minor variance averaged with tie-ins)";
+        ctx.toast(note);
       } catch(e){ ctx.toast("Save failed: "+String(e), true); }
       finally { try{ btn.disabled=false; btn.textContent="Save Alignment"; }catch(_){} }
       return;
     }
-    // Show warning with conflict details
+    // Show full warning: upstream conflicts + downstream note
     const hasModerate = conflicts.some(c=>c.variancePct < 25);
-    const escN = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     let html = `<div style="font-weight:600;color:#f59e0b;margin-bottom:8px">⚠ Alignment Conflicts Detected</div>`;
     html += `<div style="color:#cbd5e1;margin-bottom:8px;font-size:11px">This position differs from stored tie-in relationships for <strong>${escN(tM.name||tM.id)}</strong>:</div>`;
     html += `<ul style="margin:0 0 10px 14px;padding:0;color:#94a3b8;font-size:11px">`;
@@ -2320,6 +2337,14 @@ function _stack(ctx, maps, helpBtn){
         + `— <span style="${sev}">${c.variancePct}% overall variance</span></li>`;
     }
     html += `</ul>`;
+    // Downstream note (informational, not blocking)
+    if(downstreamNames.length){
+      html += `<div style="margin-bottom:10px;padding:7px 10px;border-radius:6px;background:#0a1a2a;border:1px solid #2563eb;font-size:11px;color:#93c5fd">`;
+      html += `<strong>↓ Downstream maps tied to "${escN(tM.name||tM.id)}":</strong> `;
+      html += downstreamNames.map(n=>`<strong>${escN(n)}</strong>`).join(", ");
+      html += `<div style="color:#64748b;margin-top:3px">Moving this map will invalidate their tie-in constraints. Re-check and update them after saving.</div>`;
+      html += `</div>`;
+    }
     html += `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">`;
     if(hasModerate) html += `<button id="_wAvgBtn" class="btn inline" style="background:#0a2a1a;border-color:#52b788">Average &amp; Save</button>`;
     html += `<button id="_wOvrBtn" class="btn inline" style="background:#7f1d1d;border-color:#dc2626">Override &amp; Save</button>`;
@@ -2331,7 +2356,13 @@ function _stack(ctx, maps, helpBtn){
     warnDiv.querySelector("#_wOvrBtn").onclick = async()=>{
       warnDiv.style.display="none";
       btn.disabled=true; btn.textContent="Saving…";
-      try{ await performSave(); ctx.toast("Alignment saved ✔ (override)"); }
+      try{
+        await performSave();
+        const note = downstreamNames.length
+          ? `Alignment saved ✔ (override)\n↳ Update downstream maps: ${downstreamNames.join(", ")}`
+          : "Alignment saved ✔ (override)";
+        ctx.toast(note);
+      }
       catch(e){ ctx.toast("Save failed: "+String(e), true); }
       finally{ try{ btn.disabled=false; btn.textContent="Save Alignment"; }catch(_){} }
     };
@@ -2344,7 +2375,10 @@ function _stack(ctx, maps, helpBtn){
         const tIns = (tM?.stack?.tie_ins)||[];
         const avg = _averageAlignWithTieIns(alignState.x_offset, alignState.y_offset, alignState.scale, alignState.rotation||0, tIns);
         await performSave(avg.x_offset, avg.y_offset, avg.scale, avg.rotation);
-        ctx.toast("Alignment saved ✔ (averaged with tie-ins)");
+        const note = downstreamNames.length
+          ? `Alignment saved ✔ (averaged)\n↳ Update downstream maps: ${downstreamNames.join(", ")}`
+          : "Alignment saved ✔ (averaged with tie-ins)";
+        ctx.toast(note);
       } catch(e){ ctx.toast("Save failed: "+String(e), true); }
       finally{ try{ btn.disabled=false; btn.textContent="Save Alignment"; }catch(_){} }
     };
