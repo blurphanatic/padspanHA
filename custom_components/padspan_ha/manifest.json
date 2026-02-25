@@ -17,6 +17,6 @@
   "name": "PadSpan HA",
   "requirements": [],
   "single_config_entry": true,
-  "icon": "mdi:radar",
-  "version": "0.5.3"
+  "icon": "mdi:bluetooth",
+  "version": "0.5.4"
 }
