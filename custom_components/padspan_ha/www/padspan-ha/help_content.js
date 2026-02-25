@@ -11,6 +11,7 @@ export const HELP = {
       "The Follow page lets you watch exactly where a specific person or object is right now.",
       "Pick any tracked tag from the dropdown — a phone, key fob, AirTag, Tile tracker, or anything Bluetooth. PadSpan shows you which room it's currently in, how strong the signal is, and which of your scanners can see it.",
       "The location updates automatically every few seconds. You don't need to refresh the page.",
+      "Click Details → in the status card to open the full device detail view — per-scanner RSSI, signal history, and quick access to Tag/Relabel.",
     ],
   },
   follow_selector: {
@@ -18,7 +19,7 @@ export const HELP = {
     body: [
       "The dropdown lists every device PadSpan is currently tracking.",
       "Devices with a friendly name (like 'Alice's Phone' or 'Car Keys') appear first. You can name any unrecognised device using the Tag button in the Objects section.",
-      "If a device is missing from the list, it hasn't been seen by your Bluetooth scanners recently — try moving it closer to a scanner.",
+      "If a device shows 'not_home' or is missing from the list, it hasn't been detected recently. It may have left range or gone away. Check the Objects tab for the red Away badge and its last known location.",
     ],
   },
   follow_map: {
@@ -47,6 +48,7 @@ export const HELP = {
       "Overview shows a live diagram of all your rooms with your Bluetooth scanners and tracked objects displayed inside them.",
       "Think of it as your home's control tower — a quick snapshot of where everything is right now.",
       "Each box is a room from your Home Assistant Areas & Zones. Green antenna icons are your Bluetooth radios. Coloured dots are tracked people or objects.",
+      "In Advanced mode, click any KPI number (Rooms, Objects, Radios) to see a full list. Click any row in that list for detailed info on that item.",
     ],
   },
   overview_grid: {
@@ -65,17 +67,20 @@ export const HELP = {
     title: "Objects — Everything being tracked",
     body: [
       "Objects lists every device PadSpan can see — phones tracked by Home Assistant, AirTags, Tile trackers, key fobs, and any other Bluetooth device your scanners have detected.",
-      "Devices with a green badge are 'identified' — they have a friendly name. Orange 'unidentified' devices are raw Bluetooth signals that haven't been named yet.",
-      "Use the search box to quickly find a specific device by name, room, or address.",
+      "Badge colours tell you the device type: green BLE = standard Bluetooth device, orange BLE? = unidentified, blue Private BLE = phone using rotating MAC address (resolved automatically), amber iBeacon = AirTag / Tile / HA Companion App iBeacon grouped by stable UUID.",
+      "A red Away badge appears when a BLE device hasn't been seen for longer than the configured away timeout (default 5 min). 'Last: Kitchen' shows where it was last detected. The corresponding device_tracker entity in HA also shows not_home.",
+      "Use the search box to find a device by name, address, or type 'away' to filter to absent devices. The status dropdown also has an Away option.",
+      "Click any row (anywhere except the buttons) to open a full detail panel — per-scanner RSSI, signal bars, all addresses, and quick Tag/Relabel/Untag actions.",
     ],
   },
   objects_tag: {
-    title: "Naming (tagging) an unidentified device",
+    title: "Naming (tagging) a device",
     body: [
       "When PadSpan detects a Bluetooth device it doesn't recognise, it shows a hardware address like AA:BB:CC:11:22:33.",
-      "Click the 'Tag' button next to any device to give it a friendly name — for example 'Alice's AirTag', 'Car Keys', or 'Backpack Tracker'.",
-      "Once tagged, the name appears everywhere in PadSpan — on the Overview map, the Follow tracker, and all other pages.",
-      "You can rename a device at any time by clicking 'Relabel'.",
+      "Click the 'Tag' button next to any device to give it a friendly name — for example 'Alice's AirTag', 'Car Keys', or 'Backpack Tracker'. Click Save. The name is stored permanently in Home Assistant.",
+      "Once tagged, the name appears everywhere in PadSpan — on the Overview map, the Follow tracker, and all other pages. PadSpan also creates a device_tracker entity (e.g. device_tracker.car_keys) and an area sensor (e.g. sensor.car_keys_area) in Home Assistant for use in automations.",
+      "AirTags and other iBeacon devices use a stable UUID as their identifier. The tag sticks even as the MAC address rotates — you never need to re-tag them.",
+      "You can rename a device at any time by clicking 'Relabel'. To remove a tag entirely, go to Settings → Manage → BLE Tags.",
     ],
   },
 
@@ -117,11 +122,14 @@ export const HELP = {
 
   // ── Settings ─────────────────────────────────────────────────────────────────
   settings: {
-    title: "Settings — Customise how rooms look",
+    title: "Settings — Customise PadSpan",
     body: [
-      "Settings lets you personalise the appearance of your rooms in PadSpan.",
-      "You can change the colour used for each room — this colour appears on the Overview diagram, the Follow map, and all other visualisations.",
-      "Your floors and rooms are read automatically from Home Assistant's Areas & Zones. To add, rename, or delete a floor or room, go to HA Settings → Areas & Zones.",
+      "In Advanced mode, Settings has four tabs: Appearance, Scanner Map, Presence, and Manage.",
+      "Appearance — change room colours. Your floors and rooms are read from HA; add or rename them in HA Settings → Areas & Zones.",
+      "Scanner Map — see estimated scanner positions on your floor plans, derived from calibration fingerprint data.",
+      "Presence — tune room-switching speed and set the Home/Away timeout.",
+      "Manage — untag BLE devices and delete HA areas directly from PadSpan.",
+      "In Basic mode only the Appearance tab is shown.",
     ],
   },
   settings_colors: {
@@ -130,6 +138,22 @@ export const HELP = {
       "Each room has a colour used across all of PadSpan's maps and diagrams.",
       "Click the coloured square (■) next to a room name to open the colour picker and choose a new colour.",
       "Click 'Save' when you're done — your choices are stored in Home Assistant and will be remembered next time.",
+    ],
+  },
+  settings_presence: {
+    title: "Presence — Smoothing and timeouts",
+    body: [
+      "Room Change Delay — how many seconds a scanner must consistently win before PadSpan switches a device to that room. Raise this (e.g. 30–60 s) to prevent flickering when a device sits on the boundary between two scanners. Set to 0 for instant switching.",
+      "Home/Away Timeout — if a device hasn't been detected for this long, its device_tracker entity in HA changes to not_home and a red Away badge appears in the Objects tab. Default is 5 minutes. Raise it if devices briefly drop off in thick-walled rooms or during normal use.",
+      "Both settings take effect on the next poll (every 10 seconds) — no restart needed.",
+    ],
+  },
+  settings_manage: {
+    title: "Manage — Untag devices and delete rooms",
+    body: [
+      "BLE Tags — every named BLE device is listed with its address, kind, and last-seen time. Click Untag to remove the friendly name (two-click confirm prevents accidents). The device reverts to its hardware address but continues to be tracked.",
+      "Rooms (HA Areas) — lists every area from Home Assistant. Click Delete to remove an area from HA entirely. This also unassigns any scanners in that room. Cannot be undone from within PadSpan — re-add in HA Settings → Areas & Zones if needed.",
+      "This tab is only visible in Advanced mode. For deeper data management (orphan cleanup, entity deletion, integration controls) use the Manage sidebar tab.",
     ],
   },
 };

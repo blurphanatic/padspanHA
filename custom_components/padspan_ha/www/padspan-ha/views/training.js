@@ -580,6 +580,143 @@ function _svgOrphanClean() {
 </svg>`;
 }
 
+function _svgIbeacon() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes macFade{0%,40%{opacity:1}60%,100%{opacity:0.2}}
+.mac1{animation:macFade 2.5s ease-in-out infinite}
+.mac2{animation:macFade 2.5s ease-in-out 1.25s infinite}
+@keyframes uuidGlow{0%,100%{stroke:#d97706;opacity:0.6}50%{stroke:#fbbf24;opacity:1}}
+.uuid{animation:uuidGlow 2s ease-in-out infinite}
+</style>
+<text x="200" y="14" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">iBeacon: stable UUID survives MAC rotation</text>
+<text x="80" y="36" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600" font-family="system-ui">Rotating MACs</text>
+<g class="mac1">
+  <rect x="20" y="44" width="120" height="28" rx="6" fill="#1a1000" stroke="#d97706" stroke-width="1"/>
+  <text x="80" y="62" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace">61:A3:FC:22:D1:88</text>
+</g>
+<g class="mac2">
+  <rect x="20" y="78" width="120" height="28" rx="6" fill="#1a1000" stroke="#d97706" stroke-width="1"/>
+  <text x="80" y="96" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace">72:B4:ED:33:C2:99</text>
+</g>
+<text x="80" y="124" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Apple company ID 0x004C</text>
+<text x="80" y="136" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">type 0x02 — iBeacon frame</text>
+<text x="170" y="76" fill="#52b788" font-size="20" font-family="system-ui">→</text>
+<rect class="uuid" x="196" y="44" width="196" height="62" rx="8" fill="#1a0e00" stroke="#d97706" stroke-width="1.5"/>
+<text x="294" y="64" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="700" font-family="system-ui">iBeacon</text>
+<text x="294" y="80" text-anchor="middle" fill="#d97706" font-size="8" font-family="monospace">f7826da6-4fa2…</text>
+<text x="294" y="94" text-anchor="middle" fill="#78909c" font-size="8" font-family="system-ui">Major 1 · Minor 2</text>
+<text x="294" y="136" text-anchor="middle" fill="#a7f3d0" font-size="10" font-weight="600" font-family="system-ui">One stable object</text>
+<text x="294" y="150" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Tag once — sticks forever</text>
+<text x="294" y="164" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">device_tracker.airtag_bag</text>
+</svg>`;
+}
+
+function _svgAwayBadge() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes awayPulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.awayBadge{animation:awayPulse 2s ease-in-out infinite}
+</style>
+<text x="200" y="14" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Objects tab — Away badge when device not seen</text>
+<rect x="8" y="22" width="384" height="20" rx="4" fill="#0d2318"/>
+<text x="22" y="36" fill="#6b9e7e" font-size="9" font-weight="600" font-family="system-ui">KIND</text>
+<text x="88" y="36" fill="#6b9e7e" font-size="9" font-weight="600" font-family="system-ui">NAME / ADDRESS</text>
+<text x="234" y="36" fill="#6b9e7e" font-size="9" font-weight="600" font-family="system-ui">LAST SEEN</text>
+<text x="316" y="36" fill="#6b9e7e" font-size="9" font-weight="600" font-family="system-ui">SCANNER</text>
+<rect x="8" y="46" width="384" height="28" rx="3" fill="#071008" stroke="#131f17" stroke-width="0.5"/>
+<rect x="14" y="52" width="40" height="14" rx="7" fill="#0d2318" stroke="#2d5a3d" stroke-width="1"/>
+<text x="34" y="63" text-anchor="middle" fill="#a7f3d0" font-size="8" font-family="system-ui">BLE</text>
+<text x="88" y="65" fill="#cbd5e1" font-size="10" font-family="system-ui">Car Keys</text>
+<text x="234" y="65" fill="#94a3b8" font-size="10" font-family="system-ui">5s</text>
+<text x="316" y="65" fill="#6b9e7e" font-size="9" font-family="system-ui">kitchen_hub</text>
+<rect x="8" y="78" width="384" height="36" rx="3" fill="#150505" stroke="#7f1d1d" stroke-width="1"/>
+<rect x="14" y="84" width="40" height="14" rx="7" fill="#0d2318" stroke="#2d5a3d" stroke-width="1"/>
+<text x="34" y="95" text-anchor="middle" fill="#a7f3d0" font-size="8" font-family="system-ui">BLE</text>
+<text x="88" y="91" fill="#cbd5e1" font-size="10" font-weight="600" font-family="system-ui">Dog Tracker</text>
+<g class="awayBadge">
+  <rect x="228" y="81" width="44" height="14" rx="7" fill="#3a0a0a" stroke="#7f1d1d" stroke-width="1"/>
+  <text x="250" y="92" text-anchor="middle" fill="#f87171" font-size="8" font-family="system-ui">Away</text>
+</g>
+<text x="234" y="107" fill="#6b7280" font-size="9" font-family="system-ui">8m 3s</text>
+<text x="316" y="91" fill="#6b7280" font-size="9" font-family="system-ui">Last: Hallway</text>
+<rect x="8" y="118" width="384" height="28" rx="3" fill="#071008" stroke="#131f17" stroke-width="0.5"/>
+<rect x="14" y="124" width="60" height="14" rx="7" fill="#1a3a5a" stroke="#3b82f6" stroke-width="1"/>
+<text x="44" y="135" text-anchor="middle" fill="#7dd3fc" font-size="8" font-family="system-ui">Private BLE</text>
+<text x="88" y="137" fill="#cbd5e1" font-size="10" font-family="system-ui">Alice's iPhone</text>
+<text x="234" y="137" fill="#94a3b8" font-size="10" font-family="system-ui">3s</text>
+<text x="316" y="137" fill="#6b9e7e" font-size="9" font-family="system-ui">living_room_hub</text>
+<text x="200" y="174" text-anchor="middle" fill="#f87171" font-size="9" font-family="system-ui">Away = device_tracker shows not_home in HA</text>
+<text x="200" y="190" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Timeout configurable in Settings → Presence</text>
+</svg>`;
+}
+
+function _svgPresenceSettings() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes saveGlow{0%,100%{stroke:#2d5a3d}50%{stroke:#52b788}}
+.saveBtn{animation:saveGlow 2s ease-in-out infinite}
+</style>
+<text x="200" y="14" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Settings → Presence tab</text>
+<rect x="8" y="22" width="384" height="78" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1.5"/>
+<text x="22" y="40" fill="#a7f3d0" font-size="11" font-weight="700" font-family="system-ui">Room Change Delay</text>
+<text x="22" y="55" fill="#6b9e7e" font-size="9" font-family="system-ui">Seconds a scanner must dominate before switching rooms</text>
+<text x="22" y="74" fill="#a7f3d0" font-size="10" font-family="system-ui">Room change delay</text>
+<rect x="178" y="64" width="46" height="20" rx="5" fill="#0a150e" stroke="#2d5a3d" stroke-width="1.5"/>
+<text x="201" y="78" text-anchor="middle" fill="#e2e8f0" font-size="11" font-family="system-ui">20</text>
+<text x="230" y="78" fill="#6b9e7e" font-size="9" font-family="system-ui">seconds</text>
+<rect class="saveBtn" x="294" y="64" width="42" height="20" rx="5" fill="#1a3a2a" stroke="#2d5a3d" stroke-width="1.5"/>
+<text x="315" y="78" text-anchor="middle" fill="#a7f3d0" font-size="9" font-family="system-ui">Save</text>
+<text x="22" y="94" fill="#4a6052" font-size="9" font-family="system-ui">Current: 20s → ~2 polls agreement · set to 0 for instant</text>
+<rect x="8" y="110" width="384" height="78" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1.5"/>
+<text x="22" y="128" fill="#a7f3d0" font-size="11" font-weight="700" font-family="system-ui">Home / Away Timeout</text>
+<text x="22" y="143" fill="#6b9e7e" font-size="9" font-family="system-ui">Not seen this long → device_tracker = not_home in HA</text>
+<text x="22" y="162" fill="#a7f3d0" font-size="10" font-family="system-ui">Away timeout</text>
+<rect x="178" y="152" width="46" height="20" rx="5" fill="#0a150e" stroke="#2d5a3d" stroke-width="1.5"/>
+<text x="201" y="166" text-anchor="middle" fill="#e2e8f0" font-size="11" font-family="system-ui">5</text>
+<text x="230" y="166" fill="#6b9e7e" font-size="9" font-family="system-ui">minutes</text>
+<rect class="saveBtn" x="294" y="152" width="42" height="20" rx="5" fill="#1a3a2a" stroke="#2d5a3d" stroke-width="1.5"/>
+<text x="315" y="166" text-anchor="middle" fill="#a7f3d0" font-size="9" font-family="system-ui">Save</text>
+<text x="22" y="182" fill="#4a6052" font-size="9" font-family="system-ui">Default: 5 min · range 1 min – 24 h · no restart needed</text>
+</svg>`;
+}
+
+function _svgHaEntities() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes stateChange{0%,45%{fill:#1a3a2a;stroke:#52b788}55%,100%{fill:#3a0a0a;stroke:#dc2626}}
+.stateBox{animation:stateChange 3s ease-in-out 1s infinite}
+@keyframes textSwitch{0%,45%{opacity:1}50%{opacity:0}55%,100%{opacity:0}}
+.stateHome{animation:textSwitch 3s ease-in-out 1s infinite}
+@keyframes textSwitch2{0%,45%{opacity:0}50%{opacity:0}55%,100%{opacity:1}}
+.stateAway{animation:textSwitch2 3s ease-in-out 1s infinite}
+</style>
+<text x="200" y="14" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">HA entities update automatically</text>
+<rect x="8" y="22" width="185" height="90" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1.5"/>
+<text x="20" y="40" fill="#78909c" font-size="9" font-weight="600" font-family="system-ui">device_tracker.car_keys</text>
+<text x="20" y="56" fill="#4a6052" font-size="9" font-family="system-ui">state:</text>
+<rect class="stateBox" x="50" y="46" width="80" height="18" rx="4"/>
+<text class="stateHome" x="90" y="59" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600" font-family="system-ui">Kitchen</text>
+<text class="stateAway" x="90" y="59" text-anchor="middle" fill="#f87171" font-size="9" font-weight="600" font-family="system-ui">not_home</text>
+<text x="20" y="78" fill="#4a6052" font-size="8" font-family="system-ui">source_type: bluetooth_le</text>
+<text x="20" y="90" fill="#4a6052" font-size="8" font-family="system-ui">address: CC:DD:EE:33:44:55</text>
+<text x="20" y="102" fill="#4a6052" font-size="8" font-family="system-ui">home: true / false</text>
+<rect x="207" y="22" width="185" height="90" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1.5"/>
+<text x="219" y="40" fill="#78909c" font-size="9" font-weight="600" font-family="system-ui">sensor.car_keys_area</text>
+<text x="219" y="56" fill="#4a6052" font-size="9" font-family="system-ui">state:</text>
+<rect class="stateBox" x="249" y="46" width="80" height="18" rx="4"/>
+<text class="stateHome" x="289" y="59" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600" font-family="system-ui">Kitchen</text>
+<text class="stateAway" x="289" y="59" text-anchor="middle" fill="#f87171" font-size="9" font-weight="600" font-family="system-ui">not_home</text>
+<text x="219" y="78" fill="#4a6052" font-size="8" font-family="system-ui">kind: ble</text>
+<text x="219" y="90" fill="#4a6052" font-size="8" font-family="system-ui">rssi: −64 dBm</text>
+<text x="219" y="102" fill="#4a6052" font-size="8" font-family="system-ui">age_s: 5.0</text>
+<text x="200" y="130" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600" font-family="system-ui">Link device_tracker to a Person in HA</text>
+<text x="200" y="146" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">HA Settings → People → add device_tracker.car_keys</text>
+<text x="200" y="162" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Works with HA automations, history, logbook, templates</text>
+<text x="200" y="182" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Use padspan_ha.dump_devices service to inspect full state</text>
+</svg>`;
+}
+
 // ─── Walkthrough Definitions ──────────────────────────────────────────────────
 
 const WALKTHROUGHS = [
@@ -592,6 +729,7 @@ const WALKTHROUGHS = [
       { title: "Bluetooth Scanners Detect Devices",       text: "PadSpan uses Bluetooth Low Energy (BLE) scanners placed around your home. Each scanner continuously listens for nearby Bluetooth signals from phones, tags, key fobs, and any other BLE device.", svg: _svgBleSignals },
       { title: "Signal Strength Pinpoints the Room",      text: "Each scanner reports signal strength (RSSI) in dBm — more negative = weaker signal. The scanner with the strongest (least negative) reading is physically nearest to the device. That room is assigned as the device's location.", svg: _svgRssiComparison },
       { title: "Room Assignment Updates Live",            text: "PadSpan maps the signal data to your Home Assistant Areas. The location is recalculated every 5 seconds automatically — no manual refresh needed. In Sample mode you can explore with demo data before going live.", svg: _svgRoomAssignment },
+      { title: "iBeacon Devices Survive MAC Rotation",    text: "Apple AirTags, Tile trackers, and the HA Companion App's iBeacon transmitter rotate their Bluetooth MAC address for privacy. PadSpan recognises these as iBeacon devices by the Apple manufacturer data (company ID 0x004C). All rotating MACs sharing the same UUID/Major/Minor are merged into one stable amber-badged object. Tag it once — the name sticks forever.", svg: _svgIbeacon },
       { title: "Track Anything Bluetooth",                text: "Phones tracked by the HA companion app, AirTags, Tile trackers, key fobs, smartwatches, fitness bands — if it emits a BLE signal, PadSpan can see it. Tag devices with friendly names so you always know what's what.", svg: _svgDeviceTypes },
     ],
   },
@@ -628,6 +766,18 @@ const WALKTHROUGHS = [
       { title: "Overview — Summary Counts",              text: "The Overview tab shows live counts of rooms, objects, and radios. In Advanced mode these appear as clickable KPI cards — tap any number to see a full list. Click any row in the list for detailed info on that item.", svg: _svgKpiCards },
       { title: "Room Grid — What's in Each Room",        text: "Scroll down to see the room grid. Each coloured box is a room. Inside: green antenna rings are Bluetooth scanners, teal dots are identified (named) devices, orange dots are unidentified BLE signals. Counts shown in the corner.", svg: _svgRoomGrid },
       { title: "Follow — Track a Specific Tag",          text: "Switch to the Follow tab and pick any tracked device from the dropdown. You'll see its current room, signal strength, age of last detection, and a room map with a pulsing location dot. Advanced mode adds a movement history log.", svg: _svgFollowTab },
+    ],
+  },
+  {
+    id: "home_away",
+    title: "Home/Away Detection",
+    icon: "🏠",
+    summary: "How PadSpan marks devices as not_home, the Away badge in Objects, and configuring the timeout.",
+    steps: [
+      { title: "Devices Are Tracked Even When Away",      text: "PadSpan keeps every tagged device in its tracking list even after it disappears from your scanners. A growing age_s counter tracks how long it's been since the device was last seen — no information is lost while waiting for it to return.", svg: _svgHaEntities },
+      { title: "Away Badge Appears in Objects Tab",       text: "Once a device hasn't been seen for longer than the away timeout (default 5 minutes), a red Away badge replaces the signal bar in the Objects tab. 'Last: Kitchen' shows where it was before it went out of range. The normal teal/green badge returns the moment it reappears.", svg: _svgAwayBadge },
+      { title: "HA Entities Switch to not_home",         text: "PadSpan creates a device_tracker entity (e.g. device_tracker.car_keys) and an area sensor (sensor.car_keys_area) for every tagged BLE device. When the device goes away, both entities automatically change state to not_home — ready for use in HA automations, the logbook, and Person tracking.", svg: _svgHaEntities },
+      { title: "Configure the Timeout",                  text: "Go to Settings → Presence → Home/Away Timeout to change how long before a device is marked away. Default is 5 minutes. Raise it if devices drop off briefly in thick-walled rooms or during normal use (10–30 min is common). Set it lower for fast away detection (minimum 1 minute).", svg: _svgPresenceSettings },
     ],
   },
   {
@@ -668,7 +818,10 @@ const MANUAL_SECTIONS = [
       "Scanner / Radio — a Bluetooth receiver placed in a room. ESPresense on an ESP32 or a Bermuda-tracked device are common choices. Multiple scanners per floor give better accuracy.",
       "Area — a room defined in Home Assistant's Areas & Zones. PadSpan uses your HA areas as its room list. Create and rename rooms in HA Settings → Areas & Zones.",
       "Object — anything PadSpan is tracking. Could be a phone (via HA companion app), an AirTag, a Tile tracker, a key fob, or any unnamed BLE signal.",
-      "Tag — a friendly name you assign to an unidentified BLE device. Tagged devices show up with their name everywhere in PadSpan.",
+      "iBeacon — a BLE advertising format used by Apple AirTags, Tile trackers, and the HA Companion App. Contains a stable UUID/Major/Minor identifier that doesn't change even as the MAC address rotates. PadSpan groups all rotating MACs for the same iBeacon into one amber-badged object.",
+      "Private BLE — phones (especially iPhones) rotate their MAC address for privacy. PadSpan resolves these using IRK (Identity Resolving Key) so they appear as a single stable blue-badged object rather than many unknowns.",
+      "Tag — a friendly name you assign to an unidentified BLE device. Tagged devices show up with their name everywhere in PadSpan. PadSpan also creates HA entities (device_tracker and area sensor) for each tagged device.",
+      "Home/Away — if a device hasn't been seen for longer than the away timeout (configurable, default 5 min), its device_tracker state changes to not_home and a red Away badge appears in the Objects tab.",
       "Sample Mode — a demo mode using fictional data (the Smith Residence). Great for exploring PadSpan without live hardware. Toggle between Sample and Live in the top bar.",
     ],
   },
@@ -713,19 +866,33 @@ const MANUAL_SECTIONS = [
     id: "help_settings",
     title: "Settings",
     icon: "⚙️",
-    helpKeys: ["settings", "settings_colors"],
+    helpKeys: ["settings", "settings_colors", "settings_presence", "settings_manage"],
+  },
+  {
+    id: "ha_entities_section",
+    title: "HA Entities & Automations",
+    icon: "🤖",
+    paragraphs: [
+      "PadSpan creates two HA entities for every tagged BLE device:",
+      "device_tracker.{label} — location_name = current room while home, not_home when away. Link this to a Person in HA Settings → People to get a combined home/away status.",
+      "sensor.{label}_area — state = current room name, or not_home when the device has been away for longer than the configured timeout. Use this in automations: trigger when sensor.car_keys_area changes to 'Kitchen'.",
+      "Extra attributes on both entities: address (MAC or UUID key), rssi, age_s, kind, and for iBeacon devices: ibeacon_uuid, ibeacon_major, ibeacon_minor, all_addresses.",
+      "padspan_ha.dump_devices service — call this from HA Developer Tools → Services to get a full JSON snapshot of all tracked devices and their current state. Useful for debugging and building advanced templates. Returns response data compatible with scripts and automations.",
+      "Both entities persist across restarts — not_home is a permanent valid state, not an error. Entities never go 'unavailable' just because a device is away.",
+    ],
   },
   {
     id: "manage_section",
-    title: "Manage Tab (Advanced)",
+    title: "Manage (Settings + Sidebar)",
     icon: "🔧",
     paragraphs: [
-      "The Manage tab is only visible in Advanced mode. Toggle ⚡ Advanced using the button in the top bar.",
-      "BLE Tags — lists every named BLE device. Click Delete (two-click confirm) to remove a name. The device reverts to its hardware address but is still tracked.",
-      "Rooms — lists all HA areas. Click Delete to remove an area from Home Assistant entirely. This cannot be undone from within PadSpan — if deleted by mistake, re-add the area in HA Settings → Areas & Zones.",
-      "Maps — lists all uploaded floor plans. Delete individual maps or all maps at once. Also manage the integration config entry from here.",
-      "Data → Orphan Room Polygons — scans all your map room boundaries and flags any that don't match a current HA area. These are usually leftover from sample mode or rooms that were deleted. Safe to remove.",
-      "Data → HA Entities — lists all entities PadSpan can see in your HA entity registry. Note: entities managed by other integrations (like Bermuda) will be recreated automatically after deletion.",
+      "PadSpan has two 'Manage' areas, each for different tasks:",
+      "Settings → Manage tab (Advanced mode only) — quick access for everyday cleanup: untag BLE devices and delete HA areas. Only visible in Advanced mode (⚡ toggle in top bar).",
+      "Sidebar Manage tab (Advanced mode only) — deeper data management: BLE tag operations, HA entity deletion, map and integration controls, orphan room polygon cleanup.",
+      "Untag a BLE device — go to Settings → Manage → BLE Tags. Find the device and click Untag (two-click confirm). The device reverts to its hardware address but is still tracked.",
+      "Delete an HA Area — go to Settings → Manage → Rooms. Click Delete next to an area. This removes it from Home Assistant entirely and cannot be undone from within PadSpan. Re-add in HA Settings → Areas & Zones if needed.",
+      "Orphan Room Polygons — found in Manage sidebar → Data. These are room boundaries in your maps that no longer match a real HA area — usually leftover from sample mode or deleted rooms. Delete individually or all at once.",
+      "HA Entities — listed in Manage sidebar → Data. Note: entities created by PadSpan will be recreated on next restart. Entities from other integrations (like Bermuda) are managed by those integrations.",
     ],
   },
   {
@@ -735,10 +902,15 @@ const MANUAL_SECTIONS = [
     paragraphs: [
       "No live Bluetooth data after install — HA needs a full restart (not just integration reload) after first install via HACS. Go to HA Settings → System → Restart.",
       "Devices not appearing in Objects — the device must be in range of at least one scanner and actively transmitting BLE. Check your scanner's integration (ESPresense / Bermuda) is working first.",
-      "Location seems wrong (device in wrong room) — signal strength can be affected by walls, interference, or scanner placement. Adding more scanners improves accuracy. Make sure scanners are assigned to the correct HA area in Bluetooth → Scanners.",
+      "Location seems wrong (device in wrong room) — signal strength can be affected by walls, interference, or scanner placement. Adding more scanners improves accuracy. Make sure scanners are assigned to the correct HA area in Bluetooth → Scanners. Use the per-scanner RSSI offset (Bluetooth → Scanners → offset input) to compensate if one scanner reads consistently stronger or weaker.",
+      "Device keeps flickering between two rooms — raise the Room Change Delay in Settings → Presence. 20–60 seconds is usually enough to stabilise a device on a room boundary.",
+      "device_tracker shows not_home too quickly — raise the Home/Away Timeout in Settings → Presence. If a device is briefly out of range in a thick-walled room, try 10–30 minutes.",
+      "device_tracker shows not_home too slowly — lower the timeout. The minimum is 1 minute.",
+      "AirTag/iBeacon not appearing or keeps splitting into multiple objects — make sure your BLE scanner integration is forwarding the full manufacturer data for Apple devices. PadSpan looks for Apple company ID 0x004C with iBeacon payload. ESPresense and Bermuda both support this.",
+      "iBeacon tag name disappeared after MAC rotation — this should not happen (the UUID key is stable). If it does, check that the UUID in the new advertisement matches the original — some third-party trackers change their UUID.",
       "UI changes not showing — hard refresh your browser (Ctrl+F5 or Cmd+Shift+R). Check the build stamp in Diagnostics to confirm the installed version.",
       "Email alerts not sending — email is sent via HA's notify service. Confirm a notification integration (Gmail, SMTP, etc.) is configured in HA Settings → Integrations.",
-      "Sample data lingering in Manage — use the Delete buttons in Manage → BLE Tags, or use the Orphan Polygons cleaner in Manage → Data to remove sample-mode leftovers.",
+      "Sample data lingering in Settings → Manage — use Untag in BLE Tags, or use the Orphan Polygons cleaner in Manage sidebar → Data to remove sample-mode leftovers.",
       "3D floor alignment looks wrong — after setting alignment in Maps → 3D Stack, click Save Alignment. The 3D preview will then use the correct reference aspect ratio. Re-open and re-save if alignment was set in an older version.",
     ],
   },
