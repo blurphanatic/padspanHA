@@ -967,6 +967,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         "data_mode": str,
         vol.Optional("vendor_lookup_enabled"): bool,
         vol.Optional("room_change_delay_s"): vol.Coerce(float),
+        vol.Optional("away_timeout_m"): vol.Coerce(float),
     }
 )
 @websocket_api.async_response
@@ -981,6 +982,8 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["vendor_lookup_enabled"] = bool(msg.get("vendor_lookup_enabled"))
         if "room_change_delay_s" in msg:
             payload["room_change_delay_s"] = max(0.0, min(300.0, float(msg["room_change_delay_s"])))
+        if "away_timeout_m" in msg:
+            payload["away_timeout_m"] = max(1.0, min(1440.0, float(msg["away_timeout_m"])))
         await st.async_set(**payload)
     connection.send_result(msg["id"], {"settings": _get_settings(hass)})
 

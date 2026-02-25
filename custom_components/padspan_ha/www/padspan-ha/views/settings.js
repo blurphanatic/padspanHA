@@ -580,41 +580,72 @@ function _toHex(c){
 // ── Presence tab ────────────────────────────────────────────────────────────────
 function _settingsPresence(ctx, el){
   const settings = ctx.state.settings || {};
+  const inpStyle = "width:72px;text-align:center;background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:13px";
+  const rowStyle = "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px";
+  const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
+
+  // ── Room change delay ──────────────────────────────────────────────────────
   const currentDelay = (settings.room_change_delay_s != null ? Number(settings.room_change_delay_s) : 20);
   const polls = Math.max(1, Math.round(currentDelay / 10));
-
-  const inp = el("input", {
-    type: "number", min: "0", max: "300", step: "5", value: String(currentDelay),
-    style: "width:72px;text-align:center;background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:13px",
+  const delayInp = el("input", {
+    type: "number", min: "0", max: "300", step: "5", value: String(currentDelay), style: inpStyle,
   });
-
-  const saveBtn = el("button", { class: "btn" }, "Save");
-  saveBtn.addEventListener("click", async () => {
-    const v = Math.max(0, Math.min(300, parseFloat(inp.value) || 0));
+  const delaySaveBtn = el("button", { class: "btn" }, "Save");
+  delaySaveBtn.addEventListener("click", async () => {
+    const v = Math.max(0, Math.min(300, parseFloat(delayInp.value) || 0));
     try {
       await ctx.actions.settingsSet({ room_change_delay_s: v });
       ctx.toast(`Room change delay set to ${v}s`);
     } catch(e) { ctx.toast("Failed to save setting", true); }
   });
-
-  const inpStyle = "background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:13px";
-
-  return el("div", { class: "card" }, [
-    el("div", { class: "h2" }, "Presence Smoothing"),
+  wrap.appendChild(el("div", { class: "card" }, [
+    el("div", { class: "h2" }, "Room Change Delay"),
     el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
-      "Controls how quickly PadSpan switches a tracked device to a new room after it moves. " +
-      "A higher delay prevents rapid flickering when a device sits on the boundary between two scanners. " +
-      "The room only changes after a scanner consistently dominates for the full delay period."
+      "How long a scanner must consistently dominate before PadSpan switches a device to a new room. " +
+      "Higher values prevent flickering when a device sits on the boundary between two scanners."
     ),
-    el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap" }, [
+    el("div", { style: rowStyle }, [
       el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Room change delay"),
-      inp,
+      delayInp,
       el("div", { class: "muted", style: "font-size:12px" }, "seconds"),
-      saveBtn,
+      delaySaveBtn,
     ]),
     el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
       `Current: ${currentDelay}s → requires ~${polls} consecutive 10-second poll${polls !== 1 ? "s" : ""} agreement. ` +
       `Set to 0 for instant room switching.`
     ),
-  ]);
+  ]));
+
+  // ── Away timeout ───────────────────────────────────────────────────────────
+  const currentAwayM = (settings.away_timeout_m != null ? Number(settings.away_timeout_m) : 5);
+  const awayInp = el("input", {
+    type: "number", min: "1", max: "1440", step: "1", value: String(currentAwayM), style: inpStyle,
+  });
+  const awaySaveBtn = el("button", { class: "btn" }, "Save");
+  awaySaveBtn.addEventListener("click", async () => {
+    const v = Math.max(1, Math.min(1440, parseFloat(awayInp.value) || 5));
+    try {
+      await ctx.actions.settingsSet({ away_timeout_m: v });
+      ctx.toast(`Away timeout set to ${v} min`);
+    } catch(e) { ctx.toast("Failed to save setting", true); }
+  });
+  wrap.appendChild(el("div", { class: "card" }, [
+    el("div", { class: "h2" }, "Home/Away Timeout"),
+    el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
+      "If a device hasn't been detected for this long, it is marked as not_home in HA. " +
+      "The device_tracker and area sensor both switch to not_home. " +
+      "Set higher if devices drop off briefly during normal use."
+    ),
+    el("div", { style: rowStyle }, [
+      el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Away timeout"),
+      awayInp,
+      el("div", { class: "muted", style: "font-size:12px" }, "minutes"),
+      awaySaveBtn,
+    ]),
+    el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
+      `Current: ${currentAwayM} min (${currentAwayM * 60}s). Default: 5 min. Range: 1 min – 24 h.`
+    ),
+  ]));
+
+  return wrap;
 }
