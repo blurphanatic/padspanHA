@@ -1326,6 +1326,80 @@ function _averageAlignWithTieIns(newX, newY, newScale, newRot, tieIns) {
   return { x_offset: avg(xs), y_offset: avg(ys), scale: avg(ss), rotation: avg(rs) };
 }
 
+// ── Emergency tie-in recovery ─────────────────────────────────────────────────
+// Scans all maps and returns a recovery plan: for each map, which tie-ins to keep
+// vs remove based on consensus cluster detection.
+// Returns array of { map, keptTieIns, removedTieIns, reason }.
+function _emergencyRecoverTieIns(allMaps) {
+  const OFF_T   = 0.20;   // normalized offset distance threshold
+  const SCALE_T = 0.25;   // scale difference threshold
+  const ROT_T   = 35;     // rotation degrees threshold
+  const plans   = [];
+
+  for(const m of allMaps){
+    const tieIns = (m.stack?.tie_ins) || [];
+    if(!tieIns.length) continue;
+
+    // Primary saved alignment (if it exists) is treated as an implicit vote
+    const hasPrimary = m.stack && (m.stack.x_offset !== undefined);
+    const pv = hasPrimary ? {
+      x: m.stack.x_offset ?? 0, y: m.stack.y_offset ?? 0,
+      s: m.stack.scale ?? 1,    r: m.stack.rotation ?? 0,
+      isPrimary: true,
+    } : null;
+
+    // Single tie-in: compare against primary only
+    if(tieIns.length === 1){
+      if(!pv) continue;
+      const ti = tieIns[0];
+      const dx = (ti.x_offset||0) - pv.x, dy = (ti.y_offset||0) - pv.y;
+      const offDist  = Math.sqrt(dx*dx + dy*dy);
+      const sDiff    = Math.abs((ti.scale||1) - pv.s);
+      const rDiff    = Math.abs(((ti.rotation||0) - pv.r + 540) % 360 - 180);
+      const varPct   = Math.round(offDist*100*0.55 + sDiff*100*0.30 + (rDiff/180)*100*0.15);
+      if(offDist > OFF_T * 1.5 || sDiff > SCALE_T * 1.5 || rDiff > ROT_T * 1.5){
+        plans.push({ map: m, keptTieIns: [], removedTieIns: tieIns,
+          reason: `sole tie-in deviates ${varPct}% from saved position` });
+      }
+      continue;
+    }
+
+    // 2+ tie-ins: consensus cluster analysis
+    // Each slot: tie-in index maps to allVotes index; primary (if present) appended at end
+    const allVotes = [
+      ...tieIns.map(ti => ({ x: ti.x_offset||0, y: ti.y_offset||0, s: ti.scale||1, r: ti.rotation||0 })),
+      ...(pv ? [{ x: pv.x, y: pv.y, s: pv.s, r: pv.r }] : []),
+    ];
+
+    const agreeCount = allVotes.map((v, i) => {
+      let n = 0;
+      for(let j = 0; j < allVotes.length; j++){
+        if(i === j) continue;
+        const w = allVotes[j];
+        const dx = v.x - w.x, dy = v.y - w.y;
+        const rDiff = Math.abs((v.r - w.r + 540) % 360 - 180);
+        if(Math.sqrt(dx*dx + dy*dy) <= OFF_T && Math.abs(v.s - w.s) <= SCALE_T && rDiff <= ROT_T) n++;
+      }
+      return n;
+    });
+
+    // Maximum agreements any single vote has
+    const maxAgree = Math.max(...agreeCount);
+    // Drop votes with fewer than half the max agreement (outliers)
+    const keepMin  = Math.max(1, Math.ceil(maxAgree / 2));
+
+    // Only tie-ins (not the primary vote) are removed
+    const removedTieIns = tieIns.filter((_, i) => agreeCount[i] < keepMin);
+    const keptTieIns    = tieIns.filter((_, i) => agreeCount[i] >= keepMin);
+
+    if(removedTieIns.length > 0){
+      plans.push({ map: m, keptTieIns, removedTieIns,
+        reason: `${removedTieIns.length} outlier${removedTieIns.length>1?"s":""} outside consensus cluster` });
+    }
+  }
+  return plans;
+}
+
 function _export(ctx, active, maps_list){
   const { el } = ctx.helpers;
 
@@ -2422,6 +2496,72 @@ function _stack(ctx, maps, helpBtn){
   card.appendChild(warnDiv);
   card.appendChild(tieInListDiv);
   renderTieIns();
+
+  // ── Emergency Tie-in Recovery ──────────────────────────────────────────────
+  const recovDetailPanel = el("div",{style:"display:none;margin-top:8px;padding:12px;border-radius:8px;background:#140800;border:1px solid #7f1d1d;font-size:12px"});
+  const recovBtn = el("button",{class:"btn inline",
+    style:"margin-top:10px;background:#1a0800;border-color:#7f1d1d;color:#fca5a5",
+    onclick: ()=>{
+      const allM = ctx.state.maps.list||maps;
+      const plans = _emergencyRecoverTieIns(allM);
+      if(!plans.length){
+        recovDetailPanel.style.display = "none";
+        ctx.toast("No inconsistent tie-ins found — network looks healthy ✔");
+        return;
+      }
+      const escR = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      const totalRemoved = plans.reduce((s,p)=>s+p.removedTieIns.length, 0);
+      let html = `<div style="font-weight:600;color:#f87171;margin-bottom:8px">🚑 Emergency Tie-in Recovery</div>`;
+      html += `<div style="color:#cbd5e1;margin-bottom:10px;font-size:11px">Found <strong>${totalRemoved}</strong> inconsistent tie-in${totalRemoved>1?"s":""} across <strong>${plans.length}</strong> map${plans.length>1?"s":""}. Only the most consistent cluster will be kept.</div>`;
+      html += `<div style="margin-bottom:10px">`;
+      for(const p of plans){
+        const mapName = escR(p.map.name||p.map.id);
+        html += `<div style="padding:7px 0;border-bottom:1px solid #2a1000">`;
+        html += `<div style="color:#e2e8f0;font-weight:600">${mapName}</div>`;
+        html += `<div style="color:#94a3b8;font-size:11px;margin-top:2px">${p.reason}</div>`;
+        if(p.removedTieIns.length){
+          const rmN = p.removedTieIns.map(ti=>{ const rm=allM.find(x=>x.id===ti.ref_map_id); return `"${escR(rm?rm.name||rm.id:ti.ref_map_id||"?")}"`;});
+          html += `<div style="color:#f87171;font-size:11px;margin-top:2px">✕ Remove: ${rmN.join(", ")}</div>`;
+        }
+        if(p.keptTieIns.length){
+          const kpN = p.keptTieIns.map(ti=>{ const km=allM.find(x=>x.id===ti.ref_map_id); return `"${escR(km?km.name||km.id:ti.ref_map_id||"?")}"`;});
+          html += `<div style="color:#52b788;font-size:11px;margin-top:2px">✔ Keep: ${kpN.join(", ")}</div>`;
+        } else {
+          html += `<div style="color:#f59e0b;font-size:11px;margin-top:2px">All tie-ins removed (all conflict with saved position)</div>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div>`;
+      html += `<div style="display:flex;gap:8px;align-items:center">`;
+      html += `<button id="_rConfBtn" class="btn inline" style="background:#7f1d1d;border-color:#dc2626">Confirm Recovery</button>`;
+      html += `<button id="_rCxlBtn" class="btn inline">Cancel</button>`;
+      html += `</div>`;
+      recovDetailPanel.innerHTML = html;
+      recovDetailPanel.style.display = "block";
+      recovDetailPanel.querySelector("#_rCxlBtn").onclick = ()=>{ recovDetailPanel.style.display="none"; };
+      recovDetailPanel.querySelector("#_rConfBtn").onclick = async ()=>{
+        const confBtn = recovDetailPanel.querySelector("#_rConfBtn");
+        confBtn.disabled=true; confBtn.textContent="Recovering…";
+        try{
+          for(const p of plans){
+            const freshMap = (ctx.state.maps.list||maps).find(m=>m.id===p.map.id)||p.map;
+            await ctx.actions.mapsUpdate({
+              map_id: freshMap.id, receivers: freshMap.receivers||[], calibration: freshMap.calibration||{},
+              notes: freshMap.notes||"", floor_id: freshMap.floor_id||"", room_bounds: freshMap.room_bounds||{},
+              stack: Object.assign({}, freshMap.stack||{}, { tie_ins: p.keptTieIns }),
+            });
+          }
+          recovDetailPanel.style.display="none";
+          renderTieIns();
+          ctx.toast(`Recovery complete ✔ — removed ${totalRemoved} outlier tie-in${totalRemoved>1?"s":""}`);
+        } catch(e){
+          ctx.toast("Recovery failed: "+String(e), true);
+          try{ confBtn.disabled=false; confBtn.textContent="Confirm Recovery"; }catch(_){}
+        }
+      };
+    }}, "🚑 Emergency Recovery");
+  card.appendChild(recovBtn);
+  card.appendChild(recovDetailPanel);
 
   // ── Section 3: 3D Isometric Preview ───────────────────────────────────────
   card.appendChild(el("div",{class:"muted",style:"margin-top:24px;font-size:13px;font-weight:600"},"3D Isometric Preview"));
