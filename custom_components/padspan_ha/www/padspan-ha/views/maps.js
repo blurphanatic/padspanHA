@@ -104,24 +104,52 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
   }
 
   const libSnap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  // Masters first, then by name
+  const sortedMaps = [...maps].sort((a,b) => (b.stack?.is_master?1:0) - (a.stack?.is_master?1:0));
   const list = el("div",{style:"margin-top:10px;display:flex;flex-direction:column;gap:8px"});
-  for(const m of maps){
+  for(const m of sortedMaps){
     const row = el("div",{class:"maprow" + (m.id===activeId ? " active" : "")});
 
     // Thumbnail with room bounds + recommendation overlay
     const reco = _recommendPlacement(m.receivers||[], m.room_bounds||{}, libSnap);
     const thumb = _libraryThumb(m, ctx, reco);
 
-    const left = el("div",{style:"flex:1;min-width:0"},[
+    const isMaster   = !!(m.stack?.is_master);
+    const isEligible = !isMaster && _isMasterEligible(m);
+
+    // Name row: master badge inline
+    const nameRow = el("div",{style:"display:flex;align-items:center;gap:6px"},[
       el("div",{style:"font-weight:700"}, m.name || m.id),
-      el("div",{class:"muted", style:"font-size:12px"}, `${m.image?.width||0}×${m.image?.height||0} • floor: ${(_floorName(ctx,m.floor_id))} • receivers: ${(m.receivers||[]).length}`),
-      el("div",{class:"muted", style:"font-size:12px"}, `updated: ${m.updated || ""}` + (reco ? " • gap detected" : "")),
+      ...(isMaster ? [el("span",{style:"padding:1px 7px;border-radius:10px;background:#1a3a0a;border:1px solid #52b788;font-size:10px;color:#86efac;font-weight:600"},"⭐ Master")] : []),
     ]);
 
-    const actions = el("div",{style:"display:flex;gap:8px;align-items:center;flex-shrink:0"},[
-      el("button",{class:"btn inline", onclick:()=>{ ctx.actions.mapsSetActive(m.id); ctx.actions.setMapsTab('edit'); }}, "Open"),
-      el("button",{class:"btn inline danger", onclick:async ()=>{ if(confirm(`Delete map "${m.name||m.id}"?`)){ await ctx.actions.mapsDelete(m.id); } }}, "Delete"),
+    const left = el("div",{style:"flex:1;min-width:0"},[
+      nameRow,
+      el("div",{class:"muted", style:"font-size:12px"}, `${m.image?.width||0}×${m.image?.height||0} • floor: ${(_floorName(ctx,m.floor_id))} • receivers: ${(m.receivers||[]).length}`),
+      el("div",{class:"muted", style:"font-size:12px"}, `updated: ${m.updated || ""}` + (reco ? " • gap detected" : "") + (isMaster ? " • alignment anchor" : "")),
     ]);
+
+    // Master set/unset button
+    let masterBtn = null;
+    if(isMaster){
+      masterBtn = el("button",{class:"btn inline",style:"font-size:11px;color:#94a3b8", onclick: async()=>{
+        if(!confirm(`Remove master status from "${m.name||m.id}"? It will no longer be protected from modification.`)) return;
+        const newStk = Object.assign({}, m.stack||{}, { is_master: false });
+        await ctx.actions.mapsUpdate({ map_id:m.id, receivers:m.receivers||[], calibration:m.calibration||{}, notes:m.notes||"", floor_id:m.floor_id||"", room_bounds:m.room_bounds||{}, stack:newStk });
+        ctx.toast("Master status removed");
+      }}, "Unset Master");
+    } else if(isEligible){
+      masterBtn = el("button",{class:"btn inline",style:"font-size:11px;background:#0a2a1a;border-color:#52b788", onclick: async()=>{
+        const newStk = Object.assign({}, m.stack||{}, { is_master: true, master_set_date: new Date().toISOString().slice(0,10) });
+        await ctx.actions.mapsUpdate({ map_id:m.id, receivers:m.receivers||[], calibration:m.calibration||{}, notes:m.notes||"", floor_id:m.floor_id||"", room_bounds:m.room_bounds||{}, stack:newStk });
+        ctx.toast("Map set as master ⭐ — it is now your alignment anchor");
+      }}, "Set Master");
+    }
+
+    const actions = el("div",{style:"display:flex;gap:8px;align-items:center;flex-shrink:0;flex-wrap:wrap"});
+    if(masterBtn) actions.appendChild(masterBtn);
+    actions.appendChild(el("button",{class:"btn inline", onclick:()=>{ ctx.actions.mapsSetActive(m.id); ctx.actions.setMapsTab('edit'); }}, "Open"));
+    actions.appendChild(el("button",{class:"btn inline danger", onclick:async ()=>{ if(confirm(`Delete map "${m.name||m.id}"?`)){ await ctx.actions.mapsDelete(m.id); } }}, "Delete"));
 
     row.appendChild(thumb);
     row.appendChild(left);
@@ -140,6 +168,15 @@ function _upload(ctx, helpBtn, isBasic){
     el("div",{class:"h2"}, isBasic ? "Upload a floor plan" : "Upload floor plan"),
     helpBtn("maps_upload"),
   ]));
+
+  // First-upload tip: shown only when no maps exist yet
+  if(!(ctx.state.maps?.list||[]).length){
+    card.appendChild(el("div",{style:"margin:10px 0 4px;padding:10px 12px;border-radius:8px;background:#0a1a0a;border:1px solid #52b788;font-size:12px;color:#86efac;line-height:1.6"},
+      "💡 First map tip — Upload your most precise, to-scale floor plan first. " +
+      "All other maps will be spatially anchored to it, so accuracy starts here. " +
+      "After upload you can designate it as Master in the Library to protect it from accidental modification."
+    ));
+  }
   card.appendChild(el("div",{class:"muted",style:"margin-bottom:10px"}, isBasic
     ? "Take a photo of your house plan (or use any image). Give it a name and click Upload."
     : "Upload floorplan image (PNG/JPG/WebP/GIF/SVG). We'll auto-resize and store as optimized PNG for mapping."));
@@ -1326,6 +1363,17 @@ function _averageAlignWithTieIns(newX, newY, newScale, newRot, tieIns) {
   return { x_offset: avg(xs), y_offset: avg(ys), scale: avg(ss), rotation: avg(rs) };
 }
 
+// Returns true if a map qualifies for master designation (pristine, unmodified).
+function _isMasterEligible(m) {
+  const s = m.stack || {};
+  return Math.abs(s.x_offset||0)          < 0.05
+      && Math.abs(s.y_offset||0)          < 0.05
+      && Math.abs((s.scale||1.0) - 1.0)   < 0.05
+      && Math.abs(s.rotation||0)          < 2.0
+      && Math.abs((s.scale_x_adj||1.0) - 1.0) < 0.05
+      && !s.ref_map_id;
+}
+
 // ── Emergency tie-in recovery ─────────────────────────────────────────────────
 // Scans all maps and returns a recovery plan: for each map, which tie-ins to keep
 // vs remove based on consensus cluster detection.
@@ -1998,17 +2046,34 @@ function _stack(ctx, maps, helpBtn){
   const selRow = el("div",{style:"display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-top:10px"});
   const refSel = document.createElement("select"); refSel.className = "select";
   const tgtSel = document.createElement("select"); tgtSel.className = "select";
-  for(const m of maps){
-    const oR = document.createElement("option"); oR.value = m.id; oR.textContent = m.name||m.id;
+  // Reference: masters sorted to top (they are the natural fixed reference)
+  const mapsForRef = [...maps].sort((a,b) => (b.stack?.is_master?1:0) - (a.stack?.is_master?1:0));
+  for(const m of mapsForRef){
+    const oR = document.createElement("option"); oR.value = m.id;
+    oR.textContent = (m.stack?.is_master ? "⭐ " : "") + (m.name||m.id);
     if(m.id === alignState.refId) oR.selected = true;
     refSel.appendChild(oR);
-    const oT = document.createElement("option"); oT.value = m.id; oT.textContent = m.name||m.id;
+  }
+  // Target: show all, flag masters so user is aware
+  for(const m of maps){
+    const oT = document.createElement("option"); oT.value = m.id;
+    oT.textContent = (m.stack?.is_master ? "⭐ " : "") + (m.name||m.id);
     if(m.id === alignState.targetId) oT.selected = true;
     tgtSel.appendChild(oT);
   }
   selRow.appendChild(el("div",{},[el("div",{class:"muted",style:"font-size:11px;margin-bottom:3px"},"Reference (fixed)"), refSel]));
   selRow.appendChild(el("div",{},[el("div",{class:"muted",style:"font-size:11px;margin-bottom:3px"},"Target (draggable)"), tgtSel]));
   card.appendChild(selRow);
+  // Warning shown when a master map is selected as target
+  const masterWarnDiv = el("div",{style:"display:none;margin-top:6px;padding:8px 10px;border-radius:6px;background:#1a0a00;border:1px solid #d97706;font-size:12px;color:#fbbf24"},
+    "⭐ This is a master map — your alignment anchor. Dragging or scaling it and saving will permanently revoke its master status.");
+  card.appendChild(masterWarnDiv);
+  const _updateMasterWarn = () => {
+    const tgtCheck = maps.find(m=>m.id===tgtSel.value);
+    masterWarnDiv.style.display = tgtCheck?.stack?.is_master ? "block" : "none";
+  };
+  tgtSel.addEventListener("change", _updateMasterWarn);
+  _updateMasterWarn();
 
   const readoutDiv = el("div",{style:"margin-top:8px;font-size:12px;font-family:monospace;color:#94a3b8"});
   const updateReadout = ()=>{
@@ -2295,11 +2360,13 @@ function _stack(ctx, maps, helpBtn){
     const y = overY   ?? alignState.y_offset;
     const s = overScale ?? alignState.scale;
     const r = overRot ?? alignState.rotation||0;
+    const tgtWasMaster = !!(tM.stack?.is_master);
     const newStk = Object.assign({}, tM.stack||{}, {
       x_offset: x, y_offset: y, scale: s, rotation: r,
       scale_x_adj: alignState.scaleX_adj || 1.0,
       ref_map_id: rId||null,
       ref_ar: rM2 ? (rM2.image?.height||600)/(rM2.image?.width||800) : undefined,
+      ...(tgtWasMaster ? { is_master: false } : {}),
     });
     await ctx.actions.mapsUpdate({
       map_id: tM.id, receivers: tM.receivers||[], calibration: tM.calibration||{},
@@ -2309,6 +2376,8 @@ function _stack(ctx, maps, helpBtn){
     const saved = (ctx.state.maps.list||[]).find(m=>m.id===tId);
     if(saved?.stack) alignState.rotation = saved.stack.rotation ?? alignState.rotation;
     warnDiv.style.display = "none";
+    masterWarnDiv.style.display = "none";
+    return tgtWasMaster; // true = master status was revoked
   };
 
   // Render tie-in chips below ctrlRow
@@ -2370,14 +2439,15 @@ function _stack(ctx, maps, helpBtn){
     );
     const downstreamNames = downstream.map(m => m.name||m.id);
 
+    const _mNote = wasM => wasM ? "\n⭐ Master status revoked" : "";
     // No upstream conflicts — save immediately, note downstream if any
     if(!conflicts.length){
       btn.disabled = true; btn.textContent = "Saving…";
       try {
-        await performSave();
-        const note = downstreamNames.length
+        const wasM = await performSave();
+        const note = (downstreamNames.length
           ? `Alignment saved ✔\n↳ Downstream maps may need re-checking: ${downstreamNames.join(", ")}`
-          : "Alignment saved ✔";
+          : "Alignment saved ✔") + _mNote(wasM);
         ctx.toast(note);
       }
       catch(e){ ctx.toast("Save failed: "+String(e), true); }
@@ -2390,10 +2460,10 @@ function _stack(ctx, maps, helpBtn){
       try {
         const tIns = (tM?.stack?.tie_ins)||[];
         const avg = _averageAlignWithTieIns(alignState.x_offset, alignState.y_offset, alignState.scale, alignState.rotation||0, tIns);
-        await performSave(avg.x_offset, avg.y_offset, avg.scale, avg.rotation);
-        const note = downstreamNames.length
+        const wasM = await performSave(avg.x_offset, avg.y_offset, avg.scale, avg.rotation);
+        const note = (downstreamNames.length
           ? `Alignment saved ✔ (minor variance averaged)\n↳ Downstream maps may need re-checking: ${downstreamNames.join(", ")}`
-          : "Alignment saved ✔ (minor variance averaged with tie-ins)";
+          : "Alignment saved ✔ (minor variance averaged with tie-ins)") + _mNote(wasM);
         ctx.toast(note);
       } catch(e){ ctx.toast("Save failed: "+String(e), true); }
       finally { try{ btn.disabled=false; btn.textContent="Save Alignment"; }catch(_){} }
@@ -2431,10 +2501,10 @@ function _stack(ctx, maps, helpBtn){
       warnDiv.style.display="none";
       btn.disabled=true; btn.textContent="Saving…";
       try{
-        await performSave();
-        const note = downstreamNames.length
+        const wasM = await performSave();
+        const note = (downstreamNames.length
           ? `Alignment saved ✔ (override)\n↳ Update downstream maps: ${downstreamNames.join(", ")}`
-          : "Alignment saved ✔ (override)";
+          : "Alignment saved ✔ (override)") + _mNote(wasM);
         ctx.toast(note);
       }
       catch(e){ ctx.toast("Save failed: "+String(e), true); }
@@ -2448,10 +2518,10 @@ function _stack(ctx, maps, helpBtn){
       try{
         const tIns = (tM?.stack?.tie_ins)||[];
         const avg = _averageAlignWithTieIns(alignState.x_offset, alignState.y_offset, alignState.scale, alignState.rotation||0, tIns);
-        await performSave(avg.x_offset, avg.y_offset, avg.scale, avg.rotation);
-        const note = downstreamNames.length
+        const wasM = await performSave(avg.x_offset, avg.y_offset, avg.scale, avg.rotation);
+        const note = (downstreamNames.length
           ? `Alignment saved ✔ (averaged)\n↳ Update downstream maps: ${downstreamNames.join(", ")}`
-          : "Alignment saved ✔ (averaged with tie-ins)";
+          : "Alignment saved ✔ (averaged with tie-ins)") + _mNote(wasM);
         ctx.toast(note);
       } catch(e){ ctx.toast("Save failed: "+String(e), true); }
       finally{ try{ btn.disabled=false; btn.textContent="Save Alignment"; }catch(_){} }
