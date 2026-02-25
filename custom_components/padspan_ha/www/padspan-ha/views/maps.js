@@ -413,24 +413,25 @@ function _edit(ctx, map){
     return fid === mapFloorId;
   });
 
+  const titleBtns = el("div",{style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end"},[
+    el("div",{class:"muted", style:"font-size:12px"},"Floor:"),
+    _floorSelect(floors, mapFloorId, async (fid)=>{
+      ctx.state.maps._draftFloorId = fid;
+      // If selected room is no longer eligible, clear it
+      if(ctx.state.maps._selectedRoom && !eligibleRooms.includes(ctx.state.maps._selectedRoom)){
+        ctx.state.maps._selectedRoom = "";
+        ctx.state.maps._drawing = null;
+      }
+      ctx.actions.renderRooms();
+    }),
+    el("button",{class:"btn inline", onclick:()=>{ ctx.actions.mapsSetActive(map.id); ctx.actions.setMapsTab('library'); }}, "Back"),
+  ]);
   const title = el("div",{style:"display:flex;justify-content:space-between;align-items:center;gap:10px"},[
     el("div",{},[
       el("div",{style:"font-weight:700"}, `Edit: ${map.name || map.id}`),
       el("div",{class:"muted", style:"font-size:12px"}, "Place receivers and then draw room boundaries. Save when done."),
     ]),
-    el("div",{style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end"},[
-      el("div",{class:"muted", style:"font-size:12px"},"Floor:"),
-      _floorSelect(floors, mapFloorId, async (fid)=>{
-        ctx.state.maps._draftFloorId = fid;
-        // If selected room is no longer eligible, clear it
-        if(ctx.state.maps._selectedRoom && !eligibleRooms.includes(ctx.state.maps._selectedRoom)){
-          ctx.state.maps._selectedRoom = "";
-          ctx.state.maps._drawing = null;
-        }
-        ctx.actions.renderRooms();
-      }),
-      el("button",{class:"btn inline", onclick:()=>{ ctx.actions.mapsSetActive(map.id); ctx.actions.setMapsTab('library'); }}, "Back"),
-    ])
+    titleBtns,
   ]);
 
   // --- Stage ---
@@ -951,8 +952,8 @@ function _edit(ctx, map){
     trimStatus.textContent="\u2014";
   }}, "Trim Image");
 
-  // Insert Trim button into the existing title row buttons
-  title.querySelector("div[style*='flex-end']") && title.querySelector("div[style*='flex-end']").insertBefore(trimToggleBtn, title.querySelector("div[style*='flex-end']").firstChild);
+  // Insert Trim button into the existing title row buttons (direct reference — no fragile querySelector)
+  titleBtns.insertBefore(trimToggleBtn, titleBtns.firstChild);
 
   card.appendChild(title);
   card.appendChild(trimPanel);
