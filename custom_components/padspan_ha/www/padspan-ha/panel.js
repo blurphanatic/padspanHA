@@ -13,57 +13,48 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260225T202223Z";
-import { HELP } from "./help_content.js?b=20260225T202223Z";
-import * as Follow from "./views/follow.js?b=20260225T202223Z";
-import * as Overview from "./views/overview.js?b=20260225T202223Z";
-import * as Objects from "./views/objects.js?b=20260225T202223Z";
-import * as Devices from "./views/devices.js?b=20260225T202223Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260225T202223Z";
-import * as Presence from "./views/presence.js?b=20260225T202223Z";
-import * as Zones from "./views/zones.js?b=20260225T202223Z";
-import * as Insights from "./views/insights.js?b=20260225T202223Z";
-import * as History from "./views/history.js?b=20260225T202223Z";
-import * as Monitor from "./views/monitor.js?b=20260225T202223Z";
-import * as Maps from "./views/maps.js?b=20260225T202223Z";
-import * as Events from "./views/events.js?b=20260225T202223Z";
-import * as Health from "./views/health.js?b=20260225T202223Z";
-import * as Settings from "./views/settings.js?b=20260225T202223Z";
-import * as Manage from "./views/manage.js?b=20260225T202223Z";
-import * as Debug from "./views/debug.js?b=20260225T202223Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260225T202223Z";
-import * as QA from "./views/qa.js?b=20260225T202223Z";
-import * as Training from "./views/training.js?b=20260225T202223Z";
-import * as Calibration from "./views/calibration.js?b=20260225T202223Z";
-import * as Sandbox from "./views/sandbox.js?b=20260225T202223Z";
-
-const APP_VERSION = "0.5.14";
+const APP_VERSION = "0.5.15";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260225T202223Z";
+const BUILD_ID = "20260225T203539Z";
 
-const VIEWS = {
-  follow: Follow,
-  overview: Overview,
-  objects: Objects,
-  devices: Devices,
-  bluetooth: Bluetooth,
-  presence: Presence,
-  zones: Zones,
-  insights: Insights,
-  history: History,
-  monitor: Monitor,
-  maps: Maps,
-  events: Events,
-  health: Health,
-  settings: Settings,
-  manage: Manage,
-  training: Training,
-  calibration: Calibration,
-  diagnostics: Diagnostics,
-  debug: Debug,
-  qa: QA,
-  sandbox: Sandbox,
-};
+// ── Dynamic view imports ─────────────────────────────────────────────────────
+// Using dynamic import() instead of static imports so that a single failing
+// module cannot prevent customElements.define() from running (which would blank
+// the entire panel). All imports run in parallel via Promise.allSettled; a
+// failure in one view makes only that view unavailable, not the whole panel.
+let SAMPLE_SNAPSHOT = null;
+let HELP = {};
+const VIEWS = {};
+
+const _viewsPromise = Promise.allSettled([
+  import(`./sample_data.js?b=${BUILD_ID}`).then(m => { SAMPLE_SNAPSHOT = m.SAMPLE_SNAPSHOT || null; }),
+  import(`./help_content.js?b=${BUILD_ID}`).then(m => { HELP = m.HELP || {}; }),
+  import(`./views/follow.js?b=${BUILD_ID}`).then(m => { VIEWS.follow = m; }),
+  import(`./views/overview.js?b=${BUILD_ID}`).then(m => { VIEWS.overview = m; }),
+  import(`./views/objects.js?b=${BUILD_ID}`).then(m => { VIEWS.objects = m; }),
+  import(`./views/devices.js?b=${BUILD_ID}`).then(m => { VIEWS.devices = m; }),
+  import(`./views/bluetooth.js?b=${BUILD_ID}`).then(m => { VIEWS.bluetooth = m; }),
+  import(`./views/presence.js?b=${BUILD_ID}`).then(m => { VIEWS.presence = m; }),
+  import(`./views/zones.js?b=${BUILD_ID}`).then(m => { VIEWS.zones = m; }),
+  import(`./views/insights.js?b=${BUILD_ID}`).then(m => { VIEWS.insights = m; }),
+  import(`./views/history.js?b=${BUILD_ID}`).then(m => { VIEWS.history = m; }),
+  import(`./views/monitor.js?b=${BUILD_ID}`).then(m => { VIEWS.monitor = m; }),
+  import(`./views/maps.js?b=${BUILD_ID}`).then(m => { VIEWS.maps = m; }),
+  import(`./views/events.js?b=${BUILD_ID}`).then(m => { VIEWS.events = m; }),
+  import(`./views/health.js?b=${BUILD_ID}`).then(m => { VIEWS.health = m; }),
+  import(`./views/settings.js?b=${BUILD_ID}`).then(m => { VIEWS.settings = m; }),
+  import(`./views/manage.js?b=${BUILD_ID}`).then(m => { VIEWS.manage = m; }),
+  import(`./views/debug.js?b=${BUILD_ID}`).then(m => { VIEWS.debug = m; }),
+  import(`./views/diagnostics.js?b=${BUILD_ID}`).then(m => { VIEWS.diagnostics = m; }),
+  import(`./views/qa.js?b=${BUILD_ID}`).then(m => { VIEWS.qa = m; }),
+  import(`./views/training.js?b=${BUILD_ID}`).then(m => { VIEWS.training = m; }),
+  import(`./views/calibration.js?b=${BUILD_ID}`).then(m => { VIEWS.calibration = m; }),
+  import(`./views/sandbox.js?b=${BUILD_ID}`).then(m => { VIEWS.sandbox = m; }),
+]).then(results => {
+  results.forEach((r, i) => {
+    if(r.status === "rejected") console.warn("PadSpan: view module [" + i + "] failed to load:", r.reason);
+  });
+});
 
 const MENU = [
   ["follow","Follow","mdi:crosshairs-gps"],
@@ -212,8 +203,11 @@ class PadSpanHaApp extends HTMLElement {
     // Avoid spamming refresh on every hass set (HA calls it often)
     if(!this._booted){
       this._booted = true;
-      this._refreshAll(false);
-      if(this.state.dataMode === "live") this._startPolling();
+      // Wait for all view modules to be ready before the first full refresh
+      _viewsPromise.then(() => {
+        this._refreshAll(false);
+        if(this.state.dataMode === "live") this._startPolling();
+      });
     }
   }
 
@@ -302,8 +296,26 @@ class PadSpanHaApp extends HTMLElement {
     // Load persisted mode (sample/live) even before hass is set.
     // When hass arrives we refresh.
     this._loadSettings();
-    this._renderCurrentView();
-    this._startPolling();
+
+    // If views are already populated (reconnect after detach), render immediately.
+    // Otherwise show a loading placeholder then render once dynamic imports settle.
+    if(Object.keys(VIEWS).length > 0){
+      this._renderCurrentView();
+      this._startPolling();
+    } else {
+      // Show loading placeholder — purely inline so it works with no CSS loaded yet
+      if(this.$content){
+        const lo = document.createElement("div");
+        lo.style.cssText = "padding:24px;color:#52b788;font-family:monospace;font-size:13px";
+        lo.textContent = `Loading PadSpan HA v${APP_VERSION}\u2026`;
+        this.$content.appendChild(lo);
+      }
+      _viewsPromise.then(() => {
+        this._renderNav();       // rebuild nav after complexity may have been restored
+        this._renderCurrentView();
+        this._startPolling();
+      });
+    }
   }
 
 
@@ -582,7 +594,7 @@ class PadSpanHaApp extends HTMLElement {
         renderTags: (target=null)=>{
           const node = target || this.shadowRoot?.querySelector("#content #tags");
           if(!node) return;
-          try { Objects.renderTags(this._ctx(), node); } catch (e) { console.error(e); }
+          try { VIEWS.objects?.renderTags?.(this._ctx(), node); } catch (e) { console.error(e); }
         },
         renderDiag: ()=>this._renderCurrentView(),
         // Modal used by Overview/Objects drilldowns
