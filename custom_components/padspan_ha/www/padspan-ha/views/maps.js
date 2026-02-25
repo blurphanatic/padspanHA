@@ -333,10 +333,41 @@ function _arrayBufferToBase64(buffer){
 function _loadImage(url){
   return new Promise((resolve,reject)=>{
     const img = new Image();
+    img.crossOrigin = "anonymous";
     img.onload = ()=>resolve(img);
     img.onerror = (e)=>reject(new Error("Image decode failed"));
     img.src = url;
   });
+}
+
+// Like _preparePng but reads from a URL (for already-uploaded map images).
+async function _preparePngFromUrl(imgUrl, maxDim, crop=null){
+  const img = await _loadImage(imgUrl);
+  let w = img.naturalWidth || img.width;
+  let h = img.naturalHeight || img.height;
+
+  let srcX=0, srcY=0, srcW=w, srcH=h;
+  if(crop && crop.fx1>crop.fx0 && crop.fy1>crop.fy0){
+    srcX = Math.round(w*crop.fx0);
+    srcY = Math.round(h*crop.fy0);
+    srcW = Math.max(1, Math.round(w*(crop.fx1-crop.fx0)));
+    srcH = Math.max(1, Math.round(h*(crop.fy1-crop.fy0)));
+  }
+
+  const scale = Math.min(1, maxDim/Math.max(srcW,srcH));
+  const tw = Math.max(1, Math.round(srcW*scale));
+  const th = Math.max(1, Math.round(srcH*scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width=tw; canvas.height=th;
+  const g=canvas.getContext("2d");
+  g.imageSmoothingEnabled=true;
+  g.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, tw, th);
+
+  const pngBlob = await new Promise(r=>canvas.toBlob(r,"image/png",0.92));
+  const ab = await pngBlob.arrayBuffer();
+  const b64 = _arrayBufferToBase64(ab);
+  return {width:tw, height:th, pngBase64:b64};
 }
 
 function _edit(ctx, map){
@@ -812,7 +843,119 @@ function _edit(ctx, map){
   refreshList();
   renderTools();
 
+  // ── Trim Image panel ────────────────────────────────────────────────────
+  // Shown/hidden by the "Trim" button in the title row.
+  const trimPanel = el("div",{style:"display:none;margin-top:10px"});
+  const trimStatus = el("div",{class:"mono",style:"font-size:12px;margin-top:6px"}, "\u2014");
+
+  let _trimCrop = null;
+  let _trimImgW = 0, _trimImgH = 0, _trimDrag = false;
+  let _tdx0=0,_tdy0=0,_tdx1=0,_tdy1=0;
+
+  const trimWrap   = el("div",{style:"position:relative;display:inline-block;max-width:100%;border:1px solid #253e2e;border-radius:6px;overflow:hidden"});
+  const trimImg    = document.createElement("img");
+  trimImg.style.cssText = "display:block;max-width:100%;max-height:320px";
+  const trimCanvas = document.createElement("canvas");
+  trimCanvas.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair";
+  const trimInfo   = el("div",{class:"muted",style:"font-size:11px;margin-top:5px"}, "");
+  const trimClearBtn = el("button",{class:"btn tiny",style:"margin-top:6px"}, "Reset Selection");
+
+  function _tcFrac(cx,cy){ const r=trimCanvas.getBoundingClientRect(); return [Math.max(0,Math.min(1,(cx-r.left)/r.width)),Math.max(0,Math.min(1,(cy-r.top)/r.height))]; }
+  function _drawTrimOverlay(){
+    const cw=trimCanvas.width, ch=trimCanvas.height;
+    if(!cw||!ch) return;
+    const g2=trimCanvas.getContext("2d");
+    g2.clearRect(0,0,cw,ch);
+    if(_trimCrop){
+      const {fx0,fy0,fx1,fy1}=_trimCrop;
+      const px0=fx0*cw, py0=fy0*ch, pw=(fx1-fx0)*cw, ph=(fy1-fy0)*ch;
+      g2.fillStyle="rgba(0,0,0,0.52)"; g2.fillRect(0,0,cw,ch);
+      g2.clearRect(px0,py0,pw,ph);
+      g2.strokeStyle="#52b788"; g2.lineWidth=Math.max(1,cw/400); g2.strokeRect(px0,py0,pw,ph);
+      const hs=Math.max(4,cw/100); g2.fillStyle="#52b788";
+      for(const [hx,hy] of [[px0,py0],[px0+pw,py0],[px0,py0+ph],[px0+pw,py0+ph]])
+        g2.fillRect(hx-hs/2,hy-hs/2,hs,hs);
+      trimInfo.textContent=`Keep: ${Math.round(_trimImgW*(fx1-fx0))}\u00d7${Math.round(_trimImgH*(fy1-fy0))} px  (original: ${_trimImgW}\u00d7${_trimImgH}) \u2014 drag to adjust`;
+    } else {
+      trimInfo.textContent=`Full image: ${_trimImgW}\u00d7${_trimImgH} px \u2014 drag to select region to keep`;
+    }
+  }
+  function _updateTrimCrop(){
+    const fx0=Math.min(_tdx0,_tdx1), fy0=Math.min(_tdy0,_tdy1);
+    const fx1=Math.max(_tdx0,_tdx1), fy1=Math.max(_tdy0,_tdy1);
+    _trimCrop=(fx1-fx0>0.015&&fy1-fy0>0.015)?{fx0,fy0,fx1,fy1}:null;
+    _drawTrimOverlay();
+  }
+  trimCanvas.addEventListener("mousedown",  e=>{ _trimDrag=true;  [_tdx0,_tdy0]=_tcFrac(e.clientX,e.clientY); _tdx1=_tdx0;_tdy1=_tdy0; e.preventDefault(); });
+  trimCanvas.addEventListener("mousemove",  e=>{ if(!_trimDrag)return; [_tdx1,_tdy1]=_tcFrac(e.clientX,e.clientY); _updateTrimCrop(); });
+  trimCanvas.addEventListener("mouseup",    ()=>{ _trimDrag=false; });
+  trimCanvas.addEventListener("mouseleave", ()=>{ _trimDrag=false; });
+  trimCanvas.addEventListener("touchstart", e=>{ const t=e.touches[0]; _trimDrag=true; [_tdx0,_tdy0]=_tcFrac(t.clientX,t.clientY); _tdx1=_tdx0;_tdy1=_tdy0; e.preventDefault(); },{passive:false});
+  trimCanvas.addEventListener("touchmove",  e=>{ if(!_trimDrag)return; const t=e.touches[0]; [_tdx1,_tdy1]=_tcFrac(t.clientX,t.clientY); _updateTrimCrop(); e.preventDefault(); },{passive:false});
+  trimCanvas.addEventListener("touchend",   ()=>{ _trimDrag=false; });
+  trimClearBtn.addEventListener("click", ()=>{ _trimCrop=null; _drawTrimOverlay(); });
+
+  // Load the current map image into the trim preview
+  if(url){
+    const tmpImg = new Image();
+    tmpImg.crossOrigin = "anonymous";
+    tmpImg.onload = ()=>{
+      _trimImgW = tmpImg.naturalWidth; _trimImgH = tmpImg.naturalHeight;
+      const cs = Math.min(1, 1600/Math.max(_trimImgW,_trimImgH));
+      trimCanvas.width  = Math.round(_trimImgW*cs);
+      trimCanvas.height = Math.round(_trimImgH*cs);
+      _trimCrop = null; _drawTrimOverlay();
+    };
+    tmpImg.src = url;
+  }
+
+  trimImg.src = url || "";
+  trimWrap.appendChild(trimImg);
+  trimWrap.appendChild(trimCanvas);
+
+  const trimApplyBtn = el("button",{class:"btn inline", onclick: async ()=>{
+    if(!_trimCrop){ trimStatus.textContent="Drag on the image to select the region to keep first."; return; }
+    trimStatus.textContent="Processing\u2026";
+    try{
+      const res = await _preparePngFromUrl(url, 1600, _trimCrop);
+      trimStatus.textContent=`Uploading\u2026 (${res.width}\u00d7${res.height})`;
+      await ctx.actions.mapsReplaceImage({
+        map_id: map.id,
+        width: res.width,
+        height: res.height,
+        png_base64: res.pngBase64,
+        crop: _trimCrop,
+      });
+      // Reset draft state so edit reloads from fresh map data
+      ctx.state.maps._draftMapId = null;
+      trimStatus.textContent="Trim applied \u2714";
+      trimPanel.style.display="none";
+      ctx.actions.renderRooms();
+    }catch(e){
+      trimStatus.textContent="Failed: "+String(e);
+    }
+  }}, "Apply Trim");
+
+  const trimCancelBtn = el("button",{class:"btn inline", onclick:()=>{ trimPanel.style.display="none"; }}, "Cancel");
+
+  trimPanel.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:6px"},"Drag to select the region to keep, then click Apply Trim:"));
+  trimPanel.appendChild(trimWrap);
+  trimPanel.appendChild(trimClearBtn);
+  trimPanel.appendChild(trimInfo);
+  trimPanel.appendChild(el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"},[trimApplyBtn, trimCancelBtn]));
+  trimPanel.appendChild(trimStatus);
+
+  // "Trim" toggle button in the title bar
+  const trimToggleBtn = el("button",{class:"btn inline", onclick:()=>{
+    trimPanel.style.display = trimPanel.style.display==="none" ? "" : "none";
+    trimStatus.textContent="\u2014";
+  }}, "Trim Image");
+
+  // Insert Trim button into the existing title row buttons
+  title.querySelector("div[style*='flex-end']") && title.querySelector("div[style*='flex-end']").insertBefore(trimToggleBtn, title.querySelector("div[style*='flex-end']").firstChild);
+
   card.appendChild(title);
+  card.appendChild(trimPanel);
   card.appendChild(stage);
   card.appendChild(info);
   card.appendChild(right);

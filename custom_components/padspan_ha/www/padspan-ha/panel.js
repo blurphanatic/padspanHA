@@ -13,33 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260225T001100Z";
-import { HELP } from "./help_content.js?b=20260225T001100Z";
-import * as Follow from "./views/follow.js?b=20260225T001100Z";
-import * as Overview from "./views/overview.js?b=20260225T001100Z";
-import * as Objects from "./views/objects.js?b=20260225T001100Z";
-import * as Devices from "./views/devices.js?b=20260225T001100Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260225T001100Z";
-import * as Presence from "./views/presence.js?b=20260225T001100Z";
-import * as Zones from "./views/zones.js?b=20260225T001100Z";
-import * as Insights from "./views/insights.js?b=20260225T001100Z";
-import * as History from "./views/history.js?b=20260225T001100Z";
-import * as Monitor from "./views/monitor.js?b=20260225T001100Z";
-import * as Maps from "./views/maps.js?b=20260225T001100Z";
-import * as Events from "./views/events.js?b=20260225T001100Z";
-import * as Health from "./views/health.js?b=20260225T001100Z";
-import * as Settings from "./views/settings.js?b=20260225T001100Z";
-import * as Manage from "./views/manage.js?b=20260225T001100Z";
-import * as Debug from "./views/debug.js?b=20260225T001100Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260225T001100Z";
-import * as QA from "./views/qa.js?b=20260225T001100Z";
-import * as Training from "./views/training.js?b=20260225T001100Z";
-import * as Calibration from "./views/calibration.js?b=20260225T001100Z";
-import * as Sandbox from "./views/sandbox.js?b=20260225T001100Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260225T002214Z";
+import { HELP } from "./help_content.js?b=20260225T002214Z";
+import * as Follow from "./views/follow.js?b=20260225T002214Z";
+import * as Overview from "./views/overview.js?b=20260225T002214Z";
+import * as Objects from "./views/objects.js?b=20260225T002214Z";
+import * as Devices from "./views/devices.js?b=20260225T002214Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260225T002214Z";
+import * as Presence from "./views/presence.js?b=20260225T002214Z";
+import * as Zones from "./views/zones.js?b=20260225T002214Z";
+import * as Insights from "./views/insights.js?b=20260225T002214Z";
+import * as History from "./views/history.js?b=20260225T002214Z";
+import * as Monitor from "./views/monitor.js?b=20260225T002214Z";
+import * as Maps from "./views/maps.js?b=20260225T002214Z";
+import * as Events from "./views/events.js?b=20260225T002214Z";
+import * as Health from "./views/health.js?b=20260225T002214Z";
+import * as Settings from "./views/settings.js?b=20260225T002214Z";
+import * as Manage from "./views/manage.js?b=20260225T002214Z";
+import * as Debug from "./views/debug.js?b=20260225T002214Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260225T002214Z";
+import * as QA from "./views/qa.js?b=20260225T002214Z";
+import * as Training from "./views/training.js?b=20260225T002214Z";
+import * as Calibration from "./views/calibration.js?b=20260225T002214Z";
+import * as Sandbox from "./views/sandbox.js?b=20260225T002214Z";
 
-const APP_VERSION = "0.4.84";
+const APP_VERSION = "0.4.85";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260225T001100Z";
+const BUILD_ID = "20260225T002214Z";
 
 const VIEWS = {
   follow: Follow,
@@ -622,6 +622,7 @@ class PadSpanHaApp extends HTMLElement {
         mapsDelete: async (id)=>{ await this._callWS({ type:"padspan_ha/maps_delete", map_id:id }); await this._getMapsList(); if(this.state.activeMapId===id) this.state.activeMapId=null; this._renderCurrentView(); },
         mapsUpload: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_upload"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         mapsUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
+        mapsReplaceImage: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_replace_image"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         modelUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/model_update"}, payload)); await this._getModel(); this._renderCurrentView(); },
 
         // BLE calibration actions

@@ -38,6 +38,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_maps_list)
     websocket_api.async_register_command(hass, ws_maps_upload)
     websocket_api.async_register_command(hass, ws_maps_update)
+    websocket_api.async_register_command(hass, ws_maps_replace_image)
     websocket_api.async_register_command(hass, ws_maps_delete)
     websocket_api.async_register_command(hass, ws_model_get)
     websocket_api.async_register_command(hass, ws_model_update)
@@ -1001,6 +1002,37 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
             floor_id=msg.get("floor_id"),
             room_bounds=msg.get("room_bounds"),
             stack=msg.get("stack"),
+        )
+    except KeyError:
+        connection.send_error(msg["id"], "not_found", "Map not found")
+        return
+    connection.send_result(msg["id"], {"map": updated})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/maps_replace_image",
+        "map_id": str,
+        "width": int,
+        "height": int,
+        "png_base64": str,
+        vol.Optional("crop"): dict,   # {fx0, fy0, fx1, fy1} in 0-1 image fractions
+    }
+)
+@websocket_api.async_response
+async def ws_maps_replace_image(hass: HomeAssistant, connection, msg) -> None:
+    """Replace the stored PNG for an existing map and renormalize coordinates."""
+    ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+    if not ms:
+        connection.send_error(msg["id"], "no_maps_store", "Maps store not initialized")
+        return
+    try:
+        updated = await ms.async_replace_image(
+            msg.get("map_id") or "",
+            msg.get("png_base64") or "",
+            msg.get("width") or 0,
+            msg.get("height") or 0,
+            msg.get("crop"),
         )
     except KeyError:
         connection.send_error(msg["id"], "not_found", "Map not found")

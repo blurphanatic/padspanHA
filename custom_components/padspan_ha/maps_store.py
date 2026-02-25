@@ -196,6 +196,66 @@ class MapsStore:
         await self.store.async_save(self.data)
         return m
 
+    async def async_replace_image(
+        self,
+        map_id: str,
+        png_base64: str,
+        width: int,
+        height: int,
+        crop: dict | None = None,
+    ) -> dict[str, Any]:
+        """Replace the PNG for an existing map and renormalize stored coordinates.
+
+        crop (optional) describes the region of the *original* image that was
+        kept: {fx0, fy0, fx1, fy1} as 0-1 fractions.  All receiver positions
+        and room-bound polygon points are remapped so they remain correct in the
+        new (cropped) image coordinate space.
+        """
+        m = self.get_map(map_id)
+        if not m:
+            raise KeyError("not_found")
+
+        raw = base64.b64decode(png_base64)
+
+        # Overwrite the same file so the browser cache-busts via map.updated timestamp
+        file_path = self.maps_dir / m["image"]["filename"]
+        await asyncio.to_thread(file_path.write_bytes, raw)
+
+        m["image"]["width"]      = int(width)
+        m["image"]["height"]     = int(height)
+        m["image"]["size_bytes"] = len(raw)
+        m["image"]["sha256"]     = _sha256(raw)
+
+        # Renormalize stored coordinates if a crop rectangle was supplied
+        if crop:
+            fx0 = float(crop.get("fx0", 0))
+            fy0 = float(crop.get("fy0", 0))
+            fx1 = float(crop.get("fx1", 1))
+            fy1 = float(crop.get("fy1", 1))
+            fw  = fx1 - fx0
+            fh  = fy1 - fy0
+            if fw > 0 and fh > 0:
+                def _rx(px: float) -> float:
+                    return max(0.0, min(1.0, (float(px) - fx0) / fw))
+                def _ry(py: float) -> float:
+                    return max(0.0, min(1.0, (float(py) - fy0) / fh))
+
+                for r in m.get("receivers", []):
+                    r["x"] = _rx(r.get("x", 0))
+                    r["y"] = _ry(r.get("y", 0))
+
+                for b in m.get("room_bounds", {}).values():
+                    if isinstance(b, dict):
+                        if b.get("type") == "poly" and isinstance(b.get("points"), list):
+                            b["points"] = [[_rx(p[0]), _ry(p[1])] for p in b["points"] if len(p) >= 2]
+                        elif b.get("type") == "circle":
+                            b["cx"] = _rx(b.get("cx", 0.5))
+                            b["cy"] = _ry(b.get("cy", 0.5))
+
+        m["updated"] = _now_iso()
+        await self.store.async_save(self.data)
+        return m
+
     async def async_delete_map(self, map_id: str) -> None:
         m = self.get_map(map_id)
         if not m:
