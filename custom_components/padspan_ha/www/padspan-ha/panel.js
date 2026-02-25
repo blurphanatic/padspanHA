@@ -13,33 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260225T194139Z";
-import { HELP } from "./help_content.js?b=20260225T194139Z";
-import * as Follow from "./views/follow.js?b=20260225T194139Z";
-import * as Overview from "./views/overview.js?b=20260225T194139Z";
-import * as Objects from "./views/objects.js?b=20260225T194139Z";
-import * as Devices from "./views/devices.js?b=20260225T194139Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260225T194139Z";
-import * as Presence from "./views/presence.js?b=20260225T194139Z";
-import * as Zones from "./views/zones.js?b=20260225T194139Z";
-import * as Insights from "./views/insights.js?b=20260225T194139Z";
-import * as History from "./views/history.js?b=20260225T194139Z";
-import * as Monitor from "./views/monitor.js?b=20260225T194139Z";
-import * as Maps from "./views/maps.js?b=20260225T194139Z";
-import * as Events from "./views/events.js?b=20260225T194139Z";
-import * as Health from "./views/health.js?b=20260225T194139Z";
-import * as Settings from "./views/settings.js?b=20260225T194139Z";
-import * as Manage from "./views/manage.js?b=20260225T194139Z";
-import * as Debug from "./views/debug.js?b=20260225T194139Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260225T194139Z";
-import * as QA from "./views/qa.js?b=20260225T194139Z";
-import * as Training from "./views/training.js?b=20260225T194139Z";
-import * as Calibration from "./views/calibration.js?b=20260225T194139Z";
-import * as Sandbox from "./views/sandbox.js?b=20260225T194139Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260225T200235Z";
+import { HELP } from "./help_content.js?b=20260225T200235Z";
+import * as Follow from "./views/follow.js?b=20260225T200235Z";
+import * as Overview from "./views/overview.js?b=20260225T200235Z";
+import * as Objects from "./views/objects.js?b=20260225T200235Z";
+import * as Devices from "./views/devices.js?b=20260225T200235Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260225T200235Z";
+import * as Presence from "./views/presence.js?b=20260225T200235Z";
+import * as Zones from "./views/zones.js?b=20260225T200235Z";
+import * as Insights from "./views/insights.js?b=20260225T200235Z";
+import * as History from "./views/history.js?b=20260225T200235Z";
+import * as Monitor from "./views/monitor.js?b=20260225T200235Z";
+import * as Maps from "./views/maps.js?b=20260225T200235Z";
+import * as Events from "./views/events.js?b=20260225T200235Z";
+import * as Health from "./views/health.js?b=20260225T200235Z";
+import * as Settings from "./views/settings.js?b=20260225T200235Z";
+import * as Manage from "./views/manage.js?b=20260225T200235Z";
+import * as Debug from "./views/debug.js?b=20260225T200235Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260225T200235Z";
+import * as QA from "./views/qa.js?b=20260225T200235Z";
+import * as Training from "./views/training.js?b=20260225T200235Z";
+import * as Calibration from "./views/calibration.js?b=20260225T200235Z";
+import * as Sandbox from "./views/sandbox.js?b=20260225T200235Z";
 
-const APP_VERSION = "0.5.11";
+const APP_VERSION = "0.5.12";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260225T194139Z";
+const BUILD_ID = "20260225T200235Z";
 
 const VIEWS = {
   follow: Follow,
@@ -221,6 +221,15 @@ class PadSpanHaApp extends HTMLElement {
     if(!this.shadowRoot) this.attachShadow({mode:"open"});
     this.shadowRoot.innerHTML = `
       <link rel="stylesheet" href="/padspan_ha_static/padspan-ha/styles.css?v=${APP_VERSION}&b=${BUILD_ID}">
+      <style>
+        :host{display:block;min-height:100vh;background:#0a150e;color:#e2e8f0;font-family:Inter,system-ui,Arial,sans-serif}
+        .app{display:flex;min-height:100vh}
+        .left{width:200px;min-width:160px;background:#071008;border-right:1px solid #1a2e1e;padding:12px 8px;flex-shrink:0}
+        .main{flex:1;padding:16px;overflow-y:auto;min-width:0}
+        .nav{display:flex;flex-direction:column;gap:4px}
+        .navbtn{width:100%;text-align:left;padding:7px 10px;background:none;border:none;color:#94a3b8;cursor:pointer;border-radius:6px;font-size:13px;display:flex;align-items:center;gap:8px}
+        .navbtn.active,.navbtn:hover{background:#1a2e1e;color:#e2e8f0}
+      </style>
       <div id="app" class="app">
         <aside class="left">
           <div class="brand">
@@ -480,7 +489,8 @@ class PadSpanHaApp extends HTMLElement {
     if(!this._hass) return;
     const t0 = performance.now();
     if(userAction) this._toast("Refreshing…");
-    await Promise.all([
+    // allSettled: individual WS failures don't abort the whole refresh
+    const results = await Promise.allSettled([
       this._getVersionInfo(),
       this._getStatus(),
       this._getRoomTags(),
@@ -489,9 +499,12 @@ class PadSpanHaApp extends HTMLElement {
       this._getModel(),
       this._runAutoDiag(false),
     ]);
+    // Log any WS failures to console for debugging
+    const names = ["getVersionInfo","getStatus","getRoomTags","getLiveSnapshot","getMapsList","getModel","runAutoDiag"];
+    results.forEach((r,i)=>{ if(r.status==="rejected") console.warn("PadSpan refresh:", names[i], "failed:", r.reason); });
     this._recomputeDerived();
-    this.state.timing.lastRefreshMs = Math.round(performance.now() - t0);
-    this._updateBadges();
+    try { this.state.timing.lastRefreshMs = Math.round(performance.now() - t0); } catch(e){}
+    try { this._updateBadges(); } catch(e){}
     this._renderCurrentView();
   }
 
@@ -1185,12 +1198,20 @@ class PadSpanHaApp extends HTMLElement {
         } catch(e) { /* ignore */ }
       });
     } catch (e) {
-      console.error(e);
-      this.$content.appendChild(el("div",{class:"card"},[
-        el("div",{style:"font-weight:700"}, "UI render error"),
-        el("div",{class:"muted"}, "A JavaScript error prevented this view from rendering. Copy the details below."),
-        el("pre",{class:"pre"}, String(e?.stack || e)),
-      ]));
+      console.error("PadSpan render error:", e);
+      const errDiv = document.createElement("div");
+      errDiv.style.cssText = "background:#1a0a0a;border:1px solid #7f1d1d;border-radius:8px;padding:16px;margin:16px 0;color:#fca5a5";
+      const h = document.createElement("div");
+      h.style.cssText = "font-weight:700;font-size:15px;margin-bottom:8px";
+      h.textContent = "UI render error — view: " + this.state.view;
+      const sub = document.createElement("div");
+      sub.style.cssText = "font-size:12px;margin-bottom:8px;color:#fca5a5";
+      sub.textContent = "A JavaScript error prevented this view from rendering. Open browser console (F12) for details.";
+      const pre = document.createElement("pre");
+      pre.style.cssText = "font-size:11px;white-space:pre-wrap;word-break:break-all;background:#0a0000;padding:10px;border-radius:4px;overflow:auto;max-height:300px;color:#f87171";
+      pre.textContent = String(e?.stack || e);
+      errDiv.appendChild(h); errDiv.appendChild(sub); errDiv.appendChild(pre);
+      this.$content.appendChild(errDiv);
     }
   }
 
