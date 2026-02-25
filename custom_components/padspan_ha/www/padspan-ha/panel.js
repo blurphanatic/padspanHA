@@ -13,33 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260225T201038Z";
-import { HELP } from "./help_content.js?b=20260225T201038Z";
-import * as Follow from "./views/follow.js?b=20260225T201038Z";
-import * as Overview from "./views/overview.js?b=20260225T201038Z";
-import * as Objects from "./views/objects.js?b=20260225T201038Z";
-import * as Devices from "./views/devices.js?b=20260225T201038Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260225T201038Z";
-import * as Presence from "./views/presence.js?b=20260225T201038Z";
-import * as Zones from "./views/zones.js?b=20260225T201038Z";
-import * as Insights from "./views/insights.js?b=20260225T201038Z";
-import * as History from "./views/history.js?b=20260225T201038Z";
-import * as Monitor from "./views/monitor.js?b=20260225T201038Z";
-import * as Maps from "./views/maps.js?b=20260225T201038Z";
-import * as Events from "./views/events.js?b=20260225T201038Z";
-import * as Health from "./views/health.js?b=20260225T201038Z";
-import * as Settings from "./views/settings.js?b=20260225T201038Z";
-import * as Manage from "./views/manage.js?b=20260225T201038Z";
-import * as Debug from "./views/debug.js?b=20260225T201038Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260225T201038Z";
-import * as QA from "./views/qa.js?b=20260225T201038Z";
-import * as Training from "./views/training.js?b=20260225T201038Z";
-import * as Calibration from "./views/calibration.js?b=20260225T201038Z";
-import * as Sandbox from "./views/sandbox.js?b=20260225T201038Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260225T202223Z";
+import { HELP } from "./help_content.js?b=20260225T202223Z";
+import * as Follow from "./views/follow.js?b=20260225T202223Z";
+import * as Overview from "./views/overview.js?b=20260225T202223Z";
+import * as Objects from "./views/objects.js?b=20260225T202223Z";
+import * as Devices from "./views/devices.js?b=20260225T202223Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260225T202223Z";
+import * as Presence from "./views/presence.js?b=20260225T202223Z";
+import * as Zones from "./views/zones.js?b=20260225T202223Z";
+import * as Insights from "./views/insights.js?b=20260225T202223Z";
+import * as History from "./views/history.js?b=20260225T202223Z";
+import * as Monitor from "./views/monitor.js?b=20260225T202223Z";
+import * as Maps from "./views/maps.js?b=20260225T202223Z";
+import * as Events from "./views/events.js?b=20260225T202223Z";
+import * as Health from "./views/health.js?b=20260225T202223Z";
+import * as Settings from "./views/settings.js?b=20260225T202223Z";
+import * as Manage from "./views/manage.js?b=20260225T202223Z";
+import * as Debug from "./views/debug.js?b=20260225T202223Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260225T202223Z";
+import * as QA from "./views/qa.js?b=20260225T202223Z";
+import * as Training from "./views/training.js?b=20260225T202223Z";
+import * as Calibration from "./views/calibration.js?b=20260225T202223Z";
+import * as Sandbox from "./views/sandbox.js?b=20260225T202223Z";
 
-const APP_VERSION = "0.5.13";
+const APP_VERSION = "0.5.14";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260225T201038Z";
+const BUILD_ID = "20260225T202223Z";
 
 const VIEWS = {
   follow: Follow,
@@ -222,13 +222,8 @@ class PadSpanHaApp extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <link rel="stylesheet" href="/padspan_ha_static/padspan-ha/styles.css?v=${APP_VERSION}&b=${BUILD_ID}">
       <style>
-        :host{display:block;min-height:100vh;background:#0a150e;color:#e2e8f0;font-family:Inter,system-ui,Arial,sans-serif}
-        .app{display:flex;min-height:100vh}
-        .left{width:200px;min-width:160px;background:#071008;border-right:1px solid #1a2e1e;padding:12px 8px;flex-shrink:0}
-        .main{flex:1;padding:16px;overflow-y:auto;min-width:0}
-        .nav{display:flex;flex-direction:column;gap:4px}
-        .navbtn{width:100%;text-align:left;padding:7px 10px;background:none;border:none;color:#94a3b8;cursor:pointer;border-radius:6px;font-size:13px;display:flex;align-items:center;gap:8px}
-        .navbtn.active,.navbtn:hover{background:#1a2e1e;color:#e2e8f0}
+        /* Only :host fallback — do not override layout classes that styles.css already handles */
+        :host{display:block;min-height:100vh;background:#0a150e;color:#e2e8f0;font-family:Inter,system-ui,Arial,sans-serif;box-sizing:border-box}
       </style>
       <div id="app" class="app">
         <aside class="left">
@@ -1179,6 +1174,13 @@ class PadSpanHaApp extends HTMLElement {
     } catch(e) { /* ignore */ }
 
     this.$content.innerHTML = "";
+
+    // Diagnostic stamp — always visible, purely inline styles, no CSS dependency
+    const _stamp = document.createElement("div");
+    _stamp.style.cssText = "background:#052e16;border:1px solid #166534;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:11px;font-family:monospace;color:#86efac";
+    _stamp.textContent = `v${APP_VERSION} • ${BUILD_ID} • view:${v} • mode:${this.state.dataMode}`;
+    this.$content.appendChild(_stamp);
+
     if(!mod || typeof mod.render !== "function") {
       this.$content.appendChild(el("div",{class:"card"}, `View missing: ${v}`));
       return;
