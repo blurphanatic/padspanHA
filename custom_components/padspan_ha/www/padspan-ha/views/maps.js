@@ -154,21 +154,96 @@ function _upload(ctx, helpBtn, isBasic){
   file.type = "file";
   file.accept = "image/*";
 
-  const status = el("div",{class:"mono", style:"margin-top:10px"}, "—");
+  const status = el("div",{class:"mono", style:"margin-top:10px"}, "\u2014");
+
+  // ── Crop / trim tool ───────────────────────────────────────────────────────
+  // Shown after a file is selected; drag on the preview to select a crop region.
+  let cropRect = null; // {fx0,fy0,fx1,fy1} in 0-1 image-fraction, or null = full
+  let _imgNatW = 0, _imgNatH = 0, _isDragging = false;
+  let _dx0=0, _dy0=0, _dx1=0, _dy1=0;
+
+  const previewOuter = el("div",{style:"display:none;margin-top:14px"});
+  const previewWrap  = el("div",{style:"position:relative;display:inline-block;max-width:100%;border:1px solid #253e2e;border-radius:6px;overflow:hidden"});
+  const previewImg   = document.createElement("img");
+  previewImg.style.cssText = "display:block;max-width:100%;max-height:260px";
+  const cropCanvas   = document.createElement("canvas");
+  cropCanvas.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair";
+  const cropInfo     = el("div",{class:"muted",style:"font-size:11px;margin-top:5px"}, "");
+  const cropClearBtn = el("button",{class:"btn tiny",style:"margin-top:6px"}, "Reset Crop");
+
+  function _ccFrac(clientX, clientY){
+    const r = cropCanvas.getBoundingClientRect();
+    return [Math.max(0,Math.min(1,(clientX-r.left)/r.width)), Math.max(0,Math.min(1,(clientY-r.top)/r.height))];
+  }
+  function _drawCropOverlay(){
+    const cw=cropCanvas.width, ch=cropCanvas.height;
+    if(!cw||!ch) return;
+    const g2=cropCanvas.getContext("2d");
+    g2.clearRect(0,0,cw,ch);
+    if(cropRect){
+      const {fx0,fy0,fx1,fy1}=cropRect;
+      const px0=fx0*cw, py0=fy0*ch, pw=(fx1-fx0)*cw, ph=(fy1-fy0)*ch;
+      g2.fillStyle="rgba(0,0,0,0.5)"; g2.fillRect(0,0,cw,ch);
+      g2.clearRect(px0,py0,pw,ph);
+      g2.strokeStyle="#52b788"; g2.lineWidth=Math.max(1,cw/400); g2.strokeRect(px0,py0,pw,ph);
+      const hs=Math.max(4,cw/100);
+      g2.fillStyle="#52b788";
+      for(const [hx,hy] of [[px0,py0],[px0+pw,py0],[px0,py0+ph],[px0+pw,py0+ph]])
+        g2.fillRect(hx-hs/2,hy-hs/2,hs,hs);
+      cropInfo.textContent=`Crop: ${Math.round(_imgNatW*(fx1-fx0))}\u00d7${Math.round(_imgNatH*(fy1-fy0))} px  (original: ${_imgNatW}\u00d7${_imgNatH}) \u2014 drag to adjust`;
+    } else {
+      cropInfo.textContent=`Full image: ${_imgNatW}\u00d7${_imgNatH} px \u2014 drag to select a crop region`;
+    }
+  }
+  function _updateCropFromDrag(){
+    const fx0=Math.min(_dx0,_dx1), fy0=Math.min(_dy0,_dy1);
+    const fx1=Math.max(_dx0,_dx1), fy1=Math.max(_dy0,_dy1);
+    cropRect=(fx1-fx0>0.015&&fy1-fy0>0.015)?{fx0,fy0,fx1,fy1}:null;
+    _drawCropOverlay();
+  }
+  cropCanvas.addEventListener("mousedown",  e=>{ _isDragging=true;  [_dx0,_dy0]=_ccFrac(e.clientX,e.clientY); _dx1=_dx0;_dy1=_dy0; e.preventDefault(); });
+  cropCanvas.addEventListener("mousemove",  e=>{ if(!_isDragging)return; [_dx1,_dy1]=_ccFrac(e.clientX,e.clientY); _updateCropFromDrag(); });
+  cropCanvas.addEventListener("mouseup",    ()=>{ _isDragging=false; });
+  cropCanvas.addEventListener("mouseleave", ()=>{ _isDragging=false; });
+  cropCanvas.addEventListener("touchstart", e=>{ const t=e.touches[0]; _isDragging=true; [_dx0,_dy0]=_ccFrac(t.clientX,t.clientY); _dx1=_dx0;_dy1=_dy0; e.preventDefault(); },{passive:false});
+  cropCanvas.addEventListener("touchmove",  e=>{ if(!_isDragging)return; const t=e.touches[0]; [_dx1,_dy1]=_ccFrac(t.clientX,t.clientY); _updateCropFromDrag(); e.preventDefault(); },{passive:false});
+  cropCanvas.addEventListener("touchend",   ()=>{ _isDragging=false; });
+  cropClearBtn.addEventListener("click",    ()=>{ cropRect=null; _drawCropOverlay(); });
+
+  file.addEventListener("change", ()=>{
+    if(!file.files||!file.files[0]) return;
+    const f2=file.files[0];
+    if(!name.value) name.value=f2.name.replace(/\.[^.]+$/,"");
+    const objUrl=URL.createObjectURL(f2);
+    previewImg.onload=()=>{
+      URL.revokeObjectURL(objUrl);
+      _imgNatW=previewImg.naturalWidth; _imgNatH=previewImg.naturalHeight;
+      const cs=Math.min(1,1600/Math.max(_imgNatW,_imgNatH));
+      cropCanvas.width=Math.round(_imgNatW*cs); cropCanvas.height=Math.round(_imgNatH*cs);
+      cropRect=null; _drawCropOverlay();
+      previewOuter.style.display="";
+    };
+    previewImg.src=objUrl;
+  });
+
+  previewWrap.appendChild(previewImg);
+  previewWrap.appendChild(cropCanvas);
+  previewOuter.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:6px"},
+    "Preview \u2014 drag to select a crop/trim region (optional):"));
+  previewOuter.appendChild(previewWrap);
+  previewOuter.appendChild(cropClearBtn);
+  previewOuter.appendChild(cropInfo);
 
   const btn = el("button",{class:"btn inline", onclick: async ()=>{
     if(!file.files || !file.files[0]){ status.textContent = "Pick an image file first."; return; }
     const f = file.files[0];
-
-    // Floor is REQUIRED: either select existing or add new
     let floor_id = (floorSel.value||"").trim();
     if(!floor_id){ status.textContent = "Choose a floor (from HA) before uploading."; return; }
-
-    status.textContent = "Reading…";
+    status.textContent = "Reading\u2026";
     try{
       const max = parseInt((maxw.value||"").trim() || "1600", 10);
-      const res = await _preparePng(f, isFinite(max) ? max : 1600);
-      status.textContent = `Uploading… (${res.width}×${res.height})`;
+      const res = await _preparePng(f, isFinite(max) ? max : 1600, cropRect);
+      status.textContent = `Uploading\u2026 (${res.width}\u00d7${res.height})`;
       await ctx.actions.mapsUpload({
         name: (name.value||f.name||"Map"),
         filename: f.name,
@@ -178,7 +253,7 @@ function _upload(ctx, helpBtn, isBasic){
         png_base64: res.pngBase64,
         floor_id,
       });
-      status.textContent = "Uploaded ✔";
+      status.textContent = "Uploaded \u2714";
       ctx.state.mapsTab = "edit";
       ctx.actions.renderRooms();
     }catch(e){
@@ -188,12 +263,13 @@ function _upload(ctx, helpBtn, isBasic){
 
   card.appendChild(el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-top:10px"},[
     el("div",{},[ el("div",{class:"muted",style:"font-size:12px;margin-bottom:4px"},"Floor (from HA)"), floorSel ]),
-    el("div",{class:"muted",style:"font-size:12px;align-self:flex-end;padding-bottom:4px"}, "Manage floors in HA Settings → Areas & Zones"),
+    el("div",{class:"muted",style:"font-size:12px;align-self:flex-end;padding-bottom:4px"}, "Manage floors in HA Settings \u2192 Areas & Zones"),
   ]));
 
   card.appendChild(name);
   card.appendChild(maxw);
   card.appendChild(file);
+  card.appendChild(previewOuter);
   card.appendChild(btn);
   card.appendChild(status);
 
@@ -205,7 +281,7 @@ function _upload(ctx, helpBtn, isBasic){
 }
 
 
-async function _preparePng(file, maxDim){
+async function _preparePng(file, maxDim, crop=null){
   const buf = await file.arrayBuffer();
   const blob = new Blob([buf], {type: file.type || "image/*"});
   const url = URL.createObjectURL(blob);
@@ -214,16 +290,25 @@ async function _preparePng(file, maxDim){
     let w = img.naturalWidth || img.width;
     let h = img.naturalHeight || img.height;
 
-    // constrain
-    const scale = Math.min(1, maxDim / Math.max(w,h));
-    const tw = Math.max(1, Math.round(w*scale));
-    const th = Math.max(1, Math.round(h*scale));
+    // Apply crop/trim if set (fx0,fy0,fx1,fy1 are 0-1 fractions of the image)
+    let srcX=0, srcY=0, srcW=w, srcH=h;
+    if(crop && crop.fx1>crop.fx0 && crop.fy1>crop.fy0){
+      srcX = Math.round(w*crop.fx0);
+      srcY = Math.round(h*crop.fy0);
+      srcW = Math.max(1, Math.round(w*(crop.fx1-crop.fx0)));
+      srcH = Math.max(1, Math.round(h*(crop.fy1-crop.fy0)));
+    }
+
+    // constrain to maxDim
+    const scale = Math.min(1, maxDim / Math.max(srcW,srcH));
+    const tw = Math.max(1, Math.round(srcW*scale));
+    const th = Math.max(1, Math.round(srcH*scale));
 
     const canvas = document.createElement("canvas");
     canvas.width = tw; canvas.height = th;
     const g = canvas.getContext("2d");
     g.imageSmoothingEnabled = true;
-    g.drawImage(img, 0, 0, tw, th);
+    g.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, tw, th);
 
     const pngBlob = await new Promise((resolve)=>canvas.toBlob(resolve, "image/png", 0.92));
     const ab = await pngBlob.arrayBuffer();

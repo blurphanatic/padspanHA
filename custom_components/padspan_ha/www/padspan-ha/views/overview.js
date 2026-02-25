@@ -508,7 +508,7 @@ export function render(ctx){
     }
 
     if(ctx.state._overviewIsoFocus === undefined) ctx.state._overviewIsoFocus = null;
-    const slabWZ = 7/FLOOR_GAP;
+    const slabWZ = 18/FLOOR_GAP;
     const hasBounds = sorted.some(m=>Object.keys(m.room_bounds||{}).length>0);
 
     // ── Fingerprint positioning ─────────────────────────────────────────────
@@ -609,6 +609,37 @@ export function render(ctx){
       let s = `<svg viewBox="0 0 ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
       s += `<rect width="${W}" height="${HTOTAL}" fill="#071008"/>`;
 
+      // Floor surface patterns — defined once per level, referenced by fill="url(#...)"
+      s += `<defs>`;
+      sortedIsoLevels.forEach((z2, li) => {
+        const c2 = levelColor(z2);
+        if(li === 0){
+          // Ground floor: subtle paisley (teardrop + curl + inner dot)
+          s += `<pattern id="flrpat_${li}" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">`;
+          s += `<path d="M12,2 C16,2 19,6 19,11 C19,16 16,21 12,22 C8,21 5,16 5,11 C5,6 8,2 12,2 Z" fill="none" stroke="${c2}" stroke-width="0.7" opacity="0.14"/>`;
+          s += `<path d="M12,2 C13.5,0 15.5,0.5 14.5,2.5 C13.5,1.5 12,2 12,2 Z" fill="${c2}" opacity="0.11"/>`;
+          s += `<circle cx="12" cy="15" r="1.4" fill="${c2}" opacity="0.1"/>`;
+          s += `</pattern>`;
+        } else if(li === 2){
+          // Level 2: crosshatch (two diagonal sets of lines)
+          s += `<pattern id="flrpat_${li}" x="0" y="0" width="12" height="12" patternUnits="userSpaceOnUse">`;
+          s += `<line x1="0" y1="12" x2="12" y2="0" stroke="${c2}" stroke-width="0.6" opacity="0.18"/>`;
+          s += `<line x1="0" y1="0" x2="12" y2="12" stroke="${c2}" stroke-width="0.6" opacity="0.18"/>`;
+          s += `</pattern>`;
+        } else if(li >= 3){
+          // Level 3+: hex dot grid
+          s += `<pattern id="flrpat_${li}" x="0" y="0" width="16" height="13.86" patternUnits="userSpaceOnUse">`;
+          s += `<circle cx="0"  cy="0"     r="1.5" fill="${c2}" opacity="0.14"/>`;
+          s += `<circle cx="8"  cy="6.93"  r="1.5" fill="${c2}" opacity="0.14"/>`;
+          s += `<circle cx="16" cy="0"     r="1.5" fill="${c2}" opacity="0.14"/>`;
+          s += `<circle cx="0"  cy="13.86" r="1.5" fill="${c2}" opacity="0.14"/>`;
+          s += `<circle cx="16" cy="13.86" r="1.5" fill="${c2}" opacity="0.14"/>`;
+          s += `</pattern>`;
+        }
+        // li === 1: no pattern (clean slab)
+      });
+      s += `</defs>`;
+
       if(!sorted.length){
         s += `<text x="${W/2}" y="${BASE_H/2}" text-anchor="middle" fill="#4a6052" font-size="13">All layers hidden</text>`;
         s += `</svg>`; return s;
@@ -618,6 +649,7 @@ export function render(ctx){
         const isFocused = focusZ===null || focusZ===z;
         const go = isFocused ? 1.0 : 0.1;
         const lyrColor = levelColor(z);
+        const lidx = sortedIsoLevels.indexOf(z);
 
         let x0=Infinity,y0_=Infinity,x1=-Infinity,y1_=-Infinity;
         for(const m of group){
@@ -636,9 +668,9 @@ export function render(ctx){
         s += `<polygon points="${pts([TR,BR,BR_b,TR_b])}" fill="#0d2318" fill-opacity="0.35" stroke="#253e2e" stroke-width="0.8"/>`;
         s += `<polygon points="${pts([BL,BR,BR_b,BL_b])}" fill="#0a1a12" fill-opacity="0.3" stroke="#253e2e" stroke-width="0.8"/>`;
         s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="#0f2017" fill-opacity="0.06" stroke="${lyrColor}" stroke-width="1.5" stroke-dasharray="10,5" opacity="0.5"/>`;
+        if(lidx !== 1){ s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="url(#flrpat_${lidx})" stroke="none"/>`; }
 
         // Room polygons
-        const lidx = sortedIsoLevels.indexOf(z);
         for(const m of group){
           const stk=m.stack||{}, ox=stk.x_offset||0, oy__=stk.y_offset||0, sc=stk.scale||1.0;
           const ar=(m.image?.height||600)/(m.image?.width||800);
