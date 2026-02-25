@@ -156,6 +156,15 @@ export function render(ctx){
   const allObjects = objModel && Array.isArray(objModel.list) ? objModel.list : [];
   const summary = objModel && objModel.summary ? objModel.summary : null;
 
+  // Away detection — mirrors sensor.py / device_tracker.py threshold
+  const awayTimeoutS = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null)
+    ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
+  const _isAway = (o) => {
+    if (o.kind !== "ble" && o.kind !== "private_ble" && o.kind !== "ibeacon") return false;
+    const a = o.age_s;
+    return typeof a === "number" && isFinite(a) && a > awayTimeoutS;
+  };
+
   if (!ctx.state.objSearch) ctx.state.objSearch = "";
   if (!ctx.state.objKind)   ctx.state.objKind   = "all";
   if (!ctx.state.objStatus) ctx.state.objStatus  = "all";
@@ -167,7 +176,7 @@ export function render(ctx){
   objKindSel.value = ctx.state.objKind;
 
   const objStatusSel = el("select",{class:"btn"});
-  [{v:"all",t:"All statuses"},{v:"unidentified",t:"Unidentified"},{v:"identified",t:"Identified"}]
+  [{v:"all",t:"All statuses"},{v:"unidentified",t:"Unidentified"},{v:"identified",t:"Identified"},{v:"away",t:"Away"}]
     .forEach(o=>objStatusSel.appendChild(el("option",{value:o.v},o.t)));
   objStatusSel.value = ctx.state.objStatus;
 
@@ -197,6 +206,7 @@ export function render(ctx){
     const age = o.age_s != null ? fmtAgo(o.age_s) : "";
     const isPrivateBle = kind === "private_ble";
     const isIbeacon = kind === "ibeacon";
+    const isAway = _isAway(o);
     const scanner = (kind==="ble" || isPrivateBle || isIbeacon) && Array.isArray(o.sources) && o.sources.length
       ? o.sources.map(s => typeof s === "object" ? (s.source || "") : String(s)).filter(Boolean).join(", ")
       : (o.room || "");
@@ -231,7 +241,7 @@ export function render(ctx){
     const tr = el("tr",{
       "data-kind": kind,
       "data-identified": identified ? "1" : "0",
-      "data-search": `${kind} ${displayName} ${addr} ${userLabel} ${o.entity_id||""} ${scanner} ${o.ibeacon_uuid||""}`.toLowerCase(),
+      "data-search": `${kind} ${displayName} ${addr} ${userLabel} ${o.entity_id||""} ${scanner} ${o.ibeacon_uuid||""} ${isAway?"away":""}`.toLowerCase(),
     },[
       el("td",{}, [
         isPrivateBle
@@ -251,8 +261,13 @@ export function render(ctx){
         ((kind==="ble") && o.manufacturer_data && Object.keys(o.manufacturer_data).length
           ? el("div",{class:"muted",style:"font-size:11px"}, `Apple/Manuf: ${Object.keys(o.manufacturer_data).slice(0,2).join(", ")}`) : null),
       ].filter(Boolean)),
-      el("td",{}, rssi ? el("span",{class:"badge"}, rssi) : "—"),
-      el("td",{}, age || "—"),
+      el("td",{}, rssi && !isAway ? el("span",{class:"badge"}, rssi) : "—"),
+      el("td",{}, isAway
+        ? [
+            el("span",{class:"badge",style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d;font-size:10px"}, "Away"),
+            age ? el("div",{class:"muted",style:"font-size:10px;margin-top:2px"}, age) : null,
+          ].filter(Boolean)
+        : (age || "—")),
       el("td",{class:"muted",style:"font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis"}, scanner || "—"),
       followCell,
       tagCell,
@@ -276,10 +291,12 @@ export function render(ctx){
       const kind = tr.getAttribute("data-kind");
       const ident = tr.getAttribute("data-identified")==="1";
       const hay = tr.getAttribute("data-search")||"";
+      const away = hay.includes(" away");
       let ok = true;
       if(k !== "all" && kind !== k) ok = false;
       if(s === "identified" && !ident) ok = false;
       if(s === "unidentified" && ident) ok = false;
+      if(s === "away" && !away) ok = false;
       if(q && !hay.includes(q)) ok = false;
       tr.style.display = ok ? "" : "none";
       if(ok) shown++;
@@ -311,6 +328,7 @@ export function render(ctx){
         : o.kind === "private_ble" ? "Private BLE"
         : o.kind === "ibeacon" ? "iBeacon"
         : (o.identified ? "Tagged BLE" : "Unknown BLE");
+      const isObjAway = _isAway(o);
 
       const actions = el("div",{class:"basic-obj-actions"});
       // Follow toggle
@@ -337,9 +355,14 @@ export function render(ctx){
 
       return el("div",{class:"basic-obj-card"},[
         el("div",{},[
-          el("div",{class:"basic-obj-name"}, name),
-          el("div",{class:"basic-obj-room"}, room),
-          el("div",{class:"basic-obj-sub"}, [kind, rssi].filter(Boolean).join(" · ")),
+          el("div",{class:"basic-obj-name",style:"display:flex;align-items:center;gap:6px"},[
+            el("span",{}, name),
+            isObjAway ? el("span",{class:"badge",style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d;font-size:9px"}, "Away") : null,
+          ].filter(Boolean)),
+          el("div",{class:"basic-obj-room"}, isObjAway
+            ? (room && room !== "—" ? `Last: ${room}` : "—")
+            : room),
+          el("div",{class:"basic-obj-sub"}, [kind, isObjAway ? null : rssi].filter(Boolean).join(" · ")),
         ]),
         actions,
       ]);
@@ -372,12 +395,14 @@ export function render(ctx){
   }
 
   // ── Advanced mode: table ──────────────────────────────────────────────────────
+  const awayCount = allObjects.filter(_isAway).length;
   const inventorySection = el("div",{class:"card"},[
     el("div",{class:"row",style:"margin-bottom:8px"},[
       el("div",{class:"h2",style:"flex:1"},"BLE Scanner Detections"),
       summary ? el("span",{class:"badge"}, `${summary.ble||0} BLE`) : null,
       summary ? el("span",{class:"badge warn"}, `${summary.unidentified||0} unidentified`) : null,
       summary ? el("span",{class:"badge"}, `${summary.entities||0} entities`) : null,
+      awayCount ? el("span",{class:"badge",style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d"}, `${awayCount} away`) : null,
     ].filter(Boolean)),
     el("div",{class:"toolbar"},[objSearchInput, objKindSel, objStatusSel, objStats]),
     allObjects.length
