@@ -21,6 +21,20 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_SETTINGS: dict[str, Any] = {
     "data_mode": "sample",  # "sample" | "live"
     "vendor_lookup_enabled": True,  # Sends MAC prefixes to vendor lookup APIs when requested from UI
+    "ref_power":      -59.0,   # dBm RSSI at 1 m (distance formula)
+    "path_loss_exp":   2.5,    # path-loss exponent n (distance formula)
+    "hidden_map_ids":  [],     # map IDs hidden from 3D stack view
+    "scanner_offsets": {},     # {source_name: offset_dBm} — manual per-scanner RSSI trim
+    "health_reminder_enabled": False,  # monthly calibration accuracy reminder (off by default)
+    "health_reminder_last_ts":  None,  # epoch seconds when reminder was last shown
+    # 3D isometric view layout (Maps tab)
+    "maps_iso_floor_gap":    200,   # px spacing between floors
+    "maps_iso_horiz_gap":    0,     # px L/R horizontal offset
+    "maps_iso_focus":        None,  # z_level to highlight, or null = all
+    # 3D isometric view layout (Overview tab)
+    "overview_iso_floor_gap": 150,
+    "overview_iso_horiz_gap": 0,
+    "overview_iso_focus":     None,
 }
 
 

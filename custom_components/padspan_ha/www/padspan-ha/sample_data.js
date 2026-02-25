@@ -84,11 +84,18 @@ export const SAMPLE_SNAPSHOT = {
       { key: "ble:CC:DD:EE:33:44:55", kind: "ble", address: "CC:DD:EE:33:44:55", name: "CC:DD:EE:33:44:55", user_label: "Car Keys",       identified: true,  rssi: -64, age_s: 5,  sources: ["living_room_hub"], prefix: "CC:DD:EE", prefix_count: 1 },
       { key: "ble:DD:EE:FF:44:55:66", kind: "ble", address: "DD:EE:FF:44:55:66", name: "AirTag",             user_label: "Wallet (AirTag)", identified: true,  rssi: -71, age_s: 12, sources: ["living_room_hub"], manufacturer_data: {"76":[18,25]}, prefix: "DD:EE:FF", prefix_count: 1 },
       { key: "ble:EE:FF:00:55:66:77", kind: "ble", address: "EE:FF:00:55:66:77", name: "Tile",               user_label: "Backpack (Tile)", identified: true,  rssi: -68, age_s: 8,  sources: ["kitchen_hub"],     service_uuids: ["FEED"], prefix: "EE:FF:00", prefix_count: 1 },
+      // --- Private BLE (rotating MAC resolved via IRK) ---
+      { key: "ble:47:A2:1C:88:F3:D0", kind: "private_ble", address: "47:A2:1C:88:F3:D0", name: "Alice's iPhone", private_ble_name: "Alice's iPhone", canonical_id: "irk:aabbccddeeff00112233445566778899", user_label: "Alice's iPhone", identified: true, rssi: -58, age_s: 3, room: "Living Room", sources: ["living_room_hub"], prefix: "47:A2:1C", prefix_count: 1 },
+      { key: "ble:52:B3:7D:C1:04:E9", kind: "private_ble", address: "52:B3:7D:C1:04:E9", name: "Bob's Pixel",    private_ble_name: "Bob's Pixel",    canonical_id: "irk:ffeeddccbbaa99887766554433221100", identified: true, rssi: -62, age_s: 7, room: "Master Bedroom", sources: ["bedroom_hub"], prefix: "52:B3:7D", prefix_count: 1 },
+      // --- iBeacon (stable UUID survives MAC rotation — AirTag, Tile, HA Companion App) ---
+      { key: "ibeacon:f7826da6-4fa2-4e98-8024-bc5b71e0893e:1:2", kind: "ibeacon", address: "ibeacon:f7826da6-4fa2-4e98-8024-bc5b71e0893e:1:2", all_addresses: ["61:A3:FC:22:D1:88", "72:B4:ED:33:C2:99"], name: "AirTag (Bag)", user_label: "AirTag (Bag)", identified: true, rssi: -67, age_s: 6, room: "Kitchen", sources: [{source:"kitchen_hub"}], ibeacon_uuid: "f7826da6-4fa2-4e98-8024-bc5b71e0893e", ibeacon_major: 1, ibeacon_minor: 2 },
+      // --- Away (not seen for longer than the 5-min default away timeout) ---
+      { key: "ble:AA:11:22:33:BB:CC", kind: "ble", address: "AA:11:22:33:BB:CC", name: "AA:11:22:33:BB:CC", user_label: "Dog Tracker", identified: true, rssi: -88, age_s: 483, room: "Hallway", sources: ["living_room_hub"], prefix: "AA:11:22", prefix_count: 1 },
       // --- Unidentified BLE ---
       { key: "ble:FF:00:11:66:77:88", kind: "ble", address: "FF:00:11:66:77:88", name: "", identified: false, rssi: -76, age_s: 22, sources: ["bedroom_hub"],     prefix: "FF:00:11", prefix_count: 1 },
       { key: "ble:00:11:22:77:88:99", kind: "ble", address: "00:11:22:77:88:99", name: "", identified: false, rssi: -82, age_s: 45, sources: ["living_room_hub"], prefix: "00:11:22", prefix_count: 1 },
     ],
-    summary: { total: 7, identified: 5, unidentified: 2, entities: 2, ble: 5, common_prefixes: {} },
+    summary: { total: 11, identified: 9, unidentified: 2, entities: 2, ble: 8, private_ble: 2, ibeacon: 1, common_prefixes: {} },
   },
 
   raw_counts: { areas: 5, receivers: 3, candidate_entities: 2, mapped_entities: 2, saved_entities_total: 2, saved_entities_found: 2, saved_entities_missing: 0 },

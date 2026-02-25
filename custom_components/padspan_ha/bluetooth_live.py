@@ -120,7 +120,10 @@ class _Adv:
 class BluetoothLive:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self._seen_by_addr: Dict[str, _Adv] = {}
+        # Keyed as {address: {source: _Adv}} so every radio's reading is kept independently.
+        # Previously keyed only by address, which caused the second scanner callback to
+        # overwrite the first — meaning only one radio's RSSI ever appeared per device.
+        self._seen_by_source: Dict[str, Dict[str, _Adv]] = {}
         self._unsubs: List[Any] = []
 
     def unload(self) -> None:
@@ -130,18 +133,21 @@ class BluetoothLive:
             except Exception:
                 pass
         self._unsubs.clear()
-        self._seen_by_addr.clear()
+        self._seen_by_source.clear()
 
     @callback
     def _on_adv(self, service_info: Any, change: Any = None) -> None:
-        # Store latest per address
+        # Store latest reading per {address, source} — preserves all radios' views of a device
         try:
             addr = getattr(service_info, "address", None) or ""
             if not addr:
                 return
             seen = _now()
             rec = _service_info_to_record(service_info, seen=seen)
-            self._seen_by_addr[addr] = _Adv(record=rec, seen=seen)
+            src = rec.get("source") or "_unknown"
+            if addr not in self._seen_by_source:
+                self._seen_by_source[addr] = {}
+            self._seen_by_source[addr][src] = _Adv(record=rec, seen=seen)
         except Exception as e:
             _LOGGER.debug("BLE adv parse failed: %s", e)
 
@@ -168,7 +174,7 @@ class BluetoothLive:
         diag: Dict[str, Any] = {
             "ok": True,
             "seeded": False,
-            "adv_cache_size": len(self._seen_by_addr),
+            "adv_cache_size": sum(len(v) for v in self._seen_by_source.values()),
             "errors": [],
         }
 
@@ -226,7 +232,7 @@ class BluetoothLive:
                 radios = []
 
             # If callbacks haven't filled anything yet, try seeding from HA.
-            if not self._seen_by_addr:
+            if not self._seen_by_source:
                 try:
                     self._seed_from_discovered()
                     diag["seeded"] = True
@@ -236,20 +242,21 @@ class BluetoothLive:
 
             now = _now()
             ads: List[Dict[str, Any]] = []
-            for a in self._seen_by_addr.values():
-                age_s = (now - a.seen).total_seconds()
-                if max_age_s and age_s > max_age_s:
-                    continue
-                rec = dict(a.record)
-                rec["age_s"] = age_s
-                ads.append(rec)
+            for addr, src_map in self._seen_by_source.items():
+                for src, a in src_map.items():
+                    age_s = (now - a.seen).total_seconds()
+                    if max_age_s and age_s > max_age_s:
+                        continue
+                    rec = dict(a.record)
+                    rec["age_s"] = age_s
+                    ads.append(rec)
 
             # Sort: most recently seen first
             ads.sort(key=lambda x: x.get("age_s", 1e9))
             if max_ads and len(ads) > max_ads:
                 ads = ads[:max_ads]
 
-            diag["adv_cache_size"] = len(self._seen_by_addr)
+            diag["adv_cache_size"] = sum(len(v) for v in self._seen_by_source.values())
 
             return {
                 "radios": radios,

@@ -11,6 +11,7 @@ features when the user explicitly requests it.
 """
 
 import logging
+from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -35,6 +36,7 @@ from .maps_store import MapsStore
 from .model_store import ModelStore
 from .object_store import ObjectStore
 from .panel import async_setup_panel
+from .presence_coordinator import PresenceCoordinator
 from .settings_store import SettingsStore
 from .websocket import async_register_websockets
 
@@ -115,6 +117,59 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         _LOGGER.info("room_tag_map replaced via service (%d rooms)", len(coord.room_tag_map))
 
     hass.services.async_register(DOMAIN, SERVICE_SET_MAP, _set_map, schema=SERVICE_SCHEMA)
+
+    async def _dump_devices(call: ServiceCall) -> dict | None:
+        """Return all tracked BLE devices — equivalent to Bermuda's dump_devices."""
+        presence_coord = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+        data: dict[str, Any] = dict((presence_coord.data or {}) if presence_coord else {})
+
+        from homeassistant.util import dt as dt_util  # noqa: PLC0415
+
+        result = {
+            "devices": data,
+            "count": len(data),
+            "version": BUILD_VERSION,
+            "timestamp": dt_util.utcnow().isoformat(),
+        }
+
+        # Also create a persistent notification for easy human inspection
+        try:
+            from homeassistant.components.persistent_notification import async_create  # noqa: PLC0415
+            lines = []
+            for key, obj in data.items():
+                if obj.get("user_label") or obj.get("kind") == "entity":
+                    name = obj.get("user_label") or obj.get("name") or key
+                    room = obj.get("room") or "unknown"
+                    kind = obj.get("kind") or "?"
+                    age = obj.get("age_s")
+                    age_str = f"{round(age)}s ago" if isinstance(age, (int, float)) else ""
+                    lines.append(f"- **{name}** → {room} ({kind}) {age_str}".strip())
+            summary = "\n".join(lines) or "No identified devices tracked yet."
+            async_create(
+                hass,
+                f"**PadSpan HA — {len(data)} device(s)** (v{BUILD_VERSION})\n\n{summary}",
+                title="padspan_ha.dump_devices",
+                notification_id="padspan_ha_dump_devices",
+            )
+        except Exception:
+            pass
+
+        return result
+
+    # Register dump_devices with response support (HA 2023.7+)
+    try:
+        from homeassistant.core import SupportsResponse  # noqa: PLC0415
+        hass.services.async_register(
+            DOMAIN, "dump_devices", _dump_devices,
+            schema=vol.Schema({vol.Optional("notify", default=True): bool}),
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+    except ImportError:
+        hass.services.async_register(
+            DOMAIN, "dump_devices", _dump_devices,
+            schema=vol.Schema({vol.Optional("notify", default=True): bool}),
+        )
+
     return True
 
 
@@ -148,6 +203,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coord.mark_success()
 
+    # Create and start the presence coordinator (drives sensor + device_tracker entities)
+    presence_coord: PresenceCoordinator = hass.data[DOMAIN].get("presence_coordinator")  # type: ignore[assignment]
+    if presence_coord is None:
+        presence_coord = PresenceCoordinator(hass)
+        hass.data[DOMAIN]["presence_coordinator"] = presence_coord
+    # Attempt first refresh; if it fails (e.g. BLE not yet ready) entities will appear
+    # on the next successful poll cycle (every 10 s) — not a fatal error.
+    try:
+        await presence_coord.async_config_entry_first_refresh()
+    except Exception as err:
+        _LOGGER.debug("Presence coordinator initial fetch deferred: %s", err)
+
     # Forward platforms (safe even if they don't create entities yet)
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -163,6 +230,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     except Exception:
         unload_ok = True
+
+    # Stop presence coordinator
+    try:
+        hass.data.get(DOMAIN, {}).pop("presence_coordinator", None)
+    except Exception:
+        pass
 
     # Stop BLE callbacks/cache
     try:

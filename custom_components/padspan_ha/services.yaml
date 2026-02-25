@@ -6,3 +6,17 @@ set_room_tag_map:
       required: true
       selector:
         object:
+
+dump_devices:
+  name: Dump Devices
+  description: >
+    Returns all tracked BLE devices with current room, RSSI, age, and smoothing state.
+    Equivalent to Bermuda's bermuda.dump_devices service. Supports response data for
+    use in templates, scripts, and automations. Also creates a persistent notification.
+  response: optional
+  fields:
+    notify:
+      description: Create a persistent notification summary in HA (default true).
+      default: true
+      selector:
+        boolean:
