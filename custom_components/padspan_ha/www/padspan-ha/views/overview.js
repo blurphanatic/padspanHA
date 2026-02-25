@@ -469,8 +469,8 @@ export function render(ctx){
     const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
     const roomColorFn = ctx.helpers.roomColor;
     const _esc = s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-    if(ctx.state._overviewFloorGap===undefined) ctx.state._overviewFloorGap=150;
-    if(ctx.state._overviewHorizGap===undefined) ctx.state._overviewHorizGap=0;
+    if(ctx.state._overviewFloorGap===undefined) ctx.state._overviewFloorGap = ctx.state.settings?.overview_iso_floor_gap ?? 150;
+    if(ctx.state._overviewHorizGap===undefined) ctx.state._overviewHorizGap = ctx.state.settings?.overview_iso_horiz_gap ?? 0;
     let _ovFG=ctx.state._overviewFloorGap, _ovHG=ctx.state._overviewHorizGap;
     const iso = (wx,wy,wz)=>[CX+(wx-wy)*TILE*0.866+wz*_ovHG, CY+(wx+wy)*TILE*0.5-wz*_ovFG];
     const pt  = c=>`${Math.round(c[0])},${Math.round(c[1])}`;
@@ -516,7 +516,7 @@ export function render(ctx){
     }
     _rebuildPositions();
 
-    if(ctx.state._overviewIsoFocus === undefined) ctx.state._overviewIsoFocus = null;
+    if(ctx.state._overviewIsoFocus === undefined) ctx.state._overviewIsoFocus = ctx.state.settings?.overview_iso_focus ?? null;
     const hasBounds = sorted.some(m=>Object.keys(m.room_bounds||{}).length>0);
 
     // ── Fingerprint positioning ─────────────────────────────────────────────
@@ -932,6 +932,29 @@ export function render(ctx){
     ctrlRow.appendChild(ovLRLbl);
     ctrlRow.appendChild(ovHorizSlider);
     ctrlRow.appendChild(ovHorizLbl);
+    // Save button — persists all three slider values to settings store
+    const ovSaveLbl = document.createElement("span");
+    ovSaveLbl.style.cssText = "font-size:11px;color:#94a3b8;min-width:50px";
+    const ovSaveBtn = document.createElement("button");
+    ovSaveBtn.className = "btn inline";
+    ovSaveBtn.style.cssText = "padding:2px 10px;font-size:12px";
+    ovSaveBtn.title = "Save these slider positions so the view reopens with the same layout";
+    ovSaveBtn.textContent = "Save";
+    ovSaveBtn.addEventListener("click", async ()=>{
+      ovSaveBtn.disabled = true;
+      try{
+        await ctx.actions.settingsSet({
+          overview_iso_floor_gap: ctx.state._overviewFloorGap,
+          overview_iso_horiz_gap: ctx.state._overviewHorizGap,
+          overview_iso_focus:     ctx.state._overviewIsoFocus,
+        });
+        ovSaveLbl.textContent = "Saved ✓";
+        setTimeout(()=>{ ovSaveLbl.textContent = ""; }, 2000);
+      }catch(e){ ovSaveLbl.textContent = "Error"; }
+      ovSaveBtn.disabled = false;
+    });
+    ctrlRow.appendChild(ovSaveBtn);
+    ctrlRow.appendChild(ovSaveLbl);
     ctrlRow.appendChild(roomToggleBtn);
     outer.appendChild(ctrlRow);
     outer.appendChild(isoDiv);

@@ -2208,9 +2208,9 @@ function _stack(ctx, maps, helpBtn){
   card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:2px"},"Shows all uploaded floor plans stacked by their assigned level. Use the slider to focus on one floor."));
 
   // Floor focus slider
-  if(ctx.state.maps._stackIsoFocus  === undefined) ctx.state.maps._stackIsoFocus  = null;
-  if(ctx.state.maps._stackFloorGap  === undefined) ctx.state.maps._stackFloorGap  = 200;
-  if(ctx.state.maps._stackHorizGap  === undefined) ctx.state.maps._stackHorizGap  = 0;
+  if(ctx.state.maps._stackIsoFocus  === undefined) ctx.state.maps._stackIsoFocus  = ctx.state.settings?.maps_iso_focus  ?? null;
+  if(ctx.state.maps._stackFloorGap  === undefined) ctx.state.maps._stackFloorGap  = ctx.state.settings?.maps_iso_floor_gap ?? 200;
+  if(ctx.state.maps._stackHorizGap  === undefined) ctx.state.maps._stackHorizGap  = ctx.state.settings?.maps_iso_horiz_gap ?? 0;
   const sortedIsoLevels = [...new Set(maps.map(m=>m.stack?.z_level||0))].sort((a,b)=>a-b);
   const focusLbl = el("span",{style:"font-size:12px;color:#94a3b8;min-width:80px;display:inline-block"}, "All floors");
   const focusSlider = document.createElement("input");
@@ -2269,6 +2269,23 @@ function _stack(ctx, maps, helpBtn){
     roomListPanel.style.display = ctx.state.maps._stackShowRoomList ? "block" : "none";
   }}, ctx.state.maps._stackShowRoomList ? "☰ Hide Room List" : "☰ Room List");
 
+  const isoSaveLbl = el("span",{class:"muted",style:"font-size:11px;min-width:50px"}, "");
+  const isoSaveBtn = el("button",{class:"btn inline",style:"padding:2px 10px;font-size:12px",
+    title:"Save these slider positions so the view reopens with the same layout",
+    onclick: async ()=>{
+      isoSaveBtn.disabled = true;
+      try{
+        await ctx.actions.settingsSet({
+          maps_iso_floor_gap: ctx.state.maps._stackFloorGap,
+          maps_iso_horiz_gap: ctx.state.maps._stackHorizGap,
+          maps_iso_focus:     ctx.state.maps._stackIsoFocus,
+        });
+        isoSaveLbl.textContent = "Saved ✓";
+        setTimeout(()=>{ isoSaveLbl.textContent = ""; }, 2000);
+      }catch(e){ isoSaveLbl.textContent = "Error"; }
+      isoSaveBtn.disabled = false;
+    }
+  }, "Save");
   card.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap"},[
     el("span",{class:"muted",style:"font-size:12px"},"Floor:"),
     focusSlider,
@@ -2279,6 +2296,8 @@ function _stack(ctx, maps, helpBtn){
     el("span",{class:"muted",style:"font-size:12px;margin-left:12px"},"L/R:"),
     horizSlider,
     horizLbl,
+    isoSaveBtn,
+    isoSaveLbl,
     roomListToggle,
   ]));
 

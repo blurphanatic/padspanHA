@@ -974,6 +974,12 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("hidden_map_ids"): list,
         vol.Optional("health_reminder_enabled"): bool,
         vol.Optional("health_reminder_last_ts"): vol.Any(float, int, None),
+        vol.Optional("maps_iso_floor_gap"): vol.Coerce(int),
+        vol.Optional("maps_iso_horiz_gap"): vol.Coerce(int),
+        vol.Optional("maps_iso_focus"): vol.Any(int, None),
+        vol.Optional("overview_iso_floor_gap"): vol.Coerce(int),
+        vol.Optional("overview_iso_horiz_gap"): vol.Coerce(int),
+        vol.Optional("overview_iso_focus"): vol.Any(int, None),
     }
 )
 @websocket_api.async_response
@@ -1002,6 +1008,20 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         if "health_reminder_last_ts" in msg:
             ts = msg["health_reminder_last_ts"]
             payload["health_reminder_last_ts"] = float(ts) if ts is not None else None
+        if "maps_iso_floor_gap" in msg:
+            payload["maps_iso_floor_gap"] = max(60, min(340, int(msg["maps_iso_floor_gap"])))
+        if "maps_iso_horiz_gap" in msg:
+            payload["maps_iso_horiz_gap"] = max(-120, min(120, int(msg["maps_iso_horiz_gap"])))
+        if "maps_iso_focus" in msg:
+            v = msg["maps_iso_focus"]
+            payload["maps_iso_focus"] = int(v) if v is not None else None
+        if "overview_iso_floor_gap" in msg:
+            payload["overview_iso_floor_gap"] = max(60, min(340, int(msg["overview_iso_floor_gap"])))
+        if "overview_iso_horiz_gap" in msg:
+            payload["overview_iso_horiz_gap"] = max(-120, min(120, int(msg["overview_iso_horiz_gap"])))
+        if "overview_iso_focus" in msg:
+            v = msg["overview_iso_focus"]
+            payload["overview_iso_focus"] = int(v) if v is not None else None
         await st.async_set(**payload)
     connection.send_result(msg["id"], {"settings": _get_settings(hass)})
 
