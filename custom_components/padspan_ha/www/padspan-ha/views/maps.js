@@ -1160,7 +1160,7 @@ function _export(ctx, active, maps_list){
   const lvlOpts2 = haFloors2.length > 0
     ? haFloors2.slice().sort((a,b)=>(a.level??999)-(b.level??999)).map((f,i)=>({value:f.level??i,label:f.name||f.id}))
     : _LEVEL_NAMES.map((n,i)=>({value:i,label:n}));
-  const isoSvgStr = _stackIsoSVG(maps_list, ctx, lvlOpts2, null);
+  const isoSvgStr = _stackIsoSVG(maps_list, ctx, lvlOpts2, null, ctx.state.maps._stackFloorGap || 200);
   const isoStatus = el("div",{class:"muted",style:"font-size:12px;min-height:16px"});
   const dlIsoSvg = el("button",{class:"btn inline", onclick:()=>{
     _downloadBlob(new Blob([isoSvgStr], {type:"image/svg+xml"}), "building_3d.svg");
@@ -1990,7 +1990,8 @@ function _stack(ctx, maps, helpBtn){
   card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:2px"},"Shows all uploaded floor plans stacked by their assigned level. Use the slider to focus on one floor."));
 
   // Floor focus slider
-  if(ctx.state.maps._stackIsoFocus === undefined) ctx.state.maps._stackIsoFocus = null;
+  if(ctx.state.maps._stackIsoFocus  === undefined) ctx.state.maps._stackIsoFocus  = null;
+  if(ctx.state.maps._stackFloorGap  === undefined) ctx.state.maps._stackFloorGap  = 200;
   const sortedIsoLevels = [...new Set(maps.map(m=>m.stack?.z_level||0))].sort((a,b)=>a-b);
   const focusLbl = el("span",{style:"font-size:12px;color:#94a3b8;min-width:80px;display:inline-block"}, "All floors");
   const focusSlider = document.createElement("input");
@@ -1999,9 +2000,17 @@ function _stack(ctx, maps, helpBtn){
   focusSlider.value = ctx.state.maps._stackIsoFocus === null ? "0"
     : String(sortedIsoLevels.indexOf(ctx.state.maps._stackIsoFocus) + 1);
 
+  // Layer spacing slider
+  const gapLbl = el("span",{style:"font-size:12px;color:#94a3b8;min-width:36px;display:inline-block;text-align:right"},
+    String(ctx.state.maps._stackFloorGap));
+  const gapSlider = document.createElement("input");
+  gapSlider.type = "range"; gapSlider.min = "60"; gapSlider.max = "340"; gapSlider.step = "10";
+  gapSlider.style.cssText = "width:130px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+  gapSlider.value = String(ctx.state.maps._stackFloorGap);
+
   const isoWrap = el("div",{style:"margin-top:8px;overflow:auto;border-radius:8px;background:#071008;padding:8px"});
   const rebuildIso = () => {
-    isoWrap.innerHTML = _stackIsoSVG(maps, ctx, levelOptions, ctx.state.maps._stackIsoFocus);
+    isoWrap.innerHTML = _stackIsoSVG(maps, ctx, levelOptions, ctx.state.maps._stackIsoFocus, ctx.state.maps._stackFloorGap);
   };
   focusSlider.addEventListener("input", () => {
     const idx = parseInt(focusSlider.value, 10);
@@ -2014,6 +2023,12 @@ function _stack(ctx, maps, helpBtn){
     }
     rebuildIso();
   });
+  gapSlider.addEventListener("input", () => {
+    ctx.state.maps._stackFloorGap = parseInt(gapSlider.value, 10);
+    gapLbl.textContent = String(ctx.state.maps._stackFloorGap);
+    rebuildIso();
+  });
+
   if(ctx.state.maps._stackShowRoomList === undefined) ctx.state.maps._stackShowRoomList = false;
 
   const roomListToggle = el("button",{class:"btn inline", style:"margin-left:auto", onclick:()=>{
@@ -2026,6 +2041,9 @@ function _stack(ctx, maps, helpBtn){
     el("span",{class:"muted",style:"font-size:12px"},"Floor:"),
     focusSlider,
     focusLbl,
+    el("span",{class:"muted",style:"font-size:12px;margin-left:12px"},"Spacing:"),
+    gapSlider,
+    gapLbl,
     roomListToggle,
   ]));
 
@@ -2119,8 +2137,8 @@ function _stackMapSVGStr(map, ctx, isTarget, showBg=true){
   return s;
 }
 
-function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
-  const TILE=260, FLOOR_GAP=200, CX=390, CY=740, W=780, BASE_H=1060;
+function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200){
+  const TILE=260, FLOOR_GAP=floorGap, CX=390, CY=740, W=780, BASE_H=1060;
   const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
   const roomColor = ctx.helpers.roomColor;
   const lvlLabel = (z)=>{ const opt=(levelOptions||[]).find(o=>o.value===z); return opt ? opt.label : `L${z}`; };
