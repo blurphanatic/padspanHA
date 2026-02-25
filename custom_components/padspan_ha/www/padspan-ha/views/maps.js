@@ -3026,6 +3026,15 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.6"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4"  fill="#52b788" opacity="0.9"/>`;
       }
+      // Master map: gold dashed outline around its own footprint + star at centre
+      if(m.stack?.is_master){
+        const footprint = [[0,0],[1,0],[1,1],[0,1]].map(([cx,cy])=>{ const [wx,wy]=mapPt(cx,cy); return iso(wx,wy,z); });
+        s += `<polygon points="${ptsStr(footprint)}" fill="#fbbf2415" stroke="#fbbf24" stroke-width="2.5" stroke-dasharray="8,4" opacity="0.85"/>`;
+        const [cwx,cwy] = mapPt(0.5, 0.5);
+        const [cpx,cpy] = iso(cwx,cwy,z);
+        s += `<text x="${Math.round(cpx)}" y="${Math.round(cpy)}" text-anchor="middle" dominant-baseline="middle" font-size="24" opacity="0.9">⭐</text>`;
+        s += `<text x="${Math.round(cpx)}" y="${Math.round(cpy)+22}" text-anchor="middle" fill="#fbbf24" font-size="9" font-weight="600" opacity="0.8">master</text>`;
+      }
     }
 
     // Colored index dot at bottom-left corner of slab top face
@@ -3040,7 +3049,7 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
   sortedLevels.forEach((z, i)=>{
     const ly = BASE_H + 10 + i * LEGEND_ROW;
     const color = levelColor(z);
-    const groupLabel = byLevel.get(z).map(m=>m.name||m.id).join(" + ");
+    const groupLabel = byLevel.get(z).map(m=>(m.stack?.is_master?"⭐ ":"")+(m.name||m.id)).join(" + ");
     const ceil0 = byLevel.get(z)[0].stack?.ceiling_height_m || 2.4;
     s += `<circle cx="18" cy="${ly+11}" r="11" fill="${color}" opacity="0.9"/>`;
     s += `<text x="18" y="${ly+15}" text-anchor="middle" fill="#071008" font-size="12" font-weight="700">${i+1}</text>`;

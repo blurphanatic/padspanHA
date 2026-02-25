@@ -1,7 +1,7 @@
 """Generated at build time. Used to prove what version is actually installed."""
 
-BUILD_VERSION = "0.5.9"
-BUILD_ID = "20260225T181224Z"
+BUILD_VERSION = "0.5.10"
+BUILD_ID = "20260225T181628Z"
 
 # Backwards/for convenience
 VERSION = BUILD_VERSION
