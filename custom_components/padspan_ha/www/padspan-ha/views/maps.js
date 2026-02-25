@@ -1760,6 +1760,15 @@ function _stack(ctx, maps, helpBtn){
     refSvgDiv.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%";
     refSvgDiv.innerHTML = _stackMapSVGStr(refMap, ctx, false, !refUrl);
     refLayer.appendChild(refSvgDiv);
+    // Apply reference map's own saved stack transform so it appears in its true aligned position.
+    // Without this, a map that was previously aligned rotated/scaled shows flat in the overlay.
+    const refStk = refMap.stack || {};
+    if(refStk.x_offset || refStk.y_offset || refStk.rotation || refStk.scale_x_adj || (refStk.scale && refStk.scale !== 1.0)){
+      const rsx = (refStk.scale || 1.0) * (refStk.scale_x_adj || 1.0);
+      const rsy = refStk.scale || 1.0;
+      refLayer.style.transformOrigin = "50% 50%";
+      refLayer.style.transform = `translate(${(refStk.x_offset||0)*100}%,${(refStk.y_offset||0)*100}%) rotate(${refStk.rotation||0}deg) scale(${rsx},${rsy})`;
+    }
     stageWrap.appendChild(refLayer);
 
     if(tgtMap && tgtMap.id !== refMap.id){
