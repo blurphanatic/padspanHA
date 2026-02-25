@@ -147,6 +147,8 @@ export function render(ctx) {
 
 function renderScanners(ctx, radios, sources) {
   const { el, radioShortId } = ctx.helpers;
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const scannerOffsets = (snap && snap.scanner_offsets) || (ctx.state.settings && ctx.state.settings.scanner_offsets) || {};
 
   if (!radios.length) {
     return el("div", { class: "card" }, [
@@ -171,19 +173,44 @@ function renderScanners(ctx, radios, sources) {
       r.disabled ? el("span", { class: "badge warn", style: "font-size:10px;background:rgba(148,100,220,.18);color:#c084fc" }, "⊘ Disabled") : null,
     ].filter(Boolean));
 
+    // Per-scanner RSSI offset control
+    const currentOffset = Number(scannerOffsets[src] || 0);
+    const offsetInput = el("input", {
+      type: "number", min: "-30", max: "30", step: "1",
+      value: String(currentOffset),
+      title: "RSSI offset in dBm — positive = scanner reads weaker than reality; negative = reads stronger",
+      style: "width:48px;text-align:center;background:#0a150e;border:1px solid #2d5a3d;border-radius:4px;color:#e2e8f0;padding:2px 4px;font-size:11px",
+    });
+    const offsetSaveBtn = el("button", { class: "btn tiny" }, "Set");
+    offsetSaveBtn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const v = Math.max(-30, Math.min(30, parseFloat(offsetInput.value) || 0));
+      try {
+        await ctx.actions.scannerOffsetSet(src, v);
+        ctx.toast(`Offset for ${name || src}: ${v > 0 ? "+" : ""}${v} dBm`);
+      } catch(e) { ctx.toast("Failed to save offset", true); }
+    });
+    const offsetRow = el("div", { style: "display:flex;align-items:center;gap:4px;margin-top:3px" }, [
+      el("span", { class: "muted", style: "font-size:10px" }, "RSSI offset:"),
+      offsetInput,
+      el("span", { class: "muted", style: "font-size:10px" }, "dBm"),
+      offsetSaveBtn,
+      currentOffset !== 0 ? el("span", { class: "badge", style: "font-size:10px;background:#1a3a2a;color:#52b788" }, `${currentOffset > 0 ? "+" : ""}${currentOffset} dBm active`) : null,
+    ].filter(Boolean));
+
     const subRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px" }, [
       r.area_name ? el("span", { class: "pill", style: "font-size:10px" }, r.area_name) : el("span", { class: "muted", style: "font-size:10px" }, "no room"),
       el("div", { class: "bt-scanner-src", style: "font-size:10px" }, src || "—"),
     ]);
 
     const div = el("div", { class: "bt-scanner-row" + (r.lost || r.disabled ? " warn" : "") }, [
-      el("div", { class: "bt-scanner-main" }, [ nameRow, subRow ]),
+      el("div", { class: "bt-scanner-main" }, [ nameRow, subRow, offsetRow ]),
       el("div", { class: "bt-scanner-meta" }, meta.join(" • ") || "—"),
     ]);
     if(r.lost || r.disabled) div.style.opacity = "0.7";
     div.style.cursor = "pointer";
     div.title = "Click for scanner details";
-    div.addEventListener("click", () => ctx.actions.showScannerDetail(r));
+    div.addEventListener("click", (ev) => { if(ev.target.tagName === "BUTTON" || ev.target.tagName === "INPUT") return; ctx.actions.showScannerDetail(r); });
     return div;
   };
 

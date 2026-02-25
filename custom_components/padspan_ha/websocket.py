@@ -33,6 +33,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_version)
     websocket_api.async_register_command(hass, ws_settings_get)
     websocket_api.async_register_command(hass, ws_settings_set)
+    websocket_api.async_register_command(hass, ws_scanner_offset_set)
     websocket_api.async_register_command(hass, ws_live_snapshot)
     websocket_api.async_register_command(hass, ws_vendor_lookup)
     websocket_api.async_register_command(hass, ws_maps_list)
@@ -901,6 +902,21 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 if addr and src and rssi is not None:
                     addr_src_rssi.setdefault(addr, {})[str(src)] = float(rssi)
 
+            # Apply per-scanner RSSI offsets (corrects scanners that read consistently high/low)
+            _scanner_offsets: dict[str, float] = {}
+            try:
+                _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+                _scanner_offsets = ((_st.data if _st else {}).get("scanner_offsets") or {})
+                if _scanner_offsets:
+                    for _am in addr_src_rssi.values():
+                        for _src in _am:
+                            _off = _scanner_offsets.get(_src)
+                            if _off:
+                                _am[_src] = _am[_src] + float(_off)
+            except Exception:
+                pass
+            snapshot["scanner_offsets"] = _scanner_offsets
+
             objects_list = (snapshot.get("objects") or {}).get("list") or []
             for obj in objects_list:
                 if obj.get("room"):
@@ -950,6 +966,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         "type": "padspan_ha/settings_set",
         "data_mode": str,
         vol.Optional("vendor_lookup_enabled"): bool,
+        vol.Optional("room_change_delay_s"): vol.Coerce(float),
     }
 )
 @websocket_api.async_response
@@ -959,9 +976,11 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         mode = "sample"
     st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
     if st:
-        payload = {"data_mode": mode}
+        payload: dict[str, Any] = {"data_mode": mode}
         if "vendor_lookup_enabled" in msg:
             payload["vendor_lookup_enabled"] = bool(msg.get("vendor_lookup_enabled"))
+        if "room_change_delay_s" in msg:
+            payload["room_change_delay_s"] = max(0.0, min(300.0, float(msg["room_change_delay_s"])))
         await st.async_set(**payload)
     connection.send_result(msg["id"], {"settings": _get_settings(hass)})
 
@@ -971,6 +990,30 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
 async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
     snap = await _live_snapshot(hass)
     connection.send_result(msg["id"], {"snapshot": snap})
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/scanner_offset_set",
+    "source": str,
+    vol.Optional("offset_db", default=0.0): vol.Coerce(float),
+})
+@websocket_api.async_response
+async def ws_scanner_offset_set(hass: HomeAssistant, connection, msg) -> None:
+    """Set (or clear) the RSSI calibration offset for a single Bluetooth scanner."""
+    source = str(msg.get("source", "")).strip()
+    if not source:
+        connection.send_error(msg["id"], "invalid_source", "source required")
+        return
+    offset = float(msg.get("offset_db", 0.0))
+    st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    if st:
+        offsets: dict[str, float] = dict(st.data.get("scanner_offsets") or {})
+        if offset == 0.0:
+            offsets.pop(source, None)   # zero = no offset, clean up
+        else:
+            offsets[source] = round(offset, 1)
+        await st.async_set(scanner_offsets=offsets)
+    connection.send_result(msg["id"], {"source": source, "offset_db": offset})
 
 
 @websocket_api.websocket_command(

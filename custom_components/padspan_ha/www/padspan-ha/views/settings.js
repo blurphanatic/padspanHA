@@ -27,7 +27,7 @@ export function render(ctx){
   const setTab = (t) => { ctx.state._settingsTab = t; ctx.actions.renderRooms(); };
 
   const tabBar = el("div",{class:"tabs", style:"margin-bottom:14px;flex-wrap:wrap;gap:4px"});
-  for(const [id, label] of [["appearance","Appearance"],["scannermap","Scanner Map"]]){
+  for(const [id, label] of [["appearance","Appearance"],["scannermap","Scanner Map"],["presence","Presence"]]){
     tabBar.appendChild(el("button",{
       class:"tab" + (activeTab===id ? " active" : ""),
       onclick:()=>setTab(id),
@@ -37,6 +37,8 @@ export function render(ctx){
 
   if(activeTab === "appearance"){
     root.appendChild(_settingsAppearance(ctx, el, helpBtn, draft, haFloors, haAreas, roomColor, false));
+  } else if(activeTab === "presence"){
+    root.appendChild(_settingsPresence(ctx, el));
   } else {
     root.appendChild(_scannerMap(ctx, el, haFloors));
   }
@@ -433,4 +435,46 @@ function _toHex(c){
   if(!m) return "#888888";
   const r = Number(m[1])|0, g=Number(m[2])|0, b=Number(m[3])|0;
   return "#" + [r,g,b].map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+
+// ── Presence tab ────────────────────────────────────────────────────────────────
+function _settingsPresence(ctx, el){
+  const settings = ctx.state.settings || {};
+  const currentDelay = (settings.room_change_delay_s != null ? Number(settings.room_change_delay_s) : 20);
+  const polls = Math.max(1, Math.round(currentDelay / 10));
+
+  const inp = el("input", {
+    type: "number", min: "0", max: "300", step: "5", value: String(currentDelay),
+    style: "width:72px;text-align:center;background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:13px",
+  });
+
+  const saveBtn = el("button", { class: "btn" }, "Save");
+  saveBtn.addEventListener("click", async () => {
+    const v = Math.max(0, Math.min(300, parseFloat(inp.value) || 0));
+    try {
+      await ctx.actions.settingsSet({ room_change_delay_s: v });
+      ctx.toast(`Room change delay set to ${v}s`);
+    } catch(e) { ctx.toast("Failed to save setting", true); }
+  });
+
+  const inpStyle = "background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:13px";
+
+  return el("div", { class: "card" }, [
+    el("div", { class: "h2" }, "Presence Smoothing"),
+    el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
+      "Controls how quickly PadSpan switches a tracked device to a new room after it moves. " +
+      "A higher delay prevents rapid flickering when a device sits on the boundary between two scanners. " +
+      "The room only changes after a scanner consistently dominates for the full delay period."
+    ),
+    el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap" }, [
+      el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Room change delay"),
+      inp,
+      el("div", { class: "muted", style: "font-size:12px" }, "seconds"),
+      saveBtn,
+    ]),
+    el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
+      `Current: ${currentDelay}s → requires ~${polls} consecutive 10-second poll${polls !== 1 ? "s" : ""} agreement. ` +
+      `Set to 0 for instant room switching.`
+    ),
+  ]);
 }
