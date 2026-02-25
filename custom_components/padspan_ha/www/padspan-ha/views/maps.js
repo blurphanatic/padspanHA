@@ -1290,6 +1290,42 @@ function _recommendPlacement(receivers, roomBounds, snap){
   return { polygon, rooms: candidates.map(c=>c.room), topScore: maxScore };
 }
 
+// ── Alignment conflict helpers ────────────────────────────────────────────────
+// Returns array of conflict objects for any tie-ins that differ from the new position.
+function _checkAlignConflicts(newX, newY, newScale, newRot, tgtMap, allMaps) {
+  const tieIns = (tgtMap?.stack?.tie_ins) || [];
+  if(!tieIns.length) return [];
+  const conflicts = [];
+  for(const ti of tieIns) {
+    const refMap = allMaps.find(m=>m.id === ti.ref_map_id);
+    const refName = refMap ? (refMap.name||refMap.id) : (ti.ref_map_id||"Unknown");
+    const dx = newX - (ti.x_offset||0);
+    const dy = newY - (ti.y_offset||0);
+    const offPct   = Math.round(Math.sqrt(dx*dx + dy*dy) * 100);
+    const scaleDiff = Math.abs(newScale - (ti.scale||1.0)) / Math.max(Math.abs(newScale), Math.abs(ti.scale||1.0), 0.001);
+    const scalePct  = Math.round(scaleDiff * 100);
+    const rotRaw    = Math.abs(((newRot||0) - (ti.rotation||0) + 540) % 360 - 180);
+    const rotDiff   = Math.round(rotRaw * 10) / 10;
+    // Weighted overall variance: offset 55%, scale 30%, rotation 15%
+    const variancePct = Math.round(offPct * 0.55 + scalePct * 0.30 + (rotRaw / 180) * 100 * 0.15);
+    if(offPct >= 3 || scalePct >= 3 || rotRaw >= 3) {
+      conflicts.push({ ti, refName, offPct, scalePct, rotDiff, variancePct });
+    }
+  }
+  return conflicts;
+}
+
+// Average the new alignment position with all tie-in constraints equally.
+function _averageAlignWithTieIns(newX, newY, newScale, newRot, tieIns) {
+  const xs = [newX], ys = [newY], ss = [newScale], rs = [newRot||0];
+  for(const ti of tieIns){
+    xs.push(ti.x_offset||0); ys.push(ti.y_offset||0);
+    ss.push(ti.scale||1.0);  rs.push(ti.rotation||0);
+  }
+  const avg = arr => arr.reduce((a,b)=>a+b,0) / arr.length;
+  return { x_offset: avg(xs), y_offset: avg(ys), scale: avg(ss), rotation: avg(rs) };
+}
+
 function _export(ctx, active, maps_list){
   const { el } = ctx.helpers;
 
@@ -2168,40 +2204,190 @@ function _stack(ctx, maps, helpBtn){
   // Reset all alignment
   ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; alignState.rotation=0; alignState.scaleX_adj=1.0; applyCurrentTransform(); }},"Reset"));
 
-  // Save alignment
+  // Conflict warning div (created early so save/tie-in closures can reference it)
+  const warnDiv = el("div",{style:"display:none;margin-top:12px;padding:12px;border-radius:8px;background:#1a0d00;border:1px solid #d97706;font-size:12px"});
+
+  // Tie-in list div
+  const tieInListDiv = el("div",{style:"margin-top:6px"});
+
+  // Core save helper: saves the given (or current) alignment values to the backend
+  const performSave = async (overX, overY, overScale, overRot) => {
+    const tId = alignState.targetId || tgtSel.value;
+    const tM  = (ctx.state.maps.list||[]).find(m=>m.id===tId) || maps.find(m=>m.id===tId);
+    if(!tM) throw new Error("No target map selected");
+    const rId  = alignState.refId || refSel.value;
+    const rM2  = (ctx.state.maps.list||[]).find(m=>m.id===rId) || maps.find(m=>m.id===rId);
+    const x = overX   ?? alignState.x_offset;
+    const y = overY   ?? alignState.y_offset;
+    const s = overScale ?? alignState.scale;
+    const r = overRot ?? alignState.rotation||0;
+    const newStk = Object.assign({}, tM.stack||{}, {
+      x_offset: x, y_offset: y, scale: s, rotation: r,
+      scale_x_adj: alignState.scaleX_adj || 1.0,
+      ref_map_id: rId||null,
+      ref_ar: rM2 ? (rM2.image?.height||600)/(rM2.image?.width||800) : undefined,
+    });
+    await ctx.actions.mapsUpdate({
+      map_id: tM.id, receivers: tM.receivers||[], calibration: tM.calibration||{},
+      notes: tM.notes||"", floor_id: tM.floor_id||"", room_bounds: tM.room_bounds||{},
+      stack: newStk,
+    });
+    const saved = (ctx.state.maps.list||[]).find(m=>m.id===tId);
+    if(saved?.stack) alignState.rotation = saved.stack.rotation ?? alignState.rotation;
+    warnDiv.style.display = "none";
+  };
+
+  // Render tie-in chips below ctrlRow
+  const renderTieIns = () => {
+    tieInListDiv.innerHTML = "";
+    const tId2 = alignState.targetId || tgtSel.value;
+    const tM2  = (ctx.state.maps.list||[]).find(m=>m.id===tId2) || maps.find(m=>m.id===tId2);
+    const tieIns2 = (tM2?.stack?.tie_ins)||[];
+    if(!tieIns2.length) return;
+    const allM2 = ctx.state.maps.list||maps;
+    const row2 = el("div",{style:"display:flex;gap:6px;flex-wrap:wrap;align-items:center"});
+    row2.appendChild(el("span",{style:"font-size:11px;color:#64748b;white-space:nowrap"},"Tie-ins:"));
+    for(const ti of tieIns2){
+      const rM3 = allM2.find(m=>m.id===ti.ref_map_id);
+      const rN  = rM3 ? (rM3.name||rM3.id) : (ti.ref_map_id||"?");
+      const chip = el("span",{style:"display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:#0a2a1a;border:1px solid #2d6a4f;border-radius:12px;font-size:11px;color:#52b788"});
+      chip.appendChild(document.createTextNode("Tied: "+rN));
+      const delX = el("button",{style:"background:none;border:none;color:#64748b;cursor:pointer;font-size:11px;padding:0 0 0 4px;line-height:1",
+        onclick: async(ev3)=>{
+          ev3.stopPropagation();
+          const tId3 = alignState.targetId || tgtSel.value;
+          const tM3  = (ctx.state.maps.list||[]).find(m=>m.id===tId3) || maps.find(m=>m.id===tId3);
+          if(!tM3) return;
+          const newTIs = ((tM3?.stack?.tie_ins)||[]).filter(t=>t.ref_map_id !== ti.ref_map_id);
+          const newStk3 = Object.assign({}, tM3.stack||{}, { tie_ins: newTIs });
+          try {
+            await ctx.actions.mapsUpdate({
+              map_id: tM3.id, receivers: tM3.receivers||[], calibration: tM3.calibration||{},
+              notes: tM3.notes||"", floor_id: tM3.floor_id||"", room_bounds: tM3.room_bounds||{},
+              stack: newStk3,
+            });
+            ctx.toast("Tie-in removed");
+            renderTieIns();
+          } catch(e3){ ctx.toast("Failed: "+String(e3), true); }
+        }},"×");
+      chip.appendChild(delX);
+      row2.appendChild(chip);
+    }
+    tieInListDiv.appendChild(row2);
+  };
+
+  // Save alignment — checks for conflicts first
   const saveAlignBtn = el("button",{class:"btn inline", onclick: async (ev)=>{
     const btn = ev.currentTarget;
-    const tgtId = alignState.targetId || tgtSel.value;
-    // Use freshest copy of the map from state (in case list was refreshed)
-    const tgtMap = (ctx.state.maps.list||[]).find(m=>m.id===tgtId) || maps.find(m=>m.id===tgtId);
-    if(!tgtMap){ ctx.toast("No target map selected.", true); return; }
-    btn.disabled = true; btn.textContent = "Saving…";
-    try {
-      const refId2 = alignState.refId || refSel.value;
-      const refMap2 = (ctx.state.maps.list||[]).find(m=>m.id===refId2) || maps.find(m=>m.id===refId2);
-      const newStk = Object.assign({}, tgtMap.stack||{},{
-        x_offset: alignState.x_offset, y_offset: alignState.y_offset,
-        scale: alignState.scale, rotation: alignState.rotation||0,
-        scale_x_adj: alignState.scaleX_adj || 1.0,
-        ref_ar: refMap2 ? (refMap2.image?.height||600)/(refMap2.image?.width||800) : undefined,
-      });
-      await ctx.actions.mapsUpdate({
-        map_id: tgtMap.id, receivers: tgtMap.receivers||[], calibration: tgtMap.calibration||{},
-        notes: tgtMap.notes||"", floor_id: tgtMap.floor_id||"", room_bounds: tgtMap.room_bounds||{},
-        stack: newStk,
-      });
-      // mapsUpdate already fetched fresh list + re-rendered the view;
-      // sync alignState rotation from saved value (backend now persists it)
-      const saved = (ctx.state.maps.list||[]).find(m=>m.id===tgtId);
-      if(saved?.stack) alignState.rotation = saved.stack.rotation ?? alignState.rotation;
-      ctx.toast("Alignment saved ✔");
-    } catch(e){
-      ctx.toast("Save failed: " + String(e), true);
-      try{ btn.disabled = false; btn.textContent = "Save Alignment"; } catch(_){}
+    const tId = alignState.targetId || tgtSel.value;
+    const tM  = (ctx.state.maps.list||[]).find(m=>m.id===tId) || maps.find(m=>m.id===tId);
+    if(!tM){ ctx.toast("No target map selected.", true); return; }
+    const allM = ctx.state.maps.list||maps;
+    const conflicts = _checkAlignConflicts(
+      alignState.x_offset, alignState.y_offset,
+      alignState.scale, alignState.rotation||0, tM, allM
+    );
+    // No conflicts — save immediately
+    if(!conflicts.length){
+      btn.disabled = true; btn.textContent = "Saving…";
+      try { await performSave(); ctx.toast("Alignment saved ✔"); }
+      catch(e){ ctx.toast("Save failed: "+String(e), true); }
+      finally { try{ btn.disabled=false; btn.textContent="Save Alignment"; }catch(_){} }
+      return;
     }
+    // All tiny (<5%) — auto-average silently
+    if(conflicts.every(c=>c.variancePct < 5)){
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        const tIns = (tM?.stack?.tie_ins)||[];
+        const avg = _averageAlignWithTieIns(alignState.x_offset, alignState.y_offset, alignState.scale, alignState.rotation||0, tIns);
+        await performSave(avg.x_offset, avg.y_offset, avg.scale, avg.rotation);
+        ctx.toast("Alignment saved ✔ (minor variance averaged with tie-ins)");
+      } catch(e){ ctx.toast("Save failed: "+String(e), true); }
+      finally { try{ btn.disabled=false; btn.textContent="Save Alignment"; }catch(_){} }
+      return;
+    }
+    // Show warning with conflict details
+    const hasModerate = conflicts.some(c=>c.variancePct < 25);
+    const escN = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    let html = `<div style="font-weight:600;color:#f59e0b;margin-bottom:8px">⚠ Alignment Conflicts Detected</div>`;
+    html += `<div style="color:#cbd5e1;margin-bottom:8px;font-size:11px">This position differs from stored tie-in relationships for <strong>${escN(tM.name||tM.id)}</strong>:</div>`;
+    html += `<ul style="margin:0 0 10px 14px;padding:0;color:#94a3b8;font-size:11px">`;
+    for(const c of conflicts){
+      const sev = c.variancePct >= 25 ? "color:#f87171" : "color:#fbbf24";
+      html += `<li style="margin-bottom:3px">Tied to <strong style="color:#e2e8f0">"${escN(c.refName)}"</strong>: `
+        + `offset ${c.offPct}%, scale ${c.scalePct}%, rotation ${c.rotDiff}° `
+        + `— <span style="${sev}">${c.variancePct}% overall variance</span></li>`;
+    }
+    html += `</ul>`;
+    html += `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">`;
+    if(hasModerate) html += `<button id="_wAvgBtn" class="btn inline" style="background:#0a2a1a;border-color:#52b788">Average &amp; Save</button>`;
+    html += `<button id="_wOvrBtn" class="btn inline" style="background:#7f1d1d;border-color:#dc2626">Override &amp; Save</button>`;
+    html += `<button id="_wCxlBtn" class="btn inline">Cancel</button>`;
+    html += `</div>`;
+    warnDiv.innerHTML = html;
+    warnDiv.style.display = "block";
+    // Override
+    warnDiv.querySelector("#_wOvrBtn").onclick = async()=>{
+      warnDiv.style.display="none";
+      btn.disabled=true; btn.textContent="Saving…";
+      try{ await performSave(); ctx.toast("Alignment saved ✔ (override)"); }
+      catch(e){ ctx.toast("Save failed: "+String(e), true); }
+      finally{ try{ btn.disabled=false; btn.textContent="Save Alignment"; }catch(_){} }
+    };
+    // Average (only when hasModerate)
+    const avgBtn = warnDiv.querySelector("#_wAvgBtn");
+    if(avgBtn) avgBtn.onclick = async()=>{
+      warnDiv.style.display="none";
+      btn.disabled=true; btn.textContent="Saving…";
+      try{
+        const tIns = (tM?.stack?.tie_ins)||[];
+        const avg = _averageAlignWithTieIns(alignState.x_offset, alignState.y_offset, alignState.scale, alignState.rotation||0, tIns);
+        await performSave(avg.x_offset, avg.y_offset, avg.scale, avg.rotation);
+        ctx.toast("Alignment saved ✔ (averaged with tie-ins)");
+      } catch(e){ ctx.toast("Save failed: "+String(e), true); }
+      finally{ try{ btn.disabled=false; btn.textContent="Save Alignment"; }catch(_){} }
+    };
+    // Cancel
+    warnDiv.querySelector("#_wCxlBtn").onclick = ()=>{ warnDiv.style.display="none"; };
   }},"Save Alignment");
   ctrlRow.appendChild(saveAlignBtn);
+
+  // Add Tie-in button — stores current position as an extra alignment constraint
+  const addTieInBtn = el("button",{class:"btn inline",style:"margin-left:4px;background:#0a2a1a;border-color:#2d6a4f",
+    onclick: async()=>{
+      const tId = alignState.targetId || tgtSel.value;
+      const tM  = (ctx.state.maps.list||[]).find(m=>m.id===tId) || maps.find(m=>m.id===tId);
+      if(!tM){ ctx.toast("No target map selected.", true); return; }
+      const rId = alignState.refId || refSel.value;
+      const existing = (tM?.stack?.tie_ins)||[];
+      // Replace any existing tie-in for the same ref
+      const filtered = existing.filter(ti=>ti.ref_map_id !== rId);
+      const newTieIns = [...filtered, {
+        ref_map_id: rId,
+        x_offset:  alignState.x_offset,
+        y_offset:  alignState.y_offset,
+        scale:     alignState.scale,
+        rotation:  alignState.rotation||0,
+        date:      new Date().toISOString().slice(0,10),
+      }];
+      const newStk = Object.assign({}, tM.stack||{}, { tie_ins: newTieIns });
+      try {
+        await ctx.actions.mapsUpdate({
+          map_id: tM.id, receivers: tM.receivers||[], calibration: tM.calibration||{},
+          notes: tM.notes||"", floor_id: tM.floor_id||"", room_bounds: tM.room_bounds||{},
+          stack: newStk,
+        });
+        ctx.toast("Tie-in added ✔");
+        renderTieIns();
+      } catch(e){ ctx.toast("Failed: "+String(e), true); }
+    }},"+ Tie-in");
+  ctrlRow.appendChild(addTieInBtn);
+
   card.appendChild(ctrlRow);
+  card.appendChild(warnDiv);
+  card.appendChild(tieInListDiv);
+  renderTieIns();
 
   // ── Section 3: 3D Isometric Preview ───────────────────────────────────────
   card.appendChild(el("div",{class:"muted",style:"margin-top:24px;font-size:13px;font-weight:600"},"3D Isometric Preview"));
