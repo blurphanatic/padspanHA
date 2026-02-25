@@ -1,6 +1,6 @@
 DOMAIN = "padspan_ha"
 NAME = "PadSpan HA"
-VERSION = "0.5.12"
+VERSION = "0.5.13"
 
 CONF_ENABLE_CLOUD = "enable_cloud"
 CONF_HUB_URL = "hub_url"

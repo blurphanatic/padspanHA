@@ -45,10 +45,24 @@ async def _register_static(hass: HomeAssistant, static_dir: Path, url: str = STA
     except Exception:
         _LOGGER.debug("Static register fallback failed (url=%s)", url)
 
+def _remove_panels(hass: HomeAssistant) -> None:
+    """Remove existing panel registrations so they can be refreshed."""
+    try:
+        from homeassistant.components.panel_custom import async_remove_panel  # type: ignore
+        async_remove_panel(hass, "padspan-ha")
+        async_remove_panel(hass, "padspan-calibration")
+        _LOGGER.debug("Removed existing PadSpan panels for re-registration")
+    except Exception:
+        pass
+
+
 async def async_setup_panel(hass: HomeAssistant) -> None:
     hass.data.setdefault(DOMAIN, {})
-    if hass.data[DOMAIN].get(DATA_PANEL_REGISTERED):
-        return
+
+    # Re-register panels whenever called (clear stale registrations first).
+    # This ensures HACS reloads (without full restart) always get the new module_url/BUILD_ID.
+    _remove_panels(hass)
+    hass.data[DOMAIN][DATA_PANEL_REGISTERED] = False
 
     await _register_static(hass, Path(__file__).parent / "www")
     # Also serve the integration root so icon.png is accessible at /padspan_ha_int/icon.png
@@ -92,4 +106,4 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
     )
 
     hass.data[DOMAIN][DATA_PANEL_REGISTERED] = True
-    _LOGGER.info("PadSpan HA panel registered v%s", VERSION)
+    _LOGGER.info("PadSpan HA panel registered v%s (build %s)", VERSION, BUILD_ID)

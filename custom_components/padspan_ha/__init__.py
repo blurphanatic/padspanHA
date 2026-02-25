@@ -30,6 +30,7 @@ from .const import (
     DATA_MAPS,
     DATA_MODEL,
     DATA_OBJECTS,
+    DATA_PANEL_REGISTERED,
 )
 from .coordinator import PadSpanCoordinator
 from .maps_store import MapsStore
@@ -176,6 +177,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
+    # Re-register panels with the current BUILD_ID so HACS reloads (without full
+    # HA restart) always serve the latest module_url to the browser.
+    try:
+        await async_setup_panel(hass)
+    except Exception as err:
+        _LOGGER.warning("Panel re-registration failed: %s", err)
+
     # Ensure stores are present (reload-safe)
     try:
         await _ensure_stores(hass)
@@ -230,6 +238,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     except Exception:
         unload_ok = True
+
+    # Clear panel registration flag so setup_entry re-registers with the
+    # current BUILD_ID on next load (e.g. after a HACS update + reload).
+    try:
+        hass.data.get(DOMAIN, {}).pop(DATA_PANEL_REGISTERED, None)
+    except Exception:
+        pass
 
     # Stop presence coordinator
     try:
