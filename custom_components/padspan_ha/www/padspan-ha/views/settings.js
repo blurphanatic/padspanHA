@@ -647,5 +647,48 @@ function _settingsPresence(ctx, el){
     ),
   ]));
 
+  // ── Distance Calibration ───────────────────────────────────────────────────
+  const currentRefPower   = (settings.ref_power    != null ? Number(settings.ref_power)    : -59);
+  const currentPathLoss   = (settings.path_loss_exp != null ? Number(settings.path_loss_exp) : 2.5);
+  const refInp = el("input", {
+    type: "number", min: "-100", max: "0", step: "1", value: String(currentRefPower), style: inpStyle,
+  });
+  const plInp = el("input", {
+    type: "number", min: "1", max: "4", step: "0.1", value: String(currentPathLoss), style: inpStyle,
+  });
+  const distSaveBtn = el("button", { class: "btn" }, "Save");
+  distSaveBtn.addEventListener("click", async () => {
+    const ref = Math.max(-100, Math.min(0, parseFloat(refInp.value) || -59));
+    const pl  = Math.max(1.0,  Math.min(4.0,  parseFloat(plInp.value)  || 2.5));
+    try {
+      await ctx.actions.settingsSet({ ref_power: ref, path_loss_exp: pl });
+      ctx.toast(`Distance params saved: ref=${ref} dBm, n=${pl}`);
+    } catch(e) { ctx.toast("Failed to save setting", true); }
+  });
+  wrap.appendChild(el("div", { class: "card" }, [
+    el("div", { class: "h2" }, "Distance Calibration"),
+    el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
+      "Parameters for the log-distance path-loss formula used by the sensor.{device}_distance HA entity. " +
+      "Distance (m) = 10 ^ ((ref_power − RSSI) / (10 × n)). " +
+      "Measure ref_power by holding a phone 1 m from a scanner and reading its RSSI. " +
+      "Increase n for cluttered environments (walls, furniture); lower it for open spaces."
+    ),
+    el("div", { style: rowStyle }, [
+      el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Reference power"),
+      refInp,
+      el("div", { class: "muted", style: "font-size:12px" }, "dBm at 1 m (default −59)"),
+    ]),
+    el("div", { style: rowStyle }, [
+      el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Path-loss exponent"),
+      plInp,
+      el("div", { class: "muted", style: "font-size:12px" }, "n  (default 2.5, range 1–4)"),
+    ]),
+    el("div", { style: "margin-top:8px" }, distSaveBtn),
+    el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
+      `Current: ref=${currentRefPower} dBm, n=${currentPathLoss}. ` +
+      "Free-space ≈ n=2.0. Typical indoor ≈ n=2.5–3.5."
+    ),
+  ]));
+
   return wrap;
 }
