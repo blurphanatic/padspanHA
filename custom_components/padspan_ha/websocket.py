@@ -59,6 +59,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_calibration_clear)
     websocket_api.async_register_command(hass, ws_calibration_compute_model)
     websocket_api.async_register_command(hass, ws_calibration_swap_radio)
+    websocket_api.async_register_command(hass, ws_calibration_health_check)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -971,6 +972,8 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("ref_power"): vol.Coerce(float),
         vol.Optional("path_loss_exp"): vol.Coerce(float),
         vol.Optional("hidden_map_ids"): list,
+        vol.Optional("health_reminder_enabled"): bool,
+        vol.Optional("health_reminder_last_ts"): vol.Any(float, int, None),
     }
 )
 @websocket_api.async_response
@@ -994,8 +997,120 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         if "hidden_map_ids" in msg:
             ids = msg["hidden_map_ids"]
             payload["hidden_map_ids"] = [str(x) for x in ids if isinstance(x, str)] if isinstance(ids, list) else []
+        if "health_reminder_enabled" in msg:
+            payload["health_reminder_enabled"] = bool(msg["health_reminder_enabled"])
+        if "health_reminder_last_ts" in msg:
+            ts = msg["health_reminder_last_ts"]
+            payload["health_reminder_last_ts"] = float(ts) if ts is not None else None
         await st.async_set(**payload)
     connection.send_result(msg["id"], {"settings": _get_settings(hass)})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/calibration_health_check"})
+@websocket_api.async_response
+async def ws_calibration_health_check(hass: HomeAssistant, connection, msg) -> None:
+    """Analyse calibration data quality. Returns scanner anomalies and recommended re-scan spots."""
+    from datetime import datetime, timezone as _tz  # noqa: PLC0415
+
+    st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    settings: dict[str, Any] = (st.data or {}) if st else {}
+    enabled = bool(settings.get("health_reminder_enabled", False))
+
+    cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+    points: list[dict[str, Any]] = (cal.data.get("points") or []) if cal else []
+
+    now_ts = datetime.now(_tz.utc).timestamp()
+
+    # ── Staleness ──────────────────────────────────────────────────────────────
+    stale_days: float | None = None
+    if points:
+        isos = [p.get("collected_at") or "" for p in points]
+        latest_iso = max((s for s in isos if s), default="")
+        if latest_iso:
+            try:
+                latest_ts = datetime.fromisoformat(latest_iso).timestamp()
+                stale_days = round((now_ts - latest_ts) / 86400)
+            except Exception:
+                pass
+
+    # ── Per-scanner mean-RSSI anomalies ───────────────────────────────────────
+    scanner_sum: dict[str, float] = {}
+    scanner_cnt: dict[str, int] = {}
+    for p in points:
+        for r in (p.get("scanner_readings") or []):
+            src = r.get("source")
+            mean_rssi = r.get("mean_rssi")
+            if src and mean_rssi is not None:
+                scanner_sum[src] = scanner_sum.get(src, 0.0) + float(mean_rssi)
+                scanner_cnt[src] = scanner_cnt.get(src, 0) + 1
+
+    scanner_anomalies: list[dict[str, Any]] = []
+    if scanner_sum:
+        means = {s: scanner_sum[s] / scanner_cnt[s] for s in scanner_sum}
+        grand_mean = sum(means.values()) / len(means)
+        for src, mean in means.items():
+            if scanner_cnt[src] < 3:
+                continue
+            dev = mean - grand_mean
+            if abs(dev) > 12:
+                direction = "above" if dev > 0 else "below"
+                scanner_anomalies.append({
+                    "scanner": src,
+                    "deviation_db": round(dev, 1),
+                    "message": (
+                        f"'{src}' reads {abs(dev):.0f} dBm {direction} the fleet average "
+                        f"({scanner_cnt[src]} calibration point(s)). "
+                        "Consider re-running the walk-around near this scanner."
+                    ),
+                    "severity": "warning",
+                })
+
+    # ── Sparse coverage spots — top 3 least-covered positions per map ─────────
+    maps_store = hass.data.get(DOMAIN, {}).get("maps")
+    map_ids: list[str] = []
+    if maps_store:
+        try:
+            map_ids = [m["id"] for m in (maps_store.data.get("maps") or [])]
+        except Exception:
+            pass
+
+    recommended_spots: list[dict[str, Any]] = []
+    if cal and map_ids:
+        for mid in map_ids:
+            cov = cal.compute_coverage(mid)
+            if cov["point_count"] == 0:
+                continue  # no calibration data for this map yet
+            grid = cov["grid"]
+            n = cov["grid_n"]
+            # Collect cells below 0.8 coverage, sorted worst-first; return up to 3
+            cells = sorted(
+                ((grid[cy * n + cx], cx, cy) for cy in range(n) for cx in range(n)),
+                key=lambda t: t[0],
+            )
+            count = 0
+            for score, cx, cy in cells:
+                if score >= 0.8 or count >= 3:
+                    break
+                recommended_spots.append({
+                    "map_id": mid,
+                    "x_frac": round((cx + 0.5) / n, 3),
+                    "y_frac": round((cy + 0.5) / n, 3),
+                    "coverage_score": round(score, 3),
+                })
+                count += 1
+
+    has_issues = bool(scanner_anomalies) or bool(recommended_spots) or (
+        stale_days is not None and stale_days > 60
+    )
+
+    connection.send_result(msg["id"], {
+        "enabled": enabled,
+        "point_count": len(points),
+        "stale_days": stale_days,
+        "scanner_anomalies": scanner_anomalies,
+        "recommended_spots": recommended_spots,
+        "has_issues": has_issues,
+    })
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/live_snapshot"})

@@ -690,5 +690,132 @@ function _settingsPresence(ctx, el){
     ),
   ]));
 
+  // ── Scanner RSSI Offsets ───────────────────────────────────────────────────
+  const savedOffsets = settings.scanner_offsets || {};
+  const radios = (ctx.state.live?.snapshot?.ble?.radios) || [];
+  if(radios.length){
+    const offsetRows = el("div",{style:"display:flex;flex-direction:column;gap:8px;margin-top:8px"});
+    for(const radio of radios){
+      const src = radio.source || radio.name || "";
+      if(!src) continue;
+      const currentOffset = savedOffsets[src] != null ? Number(savedOffsets[src]) : 0;
+      const offInp = el("input",{type:"number",min:"-20",max:"20",step:"0.5",value:String(currentOffset),style:inpStyle});
+      const offSaveBtn = el("button",{class:"btn inline"},"Save");
+      offSaveBtn.addEventListener("click", async()=>{
+        const v = Math.max(-20, Math.min(20, parseFloat(offInp.value)||0));
+        try {
+          await ctx.actions.scannerOffsetSet(src, v);
+          ctx.toast(`${src}: offset set to ${v>0?"+":""}${v} dB`);
+        } catch(e){ ctx.toast("Failed to save offset", true); }
+      });
+      offsetRows.appendChild(el("div",{style:rowStyle},[
+        el("div",{style:"font-size:12px;color:#a7f3d0;min-width:180px;font-family:monospace;overflow:hidden;text-overflow:ellipsis"},src),
+        offInp,
+        el("div",{class:"muted",style:"font-size:12px"},"dB"),
+        offSaveBtn,
+      ]));
+    }
+    wrap.appendChild(el("div",{class:"card"},[
+      el("div",{class:"h2"},"Scanner RSSI Offsets"),
+      el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
+        "Trim the reported signal strength of a specific scanner by a fixed dB amount. " +
+        "Normally not needed — walk-around calibration handles hardware variation automatically. " +
+        "Only adjust if a scanner reads consistently high or low despite good calibration coverage."
+      ),
+      offsetRows,
+      el("div",{class:"muted",style:"font-size:11px;margin-top:8px"},
+        "Range: −20 to +20 dB. Positive = scanner reads weaker than reality (boost it). " +
+        "Negative = scanner reads stronger than reality (attenuate it). Set to 0 to remove offset."
+      ),
+    ]));
+  }
+
+  // ── Calibration Accuracy Reminder ─────────────────────────────────────────
+  const reminderEnabled = settings.health_reminder_enabled === true;
+  const reminderLastTs  = settings.health_reminder_last_ts || null;
+
+  const reminderToggle = el("input",{type:"checkbox",id:"healthReminderToggle",style:"width:16px;height:16px;accent-color:#52b788;cursor:pointer"});
+  reminderToggle.checked = reminderEnabled;
+
+  const reminderResultDiv = el("div",{style:"margin-top:10px"});
+
+  const _renderHealthResults = (r)=>{
+    while(reminderResultDiv.firstChild) reminderResultDiv.removeChild(reminderResultDiv.firstChild);
+    if(!r){ return; }
+    const rows = [];
+    if(r.point_count === 0){
+      rows.push(el("div",{class:"muted",style:"font-size:12px"},
+        "No calibration data collected yet. Use Calibration → Pin & Listen to get started."));
+    } else {
+      const age = r.stale_days != null ? `${r.stale_days} day${r.stale_days!==1?"s":""}` : "unknown age";
+      const ageColor = (r.stale_days||0) > 60 ? "#fbbf24" : "#52b788";
+      rows.push(el("div",{style:"font-size:12px;margin-bottom:6px"},[
+        el("span",{style:`color:${ageColor};font-weight:600`}, (r.stale_days||0)>60?"⚠ ":"✓ "),
+        el("span",{class:"muted"},`${r.point_count} calibration point${r.point_count!==1?"s":""} · newest is ${age} old`),
+      ]));
+    }
+    for(const a of (r.scanner_anomalies||[])){
+      rows.push(el("div",{style:"font-size:12px;color:#fbbf24;margin-bottom:4px"},`⚠ ${a.message}`));
+    }
+    if((r.recommended_spots||[]).length){
+      rows.push(el("div",{style:"font-size:12px;font-weight:600;color:#e2e8f0;margin:8px 0 4px"},
+        "Suggested walk-around spots — stand for 60 s each with your beacon:"));
+      for(const [i,spot] of (r.recommended_spots||[]).entries()){
+        const pct = x=>Math.round(x*100);
+        const scoreLabel = spot.coverage_score<0.2?"uncovered":spot.coverage_score<0.5?"sparse":"partial";
+        rows.push(el("div",{style:"font-size:12px;color:#94a3b8;margin-bottom:3px"},
+          `${i+1}. Map ${spot.map_id} · position (${pct(spot.x_frac)}%, ${pct(spot.y_frac)}%) · ${scoreLabel}`));
+      }
+      rows.push(el("div",{class:"muted",style:"font-size:11px;margin-top:6px"},
+        "Open Calibration → Pin & Listen, tap these positions on the map, and collect for 60 s each."));
+    }
+    if(!r.has_issues && r.point_count > 0){
+      rows.push(el("div",{style:"font-size:12px;color:#52b788"},"✓ Calibration data looks good — no issues detected."));
+    }
+    for(const row of rows) reminderResultDiv.appendChild(row);
+  };
+
+  _renderHealthResults(ctx.state._healthCheckResult || null);
+
+  const checkNowBtn = el("button",{class:"btn",style:"margin-top:8px"},"Check Now");
+  checkNowBtn.addEventListener("click", async()=>{
+    checkNowBtn.disabled=true; checkNowBtn.textContent="Checking…";
+    try {
+      const r = await ctx.actions.calibrationHealthCheck();
+      ctx.state._healthCheckResult = r;
+      _renderHealthResults(r);
+      await ctx.actions.settingsSet({ health_reminder_last_ts: Date.now()/1000 });
+    } catch(e){ ctx.toast("Health check failed: "+String(e), true); }
+    finally{ checkNowBtn.disabled=false; checkNowBtn.textContent="Check Now"; }
+  });
+
+  reminderToggle.addEventListener("change", async()=>{
+    try {
+      await ctx.actions.settingsSet({ health_reminder_enabled: reminderToggle.checked });
+      ctx.toast(reminderToggle.checked ? "Calibration reminders enabled" : "Calibration reminders disabled");
+    } catch(e){ ctx.toast("Failed to save setting", true); }
+  });
+
+  const lastCheckedTxt = reminderLastTs
+    ? `Last checked: ${new Date(reminderLastTs*1000).toLocaleDateString()}`
+    : "Never checked";
+
+  wrap.appendChild(el("div",{class:"card"},[
+    el("div",{class:"h2"},"Calibration Accuracy Reminders"),
+    el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
+      reminderToggle,
+      el("label",{for:"healthReminderToggle",style:"font-size:13px;color:#e2e8f0;cursor:pointer"},
+        "Remind me to update calibration when needed for accuracy"),
+    ]),
+    el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
+      "Checks whether calibration data has gaps, stale readings, or scanner anomalies. " +
+      "When issues are found, suggests a few specific spots to stand with your beacon for 60 s each. Off by default."),
+    el("div",{style:"display:flex;align-items:center;gap:12px;flex-wrap:wrap"},[
+      checkNowBtn,
+      el("span",{class:"muted",style:"font-size:12px"}, lastCheckedTxt),
+    ]),
+    reminderResultDiv,
+  ]));
+
   return wrap;
 }
