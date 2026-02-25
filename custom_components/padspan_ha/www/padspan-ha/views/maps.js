@@ -103,20 +103,27 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
     return wrap;
   }
 
+  const libSnap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const list = el("div",{style:"margin-top:10px;display:flex;flex-direction:column;gap:8px"});
   for(const m of maps){
     const row = el("div",{class:"maprow" + (m.id===activeId ? " active" : "")});
-    const left = el("div",{},[
+
+    // Thumbnail with room bounds + recommendation overlay
+    const reco = _recommendPlacement(m.receivers||[], m.room_bounds||{}, libSnap);
+    const thumb = _libraryThumb(m, ctx, reco);
+
+    const left = el("div",{style:"flex:1;min-width:0"},[
       el("div",{style:"font-weight:700"}, m.name || m.id),
       el("div",{class:"muted", style:"font-size:12px"}, `${m.image?.width||0}×${m.image?.height||0} • floor: ${(_floorName(ctx,m.floor_id))} • receivers: ${(m.receivers||[]).length}`),
-      el("div",{class:"muted", style:"font-size:12px"}, `updated: ${m.updated || ""}`),
+      el("div",{class:"muted", style:"font-size:12px"}, `updated: ${m.updated || ""}` + (reco ? " • gap detected" : "")),
     ]);
 
-    const actions = el("div",{style:"display:flex;gap:8px;align-items:center"},[
+    const actions = el("div",{style:"display:flex;gap:8px;align-items:center;flex-shrink:0"},[
       el("button",{class:"btn inline", onclick:()=>{ ctx.actions.mapsSetActive(m.id); ctx.actions.setMapsTab('edit'); }}, "Open"),
       el("button",{class:"btn inline danger", onclick:async ()=>{ if(confirm(`Delete map "${m.name||m.id}"?`)){ await ctx.actions.mapsDelete(m.id); } }}, "Delete"),
     ]);
 
+    row.appendChild(thumb);
     row.appendChild(left);
     row.appendChild(actions);
     list.appendChild(row);
@@ -630,7 +637,8 @@ function _edit(ctx, map){
           renderAll(); renderTools();
           return;
         }
-        const result = _recommendPlacement(map, ctx);
+        const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+        const result = _recommendPlacement(ctx.state.maps._draftReceivers, ctx.state.maps._draftRoomBounds, snap);
         if(!result){
           ctx.toast("All areas appear well-covered — no obvious placement gaps found.", false);
           return;
@@ -1073,6 +1081,56 @@ function _centroid(points){
   return [clamp01(x/points.length), clamp01(y/points.length)];
 }
 
+function _libraryThumb(m, ctx, reco){
+  // Fixed-width thumbnail showing the map image + room bounds SVG + optional recommendation polygon.
+  const iw = m.image?.width  || 800;
+  const ih = m.image?.height || 600;
+  const ar = ih / iw;
+  const TW = 96;
+  const TH = Math.max(48, Math.round(TW * ar));
+
+  const wrap = document.createElement("div");
+  wrap.style.cssText = `position:relative;width:${TW}px;height:${TH}px;flex-shrink:0;`
+    + `border-radius:6px;overflow:hidden;border:1px solid #1b3526;background:#071008`;
+
+  if(m.image?.filename){
+    const img = document.createElement("img");
+    img.src = `/local/padspan_ha/maps/${m.image.filename}`;
+    img.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill";
+    wrap.appendChild(img);
+  }
+
+  // SVG overlay: room bounds + receiver dots + recommendation polygon
+  const roomColor = ctx.helpers.roomColor;
+  const rb = m.room_bounds || {};
+  let s = `<svg viewBox="0 0 1 1" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" style="position:absolute;top:0;left:0;width:100%;height:100%">`;
+  for(const [room, b] of Object.entries(rb)){
+    if(!b || b.type!=="poly" || !b.points?.length) continue;
+    const pts = b.points.map(p=>`${p[0]},${p[1]}`).join(" ");
+    const c = roomColor ? roomColor(room) : "#52b788";
+    s += `<polygon points="${pts}" fill="${c}22" stroke="${c}" stroke-width="0.005"/>`;
+  }
+  for(const rx of (m.receivers||[])){
+    s += `<circle cx="${rx.x||0}" cy="${rx.y||0}" r="0.022" fill="#52b788" opacity="0.9"/>`;
+  }
+  if(reco && Array.isArray(reco.polygon) && reco.polygon.length >= 3){
+    const pts = reco.polygon.map(p=>`${p[0]},${p[1]}`).join(" ");
+    s += `<polygon points="${pts}" fill="rgba(251,191,36,0.25)" stroke="#fbbf24" stroke-width="0.007" stroke-dasharray="0.018 0.01"/>`;
+    const rcx = reco.polygon.reduce((t,p)=>t+p[0],0)/reco.polygon.length;
+    const rcy = reco.polygon.reduce((t,p)=>t+p[1],0)/reco.polygon.length;
+    // Dot at centroid of recommended zone
+    s += `<circle cx="${rcx}" cy="${rcy}" r="0.025" fill="#fbbf24" opacity="0.85"/>`;
+    s += `<line x1="${rcx}" y1="${rcy-0.04}" x2="${rcx}" y2="${rcy-0.01}" stroke="#fbbf24" stroke-width="0.012" stroke-linecap="round" opacity="0.85"/>`;
+  }
+  s += `</svg>`;
+
+  const svgDiv = document.createElement("div");
+  svgDiv.innerHTML = s;
+  wrap.appendChild(svgDiv.firstChild);
+
+  return wrap;
+}
+
 function _layoutText(receivers, roomBounds){
   const lines = [];
   lines.push("Receivers:");
@@ -1180,10 +1238,7 @@ function _inflatePolygon(pts, dist){
 }
 
 // Returns { polygon, rooms, topScore } or null if no meaningful gap found.
-function _recommendPlacement(map, ctx){
-  const receivers = ctx.state.maps._draftReceivers || [];
-  const roomBounds = ctx.state.maps._draftRoomBounds || {};
-  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+function _recommendPlacement(receivers, roomBounds, snap){
   const objects = snap?.objects ? Object.values(snap.objects) : [];
 
   // Only rooms with drawn polygons on this map
