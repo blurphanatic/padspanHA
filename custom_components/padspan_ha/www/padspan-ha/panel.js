@@ -13,9 +13,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.15";
+const APP_VERSION = "0.5.16";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260225T203539Z";
+const BUILD_ID = "20260225T204011Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -1186,12 +1186,6 @@ class PadSpanHaApp extends HTMLElement {
     } catch(e) { /* ignore */ }
 
     this.$content.innerHTML = "";
-
-    // Diagnostic stamp — always visible, purely inline styles, no CSS dependency
-    const _stamp = document.createElement("div");
-    _stamp.style.cssText = "background:#052e16;border:1px solid #166534;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:11px;font-family:monospace;color:#86efac";
-    _stamp.textContent = `v${APP_VERSION} • ${BUILD_ID} • view:${v} • mode:${this.state.dataMode}`;
-    this.$content.appendChild(_stamp);
 
     if(!mod || typeof mod.render !== "function") {
       this.$content.appendChild(el("div",{class:"card"}, `View missing: ${v}`));
