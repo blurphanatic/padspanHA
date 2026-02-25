@@ -196,11 +196,13 @@ export function render(ctx){
     const rssi = o.rssi != null ? `${o.rssi} dBm` : "";
     const age = o.age_s != null ? fmtAgo(o.age_s) : "";
     const isPrivateBle = kind === "private_ble";
-    const scanner = (kind==="ble" || isPrivateBle) && Array.isArray(o.sources) && o.sources.length
-      ? o.sources.join(", ") : (o.room || "");
+    const isIbeacon = kind === "ibeacon";
+    const scanner = (kind==="ble" || isPrivateBle || isIbeacon) && Array.isArray(o.sources) && o.sources.length
+      ? o.sources.map(s => typeof s === "object" ? (s.source || "") : String(s)).filter(Boolean).join(", ")
+      : (o.room || "");
 
-    // Follow button
-    const followKey = addr || o.entity_id || "";
+    // For iBeacon the stable identifier is the UUID key, not the rotating MAC
+    const followKey = isIbeacon ? (o.key || "") : (addr || o.entity_id || "");
     const followCell = (() => {
       if (!followKey) return el("td",{}, "");
       const isF = ctx.actions.followedHas(followKey);
@@ -213,32 +215,39 @@ export function render(ctx){
     })();
 
     const tagCell = (() => {
-      // Allow tagging both plain BLE and private_ble (canonical_id is stable)
-      const tagAddr = kind === "private_ble" ? (o.canonical_id || addr) : addr;
-      if ((kind !== "ble" && kind !== "private_ble") || !tagAddr) return el("td",{}, "");
+      // Use stable identifier for each kind: canonical_id for private_ble, uuid key for ibeacon
+      const tagAddr = kind === "private_ble" ? (o.canonical_id || addr)
+                    : kind === "ibeacon"     ? (o.key || "")
+                    : addr;
+      if ((kind !== "ble" && kind !== "private_ble" && kind !== "ibeacon") || !tagAddr) return el("td",{}, "");
       const btn = el("button",{class:"btn tiny"}, userLabel ? "Relabel" : "Tag");
       btn.addEventListener("click",(e)=>{ e.stopPropagation(); ctx.actions.tagObjectPrompt(tagAddr, userLabel); });
       return el("td",{}, btn);
     })();
 
+    // For iBeacon, show UUID short form instead of the internal uuid key as address
+    const displayAddr = isIbeacon ? (o.ibeacon_uuid ? `${o.ibeacon_uuid.slice(0,8)}…` : addr) : addr;
+
     const tr = el("tr",{
       "data-kind": kind,
       "data-identified": identified ? "1" : "0",
-      "data-search": `${kind} ${displayName} ${addr} ${userLabel} ${o.entity_id||""} ${scanner}`.toLowerCase(),
+      "data-search": `${kind} ${displayName} ${addr} ${userLabel} ${o.entity_id||""} ${scanner} ${o.ibeacon_uuid||""}`.toLowerCase(),
     },[
       el("td",{}, [
         isPrivateBle
           ? el("span",{class:"badge",style:"background:#1a3a5a;color:#7dd3fc;border-color:#3b82f6"}, "Private BLE")
-          : el("span",{class:"badge"+(identified?"":" warn")}, kind==="ble" ? (identified?"BLE":"BLE?") : "Entity"),
+          : isIbeacon
+            ? el("span",{class:"badge",style:"background:#3a2a0a;color:#fbbf24;border-color:#d97706"}, "iBeacon")
+            : el("span",{class:"badge"+(identified?"":" warn")}, kind==="ble" ? (identified?"BLE":"BLE?") : "Entity"),
       ]),
       el("td",{}, [
         el("div",{style:"font-weight:600"}, displayName),
-        (addr && addr !== displayName ? el("div",{class:"muted",style:"font-size:11px"}, addr) : null),
+        (displayAddr && displayAddr !== displayName ? el("div",{class:"muted",style:"font-size:11px"}, displayAddr) : null),
         (o.entity_id && !userLabel ? el("div",{class:"muted",style:"font-size:11px"}, o.entity_id) : null),
         (isPrivateBle && o.private_ble_name
           ? el("div",{class:"muted",style:"font-size:11px"}, `\u{1F512} ${o.private_ble_name}`) : null),
-        (o.ibeacon_uuid
-          ? el("div",{class:"muted",style:"font-size:11px"}, `iBeacon: ${o.ibeacon_uuid.slice(0,8)}\u2026`) : null),
+        (isIbeacon && o.ibeacon_uuid
+          ? el("div",{class:"muted",style:"font-size:11px"}, `UUID: ${o.ibeacon_uuid.slice(0,8)}\u2026 \u00B7 M${o.ibeacon_major}.${o.ibeacon_minor}`) : null),
         ((kind==="ble") && o.manufacturer_data && Object.keys(o.manufacturer_data).length
           ? el("div",{class:"muted",style:"font-size:11px"}, `Apple/Manuf: ${Object.keys(o.manufacturer_data).slice(0,2).join(", ")}`) : null),
       ].filter(Boolean)),
@@ -300,6 +309,7 @@ export function render(ctx){
       const rssi = o.rssi != null ? `${o.rssi} dBm` : null;
       const kind = o.kind === "entity" ? "HA Entity"
         : o.kind === "private_ble" ? "Private BLE"
+        : o.kind === "ibeacon" ? "iBeacon"
         : (o.identified ? "Tagged BLE" : "Unknown BLE");
 
       const actions = el("div",{class:"basic-obj-actions"});
@@ -314,8 +324,10 @@ export function render(ctx){
         fBtn.addEventListener("click", ()=> ctx.actions.followedToggle(followKey));
         actions.appendChild(fBtn);
       }
-      const tagAddr2 = o.kind === "private_ble" ? (o.canonical_id || addr) : addr;
-      if((o.kind === "ble" || o.kind === "private_ble") && tagAddr2){
+      const tagAddr2 = o.kind === "private_ble" ? (o.canonical_id || addr)
+                     : o.kind === "ibeacon"     ? (o.key || "")
+                     : addr;
+      if((o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon") && tagAddr2){
         const btn = el("button",{class:"btn tiny"}, o.user_label ? "Relabel" : "Tag");
         btn.addEventListener("click", ()=> ctx.actions.tagObjectPrompt(tagAddr2, o.user_label || ""));
         actions.appendChild(btn);

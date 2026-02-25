@@ -694,7 +694,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         # identities registered in HA's built-in 'private_ble_device' component.
         # Also parse Apple iBeacon UUIDs from manufacturer data for HA Companion App.
         canonical_by_addr: dict[str, dict[str, Any]] = {}   # addr → {canonical_id, name, kind}
-        ibeacon_by_addr: dict[str, dict[str, Any]] = {}     # addr → {uuid, major, minor}
+        ibeacon_groups: dict[str, dict[str, Any]] = {}       # "ibeacon:uuid:major:minor" → merged group
+        ibeacon_addrs: set[str] = set()                      # MAC addresses absorbed into an iBeacon group
         try:
             resolver = await _get_ble_resolver(hass)
             if resolver.has_devices():
@@ -702,11 +703,44 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     resolved = resolver.resolve_address(addr)
                     if resolved:
                         canonical_by_addr[addr] = resolved
-            # Parse iBeacon from every advertisement (independent of IRK resolution)
+            # Parse iBeacon from every advertisement; group by stable UUID/major/minor key
             for addr, rec in ble_by_addr.items():
                 ib = resolver.parse_ibeacon(rec.get("manufacturer_data") or {})
                 if ib:
-                    ibeacon_by_addr[addr] = ib
+                    uuid_key = f"ibeacon:{ib['uuid']}:{ib['major']}:{ib['minor']}"
+                    ibeacon_addrs.add(addr)
+                    if uuid_key not in ibeacon_groups:
+                        ibeacon_groups[uuid_key] = {
+                            "uuid": ib["uuid"],
+                            "major": ib["major"],
+                            "minor": ib["minor"],
+                            "addrs": set(),
+                            "sources": [],
+                            "_rssi_list": [],
+                        }
+                    g = ibeacon_groups[uuid_key]
+                    g["addrs"].add(addr)
+                    for s in (rec.get("sources") or []):
+                        g["sources"].append(s)
+                    rssi = rec.get("rssi")
+                    if rssi is not None:
+                        g["_rssi_list"].append((rssi, rec.get("age_s")))
+            # Finalise each group: pick best RSSI, sort addrs, deduplicate sources
+            for uuid_key, g in ibeacon_groups.items():
+                rssi_list = g.pop("_rssi_list")
+                if rssi_list:
+                    best = max(rssi_list, key=lambda x: x[0])
+                    g["rssi"] = best[0]; g["age_s"] = best[1]
+                else:
+                    g["rssi"] = None; g["age_s"] = None
+                g["addrs"] = sorted(g["addrs"])
+                seen_srcs: set[str] = set()
+                dedup: list[Any] = []
+                for s in g["sources"]:
+                    sk = s.get("source") if isinstance(s, dict) else str(s)
+                    if sk not in seen_srcs:
+                        seen_srcs.add(sk); dedup.append(s)
+                g["sources"] = dedup
         except Exception:
             pass
 
@@ -745,12 +779,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
         # (B) BLE advertisement objects (what HA Bluetooth "Advertisement monitor" shows)
         for addr, rec in ble_by_addr.items():
+            if addr in ibeacon_addrs:
+                continue  # absorbed into a merged iBeacon group (section C)
             parts = addr.split(":")
             prefix = ":".join(parts[:3]) if len(parts) >= 3 else ""
             identified = (addr in addr_to_device) or (addr in addr_to_entities)
 
             canonical = canonical_by_addr.get(addr)
-            ibeacon   = ibeacon_by_addr.get(addr)
 
             # If this address resolved to a Private BLE Device identity, promote it.
             if canonical:
@@ -777,11 +812,30 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             if canonical:
                 obj["canonical_id"]   = canonical["canonical_id"]
                 obj["private_ble_name"] = canonical["name"]
-            if ibeacon:
-                obj["ibeacon_uuid"]  = ibeacon["uuid"]
-                obj["ibeacon_major"] = ibeacon["major"]
-                obj["ibeacon_minor"] = ibeacon["minor"]
             objects.append(obj)
+
+        # (C) iBeacon objects — one per UUID/major/minor key, merged from all rotating MACs
+        for uuid_key, g in ibeacon_groups.items():
+            all_linked: list[str] = sorted({
+                e for a in g["addrs"] for e in addr_to_entities.get(a, [])
+            })
+            identified_ib = any(a in addr_to_device for a in g["addrs"]) or bool(all_linked)
+            obj_ib: dict[str, Any] = {
+                "key": uuid_key,
+                "kind": "ibeacon",
+                "address": uuid_key,           # stable key — used by label store & tagging
+                "all_addresses": g["addrs"],   # rotating MACs this beacon was seen from
+                "name": f"iBeacon {g['uuid'][:8]}",
+                "rssi": g.get("rssi"),
+                "age_s": g.get("age_s"),
+                "sources": g.get("sources") or [],
+                "ibeacon_uuid": g["uuid"],
+                "ibeacon_major": g["major"],
+                "ibeacon_minor": g["minor"],
+                "identified": bool(identified_ib),
+                "linked_entities": all_linked,
+            }
+            objects.append(obj_ib)
 
         # Attach user labels from ObjectStore (labels make BLE objects "identified")
         try:
@@ -793,7 +847,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         entry = obj_store.get(addr)
                         if entry:
                             obj["user_label"] = entry.get("label", "")
-                            if obj.get("kind") == "ble":
+                            if obj.get("kind") in ("ble", "ibeacon"):
                                 obj["identified"] = True
         except Exception:
             pass
@@ -811,6 +865,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "entities": len([o for o in objects if o.get("kind") == "entity"]),
                 "ble": len([o for o in objects if o.get("kind") in ("ble", "private_ble")]),
                 "private_ble": len([o for o in objects if o.get("kind") == "private_ble"]),
+                "ibeacon": len([o for o in objects if o.get("kind") == "ibeacon"]),
                 "common_prefixes": common_prefixes,  # prefix -> count (>=3)
             },
         }
@@ -848,22 +903,36 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
             objects_list = (snapshot.get("objects") or {}).get("list") or []
             for obj in objects_list:
-                if obj.get("room") or obj.get("kind") not in ("ble", "private_ble"):
+                if obj.get("room"):
                     continue
-                addr = str(obj.get("address") or "").upper()
-                if not addr:
-                    continue
-                src_map = addr_src_rssi.get(addr, {})
-                # Pick source with highest RSSI that has an area mapping
-                best_rssi: float | None = None
-                best_area: str | None = None
-                for src, rssi in src_map.items():
-                    area = source_to_area.get(src)
-                    if area and (best_rssi is None or rssi > best_rssi):
-                        best_rssi = rssi
-                        best_area = area
-                if best_area:
-                    obj["room"] = best_area
+                kind = obj.get("kind")
+                if kind == "ibeacon":
+                    # Merge RSSI from all rotating MACs for this iBeacon group
+                    best_rssi_ib: float | None = None
+                    best_area_ib: str | None = None
+                    for a in (obj.get("all_addresses") or []):
+                        for src, rssi in addr_src_rssi.get(str(a).upper(), {}).items():
+                            area = source_to_area.get(src)
+                            if area and (best_rssi_ib is None or rssi > best_rssi_ib):
+                                best_rssi_ib = rssi
+                                best_area_ib = area
+                    if best_area_ib:
+                        obj["room"] = best_area_ib
+                elif kind in ("ble", "private_ble"):
+                    addr = str(obj.get("address") or "").upper()
+                    if not addr:
+                        continue
+                    src_map = addr_src_rssi.get(addr, {})
+                    # Pick source with highest RSSI that has an area mapping
+                    best_rssi: float | None = None
+                    best_area: str | None = None
+                    for src, rssi in src_map.items():
+                        area = source_to_area.get(src)
+                        if area and (best_rssi is None or rssi > best_rssi):
+                            best_rssi = rssi
+                            best_area = area
+                    if best_area:
+                        obj["room"] = best_area
     except Exception:
         pass
 
