@@ -970,6 +970,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("away_timeout_m"): vol.Coerce(float),
         vol.Optional("ref_power"): vol.Coerce(float),
         vol.Optional("path_loss_exp"): vol.Coerce(float),
+        vol.Optional("hidden_map_ids"): list,
     }
 )
 @websocket_api.async_response
@@ -990,6 +991,9 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["ref_power"] = max(-100.0, min(0.0, float(msg["ref_power"])))
         if "path_loss_exp" in msg:
             payload["path_loss_exp"] = max(1.0, min(4.0, float(msg["path_loss_exp"])))
+        if "hidden_map_ids" in msg:
+            ids = msg["hidden_map_ids"]
+            payload["hidden_map_ids"] = [str(x) for x in ids if isinstance(x, str)] if isinstance(ids, list) else []
         await st.async_set(**payload)
     connection.send_result(msg["id"], {"settings": _get_settings(hass)})
 

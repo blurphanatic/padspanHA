@@ -1495,16 +1495,18 @@ function _stack(ctx, maps, helpBtn){
   if(!ctx.state.maps._stackAlign){
     const firstTgt = maps[1] || maps[0] || null;
     ctx.state.maps._stackAlign = {
-      refId:     maps[0] ? maps[0].id : null,
-      targetId:  firstTgt ? firstTgt.id : null,
-      x_offset:  firstTgt?.stack?.x_offset  ?? 0.0,
-      y_offset:  firstTgt?.stack?.y_offset  ?? 0.0,
-      scale:     firstTgt?.stack?.scale     ?? 1.0,
-      rotation:  firstTgt?.stack?.rotation  ?? 0.0,
+      refId:      maps[0] ? maps[0].id : null,
+      targetId:   firstTgt ? firstTgt.id : null,
+      x_offset:   firstTgt?.stack?.x_offset   ?? 0.0,
+      y_offset:   firstTgt?.stack?.y_offset   ?? 0.0,
+      scale:      firstTgt?.stack?.scale      ?? 1.0,
+      rotation:   firstTgt?.stack?.rotation   ?? 0.0,
+      scaleX_adj: firstTgt?.stack?.scale_x_adj ?? 1.0,
     };
   }
   const alignState = ctx.state.maps._stackAlign;
-  if(alignState.rotation === undefined) alignState.rotation = 0.0;
+  if(alignState.rotation   === undefined) alignState.rotation   = 0.0;
+  if(alignState.scaleX_adj === undefined) alignState.scaleX_adj = 1.0;
 
   // Guard: ensure saved refId/targetId still valid after map deletions
   if(alignState.refId && !maps.find(m=>m.id===alignState.refId))
@@ -1548,10 +1550,16 @@ function _stack(ctx, maps, helpBtn){
   card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:2px"},"Assign each map to an HA floor (auto-sets stack level) and set ceiling height."));
 
   if(!ctx.state.maps._hiddenMapIds){
-    try{
-      const stored = JSON.parse(localStorage.getItem("padspan_hiddenMapIds")||"[]");
-      ctx.state.maps._hiddenMapIds = new Set(Array.isArray(stored)?stored:[]);
-    }catch(e){ ctx.state.maps._hiddenMapIds = new Set(); }
+    // Prefer HA settings store (persists across restarts); fall back to localStorage
+    const savedIds = ctx.state.settings?.hidden_map_ids;
+    if(Array.isArray(savedIds)){
+      ctx.state.maps._hiddenMapIds = new Set(savedIds);
+    } else {
+      try{
+        const stored = JSON.parse(localStorage.getItem("padspan_hiddenMapIds")||"[]");
+        ctx.state.maps._hiddenMapIds = new Set(Array.isArray(stored)?stored:[]);
+      }catch(e){ ctx.state.maps._hiddenMapIds = new Set(); }
+    }
   }
   const hiddenIds = ctx.state.maps._hiddenMapIds;
 
@@ -1637,7 +1645,8 @@ function _stack(ctx, maps, helpBtn){
     showCb.addEventListener("change", () => {
       if(!showCb.checked) hiddenIds.add(m.id); else hiddenIds.delete(m.id);
       try{ localStorage.setItem("padspan_hiddenMapIds", JSON.stringify([...hiddenIds])); }catch(e){}
-      ctx.actions.renderRooms();
+      // Persist to HA settings store (survives restarts); fire-and-forget
+      ctx.actions.settingsSet({ hidden_map_ids: [...hiddenIds] }).catch(()=>{});
     });
     tdShow.appendChild(showCb);
     tr.appendChild(tdShow);
@@ -1683,7 +1692,11 @@ function _stack(ctx, maps, helpBtn){
   card.appendChild(selRow);
 
   const readoutDiv = el("div",{style:"margin-top:8px;font-size:12px;font-family:monospace;color:#94a3b8"});
-  const updateReadout = ()=>{ readoutDiv.textContent = `X: ${alignState.x_offset.toFixed(3)}  Y: ${alignState.y_offset.toFixed(3)}  Scale: ${alignState.scale.toFixed(3)}  Rot: ${(alignState.rotation||0).toFixed(1)}°`; };
+  const updateReadout = ()=>{
+    const xAdj = alignState.scaleX_adj || 1.0;
+    const xStr = Math.abs(xAdj - 1.0) > 0.001 ? `  ScaleX: ${xAdj.toFixed(3)}` : "";
+    readoutDiv.textContent = `X: ${alignState.x_offset.toFixed(3)}  Y: ${alignState.y_offset.toFixed(3)}  Scale: ${alignState.scale.toFixed(3)}  Rot: ${(alignState.rotation||0).toFixed(1)}°${xStr}`;
+  };
   updateReadout();
   card.appendChild(readoutDiv);
 
@@ -1712,10 +1725,11 @@ function _stack(ctx, maps, helpBtn){
     // When target changes, reload its saved alignment
     if(tgtId !== alignState.targetId){
       const newTgt = maps.find(m=>m.id===tgtId);
-      alignState.x_offset = newTgt?.stack?.x_offset ?? 0.0;
-      alignState.y_offset = newTgt?.stack?.y_offset ?? 0.0;
-      alignState.scale    = newTgt?.stack?.scale    ?? 1.0;
-      alignState.rotation = newTgt?.stack?.rotation ?? 0.0;
+      alignState.x_offset   = newTgt?.stack?.x_offset    ?? 0.0;
+      alignState.y_offset   = newTgt?.stack?.y_offset    ?? 0.0;
+      alignState.scale      = newTgt?.stack?.scale       ?? 1.0;
+      alignState.rotation   = newTgt?.stack?.rotation    ?? 0.0;
+      alignState.scaleX_adj = newTgt?.stack?.scale_x_adj ?? 1.0;
     }
     alignState.refId    = refId;
     alignState.targetId = tgtId;
@@ -1750,7 +1764,7 @@ function _stack(ctx, maps, helpBtn){
 
     if(tgtMap && tgtMap.id !== refMap.id){
       const tgtLayer = document.createElement("div");
-      tgtLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:grab;transform-origin:0 0";
+      tgtLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:grab;transform-origin:50% 50%";
 
       // Target layer: image (if any) + SVG room bounds on top
       const tgtUrl = tgtMap.image?.filename ? `/local/padspan_ha/maps/${tgtMap.image.filename}` : null;
@@ -1769,8 +1783,11 @@ function _stack(ctx, maps, helpBtn){
       tgtLayerRef = tgtLayer;
 
       applyCurrentTransform = ()=>{
-        // Rotate around visual center: translate to pos → shift to center → rotate → scale → shift back
-        tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) translate(50%,50%) rotate(${alignState.rotation||0}deg) scale(${alignState.scale}) translate(-50%,-50%)`;
+        // transform-origin:50% 50% means rotate/scale happen around element center.
+        // translate moves the center to (x_offset+0.5, y_offset+0.5) of stage; rotate/scale around that point.
+        const sx = (alignState.scale || 1.0) * (alignState.scaleX_adj || 1.0);
+        const sy = alignState.scale || 1.0;
+        tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) rotate(${alignState.rotation||0}deg) scale(${sx},${sy})`;
         updateReadout();
       };
       applyCurrentTransform();
@@ -1820,6 +1837,41 @@ function _stack(ctx, maps, helpBtn){
   const ctrlRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px"});
 
   // Scale controls
+  if(ctx.state.maps._stackArLocked === undefined) ctx.state.maps._stackArLocked = true;
+
+  const xMinusBtn = el("button",{class:"btn inline",title:"Stretch left/right only (horizontal squeeze/stretch)"},"X −");
+  const xPlusBtn  = el("button",{class:"btn inline",title:"Stretch left/right only (horizontal squeeze/stretch)"},"X +");
+  const _setXBtnState = (locked)=>{
+    xMinusBtn.disabled = locked; xMinusBtn.style.opacity = locked ? "0.3" : "";
+    xPlusBtn.disabled  = locked; xPlusBtn.style.opacity  = locked ? "0.3" : "";
+  };
+  _setXBtnState(ctx.state.maps._stackArLocked);
+  xMinusBtn.onclick = ()=>{
+    alignState.scaleX_adj = Math.max(0.1, Math.round(((alignState.scaleX_adj||1.0) - 0.05)*1000)/1000);
+    applyCurrentTransform();
+  };
+  xPlusBtn.onclick = ()=>{
+    alignState.scaleX_adj = Math.min(5.0, Math.round(((alignState.scaleX_adj||1.0) + 0.05)*1000)/1000);
+    applyCurrentTransform();
+  };
+
+  const lockArBtn = el("button",{
+    class:"btn inline",
+    title:"Lock aspect ratio: Scale +/− resizes both axes equally. Unlock to enable X-only stretch.",
+  }, ctx.state.maps._stackArLocked ? "Lock AR ✓" : "Lock AR");
+  lockArBtn.style.cssText = ctx.state.maps._stackArLocked
+    ? "background:#52b788;color:#071008;font-weight:700"
+    : "color:#94a3b8";
+  lockArBtn.onclick = ()=>{
+    ctx.state.maps._stackArLocked = !ctx.state.maps._stackArLocked;
+    const lk = ctx.state.maps._stackArLocked;
+    lockArBtn.style.background = lk ? "#52b788" : "";
+    lockArBtn.style.color      = lk ? "#071008" : "#94a3b8";
+    lockArBtn.style.fontWeight = lk ? "700"     : "";
+    lockArBtn.textContent      = lk ? "Lock AR ✓" : "Lock AR";
+    _setXBtnState(lk);
+  };
+
   ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap"},"Scale:"));
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
     const outside = ctx.state.maps._stackOutsideMode;
@@ -1835,6 +1887,9 @@ function _stack(ctx, maps, helpBtn){
     alignState.scale = Math.max(minScale, Math.round((alignState.scale - step) * 1000) / 1000);
     applyCurrentTransform();
   }},"Scale −"));
+  ctrlRow.appendChild(lockArBtn);
+  ctrlRow.appendChild(xPlusBtn);
+  ctrlRow.appendChild(xMinusBtn);
 
   // Outside map toggle — lifts scale limits for very large or outdoor spaces
   const outsideBtn = el("button",{
@@ -1893,7 +1948,7 @@ function _stack(ctx, maps, helpBtn){
   }},"▲"));
 
   // Reset all alignment
-  ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; alignState.rotation=0; applyCurrentTransform(); }},"Reset"));
+  ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; alignState.rotation=0; alignState.scaleX_adj=1.0; applyCurrentTransform(); }},"Reset"));
 
   // Save alignment
   const saveAlignBtn = el("button",{class:"btn inline", onclick: async (ev)=>{
@@ -1909,6 +1964,7 @@ function _stack(ctx, maps, helpBtn){
       const newStk = Object.assign({}, tgtMap.stack||{},{
         x_offset: alignState.x_offset, y_offset: alignState.y_offset,
         scale: alignState.scale, rotation: alignState.rotation||0,
+        scale_x_adj: alignState.scaleX_adj || 1.0,
         ref_ar: refMap2 ? (refMap2.image?.height||600)/(refMap2.image?.width||800) : undefined,
       });
       await ctx.actions.mapsUpdate({
@@ -2064,7 +2120,7 @@ function _stackMapSVGStr(map, ctx, isTarget, showBg=true){
 }
 
 function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
-  const TILE=260, FLOOR_GAP=150, CX=390, CY=680, W=780, BASE_H=1000;
+  const TILE=260, FLOOR_GAP=200, CX=390, CY=740, W=780, BASE_H=1060;
   const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
   const roomColor = ctx.helpers.roomColor;
   const lvlLabel = (z)=>{ const opt=(levelOptions||[]).find(o=>o.value===z); return opt ? opt.label : `L${z}`; };
@@ -2117,11 +2173,12 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
     let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
     for(const m of group){
       const stk=m.stack||{}, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+      const sxAdj = stk.scale_x_adj || 1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
       const arRef = stk.ref_ar || ar;
       const rot=(stk.rotation||0)*Math.PI/180;
       const bbPt=(px,py)=>{
-        const dx=(px-0.5)*sc, dy=(py-0.5)*sc*arRef;
+        const dx=(px-0.5)*sc*sxAdj, dy=(py-0.5)*sc*arRef;
         const rx=dx*Math.cos(rot)-dy*Math.sin(rot), ry=dx*Math.sin(rot)+dy*Math.cos(rot);
         return [(0.5+ox)+rx, arRef*(0.5+oy_)+ry];
       };
@@ -2148,12 +2205,13 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null){
     for(const m of group){
       const stk = m.stack||{};
       const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+      const sxAdj = stk.scale_x_adj || 1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
       const arRef = stk.ref_ar || ar;
       const rotRad = (stk.rotation||0) * Math.PI / 180;
-      // CSS-matching transform: uses ref_ar (the reference map's AR) to match alignment overlay math
+      // Matches CSS transform: scale(sc*sxAdj, sc) with transform-origin:50% 50%
       const mapPt = (px,py) => {
-        const dx=(px-0.5)*sc, dy=(py-0.5)*sc*arRef;
+        const dx=(px-0.5)*sc*sxAdj, dy=(py-0.5)*sc*arRef;
         const rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad);
         const ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);
         return [(0.5+ox)+rx, arRef*(0.5+oy_)+ry];
