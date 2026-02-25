@@ -2075,6 +2075,44 @@ function _stack(ctx, maps, helpBtn){
   tgtSel.addEventListener("change", _updateMasterWarn);
   _updateMasterWarn();
 
+  // Dual-master conflict: shown when BOTH ref and target are masters and scale/rotation has changed
+  const dualMasterWarnDiv = el("div",{style:"display:none;margin-top:6px;padding:10px 12px;border-radius:6px;background:#0f0a1a;border:1px solid #7c3aed;font-size:12px"});
+  card.appendChild(dualMasterWarnDiv);
+  let dualMasterChoice = null; // 'ref' | 'tgt' | null
+  let _dmRefId = null, _dmTgtId = null;
+
+  const _checkDualMaster = (refId, tgtId) => {
+    const refM = maps.find(m=>m.id===refId);
+    const tgtM = maps.find(m=>m.id===tgtId);
+    const bothMaster = !!(refM?.stack?.is_master) && !!(tgtM?.stack?.is_master);
+    const scaleRotChanged = Math.abs(alignState.scale - 1.0) > 0.02 || Math.abs(alignState.rotation||0) > 2.0;
+    if(!bothMaster || !scaleRotChanged){
+      dualMasterWarnDiv.style.display = "none";
+      return;
+    }
+    // Reset choice if map pair changed
+    if(dualMasterChoice !== null && (_dmRefId !== refId || _dmTgtId !== tgtId)){
+      dualMasterChoice = null;
+    }
+    _dmRefId = refId; _dmTgtId = tgtId;
+    const escD = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const rName = escD(refM.name||refM.id);
+    const tName = escD(tgtM.name||tgtM.id);
+    const refSel_ = `background:#0a2a1a;border-color:#52b788;color:#86efac;font-weight:700`;
+    const tgtSel_ = `background:#0a2a1a;border-color:#52b788;color:#86efac;font-weight:700`;
+    const inactive = `color:#94a3b8`;
+    let html = `<div style="font-weight:600;color:#c084fc;margin-bottom:6px">⭐ Both maps are masters</div>`;
+    html += `<div style="color:#cbd5e1;font-size:11px;margin-bottom:8px">Scale or rotation has been changed. Only one map can remain the alignment anchor after saving. Choose which to keep as master:</div>`;
+    html += `<div style="display:flex;gap:8px;flex-wrap:wrap">`;
+    html += `<button id="_dmRef" class="btn inline" style="${dualMasterChoice==='ref' ? refSel_ : inactive}">Keep ⭐ "${rName}"</button>`;
+    html += `<button id="_dmTgt" class="btn inline" style="${dualMasterChoice==='tgt' ? tgtSel_ : inactive}">Keep ⭐ "${tName}"</button>`;
+    html += `</div>`;
+    dualMasterWarnDiv.innerHTML = html;
+    dualMasterWarnDiv.style.display = "block";
+    dualMasterWarnDiv.querySelector("#_dmRef").onclick = () => { dualMasterChoice = 'ref'; _checkDualMaster(refId, tgtId); };
+    dualMasterWarnDiv.querySelector("#_dmTgt").onclick = () => { dualMasterChoice = 'tgt'; _checkDualMaster(refId, tgtId); };
+  };
+
   const readoutDiv = el("div",{style:"margin-top:8px;font-size:12px;font-family:monospace;color:#94a3b8"});
   const updateReadout = ()=>{
     const xAdj = alignState.scaleX_adj || 1.0;
@@ -2182,6 +2220,7 @@ function _stack(ctx, maps, helpBtn){
         const sy = alignState.scale || 1.0;
         tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) rotate(${alignState.rotation||0}deg) scale(${sx},${sy})`;
         updateReadout();
+        _checkDualMaster(refId, tgtId);
       };
       applyCurrentTransform();
 
@@ -2361,23 +2400,36 @@ function _stack(ctx, maps, helpBtn){
     const s = overScale ?? alignState.scale;
     const r = overRot ?? alignState.rotation||0;
     const tgtWasMaster = !!(tM.stack?.is_master);
+    // Dual-master choice: 'tgt' = keep target as master, revoke reference instead
+    const keepTgt = dualMasterChoice === 'tgt' && tgtWasMaster && !!(rM2?.stack?.is_master);
     const newStk = Object.assign({}, tM.stack||{}, {
       x_offset: x, y_offset: y, scale: s, rotation: r,
       scale_x_adj: alignState.scaleX_adj || 1.0,
       ref_map_id: rId||null,
       ref_ar: rM2 ? (rM2.image?.height||600)/(rM2.image?.width||800) : undefined,
-      ...(tgtWasMaster ? { is_master: false } : {}),
+      ...(tgtWasMaster && !keepTgt ? { is_master: false } : {}),
     });
     await ctx.actions.mapsUpdate({
       map_id: tM.id, receivers: tM.receivers||[], calibration: tM.calibration||{},
       notes: tM.notes||"", floor_id: tM.floor_id||"", room_bounds: tM.room_bounds||{},
       stack: newStk,
     });
+    // If user chose to keep target, also revoke master on the reference map
+    if(keepTgt && rM2){
+      const refStk2 = Object.assign({}, rM2.stack||{}, { is_master: false });
+      await ctx.actions.mapsUpdate({
+        map_id: rM2.id, receivers: rM2.receivers||[], calibration: rM2.calibration||{},
+        notes: rM2.notes||"", floor_id: rM2.floor_id||"", room_bounds: rM2.room_bounds||{},
+        stack: refStk2,
+      });
+    }
     const saved = (ctx.state.maps.list||[]).find(m=>m.id===tId);
     if(saved?.stack) alignState.rotation = saved.stack.rotation ?? alignState.rotation;
     warnDiv.style.display = "none";
     masterWarnDiv.style.display = "none";
-    return tgtWasMaster; // true = master status was revoked
+    dualMasterWarnDiv.style.display = "none";
+    dualMasterChoice = null;
+    return keepTgt ? false : tgtWasMaster; // true = target's master was revoked
   };
 
   // Render tie-in chips below ctrlRow
@@ -2428,6 +2480,16 @@ function _stack(ctx, maps, helpBtn){
     const allM = ctx.state.maps.list||maps;
     const escN = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
+    // Dual-master guard: both maps are masters + scale/rotation changed + no choice made yet
+    const rId0 = alignState.refId || refSel.value;
+    const rM0  = allM.find(m=>m.id===rId0);
+    const srChanged = Math.abs(alignState.scale - 1.0) > 0.02 || Math.abs(alignState.rotation||0) > 2.0;
+    if(rM0?.stack?.is_master && tM?.stack?.is_master && srChanged && dualMasterChoice === null){
+      ctx.toast("Both maps are masters — choose which one keeps master status before saving.", true);
+      dualMasterWarnDiv.scrollIntoView?.({behavior:"smooth", block:"nearest"});
+      return;
+    }
+
     // Upstream: tie-ins stored on this map pointing to reference maps
     const conflicts = _checkAlignConflicts(
       alignState.x_offset, alignState.y_offset,
@@ -2439,7 +2501,14 @@ function _stack(ctx, maps, helpBtn){
     );
     const downstreamNames = downstream.map(m => m.name||m.id);
 
-    const _mNote = wasM => wasM ? "\n⭐ Master status revoked" : "";
+    // Note about master revocation; keepTgt means reference lost master (not target)
+    const _mNote = wasM => {
+      if(!wasM) return "";
+      const rId0b = alignState.refId || refSel.value;
+      const rM0b  = allM.find(m=>m.id===rId0b);
+      if(dualMasterChoice === 'tgt' && rM0b) return `\n⭐ "${rM0b.name||rM0b.id}" master status revoked`;
+      return `\n⭐ Master status revoked`;
+    };
     // No upstream conflicts — save immediately, note downstream if any
     if(!conflicts.length){
       btn.disabled = true; btn.textContent = "Saving…";
