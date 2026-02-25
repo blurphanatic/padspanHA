@@ -2286,6 +2286,25 @@ function _stack(ctx, maps, helpBtn){
       isoSaveBtn.disabled = false;
     }
   }, "Save");
+  const isoResetBtn = el("button",{class:"btn inline",style:"padding:2px 10px;font-size:12px",
+    title:"Reset sliders to default values and clear the saved layout",
+    onclick: async ()=>{
+      ctx.state.maps._stackFloorGap = 200;
+      ctx.state.maps._stackHorizGap = 0;
+      ctx.state.maps._stackIsoFocus = null;
+      gapSlider.value   = "200"; gapLbl.textContent   = "200";
+      horizSlider.value = "0";   horizLbl.textContent = "0";
+      focusSlider.value = "0";   focusLbl.textContent = "All floors";
+      rebuildIso();
+      isoResetBtn.disabled = true;
+      try{
+        await ctx.actions.settingsSet({ maps_iso_floor_gap:200, maps_iso_horiz_gap:0, maps_iso_focus:null });
+        isoSaveLbl.textContent = "Reset ✓";
+        setTimeout(()=>{ isoSaveLbl.textContent = ""; }, 2000);
+      }catch(e){ isoSaveLbl.textContent = "Error"; }
+      isoResetBtn.disabled = false;
+    }
+  }, "Reset");
   card.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap"},[
     el("span",{class:"muted",style:"font-size:12px"},"Floor:"),
     focusSlider,
@@ -2297,6 +2316,7 @@ function _stack(ctx, maps, helpBtn){
     horizSlider,
     horizLbl,
     isoSaveBtn,
+    isoResetBtn,
     isoSaveLbl,
     roomListToggle,
   ]));

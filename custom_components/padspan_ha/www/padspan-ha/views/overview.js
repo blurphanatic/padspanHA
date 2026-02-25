@@ -953,7 +953,30 @@ export function render(ctx){
       }catch(e){ ovSaveLbl.textContent = "Error"; }
       ovSaveBtn.disabled = false;
     });
+    const ovResetBtn = document.createElement("button");
+    ovResetBtn.className = "btn inline";
+    ovResetBtn.style.cssText = "padding:2px 10px;font-size:12px";
+    ovResetBtn.title = "Reset sliders to default values and clear the saved layout";
+    ovResetBtn.textContent = "Reset";
+    ovResetBtn.addEventListener("click", async ()=>{
+      ctx.state._overviewFloorGap = 150; _ovFG = 150;
+      ctx.state._overviewHorizGap = 0;   _ovHG = 0;
+      ctx.state._overviewIsoFocus = null;
+      ovGapSlider.value   = "150"; ovGapLbl.textContent   = "150";
+      ovHorizSlider.value = "0";   ovHorizLbl.textContent = "0";
+      focusSlider.value   = "0";   focusLbl.textContent   = "All floors";
+      _rebuildPositions();
+      isoDiv.innerHTML = buildIsoSVG(null);
+      ovResetBtn.disabled = true;
+      try{
+        await ctx.actions.settingsSet({ overview_iso_floor_gap:150, overview_iso_horiz_gap:0, overview_iso_focus:null });
+        ovSaveLbl.textContent = "Reset ✓";
+        setTimeout(()=>{ ovSaveLbl.textContent = ""; }, 2000);
+      }catch(e){ ovSaveLbl.textContent = "Error"; }
+      ovResetBtn.disabled = false;
+    });
     ctrlRow.appendChild(ovSaveBtn);
+    ctrlRow.appendChild(ovResetBtn);
     ctrlRow.appendChild(ovSaveLbl);
     ctrlRow.appendChild(roomToggleBtn);
     outer.appendChild(ctrlRow);
