@@ -398,6 +398,7 @@ function _edit(ctx, map){
     ctx.state.maps._mode = "receivers"; // receivers | rooms
     ctx.state.maps._selectedRoom = "";
     ctx.state.maps._drawing = null; // {room, points:[]}
+    ctx.state.maps._recommendPoly = null;
   }
 
   const url = map.image && map.image.filename ? `/local/padspan_ha/maps/${map.image.filename}` : null;
@@ -545,6 +546,33 @@ function _edit(ctx, map){
       svg.appendChild(cc);
     }
 
+    // Recommendation polygon overlay
+    const recoPoly = ctx.state.maps._recommendPoly;
+    if(recoPoly && Array.isArray(recoPoly.polygon) && recoPoly.polygon.length >= 3){
+      const rpoly = document.createElementNS("http://www.w3.org/2000/svg","polygon");
+      rpoly.setAttribute("points", recoPoly.polygon.map(p=>`${clamp01(p[0])},${clamp01(p[1])}`).join(" "));
+      rpoly.setAttribute("fill","rgba(251,191,36,0.18)");
+      rpoly.setAttribute("stroke","#fbbf24");
+      rpoly.setAttribute("stroke-width","0.005");
+      rpoly.setAttribute("stroke-dasharray","0.018 0.010");
+      svg.appendChild(rpoly);
+      const rcx = recoPoly.polygon.reduce((s,p)=>s+p[0],0)/recoPoly.polygon.length;
+      const rcy = recoPoly.polygon.reduce((s,p)=>s+p[1],0)/recoPoly.polygon.length;
+      const rlab = document.createElementNS("http://www.w3.org/2000/svg","text");
+      rlab.setAttribute("x", clamp01(rcx));
+      rlab.setAttribute("y", clamp01(rcy));
+      rlab.setAttribute("font-size","0.045");
+      rlab.setAttribute("text-anchor","middle");
+      rlab.setAttribute("dominant-baseline","middle");
+      rlab.setAttribute("fill","#fbbf24");
+      rlab.setAttribute("stroke","#1a0f00");
+      rlab.setAttribute("stroke-width","0.008");
+      rlab.setAttribute("paint-order","stroke fill");
+      rlab.setAttribute("font-family","system-ui,sans-serif");
+      rlab.textContent = "Recommended zone";
+      svg.appendChild(rlab);
+    }
+
     // Draft drawing polyline
     if(ctx.state.maps._drawing && Array.isArray(ctx.state.maps._drawing.points) && ctx.state.maps._drawing.points.length){
       const pts = ctx.state.maps._drawing.points;
@@ -580,6 +608,40 @@ function _edit(ctx, map){
   const renderTools = ()=>{
     right.innerHTML = "";
     right.appendChild(modeRow);
+
+    // ── Suggest Placement button ──────────────────────────────────────────────
+    {
+      const polyRooms = Object.values(ctx.state.maps._draftRoomBounds||{})
+        .filter(b=>b?.type==="poly" && Array.isArray(b.points) && b.points.length>=3);
+      const hasData = polyRooms.length >= 1;
+      const isActive = !!(ctx.state.maps._recommendPoly);
+      const recoBtn = document.createElement("button");
+      recoBtn.className = "btn inline" + (isActive ? " primary" : "");
+      recoBtn.style.marginTop = "8px";
+      recoBtn.disabled = !hasData;
+      if(!hasData) recoBtn.style.opacity = "0.4";
+      recoBtn.title = hasData
+        ? "Analyse coverage gaps and highlight the best area to place a new scanner"
+        : "Draw room boundaries first to enable coverage gap analysis";
+      recoBtn.textContent = isActive ? "Clear Suggestion" : "Suggest Placement";
+      recoBtn.addEventListener("click", ()=>{
+        if(isActive){
+          ctx.state.maps._recommendPoly = null;
+          renderAll(); renderTools();
+          return;
+        }
+        const result = _recommendPlacement(map, ctx);
+        if(!result){
+          ctx.toast("All areas appear well-covered — no obvious placement gaps found.", false);
+          return;
+        }
+        ctx.state.maps._recommendPoly = result;
+        renderAll(); renderTools();
+        const rNames = result.rooms.slice(0,3).join(", ");
+        ctx.toast(`Coverage gap found near: ${rNames}${result.rooms.length>3?" +more":""}`, false);
+      });
+      right.appendChild(recoBtn);
+    }
 
     if(ctx.state.maps._mode==="receivers"){
       right.appendChild(el("div",{class:"muted", style:"margin-top:10px;font-size:12px"}, "Receiver tools"));
@@ -1079,6 +1141,98 @@ function _receiversText(receivers){
 function clamp01(x){
   if(!isFinite(x)) return 0;
   return Math.max(0, Math.min(1, x));
+}
+
+// ─── Scanner Placement Recommender ───────────────────────────────────────────
+
+function _convexHull(pts){
+  // Andrew's monotone chain — O(n log n)
+  if(pts.length < 3) return pts.slice();
+  const s = pts.slice().sort((a,b)=> a[0]!==b[0] ? a[0]-b[0] : a[1]-b[1]);
+  const cross = (O,A,B)=>(A[0]-O[0])*(B[1]-O[1])-(A[1]-O[1])*(B[0]-O[0]);
+  const lo = [], hi = [];
+  for(const p of s){
+    while(lo.length>=2 && cross(lo[lo.length-2],lo[lo.length-1],p)<=0) lo.pop();
+    lo.push(p);
+  }
+  for(let i=s.length-1;i>=0;i--){
+    const p=s[i];
+    while(hi.length>=2 && cross(hi[hi.length-2],hi[hi.length-1],p)<=0) hi.pop();
+    hi.push(p);
+  }
+  lo.pop(); hi.pop();
+  return lo.concat(hi);
+}
+
+function _inflatePolygon(pts, dist){
+  // Push each hull vertex outward from centroid by dist (in 0-1 space).
+  if(!pts.length) return pts;
+  const cx = pts.reduce((s,p)=>s+p[0],0)/pts.length;
+  const cy = pts.reduce((s,p)=>s+p[1],0)/pts.length;
+  return pts.map(([x,y])=>{
+    const dx=x-cx, dy=y-cy;
+    const d=Math.sqrt(dx*dx+dy*dy)||1e-6;
+    return [
+      Math.max(0.01, Math.min(0.99, x + dx/d * dist)),
+      Math.max(0.01, Math.min(0.99, y + dy/d * dist)),
+    ];
+  });
+}
+
+// Returns { polygon, rooms, topScore } or null if no meaningful gap found.
+function _recommendPlacement(map, ctx){
+  const receivers = ctx.state.maps._draftReceivers || [];
+  const roomBounds = ctx.state.maps._draftRoomBounds || {};
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const objects = snap?.objects ? Object.values(snap.objects) : [];
+
+  // Only rooms with drawn polygons on this map
+  const rooms = Object.entries(roomBounds)
+    .filter(([,b])=> b && b.type==="poly" && Array.isArray(b.points) && b.points.length >= 3)
+    .map(([room, b])=>({ room, points: b.points, centroid: _centroid(b.points) }));
+  if(!rooms.length) return null;
+
+  // Traffic and best RSSI per room from the live snapshot
+  const trafficByRoom = {}, rssiByRoom = {};
+  for(const obj of objects){
+    const r = obj.room || ""; if(!r) continue;
+    trafficByRoom[r] = (trafficByRoom[r]||0) + 1;
+    const v = obj.rssi != null ? Number(obj.rssi) : null;
+    if(v != null && (rssiByRoom[r] == null || v > rssiByRoom[r])) rssiByRoom[r] = v;
+  }
+
+  // Score each room: far from receivers = high need; traffic + weak signal add weight
+  const scored = rooms.map(({room, points, centroid})=>{
+    let minDist = receivers.length ? 2.0 : 1.0;
+    for(const rx of receivers){
+      const d = Math.hypot((rx.x||0)-centroid[0], (rx.y||0)-centroid[1]);
+      if(d < minDist) minDist = d;
+    }
+    let score = Math.min(1.0, minDist * 2.0);      // geometric gap (primary driver)
+    if((trafficByRoom[room]||0) > 0) score += 0.35; // live traffic bonus
+    const rssi = rssiByRoom[room] ?? -100;
+    if(rssi < -80) score += 0.15;                   // weak signal
+    if(rssi < -88) score += 0.15;                   // very weak signal
+    return {room, points, centroid, score, minDist};
+  });
+
+  scored.sort((a,b)=>b.score-a.score);
+  const maxScore = scored[0]?.score ?? 0;
+  if(maxScore < 0.3) return null; // everything looks well-covered
+
+  // Include rooms scoring ≥55% of max — builds a generous candidate zone
+  const threshold = maxScore * 0.55;
+  const candidates = scored.filter(r=>r.score >= threshold);
+
+  // Convex hull of all candidate room vertices, then inflate for placement flexibility
+  const allPts = [];
+  for(const c of candidates) allPts.push(...c.points);
+  if(allPts.length < 3) return null;
+  const hull = _convexHull(allPts);
+  if(hull.length < 3) return null;
+  const polygon = _inflatePolygon(hull, 0.13); // expand ~13% of map width outward
+
+  return { polygon, rooms: candidates.map(c=>c.room), topScore: maxScore };
 }
 
 function _export(ctx, active, maps_list){
