@@ -2398,7 +2398,7 @@ function _stack(ctx, maps, helpBtn){
     const x = overX   ?? alignState.x_offset;
     const y = overY   ?? alignState.y_offset;
     const s = overScale ?? alignState.scale;
-    const r = overRot ?? alignState.rotation||0;
+    const r = overRot ?? (alignState.rotation || 0);
     const tgtWasMaster = !!(tM.stack?.is_master);
     // Dual-master choice: 'tgt' = keep target as master, revoke reference instead
     const keepTgt = dualMasterChoice === 'tgt' && tgtWasMaster && !!(rM2?.stack?.is_master);
