@@ -465,11 +465,14 @@ export function render(ctx){
       return renderRoomGrid();
     }
 
-    const TILE=220, FLOOR_GAP=150, CX=380, CY=590, W=760, BASE_H=940;
+    const TILE=220, CX=380, CY=590, W=760, BASE_H=940;
     const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
     const roomColorFn = ctx.helpers.roomColor;
     const _esc = s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-    const iso = (wx,wy,wz)=>[CX+(wx-wy)*TILE*0.866, CY+(wx+wy)*TILE*0.5-wz*FLOOR_GAP];
+    if(ctx.state._overviewFloorGap===undefined) ctx.state._overviewFloorGap=150;
+    if(ctx.state._overviewHorizGap===undefined) ctx.state._overviewHorizGap=0;
+    let _ovFG=ctx.state._overviewFloorGap, _ovHG=ctx.state._overviewHorizGap;
+    const iso = (wx,wy,wz)=>[CX+(wx-wy)*TILE*0.866+wz*_ovHG, CY+(wx+wy)*TILE*0.5-wz*_ovFG];
     const pt  = c=>`${Math.round(c[0])},${Math.round(c[1])}`;
     const pts = cs=>cs.map(pt).join(" ");
 
@@ -491,24 +494,29 @@ export function render(ctx){
     const levelColor = (z) => LAYER_PAL[sortedIsoLevels.indexOf(z) % LAYER_PAL.length];
 
     // Build room centroid + receiver iso positions for live data overlay
+    // _rebuildPositions() is called initially and whenever iso params change (slider)
     const roomIsoPos = {}, receiverIsoByRoom = {};
-    for(const m of sorted){
-      const stk=m.stack||{}, z=stk.z_level||0, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
-      const ar=(m.image?.height||600)/(m.image?.width||800);
-      for(const [room,b] of Object.entries(m.room_bounds||{})){
-        if(!b||b.type!=="poly"||!Array.isArray(b.points)||b.points.length<3) continue;
-        const cx=b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
-        const cy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
-        roomIsoPos[room] = iso(ox+cx*sc, oy_+cy*sc*ar, z);
-      }
-      for(const r of (m.receivers||[])){
-        if(r.room && !receiverIsoByRoom[r.room])
-          receiverIsoByRoom[r.room] = iso(ox+(r.x||0)*sc, oy_+(r.y||0)*sc*ar, z);
+    function _rebuildPositions(){
+      for(const k of Object.keys(roomIsoPos)) delete roomIsoPos[k];
+      for(const k of Object.keys(receiverIsoByRoom)) delete receiverIsoByRoom[k];
+      for(const m of sorted){
+        const stk=m.stack||{}, z=stk.z_level||0, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+        const ar=(m.image?.height||600)/(m.image?.width||800);
+        for(const [room,b] of Object.entries(m.room_bounds||{})){
+          if(!b||b.type!=="poly"||!Array.isArray(b.points)||b.points.length<3) continue;
+          const cx=b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
+          const cy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
+          roomIsoPos[room] = iso(ox+cx*sc, oy_+cy*sc*ar, z);
+        }
+        for(const r of (m.receivers||[])){
+          if(r.room && !receiverIsoByRoom[r.room])
+            receiverIsoByRoom[r.room] = iso(ox+(r.x||0)*sc, oy_+(r.y||0)*sc*ar, z);
+        }
       }
     }
+    _rebuildPositions();
 
     if(ctx.state._overviewIsoFocus === undefined) ctx.state._overviewIsoFocus = null;
-    const slabWZ = 18/FLOOR_GAP;
     const hasBounds = sorted.some(m=>Object.keys(m.room_bounds||{}).length>0);
 
     // ── Fingerprint positioning ─────────────────────────────────────────────
@@ -527,12 +535,13 @@ export function render(ctx){
     for(const m of sorted){
       const stk=m.stack||{}, z=stk.z_level||0, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
+      const arRefT=stk.ref_ar||ar, sxAdjT=stk.scale_x_adj||1.0;
       const rotRad=(stk.rotation||0)*Math.PI/180;
       mapTransforms[m.id]={z, mapPt:(px,py)=>{
-        const dx=(px-0.5)*sc, dy=(py-0.5)*sc*ar;
+        const dx=(px-0.5)*sc*sxAdjT, dy=(py-0.5)*sc*arRefT;
         const rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad);
         const ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);
-        return[(0.5+ox)+rx, ar*(0.5+oy_)+ry];
+        return[(0.5+ox)+rx, arRefT*(0.5+oy_)+ry];
       }};
     }
 
@@ -605,6 +614,7 @@ export function render(ctx){
     const LEGEND_H = sortedIsoLevels.length * 30 + 24;
 
     const buildIsoSVG = (focusZ)=>{
+      const slabWZ = 18/_ovFG;
       const HTOTAL = BASE_H + LEGEND_H;
       let s = `<svg viewBox="0 0 ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
       s += `<rect width="${W}" height="${HTOTAL}" fill="#071008"/>`;
@@ -655,8 +665,9 @@ export function render(ctx){
         for(const m of group){
           const stk=m.stack||{}, ox=stk.x_offset||0, oy__=stk.y_offset||0, sc=stk.scale||1.0;
           const ar=(m.image?.height||600)/(m.image?.width||800);
+          const arRefBB=stk.ref_ar||ar, sxAdjBB=stk.scale_x_adj||1.0;
           const rot=(stk.rotation||0)*Math.PI/180;
-          const bbPt=(px,py)=>{const dx=(px-0.5)*sc,dy=(py-0.5)*sc*ar,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,ar*(0.5+oy__)+ry];};
+          const bbPt=(px,py)=>{const dx=(px-0.5)*sc*sxAdjBB,dy=(py-0.5)*sc*arRefBB,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,arRefBB*(0.5+oy__)+ry];};
           for(const [cx,cy] of [[0,0],[1,0],[1,1],[0,1]]){const[wx,wy]=bbPt(cx,cy);x0=Math.min(x0,wx);y0_=Math.min(y0_,wy);x1=Math.max(x1,wx);y1_=Math.max(y1_,wy);}
         }
         if(!isFinite(x0)){x0=0;y0_=0;x1=1;y1_=0.75;}
@@ -676,7 +687,8 @@ export function render(ctx){
           const ar=(m.image?.height||600)/(m.image?.width||800);
           const rotRad=(stk.rotation||0)*Math.PI/180;
           // CSS-matching: scale centered, rotation in pixel space, then offset
-          const mapPt=(px,py)=>{const dx=(px-0.5)*sc,dy=(py-0.5)*sc*ar,rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad),ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);return[(0.5+ox)+rx,ar*(0.5+oy__)+ry];};
+          const arRef=stk.ref_ar||ar, sxAdj=stk.scale_x_adj||1.0;
+          const mapPt=(px,py)=>{const dx=(px-0.5)*sc*sxAdj,dy=(py-0.5)*sc*arRef,rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad),ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);return[(0.5+ox)+rx,arRef*(0.5+oy__)+ry];};
           for(const [room,b] of Object.entries(m.room_bounds||{})){
             if(!b||b.type!=="poly"||!Array.isArray(b.points)||b.points.length<3) continue;
             const color = roomColorFn(room);
@@ -866,6 +878,38 @@ export function render(ctx){
       roomListPanel.style.display = ctx.state._overviewShowRoomList ? "block" : "none";
     });
 
+    // Spacing slider
+    const ovGapLbl = document.createElement("span");
+    ovGapLbl.style.cssText = "font-size:12px;color:#94a3b8;min-width:36px;display:inline-block;text-align:right";
+    ovGapLbl.textContent = String(ctx.state._overviewFloorGap);
+    const ovGapSlider = document.createElement("input");
+    ovGapSlider.type="range"; ovGapSlider.min="60"; ovGapSlider.max="340"; ovGapSlider.step="10";
+    ovGapSlider.style.cssText = "width:110px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+    ovGapSlider.value = String(ctx.state._overviewFloorGap);
+    ovGapSlider.addEventListener("input",()=>{
+      ctx.state._overviewFloorGap = parseInt(ovGapSlider.value, 10);
+      _ovFG = ctx.state._overviewFloorGap;
+      ovGapLbl.textContent = String(ctx.state._overviewFloorGap);
+      _rebuildPositions();
+      isoDiv.innerHTML = buildIsoSVG(ctx.state._overviewIsoFocus);
+    });
+
+    // L/R horizontal offset slider
+    const ovHorizLbl = document.createElement("span");
+    ovHorizLbl.style.cssText = "font-size:12px;color:#94a3b8;min-width:36px;display:inline-block;text-align:right";
+    ovHorizLbl.textContent = String(ctx.state._overviewHorizGap);
+    const ovHorizSlider = document.createElement("input");
+    ovHorizSlider.type="range"; ovHorizSlider.min="-120"; ovHorizSlider.max="120"; ovHorizSlider.step="10";
+    ovHorizSlider.style.cssText = "width:110px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+    ovHorizSlider.value = String(ctx.state._overviewHorizGap);
+    ovHorizSlider.addEventListener("input",()=>{
+      ctx.state._overviewHorizGap = parseInt(ovHorizSlider.value, 10);
+      _ovHG = ctx.state._overviewHorizGap;
+      ovHorizLbl.textContent = String(ctx.state._overviewHorizGap);
+      _rebuildPositions();
+      isoDiv.innerHTML = buildIsoSVG(ctx.state._overviewIsoFocus);
+    });
+
     const ctrlRow = document.createElement("div");
     ctrlRow.style.cssText = "display:flex;align-items:center;gap:10px;flex-wrap:wrap";
     const floorLbl = document.createElement("span");
@@ -874,6 +918,20 @@ export function render(ctx){
     ctrlRow.appendChild(floorLbl);
     ctrlRow.appendChild(focusSlider);
     ctrlRow.appendChild(focusLbl);
+    // Spacing
+    const ovSpacingLbl = document.createElement("span");
+    ovSpacingLbl.style.cssText = "font-size:12px;color:#94a3b8;margin-left:8px";
+    ovSpacingLbl.textContent = "Spacing:";
+    ctrlRow.appendChild(ovSpacingLbl);
+    ctrlRow.appendChild(ovGapSlider);
+    ctrlRow.appendChild(ovGapLbl);
+    // L/R
+    const ovLRLbl = document.createElement("span");
+    ovLRLbl.style.cssText = "font-size:12px;color:#94a3b8;margin-left:8px";
+    ovLRLbl.textContent = "L/R:";
+    ctrlRow.appendChild(ovLRLbl);
+    ctrlRow.appendChild(ovHorizSlider);
+    ctrlRow.appendChild(ovHorizLbl);
     ctrlRow.appendChild(roomToggleBtn);
     outer.appendChild(ctrlRow);
     outer.appendChild(isoDiv);

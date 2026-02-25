@@ -13,33 +13,33 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260225T151825Z";
-import { HELP } from "./help_content.js?b=20260225T151825Z";
-import * as Follow from "./views/follow.js?b=20260225T151825Z";
-import * as Overview from "./views/overview.js?b=20260225T151825Z";
-import * as Objects from "./views/objects.js?b=20260225T151825Z";
-import * as Devices from "./views/devices.js?b=20260225T151825Z";
-import * as Bluetooth from "./views/bluetooth.js?b=20260225T151825Z";
-import * as Presence from "./views/presence.js?b=20260225T151825Z";
-import * as Zones from "./views/zones.js?b=20260225T151825Z";
-import * as Insights from "./views/insights.js?b=20260225T151825Z";
-import * as History from "./views/history.js?b=20260225T151825Z";
-import * as Monitor from "./views/monitor.js?b=20260225T151825Z";
-import * as Maps from "./views/maps.js?b=20260225T151825Z";
-import * as Events from "./views/events.js?b=20260225T151825Z";
-import * as Health from "./views/health.js?b=20260225T151825Z";
-import * as Settings from "./views/settings.js?b=20260225T151825Z";
-import * as Manage from "./views/manage.js?b=20260225T151825Z";
-import * as Debug from "./views/debug.js?b=20260225T151825Z";
-import * as Diagnostics from "./views/diagnostics.js?b=20260225T151825Z";
-import * as QA from "./views/qa.js?b=20260225T151825Z";
-import * as Training from "./views/training.js?b=20260225T151825Z";
-import * as Calibration from "./views/calibration.js?b=20260225T151825Z";
-import * as Sandbox from "./views/sandbox.js?b=20260225T151825Z";
+import { SAMPLE_SNAPSHOT } from "./sample_data.js?b=20260225T160345Z";
+import { HELP } from "./help_content.js?b=20260225T160345Z";
+import * as Follow from "./views/follow.js?b=20260225T160345Z";
+import * as Overview from "./views/overview.js?b=20260225T160345Z";
+import * as Objects from "./views/objects.js?b=20260225T160345Z";
+import * as Devices from "./views/devices.js?b=20260225T160345Z";
+import * as Bluetooth from "./views/bluetooth.js?b=20260225T160345Z";
+import * as Presence from "./views/presence.js?b=20260225T160345Z";
+import * as Zones from "./views/zones.js?b=20260225T160345Z";
+import * as Insights from "./views/insights.js?b=20260225T160345Z";
+import * as History from "./views/history.js?b=20260225T160345Z";
+import * as Monitor from "./views/monitor.js?b=20260225T160345Z";
+import * as Maps from "./views/maps.js?b=20260225T160345Z";
+import * as Events from "./views/events.js?b=20260225T160345Z";
+import * as Health from "./views/health.js?b=20260225T160345Z";
+import * as Settings from "./views/settings.js?b=20260225T160345Z";
+import * as Manage from "./views/manage.js?b=20260225T160345Z";
+import * as Debug from "./views/debug.js?b=20260225T160345Z";
+import * as Diagnostics from "./views/diagnostics.js?b=20260225T160345Z";
+import * as QA from "./views/qa.js?b=20260225T160345Z";
+import * as Training from "./views/training.js?b=20260225T160345Z";
+import * as Calibration from "./views/calibration.js?b=20260225T160345Z";
+import * as Sandbox from "./views/sandbox.js?b=20260225T160345Z";
 
-const APP_VERSION = "0.4.95";
+const APP_VERSION = "0.4.96";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260225T151825Z";
+const BUILD_ID = "20260225T160345Z";
 
 const VIEWS = {
   follow: Follow,
@@ -777,6 +777,12 @@ class PadSpanHaApp extends HTMLElement {
     const kind = obj.kind || "";
     const identified = !!obj.identified;
 
+    // Canonical address for rename (varies by kind)
+    const tagAddr = kind === "private_ble" ? (obj.canonical_id || addr)
+                  : kind === "ibeacon"     ? (obj.key || "")
+                  : addr;
+    const canRename = (kind==="ble"||kind==="private_ble"||kind==="ibeacon") && !!tagAddr;
+
     const fmtAgo = (age_s) => {
       const s = Number(age_s);
       if(!isFinite(s)) return "—";
@@ -895,28 +901,49 @@ class PadSpanHaApp extends HTMLElement {
       ]));
     }
 
-    // Actions row
-    const actionsRow = el("div", {style:"display:flex;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #1b3526;margin-top:4px"});
-    if(kind==="ble" && addr){
-      const tagBtn = el("button", {class:"btn", onclick:()=>{
-        this._closeModal();
-        this._tagObjectPrompt(addr, userLabel);
-      }}, userLabel ? "Relabel" : "Tag");
-      actionsRow.appendChild(tagBtn);
+    // Inline rename section (BLE / private_ble / ibeacon)
+    if(canRename){
+      const renameInput = el("input",{type:"text",placeholder:"Enter a label…",style:"flex:1;min-width:160px"});
+      renameInput.value = userLabel;
+      const renameStatus = el("div",{class:"muted",style:"min-height:16px;font-size:12px;margin-top:4px"});
+      const saveRenameBtn = el("button",{class:"btn"}, userLabel ? "Update" : "Tag");
+      saveRenameBtn.addEventListener("click", async()=>{
+        const label = renameInput.value.trim();
+        if(!label){ renameStatus.textContent = "Label cannot be empty."; return; }
+        try {
+          await this._callWS({ type:"padspan_ha/object_label_set", address: tagAddr, label });
+          this._closeModal();
+          this._toast(`Renamed: ${label}`);
+          await this._getLiveSnapshot();
+          this._renderCurrentView();
+        } catch(e){ renameStatus.textContent = "Failed to save. Check HA logs."; }
+      });
+      renameInput.addEventListener("keydown",(e)=>{ if(e.key==="Enter") saveRenameBtn.click(); });
+      const renameRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center"},[renameInput, saveRenameBtn]);
       if(userLabel){
-        const untagBtn = el("button", {class:"btn", onclick:async()=>{
+        const untagBtn = el("button",{class:"btn"}, "Untag");
+        untagBtn.addEventListener("click", async()=>{
           try {
-            await this._callWS({ type:"padspan_ha/object_label_delete", address:addr });
+            await this._callWS({ type:"padspan_ha/object_label_delete", address: tagAddr });
             this._closeModal();
             this._toast("Label removed.");
             await this._getLiveSnapshot();
             this._renderCurrentView();
-          } catch(e){ this._toast("Failed to remove label.", true); }
-        }}, "Untag");
-        actionsRow.appendChild(untagBtn);
+          } catch(e){ renameStatus.textContent = "Failed to remove label."; }
+        });
+        renameRow.appendChild(untagBtn);
       }
+      body.appendChild(el("div",{style:"padding-top:12px;border-top:1px solid #1b3526;margin-top:4px"},[
+        el("div",{style:"font-weight:600;margin-bottom:6px"}, "Rename"),
+        renameRow,
+        renameStatus,
+      ]));
+      requestAnimationFrame(()=>{ try{ renameInput.focus(); }catch(e){} });
     }
-    actionsRow.appendChild(el("button", {class:"btn inline", onclick:()=>this._closeModal()}, "Close"));
+
+    // Actions row
+    const actionsRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #1b3526;margin-top:8px"});
+    actionsRow.appendChild(el("button",{class:"btn inline",onclick:()=>this._closeModal()}, "Close"));
     body.appendChild(actionsRow);
 
     this._openModal(name, body, kind==="ble" ? `BLE object · ${identified?"identified":"unidentified"}` : "HA entity");

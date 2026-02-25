@@ -1160,7 +1160,7 @@ function _export(ctx, active, maps_list){
   const lvlOpts2 = haFloors2.length > 0
     ? haFloors2.slice().sort((a,b)=>(a.level??999)-(b.level??999)).map((f,i)=>({value:f.level??i,label:f.name||f.id}))
     : _LEVEL_NAMES.map((n,i)=>({value:i,label:n}));
-  const isoSvgStr = _stackIsoSVG(maps_list, ctx, lvlOpts2, null, ctx.state.maps._stackFloorGap || 200);
+  const isoSvgStr = _stackIsoSVG(maps_list, ctx, lvlOpts2, null, ctx.state.maps._stackFloorGap || 200, ctx.state.maps._stackHorizGap || 0);
   const isoStatus = el("div",{class:"muted",style:"font-size:12px;min-height:16px"});
   const dlIsoSvg = el("button",{class:"btn inline", onclick:()=>{
     _downloadBlob(new Blob([isoSvgStr], {type:"image/svg+xml"}), "building_3d.svg");
@@ -1992,6 +1992,7 @@ function _stack(ctx, maps, helpBtn){
   // Floor focus slider
   if(ctx.state.maps._stackIsoFocus  === undefined) ctx.state.maps._stackIsoFocus  = null;
   if(ctx.state.maps._stackFloorGap  === undefined) ctx.state.maps._stackFloorGap  = 200;
+  if(ctx.state.maps._stackHorizGap  === undefined) ctx.state.maps._stackHorizGap  = 0;
   const sortedIsoLevels = [...new Set(maps.map(m=>m.stack?.z_level||0))].sort((a,b)=>a-b);
   const focusLbl = el("span",{style:"font-size:12px;color:#94a3b8;min-width:80px;display:inline-block"}, "All floors");
   const focusSlider = document.createElement("input");
@@ -2008,10 +2009,23 @@ function _stack(ctx, maps, helpBtn){
   gapSlider.style.cssText = "width:130px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
   gapSlider.value = String(ctx.state.maps._stackFloorGap);
 
+  // L/R horizontal offset slider
+  const horizLbl = el("span",{style:"font-size:12px;color:#94a3b8;min-width:36px;display:inline-block;text-align:right"},
+    String(ctx.state.maps._stackHorizGap));
+  const horizSlider = document.createElement("input");
+  horizSlider.type = "range"; horizSlider.min = "-120"; horizSlider.max = "120"; horizSlider.step = "10";
+  horizSlider.style.cssText = "width:100px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+  horizSlider.value = String(ctx.state.maps._stackHorizGap);
+
   const isoWrap = el("div",{style:"margin-top:8px;overflow:auto;border-radius:8px;background:#071008;padding:8px"});
   const rebuildIso = () => {
-    isoWrap.innerHTML = _stackIsoSVG(maps, ctx, levelOptions, ctx.state.maps._stackIsoFocus, ctx.state.maps._stackFloorGap);
+    isoWrap.innerHTML = _stackIsoSVG(maps, ctx, levelOptions, ctx.state.maps._stackIsoFocus, ctx.state.maps._stackFloorGap, ctx.state.maps._stackHorizGap);
   };
+  horizSlider.addEventListener("input", () => {
+    ctx.state.maps._stackHorizGap = parseInt(horizSlider.value, 10);
+    horizLbl.textContent = String(ctx.state.maps._stackHorizGap);
+    rebuildIso();
+  });
   focusSlider.addEventListener("input", () => {
     const idx = parseInt(focusSlider.value, 10);
     if(idx === 0){ ctx.state.maps._stackIsoFocus = null; focusLbl.textContent = "All floors"; }
@@ -2044,6 +2058,9 @@ function _stack(ctx, maps, helpBtn){
     el("span",{class:"muted",style:"font-size:12px;margin-left:12px"},"Spacing:"),
     gapSlider,
     gapLbl,
+    el("span",{class:"muted",style:"font-size:12px;margin-left:12px"},"L/R:"),
+    horizSlider,
+    horizLbl,
     roomListToggle,
   ]));
 
@@ -2137,14 +2154,14 @@ function _stackMapSVGStr(map, ctx, isTarget, showBg=true){
   return s;
 }
 
-function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200){
+function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, horizGap=0){
   const TILE=260, FLOOR_GAP=floorGap, CX=390, CY=740, W=780, BASE_H=1060;
   const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
   const roomColor = ctx.helpers.roomColor;
   const lvlLabel = (z)=>{ const opt=(levelOptions||[]).find(o=>o.value===z); return opt ? opt.label : `L${z}`; };
 
   const iso = (wx, wy, wz)=>[
-    CX + (wx-wy)*TILE*0.866,
+    CX + (wx-wy)*TILE*0.866 + wz*horizGap,
     CY + (wx+wy)*TILE*0.5 - wz*FLOOR_GAP,
   ];
   const pt = (c)=>`${Math.round(c[0])},${Math.round(c[1])}`;
