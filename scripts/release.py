@@ -99,6 +99,16 @@ def update_version_files(version, build_id):
         CALIB_JS.write_text(content, encoding="utf-8")
         print(f"  calibration_panel.js -> {version} / {build_id}")
 
+    # lights_panel.js — same stamp updates
+    lights_js = INTEGRATION / "www" / "padspan-ha" / "lights_panel.js"
+    if lights_js.exists():
+        content = lights_js.read_text(encoding="utf-8")
+        content = re.sub(r'const APP_VERSION\s*=\s*"[^"]+"', f'const APP_VERSION = "{version}"', content)
+        content = re.sub(r'const BUILD_ID\s*=\s*"[^"]+"',    f'const BUILD_ID = "{build_id}"',    content)
+        content = re.sub(r'\?b=\w+', f'?b={build_id}', content)
+        lights_js.write_text(content, encoding="utf-8")
+        print(f"  lights_panel.js      -> {version} / {build_id}")
+
 
 def build_zip():
     ZIP_PATH.parent.mkdir(exist_ok=True)
@@ -135,6 +145,7 @@ def git_commit_tag_push(version, tag):
         # Frontend
         "custom_components/padspan_ha/www/padspan-ha/panel.js",
         "custom_components/padspan_ha/www/padspan-ha/calibration_panel.js",
+        "custom_components/padspan_ha/www/padspan-ha/lights_panel.js",
         "custom_components/padspan_ha/www/padspan-ha/styles.css",
         "custom_components/padspan_ha/www/padspan-ha/help_content.js",
         "custom_components/padspan_ha/www/padspan-ha/sample_data.js",

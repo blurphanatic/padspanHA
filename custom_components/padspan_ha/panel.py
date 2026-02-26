@@ -21,8 +21,9 @@ _LOGGER = logging.getLogger(__name__)
 
 STATIC_URL = "/padspan_ha_static"
 ICON_STATIC_URL = "/padspan_ha_int"
-WEB_COMPONENT       = "padspan-ha-app"
-CALIB_WEB_COMPONENT = "padspan-calib-app"
+WEB_COMPONENT        = "padspan-ha-app"
+CALIB_WEB_COMPONENT  = "padspan-calib-app"
+LIGHTS_WEB_COMPONENT = "padspan-lights-app"
 
 async def _register_static(hass: HomeAssistant, static_dir: Path, url: str = STATIC_URL) -> None:
     try:
@@ -51,6 +52,7 @@ def _remove_panels(hass: HomeAssistant) -> None:
         from homeassistant.components.panel_custom import async_remove_panel  # type: ignore
         async_remove_panel(hass, "padspan-ha")
         async_remove_panel(hass, "padspan-calibration")
+        async_remove_panel(hass, "padspan-lights")
         _LOGGER.debug("Removed existing PadSpan panels for re-registration")
     except Exception:
         pass
@@ -101,6 +103,20 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
         module_url=f"{STATIC_URL}/padspan-ha/calibration_panel.js?v={VERSION}&b={BUILD_ID}",
         config={
             "title": "PadSpan Calibration",
+            "version": VERSION,
+        },
+    )
+
+    await _register_panel(
+        hass=hass,
+        webcomponent_name=LIGHTS_WEB_COMPONENT,
+        frontend_url_path="padspan-lights",
+        sidebar_title="Lights",
+        sidebar_icon="mdi:lightbulb-group",
+        require_admin=False,
+        module_url=f"{STATIC_URL}/padspan-ha/lights_panel.js?v={VERSION}&b={BUILD_ID}",
+        config={
+            "title": "Lights",
             "version": VERSION,
         },
     )
