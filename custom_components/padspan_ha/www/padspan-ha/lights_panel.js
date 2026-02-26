@@ -8,8 +8,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.24";
-const BUILD_ID = "20260226T192455Z";
+const APP_VERSION = "0.5.25";
+const BUILD_ID = "20260226T192625Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -277,9 +277,8 @@ class PadSpanLightsApp extends HTMLElement {
     if(!this._hass) return;
     await Promise.allSettled([
       this._loadMaps(),
-      this._loadModel(),
-      this._loadLightsReg(),
       this._loadSettings(),
+      this._loadModel().then(()=>this._loadLightsReg()),
     ]);
     this._render();
     this._pollTimer = setInterval(()=>this._poll(), 5000);
