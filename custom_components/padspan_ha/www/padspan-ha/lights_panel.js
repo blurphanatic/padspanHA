@@ -8,8 +8,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.23";
-const BUILD_ID = "20260226T191830Z";
+const APP_VERSION = "0.5.24";
+const BUILD_ID = "20260226T192455Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -279,6 +279,7 @@ class PadSpanLightsApp extends HTMLElement {
       this._loadMaps(),
       this._loadModel(),
       this._loadLightsReg(),
+      this._loadSettings(),
     ]);
     this._render();
     this._pollTimer = setInterval(()=>this._poll(), 5000);
@@ -303,6 +304,28 @@ class PadSpanLightsApp extends HTMLElement {
       const res = await this._hass.callWS({ type:"padspan_ha/model_get" });
       this.state.model = { areas: res?.areas||[], floors: res?.floors||[] };
     }catch(e){}
+  }
+
+  async _loadSettings(){
+    try{
+      const res = await this._hass.callWS({ type:"padspan_ha/settings_get" });
+      const s = res?.settings || {};
+      this.state._floorGap = s.overview_iso_floor_gap ?? 150;
+      this.state._horizGap = s.overview_iso_horiz_gap ?? 0;
+      this.state._focusZ   = s.overview_iso_focus   ?? null;
+    }catch(e){}
+  }
+
+  async _saveSettings(){
+    try{
+      await this._hass.callWS({
+        type:                    "padspan_ha/settings_set",
+        data_mode:               "live",
+        overview_iso_floor_gap:  this.state._floorGap,
+        overview_iso_horiz_gap:  this.state._horizGap,
+        overview_iso_focus:      this.state._focusZ,
+      });
+    }catch(e){ throw e; }
   }
 
   async _loadLightsReg(){
@@ -469,16 +492,40 @@ class PadSpanLightsApp extends HTMLElement {
     ctrlRow.appendChild(horizSlider);
     ctrlRow.appendChild(horizLbl);
 
-    // Reset button
-    ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px;font-size:12px;padding:2px 10px",
-      onclick:()=>{
+    // Save / Reset buttons + status label
+    const saveLbl = el("span",{style:"font-size:11px;color:#94a3b8;min-width:50px;display:inline-block"},"");
+
+    const saveBtn = el("button",{class:"btn inline",style:"margin-left:8px;font-size:12px;padding:2px 10px",
+      onclick:async()=>{
+        saveBtn.disabled=true;
+        try{
+          await this._saveSettings();
+          saveLbl.textContent="Saved \u2713";
+          setTimeout(()=>{ saveLbl.textContent=""; },2000);
+        }catch(e){ saveLbl.textContent="Error"; }
+        saveBtn.disabled=false;
+      }
+    },"Save");
+
+    const resetBtn = el("button",{class:"btn inline",style:"font-size:12px;padding:2px 10px",
+      onclick:async()=>{
         this.state._floorGap=150; this.state._horizGap=0; this.state._focusZ=null; this.state._zoom=1.0;
         gapSlider.value="150";   gapLbl.textContent="150";
         horizSlider.value="0";   horizLbl.textContent="0";
         isoDiv.style.width="100%";
         rebuildISO();
+        resetBtn.disabled=true;
+        try{
+          await this._saveSettings();
+          saveLbl.textContent="Reset \u2713";
+          setTimeout(()=>{ saveLbl.textContent=""; resetBtn.disabled=false; },2000);
+        }catch(e){ saveLbl.textContent="Error"; resetBtn.disabled=false; }
       }
-    },"Reset"));
+    },"Reset");
+
+    ctrlRow.appendChild(saveBtn);
+    ctrlRow.appendChild(resetBtn);
+    ctrlRow.appendChild(saveLbl);
 
     // Zoom controls
     ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"Zoom:"));
