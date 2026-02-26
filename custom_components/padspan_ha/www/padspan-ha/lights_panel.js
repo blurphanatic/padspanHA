@@ -8,8 +8,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.26";
-const BUILD_ID = "20260226T193543Z";
+const APP_VERSION = "0.5.27";
+const BUILD_ID = "20260226T195143Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -419,6 +419,22 @@ class PadSpanLightsApp extends HTMLElement {
       return f?(f.name||`L${z}`):`L${z}`;
     };
 
+    // Build positions array FIRST (used by isoDiv and slider below)
+    const _isoPos=[null];
+    for(let _fi=0; _fi<sortedLevels.length; _fi++){
+      _isoPos.push(sortedLevels[_fi]);
+      if(_fi<sortedLevels.length-1) _isoPos.push([sortedLevels[_fi],sortedLevels[_fi+1]]);
+    }
+    const _getFocusZ =(idx)=>_isoPos[Math.max(0,Math.min(idx,_isoPos.length-1))];
+    const _getFocusLbl=(idx)=>{
+      const pos=_getFocusZ(idx);
+      if(pos===null) return "All floors";
+      const zArr=Array.isArray(pos)?pos:[pos];
+      return zArr.map(z=>{const f=floors.find(x=>x.level===z);return f?(f.name||`L${z}`):`L${z}`;}).join(" + ");
+    };
+    // Clamp saved index to valid range
+    this.state._focusIdx=Math.max(0,Math.min(this.state._focusIdx,_isoPos.length-1));
+
     const isoDiv=document.createElement("div");
     isoDiv.style.cssText=`overflow:auto;border-radius:8px;background:#071008;padding:8px;`+
       `width:${Math.round(this.state._zoom*100)}%`;
@@ -439,22 +455,6 @@ class PadSpanLightsApp extends HTMLElement {
         });
       });
     };
-
-    // Build positions array: null=all, single z, or [z0,z1] adjacent pair
-    const _isoPos=[null];
-    for(let _fi=0; _fi<sortedLevels.length; _fi++){
-      _isoPos.push(sortedLevels[_fi]);
-      if(_fi<sortedLevels.length-1) _isoPos.push([sortedLevels[_fi],sortedLevels[_fi+1]]);
-    }
-    const _getFocusZ =(idx)=>_isoPos[Math.max(0,Math.min(idx,_isoPos.length-1))];
-    const _getFocusLbl=(idx)=>{
-      const pos=_getFocusZ(idx);
-      if(pos===null) return "All floors";
-      const zArr=Array.isArray(pos)?pos:[pos];
-      return zArr.map(z=>{const f=floors.find(x=>x.level===z);return f?(f.name||`L${z}`):`L${z}`;}).join(" + ");
-    };
-    // Clamp saved index to valid range
-    this.state._focusIdx=Math.max(0,Math.min(this.state._focusIdx,_isoPos.length-1));
 
     // Floor focus slider
     const ctrlRow=el("div",{style:"display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px"});
