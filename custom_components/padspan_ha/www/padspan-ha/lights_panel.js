@@ -8,8 +8,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.20";
-const BUILD_ID = "20260226T182132Z";
+const APP_VERSION = "0.5.21";
+const BUILD_ID = "20260226T183420Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -227,7 +227,7 @@ class PadSpanLightsApp extends HTMLElement {
     // ── Floor-plan + hex overlay ─────────────────────────────────────────────
     const mapCard = el("div",{class:"card",style:"padding:0;overflow:hidden;margin-bottom:16px"});
 
-    if(active?.image_url){
+    if(active?.image?.filename){
       const VW=1000, VH=1000, HEX_R=30;
       const rb = active.room_bounds||{};
 
@@ -273,7 +273,7 @@ class PadSpanLightsApp extends HTMLElement {
       wrap.style.cssText = "position:relative;width:100%";
 
       const imgEl = document.createElement("img");
-      imgEl.src   = active.image_url;
+      imgEl.src   = `/local/padspan_ha/maps/${active.image.filename}`;
       imgEl.style.cssText = "width:100%;display:block";
       imgEl.alt   = "Floor plan";
       wrap.appendChild(imgEl);
