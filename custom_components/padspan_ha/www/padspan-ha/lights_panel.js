@@ -8,8 +8,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.27";
-const BUILD_ID = "20260226T195143Z";
+const APP_VERSION = "0.5.28";
+const BUILD_ID = "20260226T200730Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -329,14 +329,21 @@ class PadSpanLightsApp extends HTMLElement {
 
   async _loadLightsReg(){
     try{
-      const reg   = await this._hass.callWS({ type:"config/entity_registry/list" });
+      const [regRes, devRes] = await Promise.all([
+        this._hass.callWS({ type:"config/entity_registry/list" }),
+        this._hass.callWS({ type:"config/device_registry/list" }),
+      ]);
       const areas = this.state.model.areas;
       const areaIdToName={};
       for(const a of areas) areaIdToName[a.id]=a.name;
+      // device_id → area_id (for entities that inherit area from device)
+      const devAreaId={};
+      for(const d of (devRes||[])) if(d.area_id) devAreaId[d.id]=d.area_id;
       const areaMap={};
-      for(const e of reg){
-        if(e.entity_id.startsWith("light."))
-          areaMap[e.entity_id]=e.area_id?(areaIdToName[e.area_id]||null):null;
+      for(const e of (regRes||[])){
+        if(!e.entity_id.startsWith("light.")) continue;
+        const aid = e.area_id || devAreaId[e.device_id] || null;
+        areaMap[e.entity_id] = aid ? (areaIdToName[aid]||null) : null;
       }
       this.state._lightsReg={ts:Date.now(), areaMap};
     }catch(e){
