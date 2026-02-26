@@ -8,8 +8,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.25";
-const BUILD_ID = "20260226T192625Z";
+const APP_VERSION = "0.5.26";
+const BUILD_ID = "20260226T193543Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -126,7 +126,7 @@ function buildIsoSVG(maps_list, byRoom, hiddenEids, focusZ, floorGap, horizGap){
   const hasBounds=sorted.some(m=>Object.keys(m.room_bounds||{}).length>0);
 
   for(const [z,group] of [...byLevel.entries()].sort((a,b)=>a[0]-b[0])){
-    const isFocused=focusZ===null||focusZ===z;
+    const isFocused=focusZ===null||(Array.isArray(focusZ)?focusZ.includes(z):focusZ===z);
     const go=isFocused?1.0:0.1;
     const lyrColor=levelColor(z);
     const lidx=sortedLevels.indexOf(z);
@@ -261,7 +261,7 @@ class PadSpanLightsApp extends HTMLElement {
       model:       { areas:[], floors:[] },
       _lightsReg:  null,
       _hidden:     new Set(),
-      _focusZ:     null,   // null = all floors
+      _focusIdx:   0,      // index into _isoPos positions array (0 = all floors)
       _floorGap:   150,    // vertical separation between floors
       _horizGap:   0,      // horizontal L/R offset between floors
       _zoom:       1.0,
@@ -309,9 +309,9 @@ class PadSpanLightsApp extends HTMLElement {
     try{
       const res = await this._hass.callWS({ type:"padspan_ha/settings_get" });
       const s = res?.settings || {};
-      this.state._floorGap = s.overview_iso_floor_gap ?? 150;
-      this.state._horizGap = s.overview_iso_horiz_gap ?? 0;
-      this.state._focusZ   = s.overview_iso_focus   ?? null;
+      this.state._floorGap  = s.overview_iso_floor_gap ?? 150;
+      this.state._horizGap  = s.overview_iso_horiz_gap ?? 0;
+      this.state._focusIdx  = s.overview_iso_focus     ?? 0;
     }catch(e){}
   }
 
@@ -322,7 +322,7 @@ class PadSpanLightsApp extends HTMLElement {
         data_mode:               "live",
         overview_iso_floor_gap:  this.state._floorGap,
         overview_iso_horiz_gap:  this.state._horizGap,
-        overview_iso_focus:      this.state._focusZ,
+        overview_iso_focus:      this.state._focusIdx,
       });
     }catch(e){ throw e; }
   }
@@ -422,11 +422,11 @@ class PadSpanLightsApp extends HTMLElement {
     const isoDiv=document.createElement("div");
     isoDiv.style.cssText=`overflow:auto;border-radius:8px;background:#071008;padding:8px;`+
       `width:${Math.round(this.state._zoom*100)}%`;
-    isoDiv.innerHTML=buildIsoSVG(maps_list, byRoom, hidden, this.state._focusZ, this.state._floorGap, this.state._horizGap);
+    isoDiv.innerHTML=buildIsoSVG(maps_list, byRoom, hidden, _getFocusZ(this.state._focusIdx), this.state._floorGap, this.state._horizGap);
 
     const rebuildISO=()=>{
       isoDiv.style.width=`${Math.round(this.state._zoom*100)}%`;
-      isoDiv.innerHTML=buildIsoSVG(maps_list, byRoom, hidden, this.state._focusZ, this.state._floorGap, this.state._horizGap);
+      isoDiv.innerHTML=buildIsoSVG(maps_list, byRoom, hidden, _getFocusZ(this.state._focusIdx), this.state._floorGap, this.state._horizGap);
       wireHexClicks();
     };
 
@@ -440,20 +440,35 @@ class PadSpanLightsApp extends HTMLElement {
       });
     };
 
+    // Build positions array: null=all, single z, or [z0,z1] adjacent pair
+    const _isoPos=[null];
+    for(let _fi=0; _fi<sortedLevels.length; _fi++){
+      _isoPos.push(sortedLevels[_fi]);
+      if(_fi<sortedLevels.length-1) _isoPos.push([sortedLevels[_fi],sortedLevels[_fi+1]]);
+    }
+    const _getFocusZ =(idx)=>_isoPos[Math.max(0,Math.min(idx,_isoPos.length-1))];
+    const _getFocusLbl=(idx)=>{
+      const pos=_getFocusZ(idx);
+      if(pos===null) return "All floors";
+      const zArr=Array.isArray(pos)?pos:[pos];
+      return zArr.map(z=>{const f=floors.find(x=>x.level===z);return f?(f.name||`L${z}`):`L${z}`;}).join(" + ");
+    };
+    // Clamp saved index to valid range
+    this.state._focusIdx=Math.max(0,Math.min(this.state._focusIdx,_isoPos.length-1));
+
     // Floor focus slider
     const ctrlRow=el("div",{style:"display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px"});
 
     if(sortedLevels.length > 1){
-      const focusLbl=el("span",{style:"font-size:12px;color:#94a3b8;min-width:72px"},
-        this.state._focusZ===null?"All floors":floorLabel(this.state._focusZ));
+      const focusLbl=el("span",{style:"font-size:12px;color:#94a3b8;min-width:80px"},
+        _getFocusLbl(this.state._focusIdx));
       const focusSlider=document.createElement("input");
-      focusSlider.type="range"; focusSlider.min="0"; focusSlider.max=String(sortedLevels.length);
+      focusSlider.type="range"; focusSlider.min="0"; focusSlider.max=String(_isoPos.length-1);
       focusSlider.style.cssText="width:120px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
-      focusSlider.value=this.state._focusZ===null?"0":String(sortedLevels.indexOf(this.state._focusZ)+1);
+      focusSlider.value=String(this.state._focusIdx);
       focusSlider.addEventListener("input",()=>{
-        const idx=parseInt(focusSlider.value,10);
-        this.state._focusZ=idx===0?null:sortedLevels[idx-1];
-        focusLbl.textContent=this.state._focusZ===null?"All floors":floorLabel(this.state._focusZ);
+        this.state._focusIdx=parseInt(focusSlider.value,10);
+        focusLbl.textContent=_getFocusLbl(this.state._focusIdx);
         rebuildISO();
       });
       ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap"},"Floor:"));
@@ -508,7 +523,7 @@ class PadSpanLightsApp extends HTMLElement {
 
     const resetBtn = el("button",{class:"btn inline",style:"font-size:12px;padding:2px 10px",
       onclick:async()=>{
-        this.state._floorGap=150; this.state._horizGap=0; this.state._focusZ=null; this.state._zoom=1.0;
+        this.state._floorGap=150; this.state._horizGap=0; this.state._focusIdx=0; this.state._zoom=1.0;
         gapSlider.value="150";   gapLbl.textContent="150";
         horizSlider.value="0";   horizLbl.textContent="0";
         isoDiv.style.width="100%";

@@ -493,6 +493,23 @@ export function render(ctx){
     const sortedIsoLevels = [...byLevel.keys()].sort((a,b)=>a-b);
     const levelColor = (z) => LAYER_PAL[sortedIsoLevels.indexOf(z) % LAYER_PAL.length];
 
+    // ── Slider positions: all → l0 → l0+l1 → l1 → l1+l2 → l2 → … ───────────
+    // Each position is null (all), a single z-level, or [z0, z1] (adjacent pair).
+    const _isoPos = [null];
+    for(let _fi=0; _fi<sortedIsoLevels.length; _fi++){
+      _isoPos.push(sortedIsoLevels[_fi]);
+      if(_fi < sortedIsoLevels.length-1)
+        _isoPos.push([sortedIsoLevels[_fi], sortedIsoLevels[_fi+1]]);
+    }
+    const _getFocusZ   = (idx) => _isoPos[Math.max(0,Math.min(idx,_isoPos.length-1))];
+    const _getFocusLbl = (idx) => {
+      const pos = _getFocusZ(idx);
+      if(pos === null) return "All floors";
+      const fl = ctx.state.model?.floors || [];
+      const zArr = Array.isArray(pos) ? pos : [pos];
+      return zArr.map(z=>{ const f=fl.find(x=>x.level===z); return f?(f.name||`L${z}`):`L${z}`; }).join(" + ");
+    };
+
     // Build room centroid + receiver iso positions for live data overlay
     // _rebuildPositions() is called initially and whenever iso params change (slider)
     const roomIsoPos = {}, receiverIsoByRoom = {};
@@ -516,7 +533,8 @@ export function render(ctx){
     }
     _rebuildPositions();
 
-    if(ctx.state._overviewIsoFocus === undefined) ctx.state._overviewIsoFocus = ctx.state.settings?.overview_iso_focus ?? null;
+    if(ctx.state._overviewIsoFocusIdx === undefined)
+      ctx.state._overviewIsoFocusIdx = Math.max(0, Math.min(ctx.state.settings?.overview_iso_focus ?? 0, _isoPos.length-1));
     const hasBounds = sorted.some(m=>Object.keys(m.room_bounds||{}).length>0);
 
     // ── Fingerprint positioning ─────────────────────────────────────────────
@@ -656,7 +674,7 @@ export function render(ctx){
       }
 
       for(const [z,group] of [...byLevel.entries()].sort((a,b)=>a[0]-b[0])){
-        const isFocused = focusZ===null || focusZ===z;
+        const isFocused = focusZ===null || (Array.isArray(focusZ) ? focusZ.includes(z) : focusZ===z);
         const go = isFocused ? 1.0 : 0.1;
         const lyrColor = levelColor(z);
         const lidx = sortedIsoLevels.indexOf(z);
@@ -791,29 +809,22 @@ export function render(ctx){
 
     const focusLbl = document.createElement("span");
     focusLbl.style.cssText = "font-size:12px;color:#94a3b8;min-width:80px;display:inline-block";
-    focusLbl.textContent = ctx.state._overviewIsoFocus === null ? "All floors" : `L${ctx.state._overviewIsoFocus}`;
+    focusLbl.textContent = _getFocusLbl(ctx.state._overviewIsoFocusIdx);
 
     const focusSlider = document.createElement("input");
-    focusSlider.type = "range"; focusSlider.min = "0"; focusSlider.max = String(sortedIsoLevels.length);
+    focusSlider.type = "range"; focusSlider.min = "0"; focusSlider.max = String(_isoPos.length-1);
     focusSlider.style.cssText = "width:130px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
-    focusSlider.value = ctx.state._overviewIsoFocus === null ? "0"
-      : String(sortedIsoLevels.indexOf(ctx.state._overviewIsoFocus)+1);
+    focusSlider.value = String(ctx.state._overviewIsoFocusIdx);
 
     const isoDiv = document.createElement("div");
     isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px;margin-top:6px";
-    isoDiv.innerHTML = buildIsoSVG(ctx.state._overviewIsoFocus);
+    isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
 
     const haFloors2 = ctx.state.model?.floors || [];
     focusSlider.addEventListener("input", ()=>{
-      const idx = parseInt(focusSlider.value, 10);
-      if(idx===0){ ctx.state._overviewIsoFocus=null; focusLbl.textContent="All floors"; }
-      else {
-        const z = sortedIsoLevels[idx-1];
-        ctx.state._overviewIsoFocus = z;
-        const fl = haFloors2.find(f=>f.level===z);
-        focusLbl.textContent = fl ? (fl.name||`L${z}`) : `L${z}`;
-      }
-      isoDiv.innerHTML = buildIsoSVG(ctx.state._overviewIsoFocus);
+      ctx.state._overviewIsoFocusIdx = parseInt(focusSlider.value, 10);
+      focusLbl.textContent = _getFocusLbl(ctx.state._overviewIsoFocusIdx);
+      isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
     });
 
     // Room list toggle
@@ -946,7 +957,7 @@ export function render(ctx){
         await ctx.actions.settingsSet({
           overview_iso_floor_gap: ctx.state._overviewFloorGap,
           overview_iso_horiz_gap: ctx.state._overviewHorizGap,
-          overview_iso_focus:     ctx.state._overviewIsoFocus,
+          overview_iso_focus:     ctx.state._overviewIsoFocusIdx,
         });
         ovSaveLbl.textContent = "Saved ✓";
         setTimeout(()=>{ ovSaveLbl.textContent = ""; }, 2000);
@@ -961,7 +972,7 @@ export function render(ctx){
     ovResetBtn.addEventListener("click", async ()=>{
       ctx.state._overviewFloorGap = 150; _ovFG = 150;
       ctx.state._overviewHorizGap = 0;   _ovHG = 0;
-      ctx.state._overviewIsoFocus = null;
+      ctx.state._overviewIsoFocusIdx = 0;
       ovGapSlider.value   = "150"; ovGapLbl.textContent   = "150";
       ovHorizSlider.value = "0";   ovHorizLbl.textContent = "0";
       focusSlider.value   = "0";   focusLbl.textContent   = "All floors";
@@ -969,7 +980,7 @@ export function render(ctx){
       isoDiv.innerHTML = buildIsoSVG(null);
       ovResetBtn.disabled = true;
       try{
-        await ctx.actions.settingsSet({ overview_iso_floor_gap:150, overview_iso_horiz_gap:0, overview_iso_focus:null });
+        await ctx.actions.settingsSet({ overview_iso_floor_gap:150, overview_iso_horiz_gap:0, overview_iso_focus:0 });
         ovSaveLbl.textContent = "Reset ✓";
         setTimeout(()=>{ ovSaveLbl.textContent = ""; }, 2000);
       }catch(e){ ovSaveLbl.textContent = "Error"; }
