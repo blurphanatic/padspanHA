@@ -13,9 +13,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.17";
+const APP_VERSION = "0.5.18";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260225T204853Z";
+const BUILD_ID = "20260226T173912Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -321,11 +321,27 @@ class PadSpanHaApp extends HTMLElement {
 
   disconnectedCallback(){
     this._stopPolling();
+    if(this._visibilityHandler){
+      document.removeEventListener("visibilitychange", this._visibilityHandler);
+      this._visibilityHandler = null;
+    }
   }
 
   _startPolling(){
     if(this._pollTimer) return;
     this._pollTimer = setInterval(()=>this._pollTick(), 5000);
+
+    // Wake up immediately when the browser tab becomes visible again.
+    // Browsers throttle setInterval to ~1 min when the tab is hidden.
+    if(!this._visibilityHandler){
+      this._visibilityHandler = ()=>{
+        if(document.visibilityState === "visible"){
+          this._refreshAll(false);
+          if(!this._pollTimer) this._startPolling();
+        }
+      };
+      document.addEventListener("visibilitychange", this._visibilityHandler);
+    }
   }
 
   _stopPolling(){
