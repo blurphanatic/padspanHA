@@ -8,8 +8,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.28";
-const BUILD_ID = "20260226T200730Z";
+const APP_VERSION = "0.5.29";
+const BUILD_ID = "20260226T202740Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -57,11 +57,20 @@ function hexPts(cx, cy, r){
 
 // Cluster offsets (SVG px) for N hexes touching around a centre
 function hexCluster(n, r){
-  const d=r*Math.sqrt(3)+2;
+  const d=r*Math.sqrt(3)+2;  // centre-to-centre distance (tiny gap between touching hexes)
   const ring=Array.from({length:6},(_,i)=>{const a=(30+i*60)*Math.PI/180;return[d*Math.cos(a),d*Math.sin(a)];});
   const pos=[[0,0],...ring];
   if(n<=7) return pos.slice(0,n);
-  return Array.from({length:n},(_,i)=>{const col=i%3,row=Math.floor(i/3);return[(col-1)*d,row*d*0.87];});
+  // Hex-offset grid: odd rows shift right by d/2 so hexagons mesh instead of stacking as squares
+  const cols=Math.max(3,Math.ceil(Math.sqrt(n*1.15)));
+  const rows=Math.ceil(n/cols);
+  return Array.from({length:n},(_,i)=>{
+    const row=Math.floor(i/cols), col=i%cols;
+    return [
+      (col-(cols-1)/2)*d + (row%2)*d/2,
+      (row-(rows-1)/2)*d*0.866,
+    ];
+  });
 }
 
 // ── Isometric 3-D SVG builder (same projection as Overview) ──────────────────
@@ -69,7 +78,7 @@ function buildIsoSVG(maps_list, byRoom, hiddenEids, focusZ, floorGap, horizGap){
   const TILE=220, CX=380, CY=590, W=760, BASE_H=940;
   const FG=floorGap, HG=horizGap||0;
   const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
-  const HEX_R = 22;   // hexagon radius in SVG px
+  const HEX_R = 14;   // hexagon radius in SVG px
 
   const iso = (wx,wy,wz)=>[CX+(wx-wy)*TILE*0.866+wz*HG, CY+(wx+wy)*TILE*0.5-wz*FG];
   const pt  = c=>`${Math.round(c[0])},${Math.round(c[1])}`;
