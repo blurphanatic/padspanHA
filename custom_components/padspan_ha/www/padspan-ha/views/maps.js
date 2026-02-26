@@ -22,7 +22,7 @@ export function render(ctx){
   // Basic mode: only Library + Upload tabs
   const tabDefs = isBasic
     ? [["library","Library"],["upload","Upload"]]
-    : [["library","Library"],["upload","Upload"],["edit","Edit"],["stack","3D Stack"],["export","Export"],["help","Help"]];
+    : [["library","Library"],["upload","Upload"],["edit","Edit"],["stack","3D Stack"],["lights","Lights"],["export","Export"],["help","Help"]];
 
   // If current tab is not in basic tab list, reset to library
   if(isBasic && tab !== "library" && tab !== "upload"){
@@ -55,6 +55,7 @@ export function render(ctx){
     activeTab==="upload" ? _upload(ctx, helpBtn, isBasic) :
     activeTab==="edit" ? _edit(ctx, active) :
     activeTab==="stack" ? _stack(ctx, maps, helpBtn) :
+    activeTab==="lights" ? _lightsTab(ctx, maps, active) :
     activeTab==="export" ? _export(ctx, active, maps) :
     _help(ctx),
   ]);
@@ -3142,4 +3143,247 @@ async function _drawSvgOnCanvas(g, svgStr, w, h, alpha=1.0){
   }finally{
     URL.revokeObjectURL(url);
   }
+}
+
+// ── LIGHTS TAB ───────────────────────────────────────────────────────────────
+
+// Deterministic 3-char code: 1 letter + 2-digit number  (A01 … Z99)
+function _lightCode(idx) {
+  const letter = String.fromCharCode(65 + Math.floor(idx / 99));
+  const num    = String((idx % 99) + 1).padStart(2, "0");
+  return letter + num;
+}
+
+// SVG points string for a pointy-top regular hexagon (top vertex pointing up)
+function _hexPts(cx, cy, r) {
+  const pts = [];
+  for (let k = 0; k < 6; k++) {
+    const a = (90 + k * 60) * Math.PI / 180;
+    pts.push(`${(cx + r * Math.cos(a)).toFixed(2)},${(cy + r * Math.sin(a)).toFixed(2)}`);
+  }
+  return pts.join(" ");
+}
+
+// Cluster offsets for N hexes around a room centre (tight, touching formation)
+function _hexCluster(n, r) {
+  // Pointy-top touching distance between centres = r * √3; add 2 px gap
+  const d = r * Math.sqrt(3) + 2;
+  const ring = Array.from({length: 6}, (_, i) => {
+    const a = (30 + i * 60) * Math.PI / 180;
+    return [d * Math.cos(a), d * Math.sin(a)];
+  });
+  const positions = [[0, 0], ...ring]; // centre + 6-ring = 7 max
+  if (n <= 7) return positions.slice(0, n);
+  // Overflow: simple 3-wide grid
+  return Array.from({length: n}, (_, i) => {
+    const col = i % 3, row = Math.floor(i / 3);
+    return [(col - 1) * d, row * d * 0.87];
+  });
+}
+
+// Load entity_id → area_name for all lights; cached on ctx.state._lightsReg (60 s)
+async function _loadLightsReg(ctx) {
+  try {
+    const reg   = await ctx.hass.callWS({ type: "config/entity_registry/list" });
+    const areas = ctx.state.model?.areas || [];
+    const areaIdToName = {};
+    for (const a of areas) areaIdToName[a.id] = a.name;
+    const areaMap = {};
+    for (const e of reg) {
+      if (e.entity_id.startsWith("light."))
+        areaMap[e.entity_id] = e.area_id ? (areaIdToName[e.area_id] || null) : null;
+    }
+    ctx.state._lightsReg = { ts: Date.now(), areaMap };
+  } catch(err) {
+    ctx.state._lightsReg = { ts: Date.now(), areaMap: {} };
+  }
+}
+
+function _lightsTab(ctx, maps, active) {
+  const { el } = ctx.helpers;
+  const card = el("div", { class: "card" });
+
+  card.appendChild(el("div", { class: "card-head", style: "margin-bottom:12px" }, [
+    el("div", { style: "font-weight:700;font-size:15px" }, "Light Control Map"),
+    el("span", { class: "muted", style: "font-size:12px" },
+      "Tap a hex or row to toggle. Yellow\u00a0=\u00a0on \u00b7 Grey\u00a0=\u00a0off."),
+  ]));
+
+  // Registry cache check
+  const regCache = ctx.state._lightsReg;
+  if (!regCache || Date.now() - regCache.ts > 60000) {
+    card.appendChild(el("div", {
+      style: "padding:16px;color:#52b788;font-family:monospace;font-size:13px",
+    }, "Loading light registry\u2026"));
+    if (ctx.hass) _loadLightsReg(ctx).then(() => ctx.actions.renderRooms());
+    return card;
+  }
+
+  // Gather all light entities from live hass states
+  const states = ctx.hass?.states || {};
+  const lights = Object.keys(states)
+    .filter(eid => eid.startsWith("light."))
+    .map(eid => ({
+      entity_id:     eid,
+      friendly_name: states[eid].attributes?.friendly_name || eid,
+      state:         states[eid].state,   // "on" | "off" | "unavailable"
+      area_name:     regCache.areaMap[eid] || null,
+    }))
+    .sort((a, b) =>
+      (a.area_name || "\xff").localeCompare(b.area_name || "\xff") ||
+      a.friendly_name.localeCompare(b.friendly_name));
+
+  if (!lights.length) {
+    card.appendChild(el("div", { class: "muted", style: "padding:8px" },
+      "No light entities found in Home Assistant."));
+    return card;
+  }
+
+  // Assign deterministic 3-char codes (sort order is stable)
+  lights.forEach((l, i) => { l.code = _lightCode(i); });
+
+  // Floor-plan selector when multiple maps are loaded
+  if (maps.length > 1) {
+    card.appendChild(el("div", {
+      style: "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px",
+    }, [
+      el("span", { class: "muted", style: "font-size:12px" }, "Floor plan:"),
+      ...maps.map(m => el("button", {
+        class: "btn inline" + (m.id === (active?.id) ? " primary" : ""),
+        onclick: () => ctx.actions.mapsSetActive(m.id),
+      }, m.name || m.id)),
+    ]));
+  }
+
+  // Toggle: turn_on (no params) restores last brightness on dimmers
+  const toggle = async (eid) => {
+    if (!ctx.hass) return;
+    const on = ctx.hass.states[eid]?.state === "on";
+    try {
+      await ctx.hass.callService("light", on ? "turn_off" : "turn_on", { entity_id: eid });
+      setTimeout(() => ctx.actions.renderRooms(), 600);
+    } catch(err) {
+      ctx.toast("Could not toggle " + eid, true);
+    }
+  };
+
+  // Group positioned lights by room
+  const byRoom = {};
+  for (const l of lights) {
+    if (l.area_name) (byRoom[l.area_name] = byRoom[l.area_name] || []).push(l);
+  }
+  const unassigned = lights.filter(l => !l.area_name);
+
+  // ── Floor-plan image with hex overlay ────────────────────────────────────
+  if (active?.image_url) {
+    const VW = 1000, VH = 1000, HEX_R = 30;
+    const rb = active.room_bounds || {};
+
+    // Room centres from room_bounds (normalised 0-1 → SVG 0-1000)
+    const roomCentre = {};
+    for (const [room, b] of Object.entries(rb)) {
+      if (!b) continue;
+      if (b.type === "circle") {
+        roomCentre[room] = { x: (b.cx ?? 0.5) * VW, y: (b.cy ?? 0.5) * VH };
+      } else if (b.type === "poly" && b.points?.length >= 3) {
+        const pts = b.points;
+        roomCentre[room] = {
+          x: (pts.reduce((s, p) => s + p[0], 0) / pts.length) * VW,
+          y: (pts.reduce((s, p) => s + p[1], 0) / pts.length) * VH,
+        };
+      }
+    }
+
+    // SVG: hexagons only — no room labels, no scanner dots
+    let svgInner = "";
+    for (const [room, roomLights] of Object.entries(byRoom)) {
+      const ctr = roomCentre[room];
+      if (!ctr) continue;
+      const offsets = _hexCluster(roomLights.length, HEX_R);
+      roomLights.forEach((l, idx) => {
+        const [dx, dy] = offsets[idx];
+        const hx = (ctr.x + dx).toFixed(1);
+        const hy = (ctr.y + dy).toFixed(1);
+        const on     = l.state === "on";
+        const fill   = on ? "#fbbf24" : "#374151";
+        const stroke = on ? "#f59e0b" : "#4b5563";
+        const tCol   = on ? "#111827" : "#fbbf24";
+        svgInner +=
+          `<g class="lhex" data-eid="${_escSVG(l.entity_id)}" style="cursor:pointer">` +
+          `<polygon points="${_hexPts(+hx, +hy, HEX_R)}" fill="${fill}" stroke="${stroke}" stroke-width="2.5"/>` +
+          `<text x="${hx}" y="${hy}" text-anchor="middle" dominant-baseline="middle" ` +
+          `font-family="monospace" font-size="13" font-weight="700" fill="${tCol}" pointer-events="none">${_escSVG(l.code)}</text>` +
+          `</g>`;
+      });
+    }
+
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "position:relative;width:100%;margin-bottom:16px";
+
+    const imgEl = document.createElement("img");
+    imgEl.src   = active.image_url;
+    imgEl.style.cssText = "width:100%;display:block;border-radius:6px";
+    imgEl.alt   = "Floor plan";
+    wrap.appendChild(imgEl);
+
+    const svgWrap = document.createElement("div");
+    svgWrap.style.cssText = "position:absolute;inset:0;pointer-events:none";
+    svgWrap.innerHTML =
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VW} ${VH}" ` +
+      `width="100%" height="100%" style="position:absolute;inset:0">${svgInner}</svg>`;
+    wrap.appendChild(svgWrap);
+
+    // Wire click / hover after first paint
+    requestAnimationFrame(() => {
+      const svg = svgWrap.querySelector("svg");
+      if (!svg) return;
+      svg.style.pointerEvents = "all";
+      svg.querySelectorAll(".lhex").forEach(g => {
+        g.addEventListener("click", e => { e.stopPropagation(); toggle(g.dataset.eid); });
+        g.addEventListener("mouseover", () => { g.style.opacity = "0.75"; });
+        g.addEventListener("mouseout",  () => { g.style.opacity = "1"; });
+      });
+    });
+
+    card.appendChild(wrap);
+
+    if (unassigned.length) {
+      card.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:10px" },
+        `${unassigned.length} light(s) not assigned to a room \u2014 shown in index only.`));
+    }
+  } else {
+    card.appendChild(el("div", { class: "muted", style: "padding:8px;margin-bottom:12px" },
+      "No floor plan loaded (or no room boundaries drawn). " +
+      "Upload a map and draw room bounds in the Edit tab to position lights on the map."));
+  }
+
+  // ── Light index table ─────────────────────────────────────────────────────
+  card.appendChild(el("div", {
+    style: "font-weight:700;font-size:13px;color:#e2e8f0;margin-bottom:6px",
+  }, `Light Index (${lights.length})`));
+
+  const tbl = el("table", { class: "table", style: "width:100%" });
+  tbl.appendChild(el("thead", {}, el("tr", {}, [
+    el("th", {}, "Code"),
+    el("th", {}, "Light"),
+    el("th", {}, "Room"),
+    el("th", {}, "State"),
+  ])));
+  const tbody = el("tbody");
+  for (const l of lights) {
+    const on = l.state === "on";
+    tbody.appendChild(el("tr", { style: "cursor:pointer", onclick: () => toggle(l.entity_id) }, [
+      el("td", { style: "font-family:monospace;font-weight:700;color:#52b788;font-size:12px" }, l.code),
+      el("td", {}, l.friendly_name),
+      el("td", { class: "muted" }, l.area_name || "\u2014"),
+      el("td", {}, el("span", {
+        style: `display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;` +
+               `background:${on ? "#fbbf24" : "#374151"};color:${on ? "#111827" : "#fbbf24"}`,
+      }, on ? "ON" : "OFF")),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  card.appendChild(tbl);
+
+  return card;
 }
