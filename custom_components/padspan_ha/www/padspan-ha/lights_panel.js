@@ -1,15 +1,15 @@
 /*
   PadSpan HA — Lights Control Panel
   ===================================
-  Standalone HA sidebar panel: full-house light control on the SVG floor plan.
-  Pure SVG room map — same style as 3D Stack — no floor plan images needed.
+  Standalone HA sidebar panel: full-house light control on the same isometric
+  3D floor-stack view used by the Overview tab.
   Tap a hexagon or table row to toggle a light on/off.
 
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.22";
-const BUILD_ID = "20260226T185227Z";
+const APP_VERSION = "0.5.23";
+const BUILD_ID = "20260226T191830Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -31,7 +31,7 @@ function el(tag, attrs={}, children=[]){
 }
 function escSVG(s){ return String(s??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;"); }
 
-// ── Room colour (deterministic from name, matches panel.js palette) ──────────
+// ── Room colour — same palette + hash as panel.js ────────────────────────────
 const ROOM_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa","#2dd4bf","#facc15"];
 function roomColor(name){
   let h=0; for(let i=0;i<name.length;i++) h=(h*31+name.charCodeAt(i))>>>0;
@@ -39,36 +39,214 @@ function roomColor(name){
 }
 
 // ── Hex geometry helpers ──────────────────────────────────────────────────────
-// Deterministic 3-char code: 1 letter + 2-digit number  (A01 … Z99)
 function lightCode(idx){
   const letter = String.fromCharCode(65 + Math.floor(idx/99));
   const num    = String((idx%99)+1).padStart(2,"0");
   return letter+num;
 }
 
-// SVG polygon points for a pointy-top regular hexagon, coords in SVG px
+// Flat-top hexagon points in SVG px (pointy-top orientation)
 function hexPts(cx, cy, r){
-  const pts = [];
-  for(let k=0; k<6; k++){
-    const a = (90+k*60)*Math.PI/180;
-    pts.push(`${(cx+r*Math.cos(a)).toFixed(2)},${(cy+r*Math.sin(a)).toFixed(2)}`);
+  const pts=[];
+  for(let k=0;k<6;k++){
+    const a=(90+k*60)*Math.PI/180;
+    pts.push(`${(cx+r*Math.cos(a)).toFixed(1)},${(cy+r*Math.sin(a)).toFixed(1)}`);
   }
   return pts.join(" ");
 }
 
-// Cluster offsets for N hexes around a room centre (touching formation)
+// Cluster offsets (SVG px) for N hexes touching around a centre
 function hexCluster(n, r){
-  const d = r*Math.sqrt(3)+2;
-  const ring = Array.from({length:6},(_,i)=>{
-    const a=(30+i*60)*Math.PI/180;
-    return [d*Math.cos(a), d*Math.sin(a)];
+  const d=r*Math.sqrt(3)+2;
+  const ring=Array.from({length:6},(_,i)=>{const a=(30+i*60)*Math.PI/180;return[d*Math.cos(a),d*Math.sin(a)];});
+  const pos=[[0,0],...ring];
+  if(n<=7) return pos.slice(0,n);
+  return Array.from({length:n},(_,i)=>{const col=i%3,row=Math.floor(i/3);return[(col-1)*d,row*d*0.87];});
+}
+
+// ── Isometric 3-D SVG builder (same projection as Overview) ──────────────────
+function buildIsoSVG(maps_list, byRoom, hiddenEids, focusZ, floorGap, horizGap){
+  const TILE=220, CX=380, CY=590, W=760, BASE_H=940;
+  const FG=floorGap, HG=horizGap||0;
+  const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
+  const HEX_R = 22;   // hexagon radius in SVG px
+
+  const iso = (wx,wy,wz)=>[CX+(wx-wy)*TILE*0.866+wz*HG, CY+(wx+wy)*TILE*0.5-wz*FG];
+  const pt  = c=>`${Math.round(c[0])},${Math.round(c[1])}`;
+  const pts = cs=>cs.map(pt).join(" ");
+
+  const visible = maps_list.filter(m=>!m._hidden);
+  const sorted  = [...visible].sort((a,b)=>(a.stack?.z_level||0)-(b.stack?.z_level||0));
+
+  const byLevel = new Map();
+  for(const m of sorted){
+    const z=m.stack?.z_level??0;
+    if(!byLevel.has(z)) byLevel.set(z,[]);
+    byLevel.get(z).push(m);
+  }
+  const sortedLevels=[...byLevel.keys()].sort((a,b)=>a-b);
+  const levelColor=(z)=>LAYER_PAL[sortedLevels.indexOf(z)%LAYER_PAL.length];
+  const LEGEND_H=sortedLevels.length*30+24;
+  const HTOTAL=BASE_H+LEGEND_H;
+
+  let s=`<svg viewBox="0 0 ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" `+
+    `style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
+  s+=`<rect width="${W}" height="${HTOTAL}" fill="#071008"/>`;
+
+  // Floor surface patterns (same as Overview)
+  s+=`<defs>`;
+  sortedLevels.forEach((z2,li)=>{
+    const c2=levelColor(z2);
+    if(li===0){
+      s+=`<pattern id="flrpat_${li}" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">`;
+      s+=`<path d="M12,2 C16,2 19,6 19,11 C19,16 16,21 12,22 C8,21 5,16 5,11 C5,6 8,2 12,2 Z" fill="none" stroke="${c2}" stroke-width="0.7" opacity="0.14"/>`;
+      s+=`<path d="M12,2 C13.5,0 15.5,0.5 14.5,2.5 C13.5,1.5 12,2 12,2 Z" fill="${c2}" opacity="0.11"/>`;
+      s+=`<circle cx="12" cy="15" r="1.4" fill="${c2}" opacity="0.1"/></pattern>`;
+    } else if(li===2){
+      s+=`<pattern id="flrpat_${li}" x="0" y="0" width="12" height="12" patternUnits="userSpaceOnUse">`;
+      s+=`<line x1="0" y1="12" x2="12" y2="0" stroke="${c2}" stroke-width="0.6" opacity="0.18"/>`;
+      s+=`<line x1="0" y1="0" x2="12" y2="12" stroke="${c2}" stroke-width="0.6" opacity="0.18"/></pattern>`;
+    } else if(li>=3){
+      s+=`<pattern id="flrpat_${li}" x="0" y="0" width="16" height="13.86" patternUnits="userSpaceOnUse">`;
+      s+=`<circle cx="0"  cy="0"     r="1.5" fill="${c2}" opacity="0.14"/>`;
+      s+=`<circle cx="8"  cy="6.93"  r="1.5" fill="${c2}" opacity="0.14"/>`;
+      s+=`<circle cx="16" cy="0"     r="1.5" fill="${c2}" opacity="0.14"/>`;
+      s+=`<circle cx="0"  cy="13.86" r="1.5" fill="${c2}" opacity="0.14"/>`;
+      s+=`<circle cx="16" cy="13.86" r="1.5" fill="${c2}" opacity="0.14"/></pattern>`;
+    }
   });
-  const positions = [[0,0],...ring];
-  if(n<=7) return positions.slice(0,n);
-  return Array.from({length:n},(_,i)=>{
-    const col=i%3, row=Math.floor(i/3);
-    return [(col-1)*d, row*d*0.87];
+  s+=`</defs>`;
+
+  if(!sorted.length){
+    s+=`<text x="${W/2}" y="${BASE_H/2}" text-anchor="middle" fill="#4a6052" font-size="14">No floor plans uploaded yet.</text>`;
+    s+=`</svg>`; return s;
+  }
+
+  const slabWZ=18/FG;
+  const hasBounds=sorted.some(m=>Object.keys(m.room_bounds||{}).length>0);
+
+  for(const [z,group] of [...byLevel.entries()].sort((a,b)=>a[0]-b[0])){
+    const isFocused=focusZ===null||focusZ===z;
+    const go=isFocused?1.0:0.1;
+    const lyrColor=levelColor(z);
+    const lidx=sortedLevels.indexOf(z);
+
+    // Bounding box for this group
+    let x0=Infinity,y0_=Infinity,x1=-Infinity,y1_=-Infinity;
+    for(const m of group){
+      const stk=m.stack||{}, ox=stk.x_offset||0, oy__=stk.y_offset||0, sc=stk.scale||1.0;
+      const ar=(m.image?.height||600)/(m.image?.width||800);
+      const arRefBB=stk.ref_ar||ar, sxAdjBB=stk.scale_x_adj||1.0;
+      const rot=(stk.rotation||0)*Math.PI/180;
+      const bbPt=(px,py)=>{
+        const dx=(px-0.5)*sc*sxAdjBB, dy=(py-0.5)*sc*arRefBB;
+        const rx=dx*Math.cos(rot)-dy*Math.sin(rot), ry=dx*Math.sin(rot)+dy*Math.cos(rot);
+        return[(0.5+ox)+rx, arRefBB*(0.5+oy__)+ry];
+      };
+      for(const [cx,cy] of [[0,0],[1,0],[1,1],[0,1]]){
+        const[wx,wy]=bbPt(cx,cy);
+        x0=Math.min(x0,wx); y0_=Math.min(y0_,wy); x1=Math.max(x1,wx); y1_=Math.max(y1_,wy);
+      }
+    }
+    if(!isFinite(x0)){x0=0;y0_=0;x1=1;y1_=0.75;}
+
+    const TL=iso(x0,y0_,z), TR=iso(x1,y0_,z), BR=iso(x1,y1_,z), BL=iso(x0,y1_,z);
+    const TR_b=iso(x1,y0_,z-slabWZ), BR_b=iso(x1,y1_,z-slabWZ), BL_b=iso(x0,y1_,z-slabWZ);
+
+    s+=`<g opacity="${go}">`;
+    // Slab sides
+    s+=`<polygon points="${pts([TR,BR,BR_b,TR_b])}" fill="#0d2318" fill-opacity="0.35" stroke="#253e2e" stroke-width="0.8"/>`;
+    s+=`<polygon points="${pts([BL,BR,BR_b,BL_b])}" fill="#0a1a12" fill-opacity="0.3" stroke="#253e2e" stroke-width="0.8"/>`;
+    s+=`<polygon points="${pts([TL,TR,BR,BL])}" fill="#0f2017" fill-opacity="0.06" stroke="${lyrColor}" stroke-width="1.5" stroke-dasharray="10,5" opacity="0.5"/>`;
+    if(lidx!==1) s+=`<polygon points="${pts([TL,TR,BR,BL])}" fill="url(#flrpat_${lidx})" stroke="none"/>`;
+
+    // Room polygons + room name labels + hexagons
+    for(const m of group){
+      const stk=m.stack||{}, ox=stk.x_offset||0, oy__=stk.y_offset||0, sc=stk.scale||1.0;
+      const ar=(m.image?.height||600)/(m.image?.width||800);
+      const rotRad=(stk.rotation||0)*Math.PI/180;
+      const arRef=stk.ref_ar||ar, sxAdj=stk.scale_x_adj||1.0;
+      const mapPt=(px,py)=>{
+        const dx=(px-0.5)*sc*sxAdj, dy=(py-0.5)*sc*arRef;
+        const rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad), ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);
+        return[(0.5+ox)+rx, arRef*(0.5+oy__)+ry];
+      };
+
+      for(const [room,b] of Object.entries(m.room_bounds||{})){
+        if(!b) continue;
+        const color=roomColor(room);
+
+        let roomCx, roomCy;   // world-space centroid
+        if(b.type==="poly" && Array.isArray(b.points) && b.points.length>=3){
+          // Draw room polygon
+          const pp=b.points.map(p=>{const[wx,wy]=mapPt(p[0],p[1]);return pt(iso(wx,wy,z));}).join(" ");
+          s+=`<polygon points="${pp}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9"/>`;
+          roomCx=b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
+          roomCy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
+        } else if(b.type==="circle"){
+          // Draw room circle (approximated as projected ellipse via poly)
+          const N=16, rcx=b.cx??0.5, rcy=b.cy??0.5, rr=b.r??0.12;
+          const pp=Array.from({length:N},(_,i)=>{
+            const a=i*2*Math.PI/N;
+            const[wx,wy]=mapPt(rcx+rr*Math.cos(a), rcy+rr*Math.sin(a));
+            return pt(iso(wx,wy,z));
+          }).join(" ");
+          s+=`<polygon points="${pp}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9"/>`;
+          roomCx=rcx; roomCy=rcy;
+        } else { continue; }
+
+        // Room centroid in ISO screen coords
+        const [lwx,lwy]=mapPt(roomCx,roomCy);
+        const [lix,liy]=iso(lwx,lwy,z);
+
+        // Room name label
+        s+=`<text x="${Math.round(lix)}" y="${Math.round(liy)}" text-anchor="middle" dominant-baseline="middle" `+
+          `fill="${color}" font-size="8" font-family="system-ui,sans-serif" opacity="0.7" pointer-events="none">`+
+          `${escSVG(room)}</text>`;
+
+        // Hexagon cluster for this room's lights
+        const roomLights=(byRoom[room]||[]).filter(l=>!hiddenEids.has(l.entity_id));
+        if(!roomLights.length) continue;
+        const offsets=hexCluster(roomLights.length, HEX_R);
+        roomLights.forEach((l,idx)=>{
+          const [dx,dy]=offsets[idx];
+          const hx=(lix+dx).toFixed(1), hy=(liy+dy).toFixed(1);
+          const on=l.state==="on";
+          const fill=on?"#fbbf24":"#374151";
+          const stroke=on?"#f59e0b":"#4b5563";
+          const tCol=on?"#111827":"#fbbf24";
+          s+=`<g class="lhex" data-eid="${escSVG(l.entity_id)}" style="cursor:pointer">`;
+          s+=`<polygon points="${hexPts(+hx,+hy,HEX_R)}" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
+          s+=`<text x="${hx}" y="${hy}" text-anchor="middle" dominant-baseline="middle" `+
+            `font-family="monospace" font-size="11" font-weight="700" fill="${tCol}" pointer-events="none">`+
+            `${escSVG(l.code)}</text></g>`;
+        });
+      }
+    }
+
+    // Floor level badge
+    s+=`<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="15" fill="${lyrColor}" opacity="0.95"/>`;
+    s+=`<text x="${Math.round(BL[0])}" y="${Math.round(BL[1])+6}" text-anchor="middle" fill="#071008" font-size="14" font-weight="700">${lidx+1}</text>`;
+    s+=`</g>`;
+  }
+
+  if(!hasBounds && sorted.length){
+    s+=`<text x="${W/2}" y="${BASE_H-20}" text-anchor="middle" fill="#4a6052" font-size="15">`+
+      `Go to Maps \u2192 Edit to draw room boundaries</text>`;
+  }
+
+  // Legend
+  s+=`<line x1="10" y1="${BASE_H+4}" x2="${W-10}" y2="${BASE_H+4}" stroke="#1b3526" stroke-width="0.8"/>`;
+  sortedLevels.forEach((z,i)=>{
+    const ly=BASE_H+10+i*30, color=levelColor(z);
+    const groupLabel=byLevel.get(z).map(m=>m.name||m.id).join(" + ");
+    s+=`<circle cx="18" cy="${ly+11}" r="11" fill="${color}" opacity="0.9"/>`;
+    s+=`<text x="18" y="${ly+15}" text-anchor="middle" fill="#071008" font-size="12" font-weight="700">${i+1}</text>`;
+    s+=`<text x="36" y="${ly+15}" fill="${color}" font-size="18" font-weight="500">${escSVG(groupLabel)}</text>`;
   });
+
+  s+=`</svg>`;
+  return s;
 }
 
 // ── Custom element ────────────────────────────────────────────────────────────
@@ -80,12 +258,13 @@ class PadSpanLightsApp extends HTMLElement {
     this._pollTimer = null;
     this.state = {
       maps:        { list:[] },
-      activeMapId: null,
-      model:       { areas:[] },
-      _lightsReg:  null,   // { ts, areaMap }
-      _zoom:       1.0,    // view zoom multiplier
-      _rotation:   0,      // degrees
-      _hidden:     new Set(), // entity_ids hidden from map
+      model:       { areas:[], floors:[] },
+      _lightsReg:  null,
+      _hidden:     new Set(),
+      _focusZ:     null,   // null = all floors
+      _floorGap:   150,    // vertical separation between floors
+      _horizGap:   0,      // horizontal L/R offset between floors
+      _zoom:       1.0,
     };
   }
 
@@ -107,290 +286,230 @@ class PadSpanLightsApp extends HTMLElement {
 
   async _poll(){
     if(!this._hass) return;
-    // Refresh light registry every 60 s, otherwise just re-render with fresh hass.states
     if(!this.state._lightsReg || Date.now()-this.state._lightsReg.ts > 60000)
       await this._loadLightsReg();
     this._render();
   }
 
-  // ── Data loaders ──────────────────────────────────────────────────────────
   async _loadMaps(){
     try{
       const res = await this._hass.callWS({ type:"padspan_ha/maps_list" });
       this.state.maps.list = res?.maps || [];
-      if(!this.state.activeMapId && this.state.maps.list.length)
-        this.state.activeMapId = this.state.maps.list[0].id;
-    }catch(e){ /* non-fatal */ }
+    }catch(e){}
   }
 
   async _loadModel(){
     try{
       const res = await this._hass.callWS({ type:"padspan_ha/model_get" });
-      this.state.model = { areas: res?.areas || [] };
-    }catch(e){ /* non-fatal */ }
+      this.state.model = { areas: res?.areas||[], floors: res?.floors||[] };
+    }catch(e){}
   }
 
   async _loadLightsReg(){
     try{
       const reg   = await this._hass.callWS({ type:"config/entity_registry/list" });
       const areas = this.state.model.areas;
-      const areaIdToName = {};
-      for(const a of areas) areaIdToName[a.id] = a.name;
-      const areaMap = {};
+      const areaIdToName={};
+      for(const a of areas) areaIdToName[a.id]=a.name;
+      const areaMap={};
       for(const e of reg){
         if(e.entity_id.startsWith("light."))
-          areaMap[e.entity_id] = e.area_id ? (areaIdToName[e.area_id]||null) : null;
+          areaMap[e.entity_id]=e.area_id?(areaIdToName[e.area_id]||null):null;
       }
-      this.state._lightsReg = { ts:Date.now(), areaMap };
+      this.state._lightsReg={ts:Date.now(), areaMap};
     }catch(e){
-      this.state._lightsReg = { ts:Date.now(), areaMap:{} };
+      this.state._lightsReg={ts:Date.now(), areaMap:{}};
     }
   }
 
-  // ── Toggle light ──────────────────────────────────────────────────────────
   async _toggle(eid){
     if(!this._hass) return;
-    const on = this._hass.states[eid]?.state==="on";
+    const on=this._hass.states[eid]?.state==="on";
     try{
       await this._hass.callService("light", on?"turn_off":"turn_on", {entity_id:eid});
       setTimeout(()=>this._render(), 600);
-    }catch(e){
-      this._toast("Could not toggle "+eid, true);
-    }
+    }catch(e){ this._toast("Could not toggle "+eid, true); }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
   _render(){
     if(!this.shadowRoot) return;
-    const $c = this.shadowRoot.querySelector("#content");
+    const $c=this.shadowRoot.querySelector("#content");
     if(!$c) return;
     while($c.firstChild) $c.removeChild($c.firstChild);
     $c.appendChild(this._buildUI());
   }
 
   _buildUI(){
-    const root = el("div",{});
+    const root=el("div",{});
 
-    // ── Header ───────────────────────────────────────────────────────────────
+    // ── Header ────────────────────────────────────────────────────────────────
     root.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap"},[
       el("div",{style:"font-size:18px;font-weight:800;color:#e2e8f0"},"Lights"),
       el("span",{style:"font-size:12px;color:#94a3b8"},`v${APP_VERSION}`),
-      el("span",{class:"muted",style:"font-size:12px"},"Tap a hex or row to toggle \u00b7 Yellow\u00a0=\u00a0on \u00b7 Grey\u00a0=\u00a0off"),
+      el("span",{class:"muted",style:"font-size:12px"},"Tap hex or row to toggle \u00b7 Yellow\u00a0=\u00a0on \u00b7 Grey\u00a0=\u00a0off"),
       el("button",{class:"btn inline",style:"margin-left:auto",onclick:()=>{
-        this.state._lightsReg=null;
-        this._boot().then(()=>this._render());
+        this.state._lightsReg=null; this._boot().then(()=>this._render());
       }},"Refresh"),
     ]));
 
-    // Loading state
     if(!this.state._lightsReg){
-      root.appendChild(el("div",{style:"padding:24px;color:#52b788;font-family:monospace;font-size:13px"},"Loading light registry\u2026"));
+      root.appendChild(el("div",{style:"padding:24px;color:#52b788;font-family:monospace;font-size:13px"},"Loading\u2026"));
       return root;
     }
 
-    // ── Gather lights from live hass states ──────────────────────────────────
-    const states = this._hass?.states || {};
-    const regMap = this.state._lightsReg.areaMap;
-    const lights = Object.keys(states)
+    // ── Gather lights ─────────────────────────────────────────────────────────
+    const states=this._hass?.states||{};
+    const regMap=this.state._lightsReg.areaMap;
+    const lights=Object.keys(states)
       .filter(eid=>eid.startsWith("light."))
       .map(eid=>({
         entity_id:     eid,
-        friendly_name: states[eid].attributes?.friendly_name || eid,
+        friendly_name: states[eid].attributes?.friendly_name||eid,
         state:         states[eid].state,
         area_name:     regMap[eid]||null,
       }))
-      .sort((a,b)=>
-        (a.area_name||"\xff").localeCompare(b.area_name||"\xff")||
-        a.friendly_name.localeCompare(b.friendly_name));
+      .sort((a,b)=>(a.area_name||"\xff").localeCompare(b.area_name||"\xff")||
+                    a.friendly_name.localeCompare(b.friendly_name));
 
     if(!lights.length){
-      root.appendChild(el("div",{class:"muted",style:"padding:8px"},"No light entities found in Home Assistant."));
+      root.appendChild(el("div",{class:"muted",style:"padding:8px"},"No light entities found."));
       return root;
     }
-
     lights.forEach((l,i)=>{ l.code=lightCode(i); });
 
-    // ── Map selector ─────────────────────────────────────────────────────────
-    const maps   = this.state.maps.list;
-    const active = maps.find(m=>m.id===this.state.activeMapId) || maps[0] || null;
-
-    if(maps.length > 1){
-      root.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px"},[
-        el("span",{class:"muted",style:"font-size:12px"},"Floor plan:"),
-        ...maps.map(m=>el("button",{
-          class:"btn inline"+(m.id===active?.id?" primary":""),
-          onclick:()=>{ this.state.activeMapId=m.id; this._render(); },
-        }, m.name||m.id)),
-      ]));
-    }
-
-    // ── Group lights by room (skip hidden ones on the map) ────────────────────
-    const hidden = this.state._hidden;
+    // Group by room (hidden excluded from map)
+    const hidden=this.state._hidden;
     const byRoom={};
     for(const l of lights){
       if(l.area_name && !hidden.has(l.entity_id))
         (byRoom[l.area_name]=byRoom[l.area_name]||[]).push(l);
     }
-    const unassigned = lights.filter(l=>!l.area_name && !hidden.has(l.entity_id));
 
-    // ── Map card ──────────────────────────────────────────────────────────────
-    const mapCard = el("div",{class:"card",style:"padding:12px;margin-bottom:16px"});
+    // ── Map card with ISO 3D view ─────────────────────────────────────────────
+    const mapCard=el("div",{class:"card",style:"padding:12px;margin-bottom:16px"});
 
-    // Zoom / Rotate controls — same style as 3D Stack tab
-    const ctrlRow = el("div",{style:"display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px"});
-
-    // References to the stage so button closures can update it live
-    const outerWrap = el("div",{style:"overflow:auto;border-radius:6px;background:#071008"});
-    const stageWrap = el("div",{style:`width:${Math.round(this.state._zoom*100)}%;min-width:240px`});
-    outerWrap.appendChild(stageWrap);
-
-    const applyTransform = ()=>{
-      stageWrap.style.width = `${Math.round(this.state._zoom*100)}%`;
-      if(this.state._rotation !== 0){
-        stageWrap.style.transform = `rotate(${this.state._rotation}deg)`;
-        stageWrap.style.transformOrigin = "top center";
-      } else {
-        stageWrap.style.transform = "";
-      }
+    // Controls row
+    const maps_list=this.state.maps.list;
+    const sortedLevels=[...new Set(maps_list.map(m=>m.stack?.z_level??0))].sort((a,b)=>a-b);
+    const floors=this.state.model.floors||[];
+    const floorLabel=(z)=>{
+      const f=floors.find(f=>f.level===z);
+      return f?(f.name||`L${z}`):`L${z}`;
     };
 
-    ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap"},"Zoom:"));
+    const isoDiv=document.createElement("div");
+    isoDiv.style.cssText=`overflow:auto;border-radius:8px;background:#071008;padding:8px;`+
+      `width:${Math.round(this.state._zoom*100)}%`;
+    isoDiv.innerHTML=buildIsoSVG(maps_list, byRoom, hidden, this.state._focusZ, this.state._floorGap, this.state._horizGap);
+
+    const rebuildISO=()=>{
+      isoDiv.style.width=`${Math.round(this.state._zoom*100)}%`;
+      isoDiv.innerHTML=buildIsoSVG(maps_list, byRoom, hidden, this.state._focusZ, this.state._floorGap, this.state._horizGap);
+      wireHexClicks();
+    };
+
+    const wireHexClicks=()=>{
+      requestAnimationFrame(()=>{
+        isoDiv.querySelectorAll(".lhex").forEach(g=>{
+          g.addEventListener("click",e=>{e.stopPropagation();this._toggle(g.dataset.eid);});
+          g.addEventListener("mouseover",()=>{g.style.opacity="0.75";});
+          g.addEventListener("mouseout", ()=>{g.style.opacity="1";});
+        });
+      });
+    };
+
+    // Floor focus slider
+    const ctrlRow=el("div",{style:"display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px"});
+
+    if(sortedLevels.length > 1){
+      const focusLbl=el("span",{style:"font-size:12px;color:#94a3b8;min-width:72px"},
+        this.state._focusZ===null?"All floors":floorLabel(this.state._focusZ));
+      const focusSlider=document.createElement("input");
+      focusSlider.type="range"; focusSlider.min="0"; focusSlider.max=String(sortedLevels.length);
+      focusSlider.style.cssText="width:120px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+      focusSlider.value=this.state._focusZ===null?"0":String(sortedLevels.indexOf(this.state._focusZ)+1);
+      focusSlider.addEventListener("input",()=>{
+        const idx=parseInt(focusSlider.value,10);
+        this.state._focusZ=idx===0?null:sortedLevels[idx-1];
+        focusLbl.textContent=this.state._focusZ===null?"All floors":floorLabel(this.state._focusZ);
+        rebuildISO();
+      });
+      ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap"},"Floor:"));
+      ctrlRow.appendChild(focusSlider);
+      ctrlRow.appendChild(focusLbl);
+    }
+
+    // Floor gap slider
+    const gapLbl=el("span",{style:"font-size:12px;color:#94a3b8;min-width:38px"},String(this.state._floorGap));
+    const gapSlider=document.createElement("input");
+    gapSlider.type="range"; gapSlider.min="50"; gapSlider.max="400"; gapSlider.step="10";
+    gapSlider.style.cssText="width:100px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+    gapSlider.value=String(this.state._floorGap);
+    gapSlider.addEventListener("input",()=>{
+      this.state._floorGap=parseInt(gapSlider.value,10);
+      gapLbl.textContent=String(this.state._floorGap);
+      rebuildISO();
+    });
+    ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"Spacing:"));
+    ctrlRow.appendChild(gapSlider);
+    ctrlRow.appendChild(gapLbl);
+
+    // L/R horizontal offset slider
+    const horizLbl=el("span",{style:"font-size:12px;color:#94a3b8;min-width:38px"},String(this.state._horizGap));
+    const horizSlider=document.createElement("input");
+    horizSlider.type="range"; horizSlider.min="-120"; horizSlider.max="120"; horizSlider.step="10";
+    horizSlider.style.cssText="width:100px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+    horizSlider.value=String(this.state._horizGap);
+    horizSlider.addEventListener("input",()=>{
+      this.state._horizGap=parseInt(horizSlider.value,10);
+      horizLbl.textContent=String(this.state._horizGap);
+      rebuildISO();
+    });
+    ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"L/R:"));
+    ctrlRow.appendChild(horizSlider);
+    ctrlRow.appendChild(horizLbl);
+
+    // Reset button
+    ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px;font-size:12px;padding:2px 10px",
+      onclick:()=>{
+        this.state._floorGap=150; this.state._horizGap=0; this.state._focusZ=null; this.state._zoom=1.0;
+        gapSlider.value="150";   gapLbl.textContent="150";
+        horizSlider.value="0";   horizLbl.textContent="0";
+        isoDiv.style.width="100%";
+        rebuildISO();
+      }
+    },"Reset"));
+
+    // Zoom controls
+    ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"Zoom:"));
     ctrlRow.appendChild(el("button",{class:"btn inline",onclick:()=>{
-      this.state._zoom = Math.max(0.3, Math.round((this.state._zoom-0.1)*10)/10);
-      applyTransform();
+      this.state._zoom=Math.max(0.4,Math.round((this.state._zoom-0.1)*10)/10);
+      isoDiv.style.width=`${Math.round(this.state._zoom*100)}%`;
     }},"Zoom \u2212"));
     ctrlRow.appendChild(el("button",{class:"btn inline",onclick:()=>{
-      this.state._zoom=1.0; this.state._rotation=0; applyTransform();
+      this.state._zoom=1.0; isoDiv.style.width="100%";
     }},"100%"));
     ctrlRow.appendChild(el("button",{class:"btn inline",onclick:()=>{
-      this.state._zoom = Math.min(3.0, Math.round((this.state._zoom+0.1)*10)/10);
-      applyTransform();
+      this.state._zoom=Math.min(2.5,Math.round((this.state._zoom+0.1)*10)/10);
+      isoDiv.style.width=`${Math.round(this.state._zoom*100)}%`;
     }},"Zoom +"));
 
-    ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"Rotate:"));
-    ctrlRow.appendChild(el("button",{class:"btn inline",onclick:()=>{
-      this.state._rotation = Math.round(this.state._rotation - 15); applyTransform();
-    }},"\u221215\u00b0"));
-    ctrlRow.appendChild(el("button",{class:"btn inline",onclick:()=>{
-      this.state._rotation = Math.round(this.state._rotation + 15); applyTransform();
-    }},"+15\u00b0"));
-    ctrlRow.appendChild(el("button",{class:"btn inline",onclick:()=>{
-      this.state._rotation=0; applyTransform();
-    }},"0\u00b0"));
-
     mapCard.appendChild(ctrlRow);
-
-    // ── Pure SVG room map (same style as _stackMapSVGStr, scaled to 1000×1000) ─
-    const VW=1000, VH=1000, HEX_R=30;
-    const rb       = active?.room_bounds || {};
-    const hasRooms = Object.keys(rb).length > 0;
-
-    // Compute room centres in SVG px
-    const roomCentre={};
-    for(const [room, b] of Object.entries(rb)){
-      if(!b) continue;
-      if(b.type==="circle"){
-        roomCentre[room]={ x:(b.cx??0.5)*VW, y:(b.cy??0.5)*VH };
-      } else if(b.type==="poly" && Array.isArray(b.points) && b.points.length>=3){
-        const pts=b.points;
-        roomCentre[room]={
-          x:(pts.reduce((s,p)=>s+p[0],0)/pts.length)*VW,
-          y:(pts.reduce((s,p)=>s+p[1],0)/pts.length)*VH,
-        };
-      }
-    }
-
-    let svgInner="";
-
-    // Background + border (matches _stackMapSVGStr)
-    svgInner += `<rect x="5" y="5" width="${VW-10}" height="${VH-10}" fill="#071008" stroke="#1b3526" stroke-width="8"/>`;
-
-    if(hasRooms){
-      // Room shapes + names
-      for(const [room, b] of Object.entries(rb)){
-        if(!b) continue;
-        const col = roomColor(room);
-        if(b.type==="poly" && Array.isArray(b.points) && b.points.length>=3){
-          const pts = b.points.map(p=>`${(p[0]*VW).toFixed(1)},${(p[1]*VH).toFixed(1)}`).join(" ");
-          svgInner += `<polygon points="${pts}" fill="${col}33" stroke="${col}" stroke-width="3"/>`;
-          const cx = b.points.reduce((s,p)=>s+p[0],0)/b.points.length*VW;
-          const cy = b.points.reduce((s,p)=>s+p[1],0)/b.points.length*VH;
-          svgInner += `<text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" text-anchor="middle" dominant-baseline="middle" `+
-            `fill="${col}" font-size="30" font-family="system-ui,sans-serif" opacity="0.7" pointer-events="none">${escSVG(room)}</text>`;
-        } else if(b.type==="circle"){
-          const cx=(b.cx??0.5)*VW, cy=(b.cy??0.5)*VH, r=(b.r??0.12)*VW;
-          svgInner += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="${col}33" stroke="${col}" stroke-width="3"/>`;
-          svgInner += `<text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" text-anchor="middle" dominant-baseline="middle" `+
-            `fill="${col}" font-size="30" font-family="system-ui,sans-serif" opacity="0.7" pointer-events="none">${escSVG(room)}</text>`;
-        }
-      }
-
-      // Hexagons — one per light, clustered at room centre
-      for(const [room, roomLights] of Object.entries(byRoom)){
-        const ctr=roomCentre[room];
-        if(!ctr) continue;
-        const offsets=hexCluster(roomLights.length, HEX_R);
-        roomLights.forEach((l, idx)=>{
-          const [dx,dy]=offsets[idx];
-          const hx=(ctr.x+dx).toFixed(1);
-          const hy=(ctr.y+dy).toFixed(1);
-          const on    =l.state==="on";
-          const fill  =on?"#fbbf24":"#374151";
-          const stroke=on?"#f59e0b":"#4b5563";
-          const tCol  =on?"#111827":"#fbbf24";
-          svgInner+=
-            `<g class="lhex" data-eid="${escSVG(l.entity_id)}" style="cursor:pointer">`+
-            `<polygon points="${hexPts(+hx,+hy,HEX_R)}" fill="${fill}" stroke="${stroke}" stroke-width="2.5"/>`+
-            `<text x="${hx}" y="${hy}" text-anchor="middle" dominant-baseline="middle" `+
-            `font-family="monospace" font-size="13" font-weight="700" fill="${tCol}" pointer-events="none">`+
-            `${escSVG(l.code)}</text></g>`;
-        });
-      }
-
-    } else {
-      // No room bounds drawn yet
-      svgInner += `<text x="${VW/2}" y="${VH*0.43}" text-anchor="middle" dominant-baseline="middle" `+
-        `fill="#94a3b8" font-size="52" font-family="system-ui,sans-serif">${escSVG(active?.name||"No map selected")}</text>`;
-      svgInner += `<text x="${VW/2}" y="${VH*0.57}" text-anchor="middle" dominant-baseline="middle" `+
-        `fill="#4a6052" font-size="36" font-family="system-ui,sans-serif">`+
-        `Draw room bounds in PadSpan HA \u2192 Mapping \u2192 Edit</text>`;
-    }
-
-    // Map name label bottom-right (matches _stackMapSVGStr)
-    svgInner += `<text x="${VW*0.97}" y="${VH*0.97}" text-anchor="end" dominant-baseline="auto" `+
-      `fill="#94a3b8" font-size="26" font-family="system-ui,sans-serif">${escSVG(active?.name||"")}</text>`;
-
-    // Use innerHTML so SVG renders in correct namespace
-    stageWrap.innerHTML =
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VW} ${VH}" `+
-      `width="100%" style="display:block;aspect-ratio:1">${svgInner}</svg>`;
-
-    // Wire hex click events after DOM insertion
-    requestAnimationFrame(()=>{
-      const svg=stageWrap.querySelector("svg");
-      if(!svg) return;
-      svg.querySelectorAll(".lhex").forEach(g=>{
-        g.addEventListener("click", e=>{ e.stopPropagation(); this._toggle(g.dataset.eid); });
-        g.addEventListener("mouseover",()=>{ g.style.opacity="0.75"; });
-        g.addEventListener("mouseout", ()=>{ g.style.opacity="1"; });
-      });
-    });
-
-    mapCard.appendChild(outerWrap);
+    mapCard.appendChild(isoDiv);
+    wireHexClicks();
     root.appendChild(mapCard);
 
-    // ── Unassigned notice ────────────────────────────────────────────────────
+    // ── Unassigned notice ─────────────────────────────────────────────────────
+    const unassigned=lights.filter(l=>!l.area_name&&!hidden.has(l.entity_id));
     if(unassigned.length){
       root.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
         `${unassigned.length} light(s) not assigned to a room \u2014 shown in index only.`));
     }
 
-    // ── Light index table ────────────────────────────────────────────────────
-    const hiddenCount = lights.filter(l=>hidden.has(l.entity_id)).length;
-    const indexLabel = hiddenCount
-      ? `Light Index (${lights.length} \u00b7 ${hiddenCount} hidden from map)`
-      : `Light Index (${lights.length})`;
-    root.appendChild(el("div",{style:"font-weight:700;font-size:13px;color:#e2e8f0;margin-bottom:6px"}, indexLabel));
+    // ── Light index table ─────────────────────────────────────────────────────
+    const hiddenCount=lights.filter(l=>hidden.has(l.entity_id)).length;
+    root.appendChild(el("div",{style:"font-weight:700;font-size:13px;color:#e2e8f0;margin-bottom:6px"},
+      `Light Index (${lights.length}${hiddenCount?` \u00b7 ${hiddenCount} hidden from map`:""})`));
 
     const tbl=el("table",{class:"table",style:"width:100%"});
     tbl.appendChild(el("thead",{},el("tr",{},[
@@ -403,8 +522,8 @@ class PadSpanLightsApp extends HTMLElement {
     const tbody=el("tbody");
     for(const l of lights){
       const on=l.state==="on";
-      const isHidden = hidden.has(l.entity_id);
-      const row = el("tr",{style:`cursor:pointer;opacity:${isHidden?"0.45":"1"}`},[
+      const isHidden=hidden.has(l.entity_id);
+      const row=el("tr",{style:`cursor:pointer;opacity:${isHidden?"0.45":"1"}`},[
         el("td",{style:"font-family:monospace;font-weight:700;color:#52b788;font-size:12px"},l.code),
         el("td",{},l.friendly_name),
         el("td",{class:"muted"},l.area_name||"\u2014"),
@@ -414,16 +533,16 @@ class PadSpanLightsApp extends HTMLElement {
         },on?"ON":"OFF")),
         el("td",{style:"text-align:center"},el("button",{
           class:"btn inline",
-          style:`font-size:11px;padding:2px 6px;${isHidden?"opacity:0.5":""}`,
+          style:`font-size:11px;padding:2px 6px${isHidden?";opacity:0.5":""}`,
           onclick:(e)=>{
             e.stopPropagation();
             if(hidden.has(l.entity_id)) hidden.delete(l.entity_id);
             else hidden.add(l.entity_id);
             this._render();
           },
-        }, isHidden?"Show":"Hide")),
+        },isHidden?"Show":"Hide")),
       ]);
-      row.addEventListener("click", ()=>this._toggle(l.entity_id));
+      row.addEventListener("click",()=>this._toggle(l.entity_id));
       tbody.appendChild(row);
     }
     tbl.appendChild(tbody);
@@ -432,7 +551,6 @@ class PadSpanLightsApp extends HTMLElement {
     return root;
   }
 
-  // ── Toast notification ────────────────────────────────────────────────────
   _toast(msg, isError=false){
     const t=document.createElement("div");
     t.textContent=msg;
@@ -445,7 +563,6 @@ class PadSpanLightsApp extends HTMLElement {
     setTimeout(()=>{ try{document.body.removeChild(t);}catch(_){} },3500);
   }
 
-  // ── Shadow DOM ────────────────────────────────────────────────────────────
   connectedCallback(){
     if(!this.shadowRoot) this.attachShadow({mode:"open"});
     this.style.display="block";
