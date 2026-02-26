@@ -8,8 +8,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.29";
-const BUILD_ID = "20260226T202740Z";
+const APP_VERSION = "0.5.30";
+const BUILD_ID = "20260226T210431Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -258,6 +258,9 @@ function buildIsoSVG(maps_list, byRoom, hiddenEids, focusZ, floorGap, horizGap){
   return s;
 }
 
+// ── Persistence key ──────────────────────────────────────────────────────────
+const LS_HIDDEN = "padspan_ha_lights_hidden";
+
 // ── Custom element ────────────────────────────────────────────────────────────
 class PadSpanLightsApp extends HTMLElement {
   constructor(){
@@ -269,12 +272,19 @@ class PadSpanLightsApp extends HTMLElement {
       maps:        { list:[] },
       model:       { areas:[], floors:[] },
       _lightsReg:  null,
-      _hidden:     new Set(),
+      _hidden:     this._loadHidden(),
       _focusIdx:   0,      // index into _isoPos positions array (0 = all floors)
       _floorGap:   150,    // vertical separation between floors
       _horizGap:   0,      // horizontal L/R offset between floors
       _zoom:       1.0,
     };
+  }
+
+  _loadHidden(){
+    try{ return new Set(JSON.parse(localStorage.getItem(LS_HIDDEN)||"[]")); }catch(_){ return new Set(); }
+  }
+  _saveHidden(){
+    try{ localStorage.setItem(LS_HIDDEN, JSON.stringify([...this.state._hidden])); }catch(_){}
   }
 
   set hass(hass){
@@ -615,6 +625,7 @@ class PadSpanLightsApp extends HTMLElement {
             e.stopPropagation();
             if(hidden.has(l.entity_id)) hidden.delete(l.entity_id);
             else hidden.add(l.entity_id);
+            this._saveHidden();
             this._render();
           },
         },isHidden?"Show":"Hide")),
