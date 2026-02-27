@@ -25,6 +25,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "path_loss_exp":   2.5,    # path-loss exponent n (distance formula)
     "hidden_map_ids":  [],     # map IDs hidden from 3D stack view
     "scanner_offsets": {},     # {source_name: offset_dBm} — manual per-scanner RSSI trim
+    "kalman_q": 0.125,             # Kalman process noise (RSSI responsiveness)
+    "kalman_r": 8.0,               # Kalman measurement noise (smoothing strength)
     "health_reminder_enabled": False,  # monthly calibration accuracy reminder (off by default)
     "health_reminder_last_ts":  None,  # epoch seconds when reminder was last shown
     # 3D isometric view layout (Maps tab)

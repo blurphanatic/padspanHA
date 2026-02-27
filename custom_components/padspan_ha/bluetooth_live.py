@@ -98,11 +98,20 @@ def _service_info_to_record(si: Any, seen: Optional[dt.datetime] = None) -> Dict
     except Exception:
         svc_out = {}
 
+    # TX Power Level AD type (0x0A) — device's declared transmit power at 1 m.
+    # When present, use this instead of the static ref_power config to improve distance accuracy.
+    # ESPresense uses the same approach for automatic per-device calibration.
+    tx_power = getattr(si, "tx_power", None)
+    if tx_power is None:
+        adv = getattr(si, "advertisement", None)
+        tx_power = getattr(adv, "tx_power", None) if adv is not None else None
+
     return {
         "address": address,
         "name": name or address,
         "source": source,
         "rssi": rssi,
+        "tx_power": int(tx_power) if tx_power is not None else None,
         "last_seen": seen_dt.isoformat(),
         # age_s is filled in get_snapshot so it's relative to snapshot time
         "manufacturer_data": manuf_out,

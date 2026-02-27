@@ -12,10 +12,21 @@ between adjacent rooms every few seconds.
 
 Two-stage pipeline applied each poll cycle:
 
-  Stage 1 — EMA RSSI per source
-    smoothed = EMA_ALPHA * live_rssi + (1 - EMA_ALPHA) * prev_smoothed
-    α = 0.35  →  ~65 % weight carried from previous reading; responds to real
-    movement in ~3–4 polls (30–40 s) while ignoring single-poll spikes.
+  Stage 1 — Kalman-filtered RSSI per source
+    Replaces the fixed-alpha EMA with an adaptive Kalman filter that adjusts
+    its gain based on estimated uncertainty.  This makes the filter more
+    responsive to genuine movement while still rejecting momentary RF spikes.
+
+    Kalman update per (device, scanner) pair:
+        K = P / (P + R)                  # Kalman gain
+        x = x + K * (rssi_raw - x)       # filtered estimate
+        P = (1 - K) * P + Q              # error covariance
+
+    Q (process noise) — how much the true RSSI is expected to vary per poll.
+      Default 0.125.  Increase for faster response; decrease for more smoothing.
+    R (measurement noise) — how noisy the raw measurement is.
+      Default 8.0.  Increase for more smoothing; decrease for faster response.
+
     Sources that stop reporting are decayed toward -100 dBm and pruned when they
     fall below -95 dBm (~4–5 polls after last seen).
 
@@ -25,13 +36,25 @@ Two-stage pipeline applied each poll cycle:
     only changes when one room appears ≥ VOTE_THRESHOLD (2) times in the window.
     At 10 s/poll this means a room switch requires ~20 s of consistent dominance.
 
+    The vote window is cleared when a device re-appears after being away, preventing
+    stale votes from the previous location from influencing re-entry assignment.
+
 HOME/AWAY PERSISTENCE
 ─────────────────────
 Devices that disappear from the live snapshot are kept in the result dict with a
-synthetic age_s that grows each poll.  Entities read age_s and return "not_home"
-when it exceeds the configured away timeout (Settings → Presence → Away timeout;
-default 300 s / 5 min).  Entities never go "unavailable" due to the device being
-away — "not_home" is a permanently valid HA state.
+synthetic age_s that grows each poll.  A 2-poll grace period (≈20 s) prevents a
+momentary signal gap from triggering an away event.  Entities read age_s and return
+"not_home" when it exceeds the configured away timeout (Settings → Presence → Away
+timeout; default 300 s / 5 min).  Entities never go "unavailable" — "not_home" is
+a permanently valid HA state.
+
+CONFIDENCE SCORE
+─────────────────
+Each poll computes room_confidence ∈ [0, 1] based on how decisive the vote window is:
+    confidence = top_room_vote_count / vote_window_size
+At 1.0 the device has been in the same room for every poll in the window.
+At 0.33 (with window=3) only one poll agreed.  Surface in automations via the
+extra_state_attributes of sensor.{device}_area.
 """
 from __future__ import annotations
 
@@ -44,27 +67,31 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, DATA_SETTINGS
+from .const import DOMAIN, DATA_SETTINGS, DEFAULT_KALMAN_Q, DEFAULT_KALMAN_R
 
 _LOGGER = logging.getLogger(__name__)
 
 _SCAN_INTERVAL = timedelta(seconds=10)
 
-# ── Smoothing constants ──────────────────────────────────────────────────────
-# Fraction of the new reading blended into the smoothed value each poll.
-# Lower = more smoothing, slower response.  0.35 is a good balance for BLE tags.
-_EMA_ALPHA: float = 0.35
+# ── Kalman / smoothing constants ─────────────────────────────────────────────
+# Defaults — overridable via Settings → Presence → Signal Filter
+_KALMAN_Q: float = DEFAULT_KALMAN_Q   # process noise
+_KALMAN_R: float = DEFAULT_KALMAN_R   # measurement noise
 
 # Rolling window for majority-vote room confirmation.
 # Candidate room must win VOTE_THRESHOLD out of the last VOTE_WINDOW polls.
 _VOTE_WINDOW: int = 3
 _VOTE_THRESHOLD: int = 2
 
-# RSSI threshold below which a silent source is pruned from the EMA cache.
+# RSSI threshold below which a silent source is pruned from the Kalman cache.
 _EMA_PRUNE_DBM: float = -95.0
 
 # Phantom RSSI injected each poll for sources that have gone silent (drives decay).
 _EMA_SILENCE_DBM: float = -100.0
+
+# Number of consecutive missed polls before a device starts accumulating age_s.
+# Grace period = _AWAY_GRACE_POLLS * _SCAN_INTERVAL = 2 * 10s = 20s.
+_AWAY_GRACE_POLLS: int = 2
 
 
 class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -82,16 +109,22 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_seen: dict[str, float] = {}
         # {key: obj_dict}  — most recent live copy of each object
         self._known_objs: dict[str, dict[str, Any]] = {}
+        # {key: int}  — consecutive polls the object has been absent
+        self._away_miss: dict[str, int] = {}
 
-        # ── RSSI smoothing state (keyed by MAC address) ──────────────────────
-        # {addr: {source: smoothed_rssi}}
+        # ── Kalman smoothing state (keyed by addr/key) ───────────────────────
+        # {addr: {source: filtered_rssi}}  — Kalman state estimate x
         self._ema_rssi: dict[str, dict[str, float]] = {}
+        # {addr: {source: error_covariance}}  — Kalman state P
+        self._kalman_p: dict[str, dict[str, float]] = {}
 
         # ── Room-vote state (keyed by object key) ────────────────────────────
         # {key: deque of recent candidate rooms}
         self._room_votes: dict[str, deque] = {}
         # {key: confirmed_room | None}  — the current stable room assignment
         self._confirmed_room: dict[str, str | None] = {}
+        # {key: float}  — room assignment confidence ∈ [0, 1]
+        self._room_confidence: dict[str, float] = {}
 
     # ── main update ──────────────────────────────────────────────────────────
 
@@ -105,14 +138,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         now = time.monotonic()
 
-        # Build {addr_upper: {source: rssi}} from raw BLE advertisements
+        # Build {addr_upper: {source: rssi}} and {addr_upper: tx_power} from advertisements
         addr_src_rssi: dict[str, dict[str, float]] = {}
+        addr_tx_power: dict[str, int] = {}
         for ad in (snap.get("ble") or {}).get("advertisements") or []:
             addr = str(ad.get("address") or "").upper()
             src  = ad.get("source")
             rssi = ad.get("rssi")
             if addr and src and rssi is not None:
                 addr_src_rssi.setdefault(addr, {})[str(src)] = float(rssi)
+            # Capture TX Power Level from the advertisement (BLE AD type 0x0A)
+            tx_pwr = ad.get("tx_power")
+            if addr and tx_pwr is not None and addr not in addr_tx_power:
+                addr_tx_power[addr] = int(tx_pwr)
 
         # Build {source: area} from BLE radios
         source_to_area: dict[str, str] = {}
@@ -154,8 +192,25 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not key:
                 continue
 
+            # ── Re-entry detection: clear stale smoothing state ──────────────
+            # If this device was absent (stale) in the previous poll and is now
+            # back, reset the vote window and Kalman state so old-location votes
+            # don't slow down re-assignment.
+            if self._known_objs.get(key, {}).get("_stale"):
+                self._room_votes.pop(key, None)
+                self._room_confidence.pop(key, None)
+                if obj.get("kind") in ("ble", "private_ble"):
+                    addr_clear = str(obj.get("address") or "").upper()
+                    self._ema_rssi.pop(addr_clear, None)
+                    self._kalman_p.pop(addr_clear, None)
+                elif obj.get("kind") == "ibeacon":
+                    self._ema_rssi.pop(key, None)
+                    self._kalman_p.pop(key, None)
+
             # Cache the live copy for home/away persistence
             self._last_seen[key] = now
+            self._away_miss[key] = 0  # reset grace counter — device is present
+
             self._known_objs[key] = dict(obj)
 
             # Apply smoothing only to BLE objects (entity-based ones are already
@@ -169,8 +224,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if smoothed_room:
                     obj["room"] = smoothed_room
                 obj["_smoothed"] = True
-                # Store EMA-smoothed per-source RSSI for scanner distance sensors
+                obj["room_confidence"] = self._room_confidence.get(key, 0.0)
+                # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(addr, {}))
+                # Propagate TX power if seen in advertisements
+                if addr in addr_tx_power:
+                    obj.setdefault("tx_power", addr_tx_power[addr])
                 self._known_objs[key] = dict(obj)  # refresh with smoothed data
             elif obj.get("kind") == "ibeacon":
                 obj = dict(obj)
@@ -188,7 +247,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if smoothed_room:
                     obj["room"] = smoothed_room
                 obj["_smoothed"] = True
-                # Store EMA-smoothed per-source RSSI for scanner distance sensors
+                obj["room_confidence"] = self._room_confidence.get(key, 0.0)
+                # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(key, {}))
                 self._known_objs[key] = dict(obj)  # refresh with smoothed data
 
@@ -197,6 +257,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ── Carry forward stale objects (home/away persistence) ──────────────
         for key, last_obj in self._known_objs.items():
             if key in result:
+                continue
+            # Grace period: don't start aging until _AWAY_GRACE_POLLS consecutive misses.
+            # This prevents a single missed advertisement from triggering an away event.
+            miss = self._away_miss.get(key, 0) + 1
+            self._away_miss[key] = miss
+            if miss < _AWAY_GRACE_POLLS:
+                # Grace period — treat as still present (age_s = 0)
+                grace = dict(last_obj)
+                grace["age_s"] = 0.0
+                grace.pop("_stale", None)
+                result[key] = grace
                 continue
             elapsed = now - self._last_seen.get(key, now)
             stale = dict(last_obj)
@@ -224,29 +295,51 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Run one poll of the two-stage smoothing pipeline for a BLE device.
         Returns the confirmed (stable) room name, or None if not yet established.
         vote_window / vote_threshold come from the per-poll configurable delay setting.
+        Stores room confidence in self._room_confidence[key].
         """
         live_srcs = addr_src_rssi.get(addr, {})
 
-        # ── Stage 1: EMA ─────────────────────────────────────────────────────
+        # ── Stage 1: Kalman-filtered RSSI per source ─────────────────────────
         if addr not in self._ema_rssi:
             self._ema_rssi[addr] = {}
+        if addr not in self._kalman_p:
+            self._kalman_p[addr] = {}
         ema = self._ema_rssi[addr]
+        kp  = self._kalman_p[addr]
+
+        # Read Q/R from settings (allows runtime tuning without restart)
+        try:
+            _st = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            _d = (_st.data if _st else {}) or {}
+            _Q = float(_d.get("kalman_q", _KALMAN_Q))
+            _R = float(_d.get("kalman_r", _KALMAN_R))
+        except Exception:
+            _Q = _KALMAN_Q
+            _R = _KALMAN_R
 
         # Update sources that reported this poll
         for src, rssi in live_srcs.items():
             if src in ema:
-                ema[src] = _EMA_ALPHA * rssi + (1.0 - _EMA_ALPHA) * ema[src]
+                p = kp.get(src, _R)
+                K = p / (p + _R)
+                ema[src] = ema[src] + K * (rssi - ema[src])
+                kp[src] = (1.0 - K) * p + _Q
             else:
-                ema[src] = rssi  # first observation — seed without smoothing
+                ema[src] = rssi   # first observation — seed without smoothing
+                kp[src] = _R      # start with maximum uncertainty
 
         # Decay sources that did NOT report (drifts toward -100 dBm and pruned)
         for src in list(ema):
             if src not in live_srcs:
-                ema[src] = _EMA_ALPHA * _EMA_SILENCE_DBM + (1.0 - _EMA_ALPHA) * ema[src]
+                p = kp.get(src, _R)
+                K = p / (p + _R)
+                ema[src] = ema[src] + K * (_EMA_SILENCE_DBM - ema[src])
+                kp[src] = (1.0 - K) * p + _Q
                 if ema[src] < _EMA_PRUNE_DBM:
                     del ema[src]
+                    kp.pop(src, None)
 
-        # Candidate room: area of source with highest smoothed RSSI
+        # Candidate room: area of source with highest Kalman-smoothed RSSI
         candidate: str | None = None
         if ema:
             best_src = max(ema, key=lambda s: ema[s])
@@ -267,15 +360,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 counts[v] = counts.get(v, 0) + 1
 
         confirmed = self._confirmed_room.get(key)
+        confidence = 0.0
         if counts:
             top_room = max(counts, key=lambda r: counts[r])
-            if counts[top_room] >= vote_threshold:
+            top_count = counts[top_room]
+            confidence = round(top_count / len(votes), 2)
+            if top_count >= vote_threshold:
                 if top_room != confirmed:
                     _LOGGER.debug(
-                        "Room confirmed for %s: %s → %s (votes %s)",
-                        key, confirmed, top_room, dict(counts),
+                        "Room confirmed for %s: %s → %s (votes %s, confidence %.0f%%)",
+                        key, confirmed, top_room, dict(counts), confidence * 100,
                     )
                 confirmed = top_room
 
         self._confirmed_room[key] = confirmed
+        self._room_confidence[key] = confidence
         return confirmed

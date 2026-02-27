@@ -690,6 +690,50 @@ function _settingsPresence(ctx, el){
     ),
   ]));
 
+  // ── Signal Filter (Kalman) ────────────────────────────────────────────────
+  const currentKalmanQ = (settings.kalman_q != null ? Number(settings.kalman_q) : 0.125);
+  const currentKalmanR = (settings.kalman_r != null ? Number(settings.kalman_r) : 8.0);
+  const kqInp = el("input", {
+    type: "number", min: "0.01", max: "1", step: "0.01", value: String(currentKalmanQ), style: inpStyle,
+  });
+  const krInp = el("input", {
+    type: "number", min: "0.5", max: "50", step: "0.5", value: String(currentKalmanR), style: inpStyle,
+  });
+  const kalmanSaveBtn = el("button", { class: "btn inline" }, "Save");
+  kalmanSaveBtn.addEventListener("click", async () => {
+    const q = Math.max(0.01, Math.min(1.0, parseFloat(kqInp.value) || 0.125));
+    const r = Math.max(0.5, Math.min(50.0, parseFloat(krInp.value) || 8.0));
+    try {
+      await ctx.actions.settingsSet({ kalman_q: q, kalman_r: r });
+      ctx.toast(`Signal filter saved: Q=${q}, R=${r}`);
+    } catch(e) { ctx.toast("Failed to save setting", true); }
+  });
+  wrap.appendChild(el("div", { class: "card" }, [
+    el("div", { class: "h2" }, "Signal Filter"),
+    el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
+      "Kalman filter parameters for per-scanner RSSI smoothing. " +
+      "Q (process noise) controls how quickly the filter responds to real movement — lower = more smoothing, slower response. " +
+      "R (measurement noise) controls how much individual RSSI readings are trusted — higher = more smoothing. " +
+      "ESPresense defaults: Q=0.125, R=8.0."
+    ),
+    el("div", { style: rowStyle }, [
+      el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Process noise Q"),
+      kqInp,
+      el("div", { class: "muted", style: "font-size:12px" }, "0.01–1.0 (default 0.125)"),
+    ]),
+    el("div", { style: rowStyle }, [
+      el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Measurement noise R"),
+      krInp,
+      el("div", { class: "muted", style: "font-size:12px" }, "0.5–50 (default 8.0)"),
+    ]),
+    el("div", { style: "margin-top:8px" }, kalmanSaveBtn),
+    el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
+      `Current: Q=${currentKalmanQ}, R=${currentKalmanR}. ` +
+      "Increase R to suppress noise at the cost of slower room detection. " +
+      "Increase Q for faster response to movement."
+    ),
+  ]));
+
   // ── Scanner RSSI Offsets ───────────────────────────────────────────────────
   const savedOffsets = settings.scanner_offsets || {};
   const radios = (ctx.state.live?.snapshot?.ble?.radios) || [];

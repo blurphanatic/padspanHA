@@ -56,6 +56,17 @@ def _distance_params(hass: HomeAssistant) -> tuple[float, float]:
     return max(-100.0, min(0.0, ref)), max(1.0, min(4.0, exp))
 
 
+def _calc_distance(rssi: float, obj: dict, hass: HomeAssistant) -> float:
+    """Calculate distance using path-loss formula, preferring device's own TX power."""
+    ref, n = _distance_params(hass)
+    # Use device's own advertised TX Power (from iBeacon payload or BLE AD type 0x0A)
+    # if available — this eliminates the need for manual ref_power calibration.
+    tx_power = obj.get("tx_power")
+    if tx_power is not None:
+        ref = float(tx_power)
+    return round(max(0.0, 10 ** ((ref - rssi) / (10.0 * n))), 1)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -173,6 +184,7 @@ class PadSpanAreaSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity):
             "age_s": round(age, 1) if isinstance(age, (int, float)) else None,
             "sources": obj.get("sources") if home else None,
             "home": home,
+            "room_confidence": obj.get("room_confidence"),
         }
         if obj.get("ibeacon_uuid"):
             attrs["ibeacon_uuid"] = obj["ibeacon_uuid"]
@@ -231,8 +243,7 @@ class PadSpanDistanceSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity
             return None
         if isinstance(age, (int, float)) and age > _away_timeout_s(self.coordinator.hass):
             return None
-        ref, n = _distance_params(self.coordinator.hass)
-        return round(max(0.0, 10 ** ((ref - float(rssi)) / (10.0 * n))), 1)
+        return _calc_distance(float(rssi), obj, self.coordinator.hass)
 
     @property
     def available(self) -> bool:
@@ -244,6 +255,7 @@ class PadSpanDistanceSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity
         age = obj.get("age_s")
         return {
             "rssi": obj.get("rssi"),
+            "tx_power": obj.get("tx_power"),
             "age_s": round(age, 1) if isinstance(age, (int, float)) else None,
             "room": obj.get("room"),
         }
@@ -307,8 +319,7 @@ class PadSpanScannerDistanceSensor(CoordinatorEntity[PresenceCoordinator], Senso
         rssi = (obj.get("_source_rssi") or {}).get(self._source)
         if rssi is None:
             return None
-        ref, n = _distance_params(self.coordinator.hass)
-        return round(max(0.0, 10 ** ((ref - float(rssi)) / (10.0 * n))), 1)
+        return _calc_distance(float(rssi), obj, self.coordinator.hass)
 
     @property
     def available(self) -> bool:

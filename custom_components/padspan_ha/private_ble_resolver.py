@@ -173,7 +173,13 @@ class PrivateBLEResolver:
             # Format UUID as standard 8-4-4-4-12
             h = uuid_bytes.hex()
             uuid = f"{h[0:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
-            return {"uuid": uuid, "major": major, "minor": minor}
+
+            # TX Power byte (index 22) — factory-calibrated RSSI at 1 m, signed int8.
+            # ESPresense uses this to automatically set ref_power per iBeacon.
+            raw_tx = payload[22]
+            tx_power = raw_tx if raw_tx < 128 else raw_tx - 256  # convert to signed
+
+            return {"uuid": uuid, "major": major, "minor": minor, "tx_power": tx_power}
         except Exception:
             return None
 
