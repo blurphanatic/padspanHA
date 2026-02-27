@@ -513,16 +513,21 @@ function _edit(ctx, map){
   ]);
 
   const saveRow = el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;margin-top:10px"},[
-    el("button",{class:"btn inline", onclick:async ()=>{
-      await ctx.actions.mapsUpdate({
-        map_id: map.id,
-        receivers: ctx.state.maps._draftReceivers,
-        room_bounds: ctx.state.maps._draftRoomBounds,
-        floor_id: ctx.state.maps._draftFloorId,
-        calibration: map.calibration||{},
-        notes: map.notes||""
-      });
-      alert("Saved layout ✔");
+    el("button",{class:"btn inline", onclick:async (e)=>{
+      const btn = e.currentTarget;
+      btn.disabled = true; btn.textContent = "Saving…";
+      try{
+        await ctx.actions.mapsUpdate({
+          map_id: map.id,
+          receivers: ctx.state.maps._draftReceivers,
+          room_bounds: ctx.state.maps._draftRoomBounds,
+          floor_id: ctx.state.maps._draftFloorId,
+          calibration: map.calibration||{},
+          notes: map.notes||""
+        });
+        ctx.toast("Layout saved ✔");
+      }catch(err){ ctx.toast("Save failed: "+String(err), true); }
+      btn.disabled = false; btn.textContent = "Save Layout";
     }}, "Save Layout"),
     el("button",{class:"btn inline", onclick:()=>{
       // reset drafts from last saved map
@@ -813,7 +818,7 @@ function _edit(ctx, map){
       });
 
       const startBtn = el("button",{class:"btn inline", onclick:()=>{
-        if(!ctx.state.maps._selectedRoom){ alert("Choose a room first."); return; }
+        if(!ctx.state.maps._selectedRoom){ ctx.toast("Choose a room first.", true); return; }
         ctx.state.maps._drawing = { room: ctx.state.maps._selectedRoom, points: [] };
         renderAll(); renderTools();
       }}, "Start drawing");
@@ -826,7 +831,7 @@ function _edit(ctx, map){
 
       const finishBtn = el("button",{class:"btn inline", onclick:()=>{
         const d = ctx.state.maps._drawing;
-        if(!d || !Array.isArray(d.points) || d.points.length < 3){ alert("Need at least 3 points."); return; }
+        if(!d || !Array.isArray(d.points) || d.points.length < 3){ ctx.toast("Need at least 3 points.", true); return; }
         ctx.state.maps._draftRoomBounds[d.room] = { type:"poly", points: d.points.map(p=>[clamp01(p[0]), clamp01(p[1])]) };
         ctx.state.maps._drawing = null;
         renderAll(); refreshList(); renderTools();
@@ -2763,6 +2768,23 @@ function _stack(ctx, maps, helpBtn){
     rebuildIso();
   });
 
+  // Persistent last-seen pins: show red target crosshairs for away objects
+  if(ctx.state.maps._persistentPins === undefined) ctx.state.maps._persistentPins = false;
+  const persistentBtn = el("button",{
+    class: "btn inline",
+    style: ctx.state.maps._persistentPins
+      ? "background:#7f1d1d;border-color:#ef4444;color:#fca5a5;font-weight:700"
+      : "color:#94a3b8",
+    title: "Show last-seen position of away objects as red target pins on the 3D map",
+    onclick: ()=>{
+      ctx.state.maps._persistentPins = !ctx.state.maps._persistentPins;
+      persistentBtn.style.cssText = ctx.state.maps._persistentPins
+        ? "background:#7f1d1d;border-color:#ef4444;color:#fca5a5;font-weight:700"
+        : "color:#94a3b8";
+      rebuildIso();
+    }
+  }, ctx.state.maps._persistentPins ? "⊕ Persistent ON" : "⊕ Persistent");
+
   if(ctx.state.maps._stackShowRoomList === undefined) ctx.state.maps._stackShowRoomList = false;
 
   const roomListToggle = el("button",{class:"btn inline", style:"margin-left:auto", onclick:()=>{
@@ -2819,6 +2841,7 @@ function _stack(ctx, maps, helpBtn){
     horizLbl,
     isoSaveBtn,
     isoResetBtn,
+    persistentBtn,
     isoSaveLbl,
     roomListToggle,
   ]));
@@ -2918,6 +2941,15 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
   const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
   const roomColor = ctx.helpers.roomColor;
   const lvlLabel = (z)=>{ const opt=(levelOptions||[]).find(o=>o.value===z); return opt ? opt.label : `L${z}`; };
+
+  // Persistent last-seen pins: collect away objects (labeled + have room + stale)
+  const showPins = !!(ctx.state.maps && ctx.state.maps._persistentPins);
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const awayObjs = showPins && snap?.objects
+    ? Object.values(snap.objects).filter(o =>
+        o.user_label && o.room && o.room !== "unknown" && o.room !== "not_home" &&
+        typeof o.age_s === "number" && o.age_s > 30)
+    : [];
 
   const iso = (wx, wy, wz)=>[
     CX + (wx-wy)*TILE*0.866 + wz*horizGap,
@@ -3028,6 +3060,34 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.3"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.6"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4"  fill="#52b788" opacity="0.9"/>`;
+      }
+      // Persistent last-seen pins: red target crosshairs for away objects whose room is on this map
+      if(awayObjs.length){
+        const rb = m.room_bounds || {};
+        for(const obj of awayObjs){
+          const b = rb[obj.room];
+          if(!b) continue;
+          let ncx = 0.5, ncy = 0.5;
+          if(b.type === "poly" && Array.isArray(b.points) && b.points.length >= 3){
+            ncx = b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
+            ncy = b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
+          } else if(b.type === "circle"){
+            ncx = b.cx ?? 0.5; ncy = b.cy ?? 0.5;
+          }
+          const [wx,wy] = mapPt(ncx, ncy);
+          const [px,py] = iso(wx, wy, z);
+          const r = Math.round;
+          s += `<g opacity="0.92">`;
+          s += `<circle cx="${r(px)}" cy="${r(py)}" r="20" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
+          s += `<circle cx="${r(px)}" cy="${r(py)}" r="11" fill="none" stroke="#ef4444" stroke-width="2"/>`;
+          s += `<circle cx="${r(px)}" cy="${r(py)}" r="4" fill="#ef4444"/>`;
+          s += `<line x1="${r(px)-25}" y1="${r(py)}" x2="${r(px)-13}" y2="${r(py)}" stroke="#ef4444" stroke-width="1.5"/>`;
+          s += `<line x1="${r(px)+13}" y1="${r(py)}" x2="${r(px)+25}" y2="${r(py)}" stroke="#ef4444" stroke-width="1.5"/>`;
+          s += `<line x1="${r(px)}" y1="${r(py)-25}" x2="${r(px)}" y2="${r(py)-13}" stroke="#ef4444" stroke-width="1.5"/>`;
+          s += `<line x1="${r(px)}" y1="${r(py)+13}" x2="${r(px)}" y2="${r(py)+25}" stroke="#ef4444" stroke-width="1.5"/>`;
+          s += `<text x="${r(px)}" y="${r(py)+36}" text-anchor="middle" fill="#fca5a5" font-size="9" font-weight="600">${_escSVG(obj.user_label)}</text>`;
+          s += `</g>`;
+        }
       }
       // Master map: gold dashed outline around its own footprint + star at centre
       if(m.stack?.is_master){
