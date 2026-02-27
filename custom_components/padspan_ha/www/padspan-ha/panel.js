@@ -13,9 +13,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.53";
+const APP_VERSION = "0.5.54";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260227T221221Z";
+const BUILD_ID = "20260227T232011Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -189,6 +189,7 @@ class PadSpanHaApp extends HTMLElement {
       settings: {},               // full settings dict from settings_get
       // Followed beacons — persisted to localStorage
       followedAddrs: new Set(JSON.parse(localStorage.getItem("padspan_followed") || "[]")),
+      followAddr: localStorage.getItem("padspan_followAddr") || "",
     };
 
     this.$ = null;
@@ -746,6 +747,7 @@ class PadSpanHaApp extends HTMLElement {
           if(!addr) return;
           const cur = String(this.state.followAddr || "");
           this.state.followAddr = (cur === String(addr)) ? "" : String(addr);
+          try { localStorage.setItem("padspan_followAddr", this.state.followAddr); } catch(e){}
           this._renderCurrentView();
         },
       },
@@ -1047,6 +1049,7 @@ class PadSpanHaApp extends HTMLElement {
       }, _isFollowed ? "Following" : "Follow");
       followBtn.addEventListener("click", ()=>{
         this.state.followAddr = _isFollowed ? "" : _followKey;
+        try { localStorage.setItem("padspan_followAddr", this.state.followAddr); } catch(e){}
         followBtn.textContent = this.state.followAddr === _followKey ? "Following" : "Follow";
         followBtn.style.cssText = this.state.followAddr === _followKey
           ? "width:auto;margin-top:0;background:#1a3a2a;border-color:#52b788;color:#52b788" : "width:auto;margin-top:0";
@@ -1083,14 +1086,18 @@ class PadSpanHaApp extends HTMLElement {
       el("div", {style:"font-weight:600;margin-bottom:6px"}, `Objects now (${objects.length})`),
     ]);
     if(objects.length){
+      const followAddr = this.state.followAddr || "";
       for(const o of objects){
         const oName = o.user_label || o.name || o.entity_id || o.address || "Unknown";
-        const oc = o.identified ? "#5eead4" : "#f59e0b";
+        const oKey = o.address || o.entity_id || "";
+        const isFollowed = followAddr && (oKey === followAddr);
+        const oc = isFollowed ? "#fbbf24" : (o.identified ? "#5eead4" : "#f59e0b");
         const rssiTxt = o.rssi != null ? `${o.rssi} dBm` : "";
         const ageTxt = o.age_s != null ? `${Math.round(o.age_s)}s` : "";
         const oRow = el("div", {style:"display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #0d1f12"}, [
           el("span", {style:`width:8px;height:8px;border-radius:50%;background:${oc};flex-shrink:0`}),
           el("div", {style:"flex:1"}, oName),
+          isFollowed ? el("span", {class:"badge", style:"background:#fbbf2422;color:#fbbf24;border-color:#fbbf24"}, "Following") : null,
           rssiTxt ? el("span", {class:"badge"}, rssiTxt) : null,
           ageTxt ? el("span", {class:"muted", style:"font-size:11px"}, ageTxt) : null,
           el("button", {class:"btn tiny", onclick:()=>{ this._closeModal(); this._showObjectDetail(o); }}, "Details"),
@@ -1109,7 +1116,9 @@ class PadSpanHaApp extends HTMLElement {
     if(radios.length){
       for(const r of radios){
         const rName = r.name || r.source || "Scanner";
+        const sid = radioShortId(r.source || "");
         const rRow = el("div", {style:"display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #0d1f12"}, [
+          el("span", {style:"font-family:monospace;font-weight:700;font-size:12px;letter-spacing:.04em;color:#52b788;flex-shrink:0"}, sid),
           el("div", {style:"flex:1"}, [
             el("div", {}, rName),
             r.source ? el("div", {class:"muted", style:"font-size:11px;font-family:monospace"}, r.source) : null,

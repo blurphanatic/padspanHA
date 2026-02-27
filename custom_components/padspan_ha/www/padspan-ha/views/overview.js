@@ -54,11 +54,17 @@ export function render(ctx){
 
   // ---------- Modal helpers ----------
   function openRoomsList(){
+    const _followAddr = ctx.state.followAddr || "";
     const body = el("div",{});
     const rows = Object.keys(roomTagMap).sort().map((room)=>{
       const eids = roomTagMap[room] || [];
+      const hasFollowed = _followAddr && eids.some(eid => String(eid) === _followAddr);
+      const roomLabel = el("td",{},[
+        el("span",{}, room),
+        hasFollowed ? el("span",{style:"margin-left:6px;font-size:10px;color:#fbbf24;font-weight:700"}, "\u25C9 tracked") : null,
+      ].filter(Boolean));
       const row = el("tr",{},[
-        el("td",{}, room),
+        roomLabel,
         el("td",{}, String(eids.length)),
         el("td",{}, eids.join(", "))
       ]);
@@ -984,33 +990,55 @@ export function render(ctx){
       for(const room of Object.keys(m.room_bounds||{})){
         if(!ovRoomRows.find(r=>r.room===room)){
           const objsInRoom = allObjects.filter(o=>o.room===room);
-          ovRoomRows.push({ room, map: m.name||m.id, floor: flLbl, count: objsInRoom.length });
+          ovRoomRows.push({ room, map: m.name||m.id, floor: flLbl, count: objsInRoom.length, objects: objsInRoom });
         }
       }
     }
     ovRoomRows.sort((a,b)=>a.room.localeCompare(b.room));
 
     if(ovRoomRows.length){
-      const tbl = document.createElement("table");
-      tbl.style.cssText = "width:100%;border-collapse:collapse;font-size:13px";
-      tbl.innerHTML = `<thead><tr style="border-bottom:1px solid #1b3526">
-        <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left;width:24px"></th>
-        <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left">Room</th>
-        <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left">Floor</th>
-        <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left">Map</th>
-        <th style="padding:5px 8px;color:#94a3b8;font-weight:500;text-align:right">Objects</th>
-      </tr></thead>`;
+      const _followAddr = ctx.state.followAddr || "";
+      const thStyle = "padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left";
+      const tbl = el("table",{style:"width:100%;border-collapse:collapse;font-size:13px"},[
+        el("thead",{},el("tr",{style:"border-bottom:1px solid #1b3526"},[
+          el("th",{style:thStyle+";width:24px"}),
+          el("th",{style:thStyle},"Room"),
+          el("th",{style:thStyle},"Floor"),
+          el("th",{style:thStyle},"Objects"),
+        ])),
+      ]);
       const tbody2 = document.createElement("tbody");
       const roomColorFn2 = ctx.helpers.roomColor;
       for(const rr of ovRoomRows){
         const color = roomColorFn2(rr.room);
-        const tr2 = document.createElement("tr");
-        tr2.style.cssText = "border-bottom:1px solid #0f2017";
-        tr2.innerHTML = `<td style="padding:5px 8px"><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${color};vertical-align:middle"></span></td>
-          <td style="padding:5px 8px;font-weight:600;color:#e2e8f0">${rr.room}</td>
-          <td style="padding:5px 8px;color:#94a3b8">${rr.floor}</td>
-          <td style="padding:5px 8px;color:#94a3b8">${rr.map}</td>
-          <td style="padding:5px 8px;color:#94a3b8;text-align:right">${rr.count||""}</td>`;
+        const hasFollowed = _followAddr && rr.objects.some(o=>(o.address||o.entity_id||"")===_followAddr);
+        // Build object summary chips
+        const objChips = el("div",{style:"display:flex;flex-wrap:wrap;gap:3px;margin-top:2px"});
+        for(const o of (rr.objects||[]).slice(0,6)){
+          const oKey = o.address || o.entity_id || "";
+          const isF = _followAddr && oKey === _followAddr;
+          const lbl = (o.user_label || o.name || o.address || "?").substring(0,16);
+          const oc = isF ? "#fbbf24" : (o.identified ? "#5eead488" : "#f59e0b88");
+          const chip = el("span",{style:`font-size:10px;padding:1px 5px;border-radius:3px;background:${oc}22;color:${isF?"#fbbf24":"#94a3b8"};border:1px solid ${oc};white-space:nowrap${isF?";font-weight:700":""}`}, isF ? lbl + " \u25C9" : lbl);
+          objChips.appendChild(chip);
+        }
+        if(rr.objects.length > 6) objChips.appendChild(el("span",{style:"font-size:10px;color:#64748b"}, `+${rr.objects.length-6}`));
+
+        const roomCell = el("td",{style:"padding:5px 8px"},[
+          el("span",{style:"font-weight:600;color:#e2e8f0"}, rr.room),
+          hasFollowed ? el("span",{style:"margin-left:6px;font-size:9px;color:#fbbf24;font-weight:700"}, "\u25C9 tracked") : null,
+        ].filter(Boolean));
+
+        const tr2 = el("tr",{style:"border-bottom:1px solid #0f2017;cursor:pointer"},[
+          el("td",{style:"padding:5px 8px"},el("span",{style:`display:inline-block;width:14px;height:14px;border-radius:50%;background:${color};vertical-align:middle`})),
+          roomCell,
+          el("td",{style:"padding:5px 8px;color:#94a3b8"}, rr.floor),
+          el("td",{style:"padding:5px 8px"}, [
+            el("span",{style:"color:#94a3b8"}, rr.count ? String(rr.count) : ""),
+            objChips,
+          ]),
+        ]);
+        tr2.addEventListener("click",()=>ctx.actions.showRoomDetail(rr.room));
         tbody2.appendChild(tr2);
       }
       tbl.appendChild(tbody2);
