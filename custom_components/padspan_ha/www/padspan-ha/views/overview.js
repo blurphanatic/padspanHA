@@ -640,6 +640,8 @@ export function render(ctx){
     }
     const LEGEND_H = sortedIsoLevels.length * 30 + 24;
 
+    if(ctx.state._overviewPersistentPins === undefined) ctx.state._overviewPersistentPins = false;
+
     const buildIsoSVG = (focusZ)=>{
       const slabWZ = 18/_ovFG;
       // Dynamic viewBox: expand upward so high floors aren't clipped when spacing is large
@@ -778,6 +780,31 @@ export function render(ctx){
         const lblW = Math.min(lbl.length * 7 + 10, 110);
         s += `<rect x="${Math.round(bx)-lblW/2}" y="${Math.round(by)-30}" width="${lblW}" height="14" rx="3" fill="#071008" opacity="0.7"/>`;
         s += `<text x="${Math.round(bx)}" y="${Math.round(by)-19}" text-anchor="middle" fill="${BEACON_CLR}" font-size="11" font-weight="700">${_esc(lbl)}</text>`;
+      }
+
+      // Persistent last-seen pins: red target crosshairs for labeled away objects
+      if(ctx.state._overviewPersistentPins){
+        const awayPins = liveSnap?.objects?.list
+          ? liveSnap.objects.list.filter(o =>
+              o.user_label && o.room && o.room !== "unknown" && o.room !== "not_home" &&
+              typeof o.age_s === "number" && o.age_s > 30)
+          : [];
+        for(const obj of awayPins){
+          const pos = roomIsoPos[obj.room];
+          if(!pos) continue;
+          const [px, py] = pos;
+          const r = Math.round;
+          s += `<g opacity="0.92">`;
+          s += `<circle cx="${r(px)}" cy="${r(py)}" r="20" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
+          s += `<circle cx="${r(px)}" cy="${r(py)}" r="11" fill="none" stroke="#ef4444" stroke-width="2"/>`;
+          s += `<circle cx="${r(px)}" cy="${r(py)}" r="4" fill="#ef4444"/>`;
+          s += `<line x1="${r(px)-25}" y1="${r(py)}" x2="${r(px)-13}" y2="${r(py)}" stroke="#ef4444" stroke-width="1.5"/>`;
+          s += `<line x1="${r(px)+13}" y1="${r(py)}" x2="${r(px)+25}" y2="${r(py)}" stroke="#ef4444" stroke-width="1.5"/>`;
+          s += `<line x1="${r(px)}" y1="${r(py)-25}" x2="${r(px)}" y2="${r(py)-13}" stroke="#ef4444" stroke-width="1.5"/>`;
+          s += `<line x1="${r(px)}" y1="${r(py)+13}" x2="${r(px)}" y2="${r(py)+25}" stroke="#ef4444" stroke-width="1.5"/>`;
+          s += `<text x="${r(px)}" y="${r(py)+36}" text-anchor="middle" fill="#fca5a5" font-size="9" font-weight="600">${_esc(obj.user_label)}</text>`;
+          s += `</g>`;
+        }
       }
 
       // Live BLE radios — rings only, no text labels
@@ -1002,6 +1029,22 @@ export function render(ctx){
     ctrlRow.appendChild(ovResetBtn);
     ctrlRow.appendChild(ovSaveLbl);
     ctrlRow.appendChild(roomToggleBtn);
+
+    const ovPersistentBtn = document.createElement("button");
+    ovPersistentBtn.className = "btn inline";
+    ovPersistentBtn.style.cssText = ctx.state._overviewPersistentPins
+      ? "background:#7f1d1d;border-color:#ef4444;color:#fca5a5;font-weight:700"
+      : "color:#94a3b8";
+    ovPersistentBtn.textContent = ctx.state._overviewPersistentPins ? "⊕ Persistent ON" : "⊕ Persistent";
+    ovPersistentBtn.addEventListener("click", ()=>{
+      ctx.state._overviewPersistentPins = !ctx.state._overviewPersistentPins;
+      ovPersistentBtn.style.cssText = ctx.state._overviewPersistentPins
+        ? "background:#7f1d1d;border-color:#ef4444;color:#fca5a5;font-weight:700"
+        : "color:#94a3b8";
+      ovPersistentBtn.textContent = ctx.state._overviewPersistentPins ? "⊕ Persistent ON" : "⊕ Persistent";
+      isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+    });
+    ctrlRow.appendChild(ovPersistentBtn);
     outer.appendChild(ctrlRow);
     outer.appendChild(isoDiv);
     outer.appendChild(roomListPanel);
