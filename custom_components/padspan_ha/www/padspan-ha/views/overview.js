@@ -479,8 +479,18 @@ export function render(ctx){
     const allObjects = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
     const allRadios_live = radios;
 
+    // Ensure _hiddenMapIds is initialised even when Maps tab has never rendered
+    if(!ctx.state.maps._hiddenMapIds){
+      const savedIds = ctx.state.settings?.hidden_map_ids;
+      if(Array.isArray(savedIds)){
+        ctx.state.maps._hiddenMapIds = new Set(savedIds);
+      } else {
+        try{ ctx.state.maps._hiddenMapIds = new Set(JSON.parse(localStorage.getItem("padspan_hiddenMapIds")||"[]")); }
+        catch(e){ ctx.state.maps._hiddenMapIds = new Set(); }
+      }
+    }
     // Filter hidden maps
-    const hiddenIds = (ctx.state.maps && ctx.state.maps._hiddenMapIds) || new Set();
+    const hiddenIds = ctx.state.maps._hiddenMapIds;
     const sorted = [...maps_list].filter(m=>!hiddenIds.has(m.id)).sort((a,b)=>(a.stack?.z_level||0)-(b.stack?.z_level||0));
 
     // Group maps by z_level

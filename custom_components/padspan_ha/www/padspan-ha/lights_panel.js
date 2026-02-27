@@ -8,8 +8,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.31";
-const BUILD_ID = "20260227T013128Z";
+const APP_VERSION = "0.5.32";
+const BUILD_ID = "20260227T013806Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -84,8 +84,7 @@ function buildIsoSVG(maps_list, byRoom, hiddenEids, focusZ, floorGap, horizGap){
   const pt  = c=>`${Math.round(c[0])},${Math.round(c[1])}`;
   const pts = cs=>cs.map(pt).join(" ");
 
-  const visible = maps_list.filter(m=>!m._hidden);
-  const sorted  = [...visible].sort((a,b)=>(a.stack?.z_level||0)-(b.stack?.z_level||0));
+  const sorted  = [...maps_list].sort((a,b)=>(a.stack?.z_level||0)-(b.stack?.z_level||0));
 
   const byLevel = new Map();
   for(const m of sorted){
@@ -275,6 +274,7 @@ class PadSpanLightsApp extends HTMLElement {
       maps:        { list:[] },
       model:       { areas:[], floors:[] },
       _lightsReg:  null,
+      _hiddenMapIds: new Set(),
       _hidden:     this._loadHidden(),
       _focusIdx:   0,      // index into _isoPos positions array (0 = all floors)
       _floorGap:   150,    // vertical separation between floors
@@ -334,6 +334,14 @@ class PadSpanLightsApp extends HTMLElement {
       this.state._floorGap  = s.overview_iso_floor_gap ?? 150;
       this.state._horizGap  = s.overview_iso_horiz_gap ?? 0;
       this.state._focusIdx  = s.overview_iso_focus     ?? 0;
+      // Sync hidden map IDs from the same source maps.js uses
+      const savedIds = s.hidden_map_ids;
+      if(Array.isArray(savedIds)){
+        this.state._hiddenMapIds = new Set(savedIds);
+      } else {
+        try{ this.state._hiddenMapIds = new Set(JSON.parse(localStorage.getItem("padspan_hiddenMapIds")||"[]")); }
+        catch(e){ this.state._hiddenMapIds = new Set(); }
+      }
     }catch(e){}
   }
 
@@ -439,8 +447,8 @@ class PadSpanLightsApp extends HTMLElement {
     // ── Map card with ISO 3D view ─────────────────────────────────────────────
     const mapCard=el("div",{class:"card",style:"padding:12px;margin-bottom:16px"});
 
-    // Controls row
-    const maps_list=this.state.maps.list;
+    // Controls row — only visible (non-hidden) maps
+    const maps_list=this.state.maps.list.filter(m=>!this.state._hiddenMapIds.has(m.id));
     const sortedLevels=[...new Set(maps_list.map(m=>m.stack?.z_level??0))].sort((a,b)=>a-b);
     const floors=this.state.model.floors||[];
     const floorLabel=(z)=>{
