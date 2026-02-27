@@ -1,3 +1,7 @@
+// PadSpan HA — BLE Room-Presence Tracking for Home Assistant
+// Copyright (C) 2026 Garry Broeckling
+// Licensed under the GNU General Public License v3.0
+// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 /*
   PadSpan HA — Lights Control Panel
   ===================================
@@ -8,8 +12,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.57";
-const BUILD_ID = "20260227T233742Z";
+const APP_VERSION = "0.5.58";
+const BUILD_ID = "20260227T235816Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){

@@ -1,3 +1,7 @@
+// PadSpan HA — BLE Room-Presence Tracking for Home Assistant
+// Copyright (C) 2026 Garry Broeckling
+// Licensed under the GNU General Public License v3.0
+// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 /*
 REPO LOGIC NOTES
 
@@ -13,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.57";
+const APP_VERSION = "0.5.58";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260227T233742Z";
+const BUILD_ID = "20260227T235816Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing

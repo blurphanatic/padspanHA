@@ -1,3 +1,7 @@
+// PadSpan HA — BLE Room-Presence Tracking for Home Assistant
+// Copyright (C) 2026 Garry Broeckling
+// Licensed under the GNU General Public License v3.0
+// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 // PadSpan HA – Devices view
 // Purpose: make the live tag/device information readable and actionable.
 // We treat device_tracker state as "room" (common for Bermuda-style presence).

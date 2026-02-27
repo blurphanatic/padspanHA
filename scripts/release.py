@@ -130,6 +130,7 @@ def git_commit_tag_push(version, tag):
 
     static_files = [
         "VERSION.txt",
+        "LICENSE",
         "dist/padspan_ha.zip",
         "scripts/release.py",
     ]

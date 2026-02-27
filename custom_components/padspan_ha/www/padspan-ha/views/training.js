@@ -1,3 +1,7 @@
+// PadSpan HA — BLE Room-Presence Tracking for Home Assistant
+// Copyright (C) 2026 Garry Broeckling
+// Licensed under the GNU General Public License v3.0
+// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 // views/training.js — PadSpan HA Training Hub
 // Walkthroughs: animated step-by-step SVG guides
 // Manual: auto-generated from HELP dict in help_content.js + supplement content
