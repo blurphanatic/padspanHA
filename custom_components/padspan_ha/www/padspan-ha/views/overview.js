@@ -767,11 +767,11 @@ export function render(ctx){
         s += `</g>`;
       }
 
-      // Followed beacons — fingerprint-positioned using all live RSSI data
-      const followedAddrs = ctx.state.followedAddrs || new Set();
-      const followedObjects = allObjects.filter(o =>
-        followedAddrs.has(o.address || "") || followedAddrs.has(o.entity_id || "")
-      );
+      // Followed beacon — fingerprint-positioned using all live RSSI data
+      const _followAddr = ctx.state.followAddr || "";
+      const followedObjects = _followAddr ? allObjects.filter(o =>
+        (o.address || "") === _followAddr || (o.entity_id || "") === _followAddr
+      ) : [];
       // Bright gold (#fbbf24) — intentionally distinct from all other map elements:
       // radios are green, rooms are per-room color, floor badges are LAYER_PAL.
       const BEACON_CLR = "#fbbf24";
@@ -801,28 +801,45 @@ export function render(ctx){
         s += `<text x="${Math.round(bx)}" y="${Math.round(by)-19}" text-anchor="middle" fill="${BEACON_CLR}" font-size="11" font-weight="700">${_esc(lbl)}</text>`;
       }
 
-      // Persistent last-seen pins: red target crosshairs for labeled away objects
+      // Persistent pins: show all labeled objects with a known room position.
+      // Away/stale objects (age_s > 30) get red crosshair; active ones get teal dot.
       if(ctx.state._overviewPersistentPins){
-        const awayPins = liveSnap?.objects?.list
+        const persistPins = liveSnap?.objects?.list
           ? liveSnap.objects.list.filter(o =>
-              o.user_label && o.room && o.room !== "unknown" && o.room !== "not_home" &&
-              typeof o.age_s === "number" && o.age_s > 30)
+              o.user_label && o.room && o.room !== "unknown" && o.room !== "not_home")
           : [];
-        for(const obj of awayPins){
+        // Stagger offset so multiple objects in the same room don't overlap
+        const _roomPinCount = {};
+        for(const obj of persistPins){
           const pos = roomIsoPos[obj.room];
           if(!pos) continue;
-          const [px, py] = pos;
+          const idx = (_roomPinCount[obj.room] || 0);
+          _roomPinCount[obj.room] = idx + 1;
+          const offX = idx * 32 - (idx > 0 ? 16 : 0);
+          const [px, py] = [pos[0] + offX, pos[1]];
           const r = Math.round;
-          s += `<g opacity="0.92">`;
-          s += `<circle cx="${r(px)}" cy="${r(py)}" r="20" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
-          s += `<circle cx="${r(px)}" cy="${r(py)}" r="11" fill="none" stroke="#ef4444" stroke-width="2"/>`;
-          s += `<circle cx="${r(px)}" cy="${r(py)}" r="4" fill="#ef4444"/>`;
-          s += `<line x1="${r(px)-25}" y1="${r(py)}" x2="${r(px)-13}" y2="${r(py)}" stroke="#ef4444" stroke-width="1.5"/>`;
-          s += `<line x1="${r(px)+13}" y1="${r(py)}" x2="${r(px)+25}" y2="${r(py)}" stroke="#ef4444" stroke-width="1.5"/>`;
-          s += `<line x1="${r(px)}" y1="${r(py)-25}" x2="${r(px)}" y2="${r(py)-13}" stroke="#ef4444" stroke-width="1.5"/>`;
-          s += `<line x1="${r(px)}" y1="${r(py)+13}" x2="${r(px)}" y2="${r(py)+25}" stroke="#ef4444" stroke-width="1.5"/>`;
-          s += `<text x="${r(px)}" y="${r(py)+36}" text-anchor="middle" fill="#fca5a5" font-size="9" font-weight="600">${_esc(obj.user_label)}</text>`;
-          s += `</g>`;
+          const isAway = typeof obj.age_s === "number" && obj.age_s > 30;
+          if(isAway){
+            // Red crosshair for away/stale
+            s += `<g opacity="0.92">`;
+            s += `<circle cx="${r(px)}" cy="${r(py)}" r="20" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
+            s += `<circle cx="${r(px)}" cy="${r(py)}" r="11" fill="none" stroke="#ef4444" stroke-width="2"/>`;
+            s += `<circle cx="${r(px)}" cy="${r(py)}" r="4" fill="#ef4444"/>`;
+            s += `<line x1="${r(px)-25}" y1="${r(py)}" x2="${r(px)-13}" y2="${r(py)}" stroke="#ef4444" stroke-width="1.5"/>`;
+            s += `<line x1="${r(px)+13}" y1="${r(py)}" x2="${r(px)+25}" y2="${r(py)}" stroke="#ef4444" stroke-width="1.5"/>`;
+            s += `<line x1="${r(px)}" y1="${r(py)-25}" x2="${r(px)}" y2="${r(py)-13}" stroke="#ef4444" stroke-width="1.5"/>`;
+            s += `<line x1="${r(px)}" y1="${r(py)+13}" x2="${r(px)}" y2="${r(py)+25}" stroke="#ef4444" stroke-width="1.5"/>`;
+            s += `<text x="${r(px)}" y="${r(py)+36}" text-anchor="middle" fill="#fca5a5" font-size="9" font-weight="600">${_esc(obj.user_label)}</text>`;
+            s += `</g>`;
+          } else {
+            // Teal dot for active/present
+            s += `<g opacity="0.88">`;
+            s += `<circle cx="${r(px)}" cy="${r(py)}" r="12" fill="#5eead4" opacity="0.15"/>`;
+            s += `<circle cx="${r(px)}" cy="${r(py)}" r="8" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="0.95"/>`;
+            s += `<circle cx="${r(px)}" cy="${r(py)}" r="2.5" fill="#071008" opacity="0.7"/>`;
+            s += `<text x="${r(px)}" y="${r(py)+22}" text-anchor="middle" fill="#5eead4" font-size="9" font-weight="600">${_esc(obj.user_label)}</text>`;
+            s += `</g>`;
+          }
         }
       }
 

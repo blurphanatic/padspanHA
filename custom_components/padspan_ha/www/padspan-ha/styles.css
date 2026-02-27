@@ -6,7 +6,8 @@
 .brand{display:flex;gap:10px;align-items:center;font-weight:700;margin-bottom:10px;padding:10px;border-radius:14px;background:linear-gradient(90deg,rgba(82,183,136,.18),rgba(94,234,212,.10));border:1px solid #1a4228;}
 .brand img{width:30px;height:30px;border-radius:8px}
 .muted{color:#9cb1d3;font-size:12px}
-.nav button, .btn, select, input[type="text"]{width:100%;text-align:left;margin-top:8px;background:#152a1a;color:#dce7ff;border:1px solid #2d6a4f;border-radius:10px;padding:9px;cursor:pointer}
+.nav button, .btn, select, input[type="text"]{width:100%;text-align:left;margin-top:8px;background:#152a1a;color:#dce7ff;border:1px solid #2d6a4f;border-radius:10px;padding:9px;cursor:pointer;transition:transform 0.06s ease,filter 0.06s ease}
+.btn:active:not(:disabled),.nav button:active:not(:disabled),.tab:active,.btn-help:active{transform:scale(0.95);filter:brightness(1.5)}
 .nav button.active{outline:2px solid #52b788;background:#1a3d2a}
 .nav button:hover{border-color:var(--accent);background:linear-gradient(180deg,#1e3d2a,#112918)}
 .main{padding:16px}
@@ -27,7 +28,7 @@
 
 /* Mapping tabs + editor */
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-.tab{background:#132b18;color:#dce7ff;border:1px solid #1a4228;border-radius:999px;padding:6px 10px;cursor:pointer;font-size:12px}
+.tab{background:#132b18;color:#dce7ff;border:1px solid #1a4228;border-radius:999px;padding:6px 10px;cursor:pointer;font-size:12px;transition:transform 0.06s ease,filter 0.06s ease}
 .tab.active{outline:2px solid #52b788;background:#1a3d2a}
 
 .btn.inline{width:auto;margin-top:0}
