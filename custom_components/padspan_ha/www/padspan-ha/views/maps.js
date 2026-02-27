@@ -446,7 +446,11 @@ function _edit(ctx, map){
     ctx.state.maps._recommendPoly = null;
   }
 
-  const url = map.image && map.image.filename ? `/local/padspan_ha/maps/${map.image.filename}` : null;
+  // Cache-buster: map.updated changes on every trim/replace so the browser fetches fresh content
+  const _imgV = (map.updated||map.image?.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
+  const url = map.image && map.image.filename
+    ? `/local/padspan_ha/maps/${map.image.filename}${_imgV ? '?v='+_imgV : ''}`
+    : null;
 
   // Rooms eligible for this map's floor
   const areaNames = (ctx.state.model?.areas || []).map(a => a.name);
@@ -1004,20 +1008,18 @@ function _edit(ctx, map){
   trimCanvas.addEventListener("touchend",   ()=>{ _trimDrag=false; });
   trimClearBtn.addEventListener("click", ()=>{ _trimCrop=null; _drawTrimOverlay(); });
 
-  // Load the current map image into the trim preview
-  if(url){
-    const tmpImg = new Image();
-    tmpImg.crossOrigin = "anonymous";
-    tmpImg.onload = ()=>{
-      _trimImgW = tmpImg.naturalWidth; _trimImgH = tmpImg.naturalHeight;
-      const cs = Math.min(1, 1600/Math.max(_trimImgW,_trimImgH));
-      trimCanvas.width  = Math.round(_trimImgW*cs);
-      trimCanvas.height = Math.round(_trimImgH*cs);
-      _trimCrop = null; _drawTrimOverlay();
-    };
-    tmpImg.src = url;
-  }
-
+  // Use trimImg itself to size the canvas — avoids a second image load and the
+  // CORS-cache split that happened when a separate tmpImg loaded the same URL.
+  trimImg.crossOrigin = "anonymous";
+  trimImg.onload = ()=>{
+    _trimImgW = trimImg.naturalWidth; _trimImgH = trimImg.naturalHeight;
+    const cs = Math.min(1, 1600/Math.max(_trimImgW,_trimImgH));
+    trimCanvas.width  = Math.round(_trimImgW*cs);
+    trimCanvas.height = Math.round(_trimImgH*cs);
+    _trimCrop = null; _drawTrimOverlay();
+  };
+  // If already cached and decoded, fire onload manually
+  if(trimImg.complete && trimImg.naturalWidth) trimImg.onload();
   trimImg.src = url || "";
   trimWrap.appendChild(trimImg);
   trimWrap.appendChild(trimCanvas);
