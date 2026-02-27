@@ -13,9 +13,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.54";
+const APP_VERSION = "0.5.55";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260227T232011Z";
+const BUILD_ID = "20260227T233322Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -199,8 +199,9 @@ class PadSpanHaApp extends HTMLElement {
     // Live polling (keeps 'Live' mode actually live)
     this._pollTimer = null;
     this._pollInFlight = false;
-    // Periodic activity simulation — prevents HA's built-in screensaver overlay
+    // Anti-blank: activity simulation + watchdog (independent of polling)
     this._activityTimer = null;
+    this._watchdogTimer = null;
   }
 
   set hass(hass){
@@ -302,6 +303,9 @@ class PadSpanHaApp extends HTMLElement {
     // When hass arrives we refresh.
     this._loadSettings();
 
+    // Always start keep-alive (activity ping + watchdog) regardless of data mode.
+    this._startKeepAlive();
+
     // If views are already populated (reconnect after detach), render immediately.
     // Otherwise show a loading placeholder then render once dynamic imports settle.
     if(Object.keys(VIEWS).length > 0){
@@ -325,52 +329,99 @@ class PadSpanHaApp extends HTMLElement {
 
 
   disconnectedCallback(){
-    this._stopPolling();
-    if(this._visibilityHandler){
-      document.removeEventListener("visibilitychange", this._visibilityHandler);
-      this._visibilityHandler = null;
-    }
+    // Only stop the data poll — keep activity + watchdog alive so the panel
+    // recovers automatically if HA temporarily disconnects/reconnects the element.
+    this._stopDataPoll();
   }
 
-  _startPolling(){
-    if(this._pollTimer) return;
-    this._pollTimer = setInterval(()=>this._pollTick(), 5000);
+  // ── Anti-blank system ─────────────────────────────────────────────────────
+  // Three independent mechanisms prevent the panel from going blank:
+  // 1. Activity ping — synthetic pointer events keep HA's idle overlay away
+  // 2. Watchdog — detects empty content and forces a re-render
+  // 3. Visibility handler — immediate recovery when tab regains focus
 
-    // Wake up immediately when the browser tab becomes visible again.
-    // Browsers throttle setInterval to ~1 min when the tab is hidden.
+  _startKeepAlive(){
+    // Activity ping: dispatch on both document and window every 30s.
+    // HA's idle timer checks for user interaction; we simulate it.
+    // 30s is well inside the default 5-minute HA idle threshold.
+    if(!this._activityTimer){
+      const ping = ()=>{
+        try {
+          const ev = new PointerEvent("pointermove", {bubbles:true, composed:true});
+          document.dispatchEvent(ev);
+          window.dispatchEvent(ev);
+          // Also poke the HA root if available (some HA versions listen there)
+          const haRoot = document.querySelector("home-assistant");
+          if(haRoot) haRoot.dispatchEvent(ev);
+        } catch(e){}
+      };
+      ping(); // immediate first ping
+      this._activityTimer = setInterval(ping, 30_000);
+    }
+
+    // Watchdog: every 15s, check if content area is empty and re-render.
+    // Also checks if the element was disconnected and reattached.
+    if(!this._watchdogTimer){
+      this._watchdogTimer = setInterval(()=>{
+        try {
+          // If we're not connected to the DOM, skip
+          if(!this.isConnected) return;
+          // If content area exists but is empty, re-render
+          if(this.$content && !this.$content.children.length){
+            this._renderCurrentView();
+          }
+          // If $ selector is broken (shadowRoot was cleared), rebuild
+          if(!this.$ || !this.$content){
+            if(this.shadowRoot && this.shadowRoot.querySelector("#content")){
+              this.$ = (q)=>this.shadowRoot.querySelector(q);
+              this.$content = this.$("#content");
+              this.$nav = this.$("#nav");
+              this.$modal = this.$("#modal");
+              this._renderCurrentView();
+            }
+          }
+          // Ensure data poll is alive in live mode
+          if(this.state.dataMode === "live" && !this._pollTimer){
+            this._startDataPoll();
+          }
+        } catch(e){}
+      }, 15_000);
+    }
+
+    // Visibility handler: immediate wake-up when tab becomes visible again.
     if(!this._visibilityHandler){
       this._visibilityHandler = ()=>{
         if(document.visibilityState === "visible"){
-          // Re-render immediately so there's no blank flash while data loads
           this._renderCurrentView();
           this._refreshAll(false);
-          if(!this._pollTimer) this._startPolling();
+          if(this.state.dataMode === "live" && !this._pollTimer) this._startDataPoll();
         }
       };
       document.addEventListener("visibilitychange", this._visibilityHandler);
     }
-
-    // Simulate periodic user activity to prevent HA's built-in inactivity screensaver.
-    // HA tracks mousemove/pointermove events; dispatching a synthetic one every 90 s
-    // keeps the idle timer from expiring while the PadSpan panel is open.
-    if(!this._activityTimer){
-      this._activityTimer = setInterval(()=>{
-        try {
-          document.dispatchEvent(new PointerEvent("pointermove", {bubbles: true}));
-        } catch(e){}
-      }, 90_000);
-    }
   }
 
-  _stopPolling(){
+  _startDataPoll(){
+    if(this._pollTimer) return;
+    this._pollTimer = setInterval(()=>this._pollTick(), 5000);
+  }
+
+  _startPolling(){
+    this._startDataPoll();
+    this._startKeepAlive();
+  }
+
+  _stopDataPoll(){
     if(this._pollTimer){
       clearInterval(this._pollTimer);
       this._pollTimer = null;
     }
-    if(this._activityTimer){
-      clearInterval(this._activityTimer);
-      this._activityTimer = null;
-    }
+  }
+
+  _stopPolling(){
+    this._stopDataPoll();
+    // Activity timer + watchdog + visibility handler intentionally NOT stopped.
+    // They are lightweight and keep the panel alive across disconnects.
   }
 
   async _pollTick(){
