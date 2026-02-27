@@ -11,10 +11,10 @@
   - BUILD_ID / APP_VERSION are updated automatically by scripts/release.py.
 */
 
-import * as Calibration from "./views/calibration.js?b=20260227T194601Z";
+import * as Calibration from "./views/calibration.js?b=20260227T200813Z";
 
-const APP_VERSION = "0.5.47";
-const BUILD_ID = "20260227T194601Z";
+const APP_VERSION = "0.5.48";
+const BUILD_ID = "20260227T200813Z";
 
 // ── Minimal DOM helpers (same signatures as panel.js) ──────────────────────
 function el(tag, attrs={}, children=[]){
@@ -137,6 +137,13 @@ class PadSpanCalibApp extends HTMLElement {
           await self._callWS({ type: "padspan_ha/calibration_clear" }),
         calibrationComputeModel: async ()=>
           await self._callWS({ type: "padspan_ha/calibration_compute_model" }),
+        mapsUpdate: async (payload)=>{
+          await self._callWS(Object.assign({ type: "padspan_ha/maps_update" }, payload));
+          try { const res = await self._callWS({ type: "padspan_ha/maps_list" }); self.state.maps.list = res?.maps || []; } catch(_){}
+          self._render();
+        },
+        settingsSet: async (payload)=>
+          await self._callWS(Object.assign({ type: "padspan_ha/settings_set" }, payload)),
       },
     };
   }

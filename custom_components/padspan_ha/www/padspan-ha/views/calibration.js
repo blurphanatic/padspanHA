@@ -51,7 +51,7 @@ export function render(ctx) {
   ]));
 
   // Tab bar
-  const TABS = [["setup","Setup"],["pin","Pin & Listen"],["roam","Roam"],["model","Model"]];
+  const TABS = [["setup","Setup"],["pin","Pin & Listen"],["roam","Roam"],["model","Model"],["tune","Tune"]];
   const tabBar = el("div", { class: "tabs", style: "margin-bottom:14px;flex-wrap:wrap;gap:4px" });
   for (const [id, label] of TABS) {
     tabBar.appendChild(el("button", {
@@ -65,6 +65,7 @@ export function render(ctx) {
   if (cs.tab === "pin")   root.appendChild(_pinAndListen(ctx, el, cs, calData));
   if (cs.tab === "roam")  root.appendChild(_roam(ctx, el, cs, calData));
   if (cs.tab === "model") root.appendChild(_modelTab(ctx, el, cs, calData));
+  if (cs.tab === "tune")  root.appendChild(_tuneTab(ctx, el, cs, calData));
 
   return root;
 }
@@ -1222,6 +1223,563 @@ function _nextTarget(grid, gridN) {
     }
   }
   return { x_frac: bx, y_frac: by };
+}
+
+// ── Tune tab — 3D iso map with draggable receiver markers ──────────────────
+function _tuneTab(ctx, el, cs, calData) {
+  const wrap = el("div", { style: "display:flex;flex-direction:column;gap:10px" });
+  const maps_list = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
+
+  if (!maps_list.length) {
+    wrap.appendChild(el("div", { class: "card" }, [
+      el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px;color:#52b788" }, "No Maps Uploaded"),
+      el("div", { style: "font-size:12px;color:#94a3b8" },
+        "Upload floor plan images in the Maps tab first, then return here to fine-tune receiver positions."),
+    ]));
+    return wrap;
+  }
+
+  // Explainer card
+  wrap.appendChild(el("div", { class: "card", style: "border-color:#52b788" }, [
+    el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px;color:#52b788" }, "Receiver Position Tuning"),
+    el("div", { style: "font-size:12px;color:#94a3b8;line-height:1.5" },
+      "Drag BLE scanner markers to match their real-world positions. The 3D view matches the Overview map. Click Save when done."),
+  ]));
+
+  // ── Constants & state ─────────────────────────────────────────────────────
+  const TILE = 220, CX = 380, CY = 590, W = 760, BASE_H = 940;
+  const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
+  const _esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  // roomColor may not exist in standalone calibration panel — provide fallback
+  const roomColorFn = ctx.helpers.roomColor || (name => {
+    let h = 0; const s = String(name || "");
+    for (let i = 0; i < s.length; i++) { h = Math.imul(h ^ s.charCodeAt(i), 16777619); }
+    return `hsl(${(h >>> 0) % 360} 70% 55%)`;
+  });
+
+  if (!ctx.state._calibTune) ctx.state._calibTune = {
+    fg: ctx.state.settings?.overview_iso_floor_gap ?? 150,
+    hg: ctx.state.settings?.overview_iso_horiz_gap ?? 0,
+    focusIdx: 0,
+    draftReceivers: {},   // mapId → [{id,label,x,y,room}]
+    dirtyMaps: {},        // mapId → true
+    selectedRx: null,     // {mapId, rxId}
+  };
+  const ts = ctx.state._calibTune;
+
+  // Clone receivers from maps list into draft state (once per session or after reset)
+  if (!Object.keys(ts.draftReceivers).length) {
+    for (const m of maps_list) {
+      ts.draftReceivers[m.id] = (m.receivers || []).map(r => ({
+        id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || ""
+      }));
+    }
+  }
+
+  let _fg = ts.fg, _hg = ts.hg;
+
+  // ── Transforms ────────────────────────────────────────────────────────────
+  const iso = (wx, wy, wz) => [CX + (wx - wy) * TILE * 0.866 + wz * _hg, CY + (wx + wy) * TILE * 0.5 - wz * _fg];
+  const pt  = c => `${Math.round(c[0])},${Math.round(c[1])}`;
+  const pts = cs => cs.map(pt).join(" ");
+
+  // Inverse iso: screen → world at known z-level
+  const invIso = (sx, sy, z) => {
+    const ax = sx - CX - z * _hg;
+    const ay = sy - CY + z * _fg;
+    const A = TILE * 0.866, B = TILE * 0.5;
+    const wx = (ax / A + ay / B) / 2;
+    const wy = (ay / B - ax / A) / 2;
+    return [wx, wy];
+  };
+
+  // Filter & sort maps
+  const hiddenIds = ctx.state.maps._hiddenMapIds || new Set();
+  const sorted = [...maps_list].filter(m => !hiddenIds.has(m.id)).sort((a, b) => (a.stack?.z_level || 0) - (b.stack?.z_level || 0));
+  const byLevel = new Map();
+  for (const m of sorted) { const z = m.stack?.z_level ?? 0; if (!byLevel.has(z)) byLevel.set(z, []); byLevel.get(z).push(m); }
+  const sortedIsoLevels = [...byLevel.keys()].sort((a, b) => a - b);
+  const levelColor = z => LAYER_PAL[sortedIsoLevels.indexOf(z) % LAYER_PAL.length];
+
+  // Floor focus slider positions
+  const _isoPos = [null];
+  for (let i = 0; i < sortedIsoLevels.length; i++) {
+    _isoPos.push(sortedIsoLevels[i]);
+    if (i < sortedIsoLevels.length - 1) _isoPos.push([sortedIsoLevels[i], sortedIsoLevels[i + 1]]);
+  }
+  ts.focusIdx = Math.max(0, Math.min(ts.focusIdx, _isoPos.length - 1));
+  const _getFocusZ = idx => _isoPos[Math.max(0, Math.min(idx, _isoPos.length - 1))];
+  const _getFocusLbl = idx => {
+    const pos = _getFocusZ(idx);
+    if (pos === null) return "All floors";
+    const fl = ctx.state.model?.floors || [];
+    const zArr = Array.isArray(pos) ? pos : [pos];
+    return zArr.map(z => { const f = fl.find(x => x.level === z); return f ? (f.name || `L${z}`) : `L${z}`; }).join(" + ");
+  };
+
+  // Per-map forward+inverse transforms
+  const mapXforms = {};
+  for (const m of sorted) {
+    const stk = m.stack || {}, z = stk.z_level || 0, ox = stk.x_offset || 0, oy_ = stk.y_offset || 0, sc = stk.scale || 1.0;
+    const ar = (m.image?.height || 600) / (m.image?.width || 800);
+    const arRef = stk.ref_ar || ar, sxAdj = stk.scale_x_adj || 1.0;
+    const rotRad = (stk.rotation || 0) * Math.PI / 180;
+    const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
+    mapXforms[m.id] = {
+      z, ox, oy_, sc, arRef, sxAdj, cosR, sinR,
+      mapPt: (px, py) => {
+        const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef;
+        const rx = dx * cosR - dy * sinR, ry = dx * sinR + dy * cosR;
+        return [(0.5 + ox) + rx, arRef * (0.5 + oy_) + ry];
+      },
+      invMapPt: (wx, wy) => {
+        const rx = wx - (0.5 + ox);
+        const ry = wy - arRef * (0.5 + oy_);
+        const dx =  rx * cosR + ry * sinR;
+        const dy = -rx * sinR + ry * cosR;
+        return [dx / (sc * sxAdj) + 0.5, dy / (sc * arRef) + 0.5];
+      },
+    };
+  }
+
+  // ── Build SVG ───────────────────────────────────────────────────────────────
+  const LEGEND_H = sortedIsoLevels.length * 30 + 24;
+  const buildTuneSVG = (focusZ) => {
+    const slabWZ = 18 / _fg;
+    const maxIsoZ = sortedIsoLevels.length ? sortedIsoLevels[sortedIsoLevels.length - 1] : 0;
+    const viewY = Math.min(0, CY - maxIsoZ * _fg - 50);
+    const HTOTAL = BASE_H + LEGEND_H - viewY;
+    let s = `<svg viewBox="0 ${viewY} ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
+    s += `<rect x="0" y="${viewY}" width="${W}" height="${HTOTAL}" fill="#071008"/>`;
+
+    // Floor patterns
+    s += `<defs>`;
+    sortedIsoLevels.forEach((z2, li) => {
+      const c2 = levelColor(z2);
+      if (li === 0) {
+        s += `<pattern id="tpat_${li}" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">`;
+        s += `<path d="M12,2 C16,2 19,6 19,11 C19,16 16,21 12,22 C8,21 5,16 5,11 C5,6 8,2 12,2 Z" fill="none" stroke="${c2}" stroke-width="0.7" opacity="0.14"/>`;
+        s += `<path d="M12,2 C13.5,0 15.5,0.5 14.5,2.5 C13.5,1.5 12,2 12,2 Z" fill="${c2}" opacity="0.11"/>`;
+        s += `<circle cx="12" cy="15" r="1.4" fill="${c2}" opacity="0.1"/>`;
+        s += `</pattern>`;
+      } else if (li === 2) {
+        s += `<pattern id="tpat_${li}" x="0" y="0" width="12" height="12" patternUnits="userSpaceOnUse">`;
+        s += `<line x1="0" y1="12" x2="12" y2="0" stroke="${c2}" stroke-width="0.6" opacity="0.18"/>`;
+        s += `<line x1="0" y1="0" x2="12" y2="12" stroke="${c2}" stroke-width="0.6" opacity="0.18"/>`;
+        s += `</pattern>`;
+      } else if (li >= 3) {
+        s += `<pattern id="tpat_${li}" x="0" y="0" width="16" height="13.86" patternUnits="userSpaceOnUse">`;
+        s += `<circle cx="0" cy="0" r="1.5" fill="${c2}" opacity="0.14"/>`;
+        s += `<circle cx="8" cy="6.93" r="1.5" fill="${c2}" opacity="0.14"/>`;
+        s += `<circle cx="16" cy="0" r="1.5" fill="${c2}" opacity="0.14"/>`;
+        s += `<circle cx="0" cy="13.86" r="1.5" fill="${c2}" opacity="0.14"/>`;
+        s += `<circle cx="16" cy="13.86" r="1.5" fill="${c2}" opacity="0.14"/>`;
+        s += `</pattern>`;
+      }
+    });
+    s += `</defs>`;
+
+    if (!sorted.length) {
+      s += `<text x="${W / 2}" y="${BASE_H / 2}" text-anchor="middle" fill="#4a6052" font-size="13">All layers hidden</text>`;
+      s += `</svg>`; return s;
+    }
+
+    // Floor slabs + room polygons + receivers
+    for (const [z, group] of [...byLevel.entries()].sort((a, b) => a[0] - b[0])) {
+      const isFocused = focusZ === null || (Array.isArray(focusZ) ? focusZ.includes(z) : focusZ === z);
+      const go = isFocused ? 1.0 : 0.1;
+      const lyrColor = levelColor(z);
+      const lidx = sortedIsoLevels.indexOf(z);
+
+      // Bounding box for all maps at this level
+      let x0 = Infinity, y0_ = Infinity, x1 = -Infinity, y1_ = -Infinity;
+      for (const m of group) {
+        const xf = mapXforms[m.id]; if (!xf) continue;
+        const stk = m.stack || {}, ox2 = stk.x_offset || 0, oy2 = stk.y_offset || 0, sc2 = stk.scale || 1.0;
+        const ar2 = (m.image?.height || 600) / (m.image?.width || 800);
+        const arRefBB = stk.ref_ar || ar2, sxAdjBB = stk.scale_x_adj || 1.0;
+        const rot2 = (stk.rotation || 0) * Math.PI / 180;
+        const bbPt = (px, py) => {
+          const dx = (px - 0.5) * sc2 * sxAdjBB, dy = (py - 0.5) * sc2 * arRefBB;
+          const rx = dx * Math.cos(rot2) - dy * Math.sin(rot2), ry = dx * Math.sin(rot2) + dy * Math.cos(rot2);
+          return [(0.5 + ox2) + rx, arRefBB * (0.5 + oy2) + ry];
+        };
+        for (const [cx, cy] of [[0, 0], [1, 0], [1, 1], [0, 1]]) {
+          const [wx, wy] = bbPt(cx, cy);
+          x0 = Math.min(x0, wx); y0_ = Math.min(y0_, wy); x1 = Math.max(x1, wx); y1_ = Math.max(y1_, wy);
+        }
+      }
+      if (!isFinite(x0)) { x0 = 0; y0_ = 0; x1 = 1; y1_ = 0.75; }
+
+      const TL = iso(x0, y0_, z), TR = iso(x1, y0_, z), BR = iso(x1, y1_, z), BL = iso(x0, y1_, z);
+      const TR_b = iso(x1, y0_, z - slabWZ), BR_b = iso(x1, y1_, z - slabWZ), BL_b = iso(x0, y1_, z - slabWZ);
+
+      s += `<g opacity="${go}">`;
+      s += `<polygon points="${pts([TR, BR, BR_b, TR_b])}" fill="#0d2318" fill-opacity="0.35" stroke="#253e2e" stroke-width="0.8"/>`;
+      s += `<polygon points="${pts([BL, BR, BR_b, BL_b])}" fill="#0a1a12" fill-opacity="0.3" stroke="#253e2e" stroke-width="0.8"/>`;
+      s += `<polygon points="${pts([TL, TR, BR, BL])}" fill="#0f2017" fill-opacity="0.06" stroke="${lyrColor}" stroke-width="1.5" stroke-dasharray="10,5" opacity="0.5"/>`;
+      if (lidx !== 1) { s += `<polygon points="${pts([TL, TR, BR, BL])}" fill="url(#tpat_${lidx})" stroke="none"/>`; }
+
+      // Room polygons + labels
+      for (const m of group) {
+        const xf = mapXforms[m.id]; if (!xf) continue;
+        for (const [room, b] of Object.entries(m.room_bounds || {})) {
+          if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
+          const color = roomColorFn(room);
+          const pp = b.points.map(p => { const [wx, wy] = xf.mapPt(p[0], p[1]); return pt(iso(wx, wy, z)); }).join(" ");
+          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9"/>`;
+          const cx2 = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
+          const cy2 = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
+          const [lwx, lwy] = xf.mapPt(cx2, cy2);
+          const [lix, liy] = iso(lwx, lwy, z);
+          s += `<text x="${Math.round(lix)}" y="${Math.round(liy) + lidx * 2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
+        }
+
+        // Receiver markers (draggable)
+        const draft = ts.draftReceivers[m.id] || [];
+        for (const r of draft) {
+          const [wx, wy] = xf.mapPt(r.x || 0, r.y || 0);
+          const [px, py] = iso(wx, wy, z);
+          const isSel = ts.selectedRx && ts.selectedRx.mapId === m.id && ts.selectedRx.rxId === r.id;
+          const rx = Math.round(px), ry = Math.round(py);
+          const lbl = (r.label || r.id || "R").substring(0, 6);
+          const tip = `${r.label || r.id || "Receiver"}${r.room ? " | Room: " + r.room : ""} | x: ${(r.x * 100).toFixed(1)}% y: ${(r.y * 100).toFixed(1)}%`;
+
+          s += `<g data-rx-id="${_esc(r.id)}" data-map-id="${_esc(m.id)}" data-z="${z}" data-tip="${_esc(tip)}" style="cursor:grab">`;
+          // Selection highlight
+          if (isSel) s += `<circle cx="${rx}" cy="${ry}" r="22" fill="none" stroke="#fbbf24" stroke-width="2" stroke-dasharray="4,3" opacity="0.9"/>`;
+          // Outer pulse ring
+          s += `<circle cx="${rx}" cy="${ry}" r="16" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.35"/>`;
+          // Middle ring
+          s += `<circle cx="${rx}" cy="${ry}" r="10" fill="none" stroke="#52b788" stroke-width="1.8" opacity="0.7"/>`;
+          // Center dot
+          s += `<circle cx="${rx}" cy="${ry}" r="5" fill="#52b788" opacity="0.95"/>`;
+          // Label below
+          const lblW = Math.min(lbl.length * 7 + 8, 60);
+          s += `<rect x="${rx - lblW / 2}" y="${ry + 18}" width="${lblW}" height="13" rx="3" fill="#071008" opacity="0.8"/>`;
+          s += `<text x="${rx}" y="${ry + 28}" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600">${_esc(lbl)}</text>`;
+          s += `</g>`;
+        }
+      }
+
+      // Layer index dot
+      s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="15" fill="${lyrColor}" opacity="0.95"/>`;
+      s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1]) + 6}" text-anchor="middle" fill="#071008" font-size="14" font-weight="700">${lidx + 1}</text>`;
+      s += `</g>`;
+    }
+
+    // Legend
+    s += `<line x1="10" y1="${BASE_H + 4}" x2="${W - 10}" y2="${BASE_H + 4}" stroke="#1b3526" stroke-width="0.8"/>`;
+    sortedIsoLevels.forEach((z, i) => {
+      const ly = BASE_H + 10 + i * 30;
+      const color = levelColor(z);
+      const groupLabel = byLevel.get(z).map(m => m.name || m.id).join(" + ");
+      s += `<circle cx="18" cy="${ly + 11}" r="11" fill="${color}" opacity="0.9"/>`;
+      s += `<text x="18" y="${ly + 15}" text-anchor="middle" fill="#071008" font-size="12" font-weight="700">${i + 1}</text>`;
+      s += `<text x="36" y="${ly + 15}" fill="${color}" font-size="18" font-weight="500">${_esc(groupLabel)}</text>`;
+    });
+
+    s += `</svg>`;
+    return s;
+  };
+
+  // ── DOM: SVG container ──────────────────────────────────────────────────────
+  const isoWrap = document.createElement("div");
+  isoWrap.style.cssText = "position:relative;margin-top:6px";
+
+  const isoDiv = document.createElement("div");
+  isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px";
+  isoDiv.innerHTML = buildTuneSVG(_getFocusZ(ts.focusIdx));
+
+  // Hover tooltip
+  const tipEl = document.createElement("div");
+  tipEl.style.cssText = "position:absolute;top:8px;left:8px;background:rgba(7,16,8,0.92);" +
+    "border:1px solid #2d6a4f;border-radius:8px;padding:6px 10px;font-size:11px;color:#a7f3d0;" +
+    "pointer-events:none;white-space:pre-line;max-width:260px;z-index:5;display:none;" +
+    "font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.5";
+  isoWrap.appendChild(isoDiv);
+  isoWrap.appendChild(tipEl);
+
+  isoDiv.addEventListener("mouseover", e => {
+    const g = e.target.closest("[data-tip]");
+    if (g) {
+      tipEl.textContent = "";
+      g.getAttribute("data-tip").split("|").forEach((line, i) => {
+        if (i > 0) tipEl.appendChild(document.createElement("br"));
+        tipEl.appendChild(document.createTextNode(line));
+      });
+      tipEl.style.display = "block";
+    }
+  });
+  isoDiv.addEventListener("mouseout", e => {
+    const g = e.target.closest("[data-tip]");
+    if (!g || !isoDiv.contains(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("[data-tip]")))
+      tipEl.style.display = "none";
+  });
+
+  // ── Drag interaction ────────────────────────────────────────────────────────
+  let _dragging = null; // {mapId, rxId, z, svgEl}
+
+  isoDiv.addEventListener("pointerdown", e => {
+    const g = e.target.closest("[data-rx-id]");
+    if (!g) return;
+    e.preventDefault();
+    const mapId = g.getAttribute("data-map-id");
+    const rxId = g.getAttribute("data-rx-id");
+    const z = Number(g.getAttribute("data-z") || 0);
+    ts.selectedRx = { mapId, rxId };
+    _dragging = { mapId, rxId, z };
+    isoDiv.setPointerCapture(e.pointerId);
+    isoDiv.style.cursor = "grabbing";
+    // Update selection highlight
+    _refreshSVG();
+    _refreshInfo();
+  });
+
+  isoDiv.addEventListener("pointermove", e => {
+    if (!_dragging) return;
+    e.preventDefault();
+    const svgNode = isoDiv.querySelector("svg");
+    if (!svgNode) return;
+
+    // Convert client coords → SVG coords using getScreenCTM
+    const ctm = svgNode.getScreenCTM();
+    if (!ctm) return;
+    const inv = ctm.inverse();
+    const sx = e.clientX * inv.a + e.clientY * inv.c + inv.e;
+    const sy = e.clientX * inv.b + e.clientY * inv.d + inv.f;
+
+    // SVG coords → world coords (at this floor's z-level)
+    const [wx, wy] = invIso(sx, sy, _dragging.z);
+
+    // World coords → normalized image coords for this map
+    const xf = mapXforms[_dragging.mapId];
+    if (!xf) return;
+    const [nx, ny] = xf.invMapPt(wx, wy);
+
+    // Clamp to [0, 1]
+    const cx = Math.max(0, Math.min(1, nx));
+    const cy = Math.max(0, Math.min(1, ny));
+
+    // Update draft
+    const draft = ts.draftReceivers[_dragging.mapId];
+    if (!draft) return;
+    const rx = draft.find(r => r.id === _dragging.rxId);
+    if (!rx) return;
+    rx.x = cx;
+    rx.y = cy;
+    ts.dirtyMaps[_dragging.mapId] = true;
+
+    // Re-render SVG for live feedback
+    _refreshSVG();
+    _refreshInfo();
+  });
+
+  isoDiv.addEventListener("pointerup", e => {
+    if (_dragging) {
+      _dragging = null;
+      isoDiv.releasePointerCapture(e.pointerId);
+      isoDiv.style.cursor = "";
+      _refreshDirtyLabel();
+    }
+  });
+
+  // Click to select (without drag)
+  isoDiv.addEventListener("click", e => {
+    if (_dragging) return;
+    const g = e.target.closest("[data-rx-id]");
+    if (g) {
+      ts.selectedRx = { mapId: g.getAttribute("data-map-id"), rxId: g.getAttribute("data-rx-id") };
+      _refreshSVG();
+      _refreshInfo();
+    }
+  });
+
+  // ── Helper: rebuild SVG without losing scroll ─────────────────────────────
+  function _refreshSVG() {
+    const scrollTop = isoDiv.scrollTop, scrollLeft = isoDiv.scrollLeft;
+    isoDiv.innerHTML = buildTuneSVG(_getFocusZ(ts.focusIdx));
+    isoDiv.scrollTop = scrollTop;
+    isoDiv.scrollLeft = scrollLeft;
+  }
+
+  // ── Controls row ──────────────────────────────────────────────────────────
+  const ctrlRow = document.createElement("div");
+  ctrlRow.style.cssText = "display:flex;align-items:center;gap:10px;flex-wrap:wrap";
+
+  // Floor focus
+  const focusLbl = document.createElement("span");
+  focusLbl.style.cssText = "font-size:12px;color:#94a3b8;min-width:80px;display:inline-block";
+  focusLbl.textContent = _getFocusLbl(ts.focusIdx);
+  const focusSlider = document.createElement("input");
+  focusSlider.type = "range"; focusSlider.min = "0"; focusSlider.max = String(_isoPos.length - 1);
+  focusSlider.style.cssText = "width:130px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+  focusSlider.value = String(ts.focusIdx);
+  focusSlider.addEventListener("input", () => {
+    ts.focusIdx = parseInt(focusSlider.value, 10);
+    focusLbl.textContent = _getFocusLbl(ts.focusIdx);
+    _refreshSVG();
+  });
+
+  const floorLbl = document.createElement("span");
+  floorLbl.style.cssText = "font-size:12px;color:#94a3b8";
+  floorLbl.textContent = "Floor:";
+  ctrlRow.appendChild(floorLbl);
+  ctrlRow.appendChild(focusSlider);
+  ctrlRow.appendChild(focusLbl);
+
+  // Spacing slider
+  const gapLbl = document.createElement("span");
+  gapLbl.style.cssText = "font-size:12px;color:#94a3b8;min-width:36px;display:inline-block;text-align:right";
+  gapLbl.textContent = String(ts.fg);
+  const gapSlider = document.createElement("input");
+  gapSlider.type = "range"; gapSlider.min = "60"; gapSlider.max = "340"; gapSlider.step = "10";
+  gapSlider.style.cssText = "width:110px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+  gapSlider.value = String(ts.fg);
+  gapSlider.addEventListener("input", () => {
+    ts.fg = parseInt(gapSlider.value, 10);
+    _fg = ts.fg;
+    gapLbl.textContent = String(ts.fg);
+    _refreshSVG();
+  });
+  const spacingLbl = document.createElement("span");
+  spacingLbl.style.cssText = "font-size:12px;color:#94a3b8;margin-left:8px";
+  spacingLbl.textContent = "Spacing:";
+  ctrlRow.appendChild(spacingLbl);
+  ctrlRow.appendChild(gapSlider);
+  ctrlRow.appendChild(gapLbl);
+
+  // L/R slider
+  const hgLbl = document.createElement("span");
+  hgLbl.style.cssText = "font-size:12px;color:#94a3b8;min-width:36px;display:inline-block;text-align:right";
+  hgLbl.textContent = String(ts.hg);
+  const hgSlider = document.createElement("input");
+  hgSlider.type = "range"; hgSlider.min = "-120"; hgSlider.max = "120"; hgSlider.step = "10";
+  hgSlider.style.cssText = "width:110px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+  hgSlider.value = String(ts.hg);
+  hgSlider.addEventListener("input", () => {
+    ts.hg = parseInt(hgSlider.value, 10);
+    _hg = ts.hg;
+    hgLbl.textContent = String(ts.hg);
+    _refreshSVG();
+  });
+  const lrLbl = document.createElement("span");
+  lrLbl.style.cssText = "font-size:12px;color:#94a3b8;margin-left:8px";
+  lrLbl.textContent = "L/R:";
+  ctrlRow.appendChild(lrLbl);
+  ctrlRow.appendChild(hgSlider);
+  ctrlRow.appendChild(hgLbl);
+
+  // Save button
+  const statusLbl = document.createElement("span");
+  statusLbl.style.cssText = "font-size:11px;color:#94a3b8;min-width:90px";
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn inline";
+  saveBtn.style.cssText = "padding:2px 10px;font-size:12px";
+  saveBtn.textContent = "Save";
+  saveBtn.title = "Save updated receiver positions to all modified maps";
+  saveBtn.addEventListener("click", async () => {
+    const dirtyIds = Object.keys(ts.dirtyMaps).filter(id => ts.dirtyMaps[id]);
+    if (!dirtyIds.length) { statusLbl.textContent = "No changes"; setTimeout(() => { statusLbl.textContent = ""; }, 2000); return; }
+    saveBtn.disabled = true;
+    statusLbl.textContent = "Saving...";
+    try {
+      for (const mapId of dirtyIds) {
+        const origMap = maps_list.find(m => m.id === mapId);
+        if (!origMap) continue;
+        await ctx.actions.mapsUpdate({
+          map_id: mapId,
+          receivers: ts.draftReceivers[mapId],
+          room_bounds: origMap.room_bounds || {},
+          floor_id: origMap.floor_id || origMap.stack?.floor_id || "",
+          calibration: origMap.calibration || {},
+          notes: origMap.notes || "",
+        });
+      }
+      ts.dirtyMaps = {};
+      statusLbl.textContent = "Saved ✓";
+      ctx.toast("Receiver positions saved");
+      setTimeout(() => { statusLbl.textContent = ""; }, 2500);
+      _refreshDirtyLabel();
+    } catch (e) {
+      statusLbl.textContent = "Error saving";
+      ctx.toast("Save failed: " + String(e), true);
+    }
+    saveBtn.disabled = false;
+  });
+
+  // Reset button
+  const resetBtn = document.createElement("button");
+  resetBtn.className = "btn inline";
+  resetBtn.style.cssText = "padding:2px 10px;font-size:12px";
+  resetBtn.textContent = "Reset";
+  resetBtn.title = "Discard unsaved changes and reload receiver positions";
+  resetBtn.addEventListener("click", () => {
+    ts.draftReceivers = {};
+    for (const m of maps_list) {
+      ts.draftReceivers[m.id] = (m.receivers || []).map(r => ({
+        id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || ""
+      }));
+    }
+    ts.dirtyMaps = {};
+    ts.selectedRx = null;
+    ts.fg = ctx.state.settings?.overview_iso_floor_gap ?? 150;
+    ts.hg = ctx.state.settings?.overview_iso_horiz_gap ?? 0;
+    ts.focusIdx = 0;
+    _fg = ts.fg; _hg = ts.hg;
+    gapSlider.value = String(ts.fg); gapLbl.textContent = String(ts.fg);
+    hgSlider.value = String(ts.hg); hgLbl.textContent = String(ts.hg);
+    focusSlider.value = "0"; focusLbl.textContent = "All floors";
+    statusLbl.textContent = "Reset ✓";
+    setTimeout(() => { statusLbl.textContent = ""; }, 2000);
+    _refreshSVG();
+    _refreshInfo();
+    _refreshDirtyLabel();
+  });
+
+  ctrlRow.appendChild(saveBtn);
+  ctrlRow.appendChild(resetBtn);
+  ctrlRow.appendChild(statusLbl);
+
+  // Dirty indicator
+  const dirtyLbl = document.createElement("span");
+  dirtyLbl.style.cssText = "font-size:11px;color:#f59e0b;font-weight:600;margin-left:auto";
+  function _refreshDirtyLabel() {
+    const n = Object.keys(ts.dirtyMaps).filter(id => ts.dirtyMaps[id]).length;
+    dirtyLbl.textContent = n ? `${n} map${n > 1 ? "s" : ""} unsaved` : "";
+  }
+  _refreshDirtyLabel();
+  ctrlRow.appendChild(dirtyLbl);
+
+  // ── Selected receiver info panel ──────────────────────────────────────────
+  const infoCard = document.createElement("div");
+  infoCard.style.cssText = "background:#0d1f14;border:1px solid #1b3526;border-radius:8px;padding:10px 14px;font-size:12px;color:#a7f3d0;min-height:24px";
+  function _refreshInfo() {
+    if (!ts.selectedRx) {
+      infoCard.textContent = "Click a receiver marker to select it, then drag to reposition.";
+      return;
+    }
+    const draft = ts.draftReceivers[ts.selectedRx.mapId] || [];
+    const rx = draft.find(r => r.id === ts.selectedRx.rxId);
+    if (!rx) { infoCard.textContent = "Receiver not found."; return; }
+    const mapObj = maps_list.find(m => m.id === ts.selectedRx.mapId);
+    infoCard.innerHTML = "";
+    const lines = [
+      `<b style="color:#52b788">${_esc(rx.label || rx.id)}</b>`,
+      `Map: ${_esc(mapObj?.name || ts.selectedRx.mapId)}`,
+      `Room: ${_esc(rx.room || "—")}`,
+      `Position: x ${(rx.x * 100).toFixed(1)}%, y ${(rx.y * 100).toFixed(1)}%`,
+    ];
+    infoCard.innerHTML = lines.join(" &nbsp;·&nbsp; ");
+  }
+  _refreshInfo();
+
+  // ── Assemble ──────────────────────────────────────────────────────────────
+  wrap.appendChild(ctrlRow);
+  wrap.appendChild(isoWrap);
+  wrap.appendChild(infoCard);
+
+  return wrap;
 }
 
 function _detectRoom(x, y, mapData) {
