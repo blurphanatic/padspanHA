@@ -13,9 +13,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.39";
+const APP_VERSION = "0.5.40";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260227T173144Z";
+const BUILD_ID = "20260227T175439Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -196,6 +196,8 @@ class PadSpanHaApp extends HTMLElement {
     // Live polling (keeps 'Live' mode actually live)
     this._pollTimer = null;
     this._pollInFlight = false;
+    // Periodic activity simulation — prevents HA's built-in screensaver overlay
+    this._activityTimer = null;
   }
 
   set hass(hass){
@@ -336,11 +338,24 @@ class PadSpanHaApp extends HTMLElement {
     if(!this._visibilityHandler){
       this._visibilityHandler = ()=>{
         if(document.visibilityState === "visible"){
+          // Re-render immediately so there's no blank flash while data loads
+          this._renderCurrentView();
           this._refreshAll(false);
           if(!this._pollTimer) this._startPolling();
         }
       };
       document.addEventListener("visibilitychange", this._visibilityHandler);
+    }
+
+    // Simulate periodic user activity to prevent HA's built-in inactivity screensaver.
+    // HA tracks mousemove/pointermove events; dispatching a synthetic one every 90 s
+    // keeps the idle timer from expiring while the PadSpan panel is open.
+    if(!this._activityTimer){
+      this._activityTimer = setInterval(()=>{
+        try {
+          document.dispatchEvent(new PointerEvent("pointermove", {bubbles: true}));
+        } catch(e){}
+      }, 90_000);
     }
   }
 
@@ -348,6 +363,10 @@ class PadSpanHaApp extends HTMLElement {
     if(this._pollTimer){
       clearInterval(this._pollTimer);
       this._pollTimer = null;
+    }
+    if(this._activityTimer){
+      clearInterval(this._activityTimer);
+      this._activityTimer = null;
     }
   }
 
