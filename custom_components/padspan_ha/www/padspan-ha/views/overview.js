@@ -12,7 +12,8 @@
  */
 
 export function render(ctx){
-  const { el, pill, helpBtn } = ctx.helpers;
+  const { el, pill, helpBtn, radioShortId } = ctx.helpers;
+  const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
   const isBasic = ctx.state.complexity === "basic";
 
   const fmtNum = (n)=>{
@@ -106,6 +107,7 @@ export function render(ctx){
       }
       areaCell.appendChild(document.createTextNode(x.area_name || (x.disabled||x.lost ? "" : "—")));
       const tr = el("tr",{},[
+        el("td",{style:"font-family:monospace;font-weight:700;font-size:12px;letter-spacing:.04em"}, _sid(x.source)),
         el("td",{}, x.name || ""),
         el("td",{}, x.source || ""),
         el("td",{}, (x.adapter!=null?String(x.adapter):"")),
@@ -125,6 +127,7 @@ export function render(ctx){
 
     body.appendChild(el("table",{class:"table"},[
       el("thead",{}, el("tr",{},[
+        el("th",{}, "ID"),
         el("th",{}, "Name"),
         el("th",{}, "Source"),
         el("th",{}, "Adapter"),
@@ -133,14 +136,13 @@ export function render(ctx){
         el("th",{}, "Area"),
         el("th",{}, ""),
       ])),
-      el("tbody",{}, rows.length?rows:el("tr",{}, el("td",{colspan:7}, "No radios found. (Switch to Live mode + ensure Bluetooth is enabled in HA.)")))
+      el("tbody",{}, rows.length?rows:el("tr",{}, el("td",{colspan:8}, "No radios found. (Switch to Live mode + ensure Bluetooth is enabled in HA.)")))
     ]));
-    ctx.actions.openModal("Bluetooth Radios", body, "Areas read from HA — assign to update HA device registry");
+    ctx.actions.openModal("Bluetooth Radios", body, "ID = 3-letter label code · Areas read from HA device registry");
   }
 
   function openAreaAssign(radio, areas){
-    const { radioShortId } = ctx.helpers;
-    const sid = radioShortId ? radioShortId(radio.source||"") : "";
+    const sid = _sid(radio.source);
     if(dataMode !== "live"){
       ctx.toast("Area assignment requires Live mode.", true);
       return;
@@ -753,16 +755,18 @@ export function render(ctx){
             const [lix,liy]=iso(lwx,lwy,z);
             s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
           }
-          // Placed receivers (with scanner tooltip if live data matches)
+          // Placed receivers (with scanner tooltip + SID label)
           for(const r of (m.receivers||[])){
             const[wx,wy]=mapPt(r.x||0,r.y||0);
             const [px,py]=iso(wx,wy,z);
             const liveRadio = allRadios_live.find(rd=>rd.name===(r.label||"")||rd.source===(r.id||""));
-            const _rTip = `Scanner: ${r.label||r.id||"receiver"}${r.room ? "\nArea: "+r.room : ""}${liveRadio?.scanning!=null ? "\nScanning: "+(liveRadio.scanning?"Yes":"No") : ""}`;
+            const rsid = _sid(liveRadio ? liveRadio.source : (r.id || r.label || ""));
+            const _rTip = `${rsid} · ${r.label||r.id||"receiver"}${r.room ? "\nArea: "+r.room : ""}${liveRadio?.scanning!=null ? "\nScanning: "+(liveRadio.scanning?"Yes":"No") : ""}`;
             s += `<g data-tip="${_esc(_rTip)}">`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.3"/>`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.6"/>`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4"  fill="#52b788" opacity="0.9"/>`;
+            s += `<text x="${Math.round(px)}" y="${Math.round(py)-16}" text-anchor="middle" fill="#52b788" font-size="9" font-weight="700" font-family="monospace">${_esc(rsid)}</text>`;
             s += `</g>`;
           }
         }
@@ -897,12 +901,14 @@ export function render(ctx){
         let px,py;
         if(pos){ [px,py]=pos; }
         else { const idx=drawn.size-1; px=50+idx*160; py=BASE_H-40; if(px>W-80) continue; }
-        const _tip = `Scanner: ${name}${area ? "\nArea: "+area : ""}${radio.scanning!=null ? "\nScanning: "+(radio.scanning?"Yes":"No") : ""}`;
+        const rsid = _sid(radio.source);
+        const _tip = `${rsid} · ${name}${area ? "\nArea: "+area : ""}${radio.scanning!=null ? "\nScanning: "+(radio.scanning?"Yes":"No") : ""}`;
         s += `<g data-tip="${_esc(_tip)}">`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="22" fill="none" stroke="#52b788" stroke-width="1" opacity="0.2"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="14" fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.45"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="#52b788" opacity="0.9"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="3"  fill="#071008" opacity="0.7"/>`;
+        s += `<text x="${Math.round(px)}" y="${Math.round(py)-26}" text-anchor="middle" fill="#52b788" font-size="9" font-weight="700" font-family="monospace">${_esc(rsid)}</text>`;
         s += `</g>`;
       }
 
@@ -1236,11 +1242,13 @@ export function render(ctx){
       const roomRadios = radiosByRoom[room] || [];
       roomRadios.slice(0,5).forEach((r, ri) => {
         const rx = x + 22 + ri * 52, ry = y + 105;
+        const rsid = _sid(r.source);
         s += `<circle cx="${rx}" cy="${ry}" r="14" fill="none" stroke="#52b788" stroke-width="0.7" opacity="0.2"/>`;
         s += `<circle cx="${rx}" cy="${ry}" r="8"  fill="none" stroke="#52b788" stroke-width="1"   opacity="0.5"/>`;
         s += `<circle cx="${rx}" cy="${ry}" r="4"  fill="#52b788"/>`;
+        s += `<text x="${rx}" y="${ry - 18}" text-anchor="middle" fill="#52b788" font-size="10" font-weight="700" font-family="monospace">${_esc(rsid)}</text>`;
         const lbl = (r.name || r.source || "").substring(0, 9);
-        s += `<text x="${rx}" y="${ry + 20}" text-anchor="middle" fill="#52b788" font-size="9">${_esc(lbl)}</text>`;
+        s += `<text x="${rx}" y="${ry + 20}" text-anchor="middle" fill="#52b788" font-size="8" opacity="0.7">${_esc(lbl)}</text>`;
       });
 
       // Objects (dots on the right side)
@@ -1265,10 +1273,12 @@ export function render(ctx){
       s += `<text x="${PX}" y="${uy + 14}" fill="#94a3b8" font-size="12" font-weight="600">Radios not yet assigned to an HA area</text>`;
       unassignedRadios.slice(0,6).forEach((r, ri) => {
         const rx = PX + 20 + ri * 140, ry = uy + 42;
+        const rsid = _sid(r.source);
         s += `<circle cx="${rx}" cy="${ry}" r="8" fill="none" stroke="#52b788" stroke-width="0.8" opacity="0.3"/>`;
         s += `<circle cx="${rx}" cy="${ry}" r="5" fill="none" stroke="#52b788" stroke-width="1"   opacity="0.6"/>`;
         s += `<circle cx="${rx}" cy="${ry}" r="3" fill="#52b78888"/>`;
-        s += `<text x="${rx + 14}" y="${ry + 4}" fill="#94a3b8" font-size="10">${_esc(r.name || r.source || "Unknown")}</text>`;
+        s += `<text x="${rx + 14}" y="${ry - 2}" fill="#52b788" font-size="10" font-weight="700" font-family="monospace">${_esc(rsid)}</text>`;
+        s += `<text x="${rx + 14}" y="${ry + 12}" fill="#94a3b8" font-size="9">${_esc(r.name || r.source || "Unknown")}</text>`;
       });
     }
 
@@ -1296,10 +1306,14 @@ export function render(ctx){
     // Radio markers (concentric rings = scanning BT proxy)
     for(const radio of (fp.radios||[])){
       const {x,y} = radio;
+      // Use source for SID if available; fall back to name-based lookup from live radios
+      const liveMatch = radios.find(r=>r.name===radio.name);
+      const rsid = _sid(liveMatch ? liveMatch.source : (radio.id || radio.name || ""));
       s += `<circle cx="${x}" cy="${y}" r="22" fill="none" stroke="#52b788" stroke-width="0.8" opacity="0.2"/>`;
       s += `<circle cx="${x}" cy="${y}" r="14" fill="none" stroke="#52b788" stroke-width="1" opacity="0.4"/>`;
       s += `<circle cx="${x}" cy="${y}" r="8"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.7"/>`;
       s += `<circle cx="${x}" cy="${y}" r="4"  fill="#52b788" opacity="1"/>`;
+      s += `<text x="${x}" y="${y-26}" text-anchor="middle" fill="#52b788" font-size="10" font-weight="700" font-family="monospace">${rsid}</text>`;
       s += `<text x="${x}" y="${y+30}" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui,sans-serif">${radio.name}</text>`;
     }
 
