@@ -2137,6 +2137,8 @@ function _stack(ctx, maps, helpBtn){
   card.appendChild(stageOuter);
 
   let tgtLayerRef = null;
+  let pinsLayerRef = null;
+  let rebuildPins = () => {};  // forward ref — real impl assigned after buildStage
   let stageAr = 1.0;
   let applyCurrentTransform = ()=>{ updateReadout(); };
   // AbortController to clean up window listeners when buildStage() is called again
@@ -2268,6 +2270,29 @@ function _stack(ctx, maps, helpBtn){
       applyCurrentTransform = ()=>{ updateReadout(); };
       applyCurrentTransform();
     }
+
+    // Persistent pins overlay — always on top, never captures pointer events
+    const pinsDiv = document.createElement("div");
+    pinsDiv.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none";
+    pinsLayerRef = pinsDiv;
+    rebuildPins();
+    stageWrap.appendChild(pinsDiv);
+  };
+
+  // Real rebuildPins — updates only the pins SVG layer without rebuilding the whole stage
+  rebuildPins = () => {
+    if(!pinsLayerRef) return;
+    if(!ctx.state.maps._persistentPins){ pinsLayerRef.innerHTML = ""; return; }
+    const refId = refSel.value;
+    const refMap = maps.find(m=>m.id===refId) || null;
+    if(!refMap){ pinsLayerRef.innerHTML = ""; return; }
+    const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+    const awayObjs = snap?.objects
+      ? Object.values(snap.objects).filter(o =>
+          o.user_label && o.room && o.room !== "unknown" && o.room !== "not_home" &&
+          typeof o.age_s === "number" && o.age_s > 30)
+      : [];
+    pinsLayerRef.innerHTML = _persistent2dPinsSVGStr(refMap.room_bounds||{}, awayObjs);
   };
 
   refSel.addEventListener("change", buildStage);
@@ -2782,6 +2807,7 @@ function _stack(ctx, maps, helpBtn){
         ? "background:#7f1d1d;border-color:#ef4444;color:#fca5a5;font-weight:700"
         : "color:#94a3b8";
       rebuildIso();
+      rebuildPins();
     }
   }, ctx.state.maps._persistentPins ? "⊕ Persistent ON" : "⊕ Persistent");
 
@@ -2932,6 +2958,43 @@ function _stackMapSVGStr(map, ctx, isTarget, showBg=true){
   }
 
   s += `<text x="0.97" y="0.97" text-anchor="end" dominant-baseline="auto" fill="${isTarget?"#52b788":"#94a3b8"}" font-size="0.04" font-family="system-ui,sans-serif">${_escSVG(map.name||map.id)}</text>`;
+  s += `</svg>`;
+  return s;
+}
+
+// Generates the persistent-pins SVG overlay for the 2D alignment view.
+// Uses viewBox="0 0 1 1" / preserveAspectRatio="none" to match the room_bounds
+// coordinate system (same as _stackMapSVGStr).
+function _persistent2dPinsSVGStr(roomBounds, awayObjs){
+  if(!awayObjs.length) return "";
+  const rb = roomBounds || {};
+  let s = `<svg viewBox="0 0 1 1" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" style="position:absolute;top:0;left:0;width:100%;height:100%">`;
+  for(const obj of awayObjs){
+    const b = rb[obj.room];
+    if(!b) continue;
+    let cx = 0.5, cy = 0.5;
+    if(b.type === "poly" && Array.isArray(b.points) && b.points.length >= 3){
+      cx = b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
+      cy = b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
+    } else if(b.type === "circle"){
+      cx = b.cx ?? 0.5; cy = b.cy ?? 0.5;
+    }
+    const R  = 0.040;  // outer ring
+    const rM = 0.022;  // middle ring
+    const rD = 0.009;  // centre dot
+    const arm = rM + 0.026;  // crosshair arm end distance from centre
+    const gap = rM + 0.005;  // crosshair arm start distance from centre
+    s += `<g opacity="0.9">`;
+    s += `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#ef4444" stroke-width="0.007"/>`;
+    s += `<circle cx="${cx}" cy="${cy}" r="${rM}" fill="none" stroke="#ef4444" stroke-width="0.009"/>`;
+    s += `<circle cx="${cx}" cy="${cy}" r="${rD}" fill="#ef4444"/>`;
+    s += `<line x1="${cx-arm}" y1="${cy}" x2="${cx-gap}" y2="${cy}" stroke="#ef4444" stroke-width="0.007"/>`;
+    s += `<line x1="${cx+gap}" y1="${cy}" x2="${cx+arm}" y2="${cy}" stroke="#ef4444" stroke-width="0.007"/>`;
+    s += `<line x1="${cx}" y1="${cy-arm}" x2="${cx}" y2="${cy-gap}" stroke="#ef4444" stroke-width="0.007"/>`;
+    s += `<line x1="${cx}" y1="${cy+gap}" x2="${cx}" y2="${cy+arm}" stroke="#ef4444" stroke-width="0.007"/>`;
+    s += `<text x="${cx}" y="${cy+R+0.030}" text-anchor="middle" fill="#fca5a5" font-size="0.038" font-family="system-ui,sans-serif" font-weight="600">${_escSVG(obj.user_label)}</text>`;
+    s += `</g>`;
+  }
   s += `</svg>`;
   return s;
 }
