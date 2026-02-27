@@ -777,6 +777,7 @@ export function render(ctx){
         if(o.kind) parts.push(`Kind: ${o.kind}`);
         if(o.address && o.address !== n) parts.push(`Addr: ${o.address}`);
         if(o.room) parts.push(`Room: ${o.room}`);
+        if(o.knn_confidence > 0) parts.push(`Calibrated: ${Math.round(o.knn_confidence * 100)}%`);
         if(o.rssi != null) parts.push(`RSSI: ${o.rssi} dBm`);
         if(o.age_s != null){
           const a = Number(o.age_s);

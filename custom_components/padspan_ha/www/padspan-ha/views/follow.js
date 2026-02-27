@@ -162,6 +162,10 @@ function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode
   const statusBadge = obj.identified
     ? el("span", { class: "badge" }, "identified")
     : el("span", { class: "badge warn" }, "unidentified");
+  const knnBadge = obj.knn_confidence > 0
+    ? el("span", { class: "badge", style: "background:#1a3a2a;color:#52b788;border:1px solid #2d6a4f" },
+        `Calibrated ${Math.round(obj.knn_confidence * 100)}%`)
+    : null;
 
   if (isBasic) {
     // Basic mode: large room name + floor, simple last-seen
@@ -171,9 +175,10 @@ function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode
     return el("div", { class: "card", style: "margin-bottom:10px" }, [
       el("div", { class: "card-head" }, [
         el("div", { class: "h2" }, name),
+        knnBadge,
         helpBtn("follow_map"),
         detailsBtnBasic,
-      ]),
+      ].filter(Boolean)),
       el("div", { style: "margin-top:8px" }, [
         el("div", { class: "muted", style: "font-size:12px" }, "Currently in"),
         el("div", { style: "font-size:28px;font-weight:800;color:#52b788;margin-top:2px" }, room),
@@ -195,10 +200,11 @@ function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode
     el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px" }, [
       el("div", { style: "font-size:18px;font-weight:800;color:#e2e8f0" }, name),
       statusBadge,
+      knnBadge,
       el("button", {class:"btn inline", style:"margin-left:auto",
         onclick:()=> ctx.actions.showObjectDetail(obj)
       }, "Details →"),
-    ]),
+    ].filter(Boolean)),
     el("div", { class: "grid-2" }, [
       el("div", {}, [
         el("div", { class: "muted", style: "font-size:11px" }, "Current room"),

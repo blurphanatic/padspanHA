@@ -286,7 +286,10 @@ export function render(ctx){
             age ? el("div",{class:"muted",style:"font-size:10px;margin-top:2px"}, age) : null,
           ].filter(Boolean)
         : (age || "—")),
-      el("td",{class:"muted",style:"font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis"}, scanner || "—"),
+      el("td",{class:"muted",style:"font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis"},
+        o.knn_confidence > 0
+          ? [scanner || "—", el("div",{style:"font-size:10px;color:#52b788;margin-top:1px"}, `Calibrated ${Math.round(o.knn_confidence*100)}%`)]
+          : (scanner || "—")),
       followCell,
       tagCell,
     ]);

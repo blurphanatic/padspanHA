@@ -30,11 +30,13 @@ from .const import (
     DATA_MAPS,
     DATA_MODEL,
     DATA_OBJECTS,
+    DATA_ALERTS,
     DATA_PANEL_REGISTERED,
 )
 from .coordinator import PadSpanCoordinator
 from .maps_store import MapsStore
 from .model_store import ModelStore
+from .alert_store import AlertStore
 from .object_store import ObjectStore
 from .panel import async_setup_panel
 from .presence_coordinator import PresenceCoordinator
@@ -76,6 +78,12 @@ async def _ensure_stores(hass: HomeAssistant) -> None:
         await obj_store.async_load()
         hass.data[DOMAIN][DATA_OBJECTS] = obj_store
         _LOGGER.debug("ObjectStore ready (%d labels)", len(obj_store.all()))
+
+    if DATA_ALERTS not in hass.data[DOMAIN]:
+        alert_store = AlertStore(hass)
+        await alert_store.async_load()
+        hass.data[DOMAIN][DATA_ALERTS] = alert_store
+        _LOGGER.debug("AlertStore ready (%d configs)", len(alert_store.all()))
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:

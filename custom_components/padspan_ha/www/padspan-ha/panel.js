@@ -13,9 +13,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.48";
+const APP_VERSION = "0.5.49";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260227T200813Z";
+const BUILD_ID = "20260227T211238Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -417,6 +417,12 @@ class PadSpanHaApp extends HTMLElement {
       }
     }catch(e){}
   }
+  async _loadAlertConfigs(){
+    try{
+      const res = await this._callWS({ type: "padspan_ha/follow_alert_get" });
+      if(res?.configs) this.state.followAlertConfig = res.configs;
+    }catch(e){}
+  }
 
   // ---------- Data loading ----------
   async _loadSettings(){
@@ -553,6 +559,7 @@ class PadSpanHaApp extends HTMLElement {
       this._getModel(),
       this._runAutoDiag(false),
       this._fetchSettings(),
+      this._loadAlertConfigs(),
     ]);
     // Log any WS failures to console for debugging
     const names = ["getVersionInfo","getStatus","getRoomTags","getLiveSnapshot","getMapsList","getModel","runAutoDiag"];
@@ -667,6 +674,12 @@ class PadSpanHaApp extends HTMLElement {
         radioDisabledSet: async (source, disabled)=>await this._callWS({ type:"padspan_ha/radio_disabled_set", source, disabled }),
         refreshSnapshot: async ()=>{ await this._getLiveSnapshot(); this._renderCurrentView(); },
         followAlertSave: async (payload)=>await this._callWS({ type:"padspan_ha/follow_alert_save", ...payload }),
+        followAlertGet: async ()=>{
+          try {
+            const res = await this._callWS({ type:"padspan_ha/follow_alert_get" });
+            if(res && res.configs) this.state.followAlertConfig = res.configs;
+          } catch(e){ /* non-fatal */ }
+        },
         showHelp: (key)=>this._showHelp(key),
 
         // Area / entity management
@@ -1249,6 +1262,29 @@ class PadSpanHaApp extends HTMLElement {
     } catch(e) { /* ignore */ }
 
     this.$content.innerHTML = "";
+
+    // BLE health banner — show once per session when Bluetooth feed is unhealthy
+    if(!this.state._bleBannerDismissed){
+      const snap = this.state.live?.snapshot;
+      const bleDiag = snap?.ble?.diag;
+      if(bleDiag && (bleDiag.ok === false || (Array.isArray(bleDiag.errors) && bleDiag.errors.length))){
+        const banner = document.createElement("div");
+        banner.style.cssText = "background:#1a0a0a;border:1px solid #7f1d1d;border-radius:8px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:flex-start;gap:10px";
+        const msg = document.createElement("div");
+        msg.style.cssText = "flex:1;font-size:12px;color:#fca5a5;line-height:1.5";
+        msg.innerHTML = "<b style='font-size:13px'>Bluetooth feed unavailable</b><br>"
+          + "PadSpan can't see BLE scanners. This usually means Home Assistant needs a <b>full restart</b> "
+          + "(Settings → System → Restart) — a reload isn't enough after first install.";
+        const dismissBtn = document.createElement("button");
+        dismissBtn.className = "btn inline";
+        dismissBtn.style.cssText = "padding:2px 8px;font-size:11px;color:#fca5a5;border-color:#7f1d1d;flex-shrink:0";
+        dismissBtn.textContent = "Dismiss";
+        dismissBtn.addEventListener("click", ()=>{ this.state._bleBannerDismissed = true; banner.remove(); });
+        banner.appendChild(msg);
+        banner.appendChild(dismissBtn);
+        this.$content.appendChild(banner);
+      }
+    }
 
     if(!mod || typeof mod.render !== "function") {
       this.$content.appendChild(el("div",{class:"card"}, `View missing: ${v}`));

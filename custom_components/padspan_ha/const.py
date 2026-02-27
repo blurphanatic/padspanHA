@@ -1,6 +1,6 @@
 DOMAIN = "padspan_ha"
 NAME = "PadSpan HA"
-VERSION = "0.5.48"
+VERSION = "0.5.49"
 
 CONF_ENABLE_CLOUD = "enable_cloud"
 CONF_HUB_URL = "hub_url"
@@ -35,3 +35,5 @@ OBJECT_STORE_KEY = "padspan_ha.objects"
 DATA_OBJECTS = "objects"
 CALIBRATION_STORE_KEY = "padspan_ha.calibration"
 DATA_CALIBRATION = "calibration"
+ALERTS_STORE_KEY = "padspan_ha.follow_alerts"
+DATA_ALERTS = "alerts"

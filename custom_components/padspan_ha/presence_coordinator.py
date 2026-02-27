@@ -154,6 +154,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._rssi_margin_confidence: dict[str, float] = {}
         # {key: dict}  — latest k-NN fingerprint result (x_frac, y_frac, confidence, nearest_room)
         self._knn_position: dict[str, dict] = {}
+        # Throttle: {key: monotonic_ts} — last alert sent time per object
+        self._alert_last_sent: dict[str, float] = {}
+        _ALERT_COOLDOWN_S = 60  # min seconds between alerts for same device
 
     # ── main update ──────────────────────────────────────────────────────────
 
@@ -167,6 +170,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"PadSpan snapshot error: {err}") from err
 
         now = time.monotonic()
+        self._pending_room_changes: list[tuple[str, str | None, str]] = []  # (key, old_room, new_room)
 
         # ── Resolve rotating MACs to canonical IDs ────────────────────────────
         # Build a mapping {raw_addr_upper → canonical_key} so that all rotating
@@ -349,6 +353,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 stale["room"] = self._confirmed_room[key]
             result[key] = stale
 
+        # ── Fire follow-alerts for room changes ────────────────────────────────
+        if self._pending_room_changes:
+            await self._process_room_alerts(now, result)
+
         return result
 
     # ── smoothing helpers ─────────────────────────────────────────────────────
@@ -513,9 +521,76 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "Room confirmed for %s: %s → %s (votes %s, confidence %.0f%%)",
                         key, confirmed, top_room, dict(counts), confidence * 100,
                     )
+                    # Track room change for alert processing
+                    self._pending_room_changes.append((key, confirmed, top_room))
                 confirmed = top_room
 
         self._confirmed_room[key] = confirmed
         self._room_confidence[key] = confidence
         self._rssi_margin_confidence[key] = rssi_margin_confidence
         return confirmed
+
+    # ── Follow-alert processing ────────────────────────────────────────────
+
+    async def _process_room_alerts(
+        self, now: float, result: dict[str, Any]
+    ) -> None:
+        """Send email alerts for room changes based on saved alert configs."""
+        from .const import DOMAIN, DATA_ALERTS
+
+        alert_store = self.hass.data.get(DOMAIN, {}).get(DATA_ALERTS)
+        if not alert_store:
+            return
+
+        for key, old_room, new_room in self._pending_room_changes:
+            try:
+                cfg = alert_store.get_config(key)
+                if not cfg:
+                    continue
+                email = (cfg.get("email") or "").strip()
+                if not email:
+                    continue
+                if not cfg.get("on_room_change"):
+                    continue
+
+                # Check watch_rooms filter (empty list = alert on all rooms)
+                watch = cfg.get("watch_rooms") or []
+                if watch and new_room not in watch:
+                    continue
+
+                # Rate limit: 60s cooldown per device
+                last = self._alert_last_sent.get(key, 0.0)
+                if now - last < 60:
+                    _LOGGER.debug("Alert throttled for %s (%.0fs since last)", key, now - last)
+                    continue
+
+                # Get display label
+                obj = result.get(key) or self._known_objs.get(key) or {}
+                label = obj.get("user_label") or obj.get("name") or key
+
+                # Find a notify service
+                services = self.hass.services.async_services().get("notify", {})
+                if not services:
+                    _LOGGER.warning("Alert: no notify services available in HA")
+                    continue
+                service_name = next(iter(services))
+
+                message = (
+                    f"{label} moved from {old_room or 'unknown'} to {new_room}"
+                )
+                await self.hass.services.async_call(
+                    "notify",
+                    service_name,
+                    {
+                        "title": f"PadSpan: {label} moved",
+                        "message": message,
+                        "target": email,
+                    },
+                )
+                self._alert_last_sent[key] = now
+                _LOGGER.info(
+                    "Follow alert sent for %s: %s → %s (to %s via notify.%s)",
+                    label, old_room, new_room, email, service_name,
+                )
+            except Exception as err:
+                _LOGGER.warning("Follow alert failed for %s: %s", key, err)

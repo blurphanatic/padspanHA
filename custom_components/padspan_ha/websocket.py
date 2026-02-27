@@ -48,6 +48,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_radio_area_set)
     websocket_api.async_register_command(hass, ws_radio_lost_set)
     websocket_api.async_register_command(hass, ws_radio_disabled_set)
+    websocket_api.async_register_command(hass, ws_follow_alert_get)
     websocket_api.async_register_command(hass, ws_follow_alert_save)
     websocket_api.async_register_command(hass, ws_area_delete)
     websocket_api.async_register_command(hass, ws_entity_delete)
@@ -1514,6 +1515,16 @@ async def ws_radio_disabled_set(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], {"ok": True, "source": source, "disabled": disabled})
 
 
+@websocket_api.websocket_command({"type": "padspan_ha/follow_alert_get"})
+@websocket_api.async_response
+async def ws_follow_alert_get(hass: HomeAssistant, connection, msg) -> None:
+    """Return all saved follow-alert configurations."""
+    from .const import DATA_ALERTS
+    alert_store = hass.data.get(DOMAIN, {}).get(DATA_ALERTS)
+    configs = alert_store.all() if alert_store else {}
+    connection.send_result(msg["id"], {"configs": configs})
+
+
 @websocket_api.websocket_command(
     {
         "type": "padspan_ha/follow_alert_save",
@@ -1525,12 +1536,18 @@ async def ws_radio_disabled_set(hass: HomeAssistant, connection, msg) -> None:
 async def ws_follow_alert_save(hass: HomeAssistant, connection, msg) -> None:
     """Save follow/alert configuration for a tracked object.
 
-    Stores config in hass.data so it persists for the HA session.
-    Future: persist to storage + trigger HA notify service on movement.
+    Persists to AlertStore so configs survive HA restarts.
     """
     addr = str(msg.get("addr") or "").strip()
     config = msg.get("config") or {}
-    hass.data.setdefault(DOMAIN, {}).setdefault("follow_alerts", {})[addr] = config
+    # Persist to AlertStore (disk-backed)
+    from .const import DATA_ALERTS
+    alert_store = hass.data.get(DOMAIN, {}).get(DATA_ALERTS)
+    if alert_store:
+        await alert_store.async_save_config(addr, config)
+    else:
+        # Fallback: session-only (shouldn't happen if stores loaded)
+        hass.data.setdefault(DOMAIN, {}).setdefault("follow_alerts", {})[addr] = config
     _LOGGER.debug("PadSpan HA follow_alert_save: addr=%s config=%s", addr, config)
     connection.send_result(msg["id"], {"ok": True, "addr": addr})
 
