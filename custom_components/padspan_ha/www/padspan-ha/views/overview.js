@@ -744,7 +744,9 @@ export function render(ctx){
             if(!b||b.type!=="poly"||!Array.isArray(b.points)||b.points.length<3) continue;
             const color = roomColorFn(room);
             const pp = b.points.map(p=>{const[wx,wy]=mapPt(p[0],p[1]);return pt(iso(wx,wy,z));}).join(" ");
-            s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9"/>`;
+            const _objsHere = allObjects.filter(o=>o.room===room);
+            const _roomTip = `${room}\n${_objsHere.length} object${_objsHere.length!==1?"s":""} detected`;
+            s += `<g data-tip="${_esc(_roomTip)}"><polygon points="${pp}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9"/></g>`;
             const cx=b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
             const cy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
             const [lwx,lwy]=mapPt(cx,cy);
@@ -767,83 +769,112 @@ export function render(ctx){
         s += `</g>`;
       }
 
+      // ── Helper: build tooltip string for any object ────────────────────────
+      const _objTip = (o) => {
+        const parts = [];
+        const n = o.user_label || o.name || o.address || o.entity_id || "Unknown";
+        parts.push(n);
+        if(o.kind) parts.push(`Kind: ${o.kind}`);
+        if(o.address && o.address !== n) parts.push(`Addr: ${o.address}`);
+        if(o.room) parts.push(`Room: ${o.room}`);
+        if(o.rssi != null) parts.push(`RSSI: ${o.rssi} dBm`);
+        if(o.age_s != null){
+          const a = Number(o.age_s);
+          parts.push(`Seen: ${a<60 ? Math.round(a)+"s ago" : Math.floor(a/60)+"m ago"}`);
+        }
+        if(o.sources && o.sources.length) parts.push(`Scanners: ${o.sources.join(", ")}`);
+        if(!o.user_label) parts.push("Click to tag / view details");
+        return parts.join("|");  // pipe-delimited for data attribute, rendered as lines
+      };
+
+      // Track which object keys are rendered (to avoid duplicate dots for unlabeled layer)
+      const _renderedObjKeys = new Set();
+
       // Followed beacon — fingerprint-positioned using all live RSSI data
       const _followAddr = ctx.state.followAddr || "";
       const followedObjects = _followAddr ? allObjects.filter(o =>
         (o.address || "") === _followAddr || (o.entity_id || "") === _followAddr
       ) : [];
-      // Bright gold (#fbbf24) — intentionally distinct from all other map elements:
-      // radios are green, rooms are per-room color, floor badges are LAYER_PAL.
       const BEACON_CLR = "#fbbf24";
       for(const o of followedObjects){
+        _renderedObjKeys.add(o.key || o.address || o.entity_id || "");
         const readings = _getObjReadings(o);
         const match    = _matchFingerprint(readings);
         const lbl = (o.user_label||o.name||"?").substring(0,14);
         let bx, by;
         if(match){
           bx=match.sx; by=match.sy;
-          // Dashed uncertainty ring: tight+opaque = confident; wide+faint = uncertain
           const cr = Math.round(10 + (1-match.confidence)*24);
           const op = (0.3 + match.confidence*0.55).toFixed(2);
           s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
         } else if(o.room && roomIsoPos[o.room]){
           [bx,by] = roomIsoPos[o.room];
         } else { continue; }
-        // Outer glow ring
+        const _ok = _esc(o.key||o.address||o.entity_id||"");
+        s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(o))}" style="cursor:pointer">`;
         s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="14" fill="${BEACON_CLR}" opacity="0.18"/>`;
-        // Main dot
         s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="10" fill="${BEACON_CLR}" stroke="#071008" stroke-width="1.5" opacity="0.97"/>`;
-        // Dark centre pip
         s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="3" fill="#071008" opacity="0.7"/>`;
-        // Label: dark backing rect + bright text
         const lblW = Math.min(lbl.length * 7 + 10, 110);
         s += `<rect x="${Math.round(bx)-lblW/2}" y="${Math.round(by)-30}" width="${lblW}" height="14" rx="3" fill="#071008" opacity="0.7"/>`;
         s += `<text x="${Math.round(bx)}" y="${Math.round(by)-19}" text-anchor="middle" fill="${BEACON_CLR}" font-size="11" font-weight="700">${_esc(lbl)}</text>`;
+        s += `</g>`;
       }
 
-      // Persistent pins: show all labeled objects with a known room position.
-      // Away/stale objects (age_s > 30) get red crosshair; active ones get teal dot.
-      if(ctx.state._overviewPersistentPins){
-        const persistPins = liveSnap?.objects?.list
-          ? liveSnap.objects.list.filter(o =>
-              o.user_label && o.room && o.room !== "unknown" && o.room !== "not_home")
-          : [];
-        // Stagger offset so multiple objects in the same room don't overlap
-        const _roomPinCount = {};
-        for(const obj of persistPins){
+      // Persistent pins + unlabeled objects with known room positions.
+      // Labeled away = red crosshair, labeled active = teal dot, unlabeled = dim amber dot.
+      {
+        const _mapObjs = allObjects.filter(o =>
+          o.room && o.room !== "unknown" && o.room !== "not_home" && roomIsoPos[o.room] &&
+          !_renderedObjKeys.has(o.key || o.address || o.entity_id || ""));
+        const _roomObjCount = {};
+        for(const obj of _mapObjs){
+          const oKey = obj.key || obj.address || obj.entity_id || "";
+          _renderedObjKeys.add(oKey);
           const pos = roomIsoPos[obj.room];
-          if(!pos) continue;
-          const idx = (_roomPinCount[obj.room] || 0);
-          _roomPinCount[obj.room] = idx + 1;
-          const offX = idx * 32 - (idx > 0 ? 16 : 0);
-          const [px, py] = [pos[0] + offX, pos[1]];
-          const r = Math.round;
+          const idx = (_roomObjCount[obj.room] || 0);
+          _roomObjCount[obj.room] = idx + 1;
+          // Stagger: spiral-ish offset so items in the same room don't overlap
+          const angle = idx * 2.4;  // golden-angle-ish
+          const radius = 8 + idx * 6;
+          const offX = Math.cos(angle) * Math.min(radius, 40);
+          const offY = Math.sin(angle) * Math.min(radius, 25);
+          const px = Math.round(pos[0] + offX);
+          const py = Math.round(pos[1] + offY);
+          const _ok = _esc(oKey);
           const isAway = typeof obj.age_s === "number" && obj.age_s > 30;
-          if(isAway){
-            // Red crosshair for away/stale
-            s += `<g opacity="0.92">`;
-            s += `<circle cx="${r(px)}" cy="${r(py)}" r="20" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
-            s += `<circle cx="${r(px)}" cy="${r(py)}" r="11" fill="none" stroke="#ef4444" stroke-width="2"/>`;
-            s += `<circle cx="${r(px)}" cy="${r(py)}" r="4" fill="#ef4444"/>`;
-            s += `<line x1="${r(px)-25}" y1="${r(py)}" x2="${r(px)-13}" y2="${r(py)}" stroke="#ef4444" stroke-width="1.5"/>`;
-            s += `<line x1="${r(px)+13}" y1="${r(py)}" x2="${r(px)+25}" y2="${r(py)}" stroke="#ef4444" stroke-width="1.5"/>`;
-            s += `<line x1="${r(px)}" y1="${r(py)-25}" x2="${r(px)}" y2="${r(py)-13}" stroke="#ef4444" stroke-width="1.5"/>`;
-            s += `<line x1="${r(px)}" y1="${r(py)+13}" x2="${r(px)}" y2="${r(py)+25}" stroke="#ef4444" stroke-width="1.5"/>`;
-            s += `<text x="${r(px)}" y="${r(py)+36}" text-anchor="middle" fill="#fca5a5" font-size="9" font-weight="600">${_esc(obj.user_label)}</text>`;
+          const hasLabel = !!obj.user_label;
+
+          if(hasLabel && isAway && ctx.state._overviewPersistentPins){
+            // Red crosshair for labeled away objects (persistent mode)
+            s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.92">`;
+            s += `<circle cx="${px}" cy="${py}" r="20" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
+            s += `<circle cx="${px}" cy="${py}" r="11" fill="none" stroke="#ef4444" stroke-width="2"/>`;
+            s += `<circle cx="${px}" cy="${py}" r="4" fill="#ef4444"/>`;
+            s += `<line x1="${px-25}" y1="${py}" x2="${px-13}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
+            s += `<line x1="${px+13}" y1="${py}" x2="${px+25}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
+            s += `<line x1="${px}" y1="${py-25}" x2="${px}" y2="${py-13}" stroke="#ef4444" stroke-width="1.5"/>`;
+            s += `<line x1="${px}" y1="${py+13}" x2="${px}" y2="${py+25}" stroke="#ef4444" stroke-width="1.5"/>`;
+            s += `<text x="${px}" y="${py+36}" text-anchor="middle" fill="#fca5a5" font-size="9" font-weight="600">${_esc(obj.user_label)}</text>`;
             s += `</g>`;
-          } else {
-            // Teal dot for active/present
-            s += `<g opacity="0.88">`;
-            s += `<circle cx="${r(px)}" cy="${r(py)}" r="12" fill="#5eead4" opacity="0.15"/>`;
-            s += `<circle cx="${r(px)}" cy="${r(py)}" r="8" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="0.95"/>`;
-            s += `<circle cx="${r(px)}" cy="${r(py)}" r="2.5" fill="#071008" opacity="0.7"/>`;
-            s += `<text x="${r(px)}" y="${r(py)+22}" text-anchor="middle" fill="#5eead4" font-size="9" font-weight="600">${_esc(obj.user_label)}</text>`;
+          } else if(hasLabel && ctx.state._overviewPersistentPins){
+            // Teal dot for labeled active objects (persistent mode)
+            s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.88">`;
+            s += `<circle cx="${px}" cy="${py}" r="12" fill="#5eead4" opacity="0.15"/>`;
+            s += `<circle cx="${px}" cy="${py}" r="8" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="0.95"/>`;
+            s += `<circle cx="${px}" cy="${py}" r="2.5" fill="#071008" opacity="0.7"/>`;
+            s += `<text x="${px}" y="${py+22}" text-anchor="middle" fill="#5eead4" font-size="9" font-weight="600">${_esc(obj.user_label)}</text>`;
+            s += `</g>`;
+          } else if(!hasLabel){
+            // Small dim amber dot for unlabeled objects — always shown
+            s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.6">`;
+            s += `<circle cx="${px}" cy="${py}" r="5" fill="#f59e0b" stroke="#071008" stroke-width="1" opacity="0.7"/>`;
             s += `</g>`;
           }
         }
       }
 
-      // Live BLE radios — rings only, no text labels
+      // Live BLE radios — rings with tooltip
       const drawn = new Set();
       for(const radio of allRadios_live){
         const name = radio.name||radio.source||"";
@@ -853,10 +884,13 @@ export function render(ctx){
         let px,py;
         if(pos){ [px,py]=pos; }
         else { const idx=drawn.size-1; px=50+idx*160; py=BASE_H-40; if(px>W-80) continue; }
+        const _tip = `Scanner: ${name}${area ? "\nArea: "+area : ""}${radio.scanning!=null ? "\nScanning: "+(radio.scanning?"Yes":"No") : ""}`;
+        s += `<g data-tip="${_esc(_tip)}">`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="22" fill="none" stroke="#52b788" stroke-width="1" opacity="0.2"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="14" fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.45"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="#52b788" opacity="0.9"/>`;
         s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="3"  fill="#071008" opacity="0.7"/>`;
+        s += `</g>`;
       }
 
       if(!hasBounds && sorted.length){
@@ -891,9 +925,49 @@ export function render(ctx){
     focusSlider.style.cssText = "width:130px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
     focusSlider.value = String(ctx.state._overviewIsoFocusIdx);
 
+    const isoWrap = document.createElement("div");
+    isoWrap.style.cssText = "position:relative;margin-top:6px";
+
     const isoDiv = document.createElement("div");
-    isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px;margin-top:6px";
+    isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px";
     isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+
+    // Hover info overlay — upper-left corner of the map
+    const isoTipEl = document.createElement("div");
+    isoTipEl.style.cssText = "position:absolute;top:8px;left:8px;background:rgba(7,16,8,0.92);" +
+      "border:1px solid #2d6a4f;border-radius:8px;padding:6px 10px;font-size:11px;color:#a7f3d0;" +
+      "pointer-events:none;white-space:pre-line;max-width:260px;z-index:5;display:none;" +
+      "font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.5";
+    isoWrap.appendChild(isoDiv);
+    isoWrap.appendChild(isoTipEl);
+
+    // Event delegation: hover → show info overlay, click → open detail modal
+    isoDiv.addEventListener("mouseover", (e) => {
+      const g = e.target.closest("[data-tip]");
+      if(g){
+        isoTipEl.textContent = "";
+        const lines = g.getAttribute("data-tip").split("|");
+        lines.forEach((line, i) => {
+          if(i > 0) isoTipEl.appendChild(document.createElement("br"));
+          isoTipEl.appendChild(document.createTextNode(line));
+        });
+        isoTipEl.style.display = "block";
+      }
+    });
+    isoDiv.addEventListener("mouseout", (e) => {
+      const g = e.target.closest("[data-tip]");
+      if(!g || !isoDiv.contains(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("[data-tip]")))
+        isoTipEl.style.display = "none";
+    });
+    isoDiv.addEventListener("click", (e) => {
+      const g = e.target.closest("[data-obj-key]");
+      if(!g) return;
+      const objKey = g.getAttribute("data-obj-key");
+      if(!objKey) return;
+      const obj = allObjects.find(o =>
+        (o.key||"") === objKey || (o.address||"") === objKey || (o.entity_id||"") === objKey);
+      if(obj) ctx.actions.showObjectDetail(obj);
+    });
 
     const haFloors2 = ctx.state.model?.floors || [];
     focusSlider.addEventListener("input", ()=>{
@@ -1082,7 +1156,7 @@ export function render(ctx){
     });
     ctrlRow.appendChild(ovPersistentBtn);
     outer.appendChild(ctrlRow);
-    outer.appendChild(isoDiv);
+    outer.appendChild(isoWrap);
     outer.appendChild(roomListPanel);
     return outer;
   }
