@@ -883,34 +883,9 @@ export function render(ctx){
         }
       }
 
-      // Live BLE radios — only show radios NOT already placed on a map
-      // (placed receivers are drawn above with their own markers)
-      const placedLabels = new Set();
-      for(const m of sorted) for(const r of (m.receivers||[])) {
-        if(r.label) placedLabels.add(r.label);
-        if(r.id) placedLabels.add(r.id);
-      }
-      const drawn = new Set();
-      for(const radio of allRadios_live){
-        const name = radio.name||radio.source||"";
-        if(drawn.has(name)) continue; drawn.add(name);
-        // Skip if this scanner is already represented by a placed receiver on a map
-        if(placedLabels.has(name) || placedLabels.has(radio.source)) continue;
-        const area = radio.area_name;
-        const pos = (area && receiverIsoByRoom[area]) || (area && roomIsoPos[area]);
-        let px,py;
-        if(pos){ [px,py]=pos; }
-        else { const idx=drawn.size-1; px=50+idx*160; py=BASE_H-40; if(px>W-80) continue; }
-        const rsid = _sid(radio.source);
-        const _tip = `${rsid} · ${name}${area ? "\nArea: "+area : ""}${radio.scanning!=null ? "\nScanning: "+(radio.scanning?"Yes":"No") : ""}`;
-        s += `<g data-tip="${_esc(_tip)}">`;
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="22" fill="none" stroke="#52b788" stroke-width="1" opacity="0.2"/>`;
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="14" fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.45"/>`;
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="#52b788" opacity="0.9"/>`;
-        s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="3"  fill="#071008" opacity="0.7"/>`;
-        s += `<text x="${Math.round(px)}" y="${Math.round(py)-26}" text-anchor="middle" fill="#52b788" font-size="9" font-weight="700" font-family="monospace">${_esc(rsid)}</text>`;
-        s += `</g>`;
-      }
+      // Only placed receivers (pinned to maps) are shown in the 3D view.
+      // Live BLE radios without map placement are omitted — they have no
+      // precise coordinates and would just clutter the spatial view.
 
       if(!hasBounds && sorted.length){
         s += `<text x="${W/2}" y="${BASE_H-20}" text-anchor="middle" fill="#4a6052" font-size="16">Go to Maps → Edit to draw room boundaries</text>`;
