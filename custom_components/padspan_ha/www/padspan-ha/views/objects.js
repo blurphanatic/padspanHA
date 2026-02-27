@@ -156,6 +156,21 @@ export function render(ctx){
   const allObjects = objModel && Array.isArray(objModel.list) ? objModel.list : [];
   const summary = objModel && objModel.summary ? objModel.summary : null;
 
+  // Dedup: suppress entity rows whose physical device already has a BLE/iBeacon/private_ble row.
+  // This prevents e.g. "Dog Tracker" entity appearing alongside its BLE advertisement row.
+  const _bleAddrSet = new Set(
+    allObjects.filter(o => o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon")
+      .map(o => o.address).filter(Boolean)
+  );
+  const _linkedEntitySet = new Set(
+    allObjects.flatMap(o => Array.isArray(o.linked_entities) ? o.linked_entities : [])
+  );
+  const _isDuplicateEntity = (o) =>
+    o.kind === "entity" && (
+      (o.address && _bleAddrSet.has(o.address)) ||
+      (o.entity_id && _linkedEntitySet.has(o.entity_id))
+    );
+
   // Away detection — mirrors sensor.py / device_tracker.py threshold
   const awayTimeoutS = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null)
     ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
@@ -171,7 +186,7 @@ export function render(ctx){
 
   const objSearchInput = el("input",{type:"text", placeholder:"Search address, name, label…", value: ctx.state.objSearch});
   const objKindSel = el("select",{class:"btn"});
-  [{v:"all",t:"All"},{v:"ble",t:"BLE devices"},{v:"entity",t:"HA entities"}]
+  [{v:"all",t:"All"},{v:"ble",t:"BLE / beacon devices"},{v:"entity",t:"HA entities only"}]
     .forEach(o=>objKindSel.appendChild(el("option",{value:o.v},o.t)));
   objKindSel.value = ctx.state.objKind;
 
@@ -197,6 +212,9 @@ export function render(ctx){
   ]);
 
   const objRowEls = allObjects.map(o=>{
+    // Skip entity rows that duplicate a BLE/iBeacon/private_ble row for the same device
+    if(_isDuplicateEntity(o)) return null;
+
     const kind = o.kind || "";
     const identified = !!o.identified;
     const addr = o.address || "";
@@ -280,7 +298,7 @@ export function render(ctx){
     });
     objTbody.appendChild(tr);
     return tr;
-  });
+  }).filter(Boolean);
 
   function applyObjFilter(){
     const q = String(ctx.state.objSearch||"").toLowerCase();
@@ -293,7 +311,9 @@ export function render(ctx){
       const hay = tr.getAttribute("data-search")||"";
       const away = hay.includes(" away");
       let ok = true;
-      if(k !== "all" && kind !== k) ok = false;
+      // "ble" filter covers ble, private_ble, and ibeacon (all physical BLE devices)
+      if(k === "ble" && kind !== "ble" && kind !== "private_ble" && kind !== "ibeacon") ok = false;
+      else if(k !== "all" && k !== "ble" && kind !== k) ok = false;
       if(s === "identified" && !ident) ok = false;
       if(s === "unidentified" && ident) ok = false;
       if(s === "away" && !away) ok = false;

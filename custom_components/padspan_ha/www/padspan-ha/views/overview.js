@@ -268,13 +268,27 @@ export function render(ctx){
     const summary = liveSnap.objects.summary || {};
     const commonPrefixes = summary.common_prefixes || {};
 
+    // Dedup: suppress entity rows whose device already has a BLE/iBeacon/private_ble row
+    const _ovBleAddrSet = new Set(
+      list.filter(o => o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon")
+        .map(o => o.address).filter(Boolean)
+    );
+    const _ovLinkedSet = new Set(
+      list.flatMap(o => Array.isArray(o.linked_entities) ? o.linked_entities : [])
+    );
+    const _ovIsDup = (o) =>
+      o.kind === "entity" && (
+        (o.address && _ovBleAddrSet.has(o.address)) ||
+        (o.entity_id && _ovLinkedSet.has(o.entity_id))
+      );
+
     const body = el("div",{});
     const controls = el("div",{class:"controls"});
     const search = el("input",{type:"text", placeholder:"Filter by address, vendor, entity, room…"});
     const kindSel = el("select",{},[
       el("option",{value:"all"}, "All kinds"),
       el("option",{value:"entity"}, "Entities only"),
-      el("option",{value:"ble"}, "BLE only"),
+      el("option",{value:"ble"}, "BLE / beacon devices"),
     ]);
     const statusSel = el("select",{},[
       el("option",{value:"all"}, "All statuses"),
@@ -316,6 +330,9 @@ export function render(ctx){
 
     // Build rows once, then filter by show/hide (fast, no re-render).
     const rowEls = list.map((o)=>{
+      // Skip entity rows that duplicate a BLE row for the same physical device
+      if(_ovIsDup(o)) return null;
+
       const kind = o.kind || "";
       const identified = !!o.identified;
       const addr = o.address || "";
@@ -393,7 +410,7 @@ export function render(ctx){
       // kick vendor lookup for BLE rows (best-effort, after render)
       tr._vendorCell = vendorCell;
       return tr;
-    });
+    }).filter(Boolean);
 
     rowEls.forEach(tr=>tbody.appendChild(tr));
 
@@ -413,7 +430,9 @@ export function render(ctx){
 
         let ok = true;
         if(q && !hay.includes(q)) ok=false;
-        if(k!=="all" && kind!==k) ok=false;
+        // "ble" filter covers ble, private_ble, and ibeacon (all physical BLE devices)
+        if(k === "ble" && kind !== "ble" && kind !== "private_ble" && kind !== "ibeacon") ok = false;
+        else if(k!=="all" && k!=="ble" && kind!==k) ok=false;
         if(st==="identified" && !idf) ok=false;
         if(st==="unidentified" && idf) ok=false;
         if(co && !common) ok=false;

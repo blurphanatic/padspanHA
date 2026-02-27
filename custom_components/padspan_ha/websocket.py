@@ -416,6 +416,16 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         for st in hass.states.async_all():
             entity_id = st.entity_id
 
+            # Skip our own derived sensor/tracker entities (area, distance) — they are
+            # characteristics of BLE objects already in section B/C of the objects list.
+            # Including them would show "Dog Distance" and "Dog Area" as separate "objects".
+            try:
+                _ent_entry = er.async_get(entity_id)
+                if _ent_entry and _ent_entry.platform == DOMAIN:
+                    continue
+            except Exception:
+                pass
+
             # Determine room/area first (state often contains the room name).
             room = _room_from_state(entity_id, st)
             if not room:
@@ -846,13 +856,22 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
             if obj_store:
                 for obj in objects:
-                    addr = obj.get("address", "")
-                    if addr:
-                        entry = obj_store.get(addr)
-                        if entry:
-                            obj["user_label"] = entry.get("label", "")
-                            if obj.get("kind") in ("ble", "ibeacon"):
-                                obj["identified"] = True
+                    addr = obj.get("address", "") or ""
+                    # private_ble objects are tagged by canonical_id in the UI (not the
+                    # rotating MAC address), so try canonical_id first, fall back to MAC.
+                    if obj.get("kind") == "private_ble":
+                        lookup_key = obj.get("canonical_id") or addr
+                    else:
+                        lookup_key = addr
+                    if not lookup_key:
+                        continue
+                    entry = obj_store.get(lookup_key)
+                    if not entry and lookup_key != addr:
+                        entry = obj_store.get(addr)  # fallback to MAC
+                    if entry:
+                        obj["user_label"] = entry.get("label", "")
+                        if obj.get("kind") in ("ble", "ibeacon", "private_ble"):
+                            obj["identified"] = True
         except Exception:
             pass
 
