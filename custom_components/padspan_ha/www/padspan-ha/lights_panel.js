@@ -8,8 +8,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.30";
-const BUILD_ID = "20260226T210431Z";
+const APP_VERSION = "0.5.31";
+const BUILD_ID = "20260227T013128Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -96,11 +96,14 @@ function buildIsoSVG(maps_list, byRoom, hiddenEids, focusZ, floorGap, horizGap){
   const sortedLevels=[...byLevel.keys()].sort((a,b)=>a-b);
   const levelColor=(z)=>LAYER_PAL[sortedLevels.indexOf(z)%LAYER_PAL.length];
   const LEGEND_H=sortedLevels.length*30+24;
-  const HTOTAL=BASE_H+LEGEND_H;
+  // Dynamic viewBox: expand upward so high floors aren't clipped when spacing is large
+  const maxIsoZ = sortedLevels.length ? sortedLevels[sortedLevels.length-1] : 0;
+  const viewY   = Math.min(0, CY - maxIsoZ*FG - 50);   // 50 px top padding
+  const HTOTAL  = BASE_H + LEGEND_H - viewY;
 
-  let s=`<svg viewBox="0 0 ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" `+
+  let s=`<svg viewBox="0 ${viewY} ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" `+
     `style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
-  s+=`<rect width="${W}" height="${HTOTAL}" fill="#071008"/>`;
+  s+=`<rect x="0" y="${viewY}" width="${W}" height="${HTOTAL}" fill="#071008"/>`;
 
   // Floor surface patterns (same as Overview)
   s+=`<defs>`;
