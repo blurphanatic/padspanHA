@@ -13,9 +13,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.42";
+const APP_VERSION = "0.5.43";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260227T181327Z";
+const BUILD_ID = "20260227T183144Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -716,13 +716,12 @@ class PadSpanHaApp extends HTMLElement {
         calibrationComputeModel: async () => await this._callWS({ type: "padspan_ha/calibration_compute_model" }),
         calibrationSwapRadio: async (old_source, new_source) => await this._callWS({ type: "padspan_ha/calibration_swap_radio", old_source, new_source }),
         calibrationHealthCheck: async () => await this._callWS({ type: "padspan_ha/calibration_health_check" }),
-        // Followed beacons — clicking Follow navigates directly to the Follow tab with the object pre-selected
+        // Followed beacons — toggle follow state; re-renders current view to update button
         followedHas: (addr) => !!addr && String(addr) === String(this.state.followAddr || ""),
         followedToggle: (addr) => {
           if(!addr) return;
-          this.state.followAddr = String(addr);
-          this.state.view = "follow";
-          this._renderNav();
+          const cur = String(this.state.followAddr || "");
+          this.state.followAddr = (cur === String(addr)) ? "" : String(addr);
           this._renderCurrentView();
         },
       },
