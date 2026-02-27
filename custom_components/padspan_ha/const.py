@@ -1,6 +1,6 @@
 DOMAIN = "padspan_ha"
 NAME = "PadSpan HA"
-VERSION = "0.5.38"
+VERSION = "0.5.39"
 
 CONF_ENABLE_CLOUD = "enable_cloud"
 CONF_HUB_URL = "hub_url"
@@ -14,6 +14,10 @@ DEFAULT_PATH_LOSS_EXP = 2.5      # path-loss exponent n
 # Kalman filter parameters for per-scanner RSSI smoothing (replaces EMA)
 DEFAULT_KALMAN_Q = 0.125         # process noise: how much true RSSI varies per poll
 DEFAULT_KALMAN_R = 8.0           # measurement noise: how noisy raw RSSI is
+
+# Gaussian room-scoring σ in metres.  score = exp(−(d/σ)²)
+# At d=σ the scanner's influence drops to ~37%; at d=2σ to ~2%.
+DEFAULT_ROOM_SIGMA_M = 4.0
 
 DATA_COORDINATOR = "coordinator"
 DATA_PANEL_REGISTERED = "_panel_registered"

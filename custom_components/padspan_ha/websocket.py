@@ -975,6 +975,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("path_loss_exp"): vol.Coerce(float),
         vol.Optional("kalman_q"): vol.Coerce(float),
         vol.Optional("kalman_r"): vol.Coerce(float),
+        vol.Optional("room_sigma_m"): vol.Coerce(float),
         vol.Optional("hidden_map_ids"): list,
         vol.Optional("health_reminder_enabled"): bool,
         vol.Optional("health_reminder_last_ts"): vol.Any(float, int, None),
@@ -1008,6 +1009,8 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["kalman_q"] = max(0.01, min(1.0, float(msg["kalman_q"])))
         if "kalman_r" in msg:
             payload["kalman_r"] = max(0.5, min(50.0, float(msg["kalman_r"])))
+        if "room_sigma_m" in msg:
+            payload["room_sigma_m"] = max(1.0, min(20.0, float(msg["room_sigma_m"])))
         if "hidden_map_ids" in msg:
             ids = msg["hidden_map_ids"]
             payload["hidden_map_ids"] = [str(x) for x in ids if isinstance(x, str)] if isinstance(ids, list) else []

@@ -27,6 +27,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "scanner_offsets": {},     # {source_name: offset_dBm} — manual per-scanner RSSI trim
     "kalman_q": 0.125,             # Kalman process noise (RSSI responsiveness)
     "kalman_r": 8.0,               # Kalman measurement noise (smoothing strength)
+    "room_sigma_m": 4.0,           # Gaussian room-scoring sigma in metres
     "health_reminder_enabled": False,  # monthly calibration accuracy reminder (off by default)
     "health_reminder_last_ts":  None,  # epoch seconds when reminder was last shown
     # 3D isometric view layout (Maps tab)

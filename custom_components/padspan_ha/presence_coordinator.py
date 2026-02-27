@@ -10,7 +10,7 @@ Raw BLE RSSI is extremely noisy — a device standing still can swing ±10 dBm
 between consecutive advertisements.  Without smoothing, the "current room" flickers
 between adjacent rooms every few seconds.
 
-Two-stage pipeline applied each poll cycle:
+Three-stage pipeline applied each poll cycle:
 
   Stage 1 — Kalman-filtered RSSI per source
     Replaces the fixed-alpha EMA with an adaptive Kalman filter that adjusts
@@ -30,10 +30,21 @@ Two-stage pipeline applied each poll cycle:
     Sources that stop reporting are decayed toward -100 dBm and pruned when they
     fall below -95 dBm (~4–5 polls after last seen).
 
+  Stage 1.5 — Gaussian room scoring (replaces winner-takes-all max RSSI)
+    Each scanner's Kalman RSSI is converted to an estimated distance via the
+    path-loss formula, then scored with a Gaussian weight exp(−(d/σ)²) where
+    σ is the configurable room_sigma_m (default 4 m).  The room with the highest
+    max-score across its assigned scanners becomes the candidate.  This penalises
+    scanners on the far side of a wall more proportionally than raw RSSI comparison.
+
+    Optional k-NN override: if calibration fingerprint data (≥5 points) exists and
+    the k-NN confidence exceeds 0.30, the fingerprint result replaces the Gaussian
+    candidate.  Also provides sub-room (x_frac, y_frac) for map dot positioning.
+
   Stage 2 — Majority-vote window
-    At each poll, the candidate room (area of source with highest smoothed RSSI)
-    is added to a rolling window of VOTE_WINDOW (3) entries.  The confirmed room
-    only changes when one room appears ≥ VOTE_THRESHOLD (2) times in the window.
+    At each poll, the candidate room (from Gaussian scoring or k-NN) is added to
+    a rolling window of VOTE_WINDOW (3) entries.  The confirmed room only changes
+    when one room appears ≥ VOTE_THRESHOLD (2) times in the window.
     At 10 s/poll this means a room switch requires ~20 s of consistent dominance.
 
     The vote window is cleared when a device re-appears after being away, preventing
@@ -59,6 +70,7 @@ extra_state_attributes of sensor.{device}_area.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections import deque
 from datetime import timedelta
@@ -67,7 +79,11 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, DATA_SETTINGS, DEFAULT_KALMAN_Q, DEFAULT_KALMAN_R
+from .const import (
+    DOMAIN, DATA_SETTINGS, DATA_CALIBRATION,
+    DEFAULT_KALMAN_Q, DEFAULT_KALMAN_R,
+    DEFAULT_REF_POWER, DEFAULT_PATH_LOSS_EXP, DEFAULT_ROOM_SIGMA_M,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -92,6 +108,12 @@ _EMA_SILENCE_DBM: float = -100.0
 # Number of consecutive missed polls before a device starts accumulating age_s.
 # Grace period = _AWAY_GRACE_POLLS * _SCAN_INTERVAL = 2 * 10s = 20s.
 _AWAY_GRACE_POLLS: int = 2
+
+# ── k-NN live fingerprint gating ─────────────────────────────────────────────
+# Minimum calibration points before k-NN is consulted for live room assignment.
+_KNN_MIN_POINTS: int = 5
+# Minimum k-NN confidence [0, 1] required to override the Gaussian candidate.
+_KNN_LIVE_THRESHOLD: float = 0.30
 
 
 class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -127,6 +149,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._room_confidence: dict[str, float] = {}
         # {key: float}  — RSSI margin confidence ∈ [0, 1] (gap between best and 2nd-best scanner)
         self._rssi_margin_confidence: dict[str, float] = {}
+        # {key: dict}  — latest k-NN fingerprint result (x_frac, y_frac, confidence, nearest_room)
+        self._knn_position: dict[str, dict] = {}
 
     # ── main update ──────────────────────────────────────────────────────────
 
@@ -201,6 +225,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self._known_objs.get(key, {}).get("_stale"):
                 self._room_votes.pop(key, None)
                 self._room_confidence.pop(key, None)
+                self._knn_position.pop(key, None)
                 if obj.get("kind") in ("ble", "private_ble"):
                     addr_clear = str(obj.get("address") or "").upper()
                     self._ema_rssi.pop(addr_clear, None)
@@ -228,6 +253,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 obj["_smoothed"] = True
                 obj["room_confidence"] = self._room_confidence.get(key, 0.0)
                 obj["rssi_margin_confidence"] = self._rssi_margin_confidence.get(key, 0.0)
+                # Propagate k-NN sub-room position when calibration data is available
+                _knn = self._knn_position.get(key)
+                if _knn:
+                    obj["x_frac"] = _knn.get("x_frac")
+                    obj["y_frac"] = _knn.get("y_frac")
+                    obj["knn_confidence"] = _knn.get("confidence")
                 # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(addr, {}))
                 # Propagate TX power if seen in advertisements
@@ -252,6 +283,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 obj["_smoothed"] = True
                 obj["room_confidence"] = self._room_confidence.get(key, 0.0)
                 obj["rssi_margin_confidence"] = self._rssi_margin_confidence.get(key, 0.0)
+                # Propagate k-NN sub-room position when calibration data is available
+                _knn_ib = self._knn_position.get(key)
+                if _knn_ib:
+                    obj["x_frac"] = _knn_ib.get("x_frac")
+                    obj["y_frac"] = _knn_ib.get("y_frac")
+                    obj["knn_confidence"] = _knn_ib.get("confidence")
                 # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(key, {}))
                 self._known_objs[key] = dict(obj)  # refresh with smoothed data
@@ -343,20 +380,70 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     del ema[src]
                     kp.pop(src, None)
 
-        # Candidate room: area of source with highest Kalman-smoothed RSSI
-        # Also compute RSSI margin confidence: how clearly the winner beats the runner-up.
-        # margin 0 dBm → 0% confidence; margin ≥15 dBm → 100% confidence.
+        # Read path-loss params and room sigma from settings
+        try:
+            _st_pl = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            _d_pl  = (_st_pl.data if _st_pl else {}) or {}
+            _ref   = float(_d_pl.get("ref_power",    DEFAULT_REF_POWER))
+            _n_exp = float(_d_pl.get("path_loss_exp", DEFAULT_PATH_LOSS_EXP))
+            _sigma = float(_d_pl.get("room_sigma_m",  DEFAULT_ROOM_SIGMA_M))
+        except Exception:
+            _ref   = DEFAULT_REF_POWER
+            _n_exp = DEFAULT_PATH_LOSS_EXP
+            _sigma = DEFAULT_ROOM_SIGMA_M
+
+        # ── Change A: Gaussian room scoring ──────────────────────────────────
+        # Convert each scanner's Kalman-filtered RSSI → estimated distance →
+        # Gaussian weight exp(−(d/σ)²).  Score each room as the max weight of
+        # its assigned scanners.  Compared to winner-takes-all (max RSSI), this
+        # penalises scanners on the far side of a wall more proportionally,
+        # softening boundary flickering without requiring geometry data.
         candidate: str | None = None
         rssi_margin_confidence: float = 0.0
         if ema:
+            # Raw RSSI gap: keep backwards-compatible rssi_margin_confidence metric
             sorted_vals = sorted(ema.values(), reverse=True)
-            best_src = max(ema, key=lambda s: ema[s])
-            candidate = source_to_area.get(best_src)
             if len(sorted_vals) >= 2:
-                margin = sorted_vals[0] - sorted_vals[1]
-                rssi_margin_confidence = round(min(1.0, max(0.0, margin / 15.0)), 2)
+                rssi_margin_confidence = round(
+                    min(1.0, max(0.0, (sorted_vals[0] - sorted_vals[1]) / 15.0)), 2
+                )
             else:
-                rssi_margin_confidence = 1.0  # only one scanner — it wins uncontested
+                rssi_margin_confidence = 1.0
+
+            # Gaussian room scoring
+            room_scores: dict[str, float] = {}
+            for _src, _rssi in ema.items():
+                _room = source_to_area.get(_src)
+                if not _room:
+                    continue
+                _dist  = max(0.1, 10.0 ** ((_ref - _rssi) / (10.0 * _n_exp)))
+                _score = math.exp(-(_dist / _sigma) ** 2)
+                if _room not in room_scores or _score > room_scores[_room]:
+                    room_scores[_room] = _score
+            if room_scores:
+                candidate = max(room_scores, key=lambda r: room_scores[r])
+
+        # ── Change B: k-NN fingerprint override ──────────────────────────────
+        # When calibration data exists and the fingerprint match is confident
+        # enough, use the k-NN result as the candidate instead of the Gaussian
+        # winner.  Also captures sub-room (x_frac, y_frac) for map display.
+        try:
+            _calib = self.hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+            if _calib and len(_calib.data.get("points", [])) >= _KNN_MIN_POINTS:
+                _knn = _calib.knn_locate(dict(ema))
+                if _knn and _knn.get("confidence", 0.0) >= _KNN_LIVE_THRESHOLD:
+                    _knn_room = _knn.get("nearest_room")
+                    if _knn_room:
+                        candidate = _knn_room
+                        self._knn_position[key] = _knn
+                    else:
+                        self._knn_position.pop(key, None)
+                else:
+                    self._knn_position.pop(key, None)
+            else:
+                self._knn_position.pop(key, None)
+        except Exception:
+            self._knn_position.pop(key, None)
 
         # ── Stage 2: majority-vote window (size adjusts to room_change_delay_s) ──
         existing = self._room_votes.get(key)
