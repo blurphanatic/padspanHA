@@ -753,13 +753,17 @@ export function render(ctx){
             const [lix,liy]=iso(lwx,lwy,z);
             s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
           }
-          // Placed receivers
+          // Placed receivers (with scanner tooltip if live data matches)
           for(const r of (m.receivers||[])){
             const[wx,wy]=mapPt(r.x||0,r.y||0);
             const [px,py]=iso(wx,wy,z);
+            const liveRadio = allRadios_live.find(rd=>rd.name===(r.label||"")||rd.source===(r.id||""));
+            const _rTip = `Scanner: ${r.label||r.id||"receiver"}${r.room ? "\nArea: "+r.room : ""}${liveRadio?.scanning!=null ? "\nScanning: "+(liveRadio.scanning?"Yes":"No") : ""}`;
+            s += `<g data-tip="${_esc(_rTip)}">`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.3"/>`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.6"/>`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4"  fill="#52b788" opacity="0.9"/>`;
+            s += `</g>`;
           }
         }
 
@@ -875,11 +879,19 @@ export function render(ctx){
         }
       }
 
-      // Live BLE radios — rings with tooltip
+      // Live BLE radios — only show radios NOT already placed on a map
+      // (placed receivers are drawn above with their own markers)
+      const placedLabels = new Set();
+      for(const m of sorted) for(const r of (m.receivers||[])) {
+        if(r.label) placedLabels.add(r.label);
+        if(r.id) placedLabels.add(r.id);
+      }
       const drawn = new Set();
       for(const radio of allRadios_live){
         const name = radio.name||radio.source||"";
         if(drawn.has(name)) continue; drawn.add(name);
+        // Skip if this scanner is already represented by a placed receiver on a map
+        if(placedLabels.has(name) || placedLabels.has(radio.source)) continue;
         const area = radio.area_name;
         const pos = (area && receiverIsoByRoom[area]) || (area && roomIsoPos[area]);
         let px,py;
