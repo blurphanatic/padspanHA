@@ -11,10 +11,10 @@
   - BUILD_ID / APP_VERSION are updated automatically by scripts/release.py.
 */
 
-import * as Calibration from "./views/calibration.js?b=20260227T233446Z";
+import * as Calibration from "./views/calibration.js?b=20260227T233742Z";
 
-const APP_VERSION = "0.5.56";
-const BUILD_ID = "20260227T233446Z";
+const APP_VERSION = "0.5.57";
+const BUILD_ID = "20260227T233742Z";
 
 // ── Minimal DOM helpers (same signatures as panel.js) ──────────────────────
 function el(tag, attrs={}, children=[]){

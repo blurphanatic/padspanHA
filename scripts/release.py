@@ -121,45 +121,21 @@ def build_zip():
 
 
 def git_commit_tag_push(version, tag):
-    files = " ".join([
+    # Auto-discover all tracked + new files under custom_components/padspan_ha/
+    # This ensures new .py, .js, .json, .yaml, .css, .png files are always included.
+    discovered = []
+    for f in sorted(INTEGRATION.rglob("*")):
+        if f.is_file() and "__pycache__" not in f.parts and f.suffix != ".pyc":
+            discovered.append(str(f.relative_to(ROOT)).replace("\\", "/"))
+
+    static_files = [
         "VERSION.txt",
         "dist/padspan_ha.zip",
-        "custom_components/padspan_ha/manifest.json",
-        "custom_components/padspan_ha/const.py",
-        "custom_components/padspan_ha/build_info.py",
-        "custom_components/padspan_ha/coordinator.py",
-        "custom_components/padspan_ha/websocket.py",
-        "custom_components/padspan_ha/maps_store.py",
-        "custom_components/padspan_ha/calibration_store.py",
-        "custom_components/padspan_ha/panel.py",
-        # Python backend — presence/sensor/device_tracker platform
-        "custom_components/padspan_ha/__init__.py",
-        "custom_components/padspan_ha/sensor.py",
-        "custom_components/padspan_ha/device_tracker.py",
-        "custom_components/padspan_ha/binary_sensor.py",
-        "custom_components/padspan_ha/presence_coordinator.py",
-        "custom_components/padspan_ha/private_ble_resolver.py",
-        "custom_components/padspan_ha/bluetooth_live.py",
-        "custom_components/padspan_ha/settings_store.py",
-        "custom_components/padspan_ha/services.yaml",
-        # Frontend
-        "custom_components/padspan_ha/www/padspan-ha/panel.js",
-        "custom_components/padspan_ha/www/padspan-ha/calibration_panel.js",
-        "custom_components/padspan_ha/www/padspan-ha/lights_panel.js",
-        "custom_components/padspan_ha/www/padspan-ha/styles.css",
-        "custom_components/padspan_ha/www/padspan-ha/help_content.js",
-        "custom_components/padspan_ha/www/padspan-ha/sample_data.js",
-        "custom_components/padspan_ha/www/padspan-ha/views/follow.js",
-        "custom_components/padspan_ha/www/padspan-ha/views/overview.js",
-        "custom_components/padspan_ha/www/padspan-ha/views/objects.js",
-        "custom_components/padspan_ha/www/padspan-ha/views/bluetooth.js",
-        "custom_components/padspan_ha/www/padspan-ha/views/settings.js",
-        "custom_components/padspan_ha/www/padspan-ha/views/manage.js",
-        "custom_components/padspan_ha/www/padspan-ha/views/maps.js",
-        "custom_components/padspan_ha/www/padspan-ha/views/training.js",
-        "custom_components/padspan_ha/www/padspan-ha/views/calibration.js",
         "scripts/release.py",
-    ])
+    ]
+    all_files = static_files + discovered
+    # Quote each path in case of spaces
+    files = " ".join(f'"{p}"' for p in all_files)
     run(f"git add {files}")
     run(f'git commit -m "chore: bump version to {tag}"')
     run(f"git tag {tag}")
