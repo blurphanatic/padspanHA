@@ -1014,6 +1014,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("overview_iso_floor_gap"): vol.Coerce(int),
         vol.Optional("overview_iso_horiz_gap"): vol.Coerce(int),
         vol.Optional("overview_iso_focus"): vol.Any(int, None),
+        vol.Optional("lights_hidden"): list,
     }
 )
 @websocket_api.async_response
@@ -1062,6 +1063,9 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         if "overview_iso_focus" in msg:
             v = msg["overview_iso_focus"]
             payload["overview_iso_focus"] = int(v) if v is not None else None
+        if "lights_hidden" in msg:
+            ids = msg["lights_hidden"]
+            payload["lights_hidden"] = [str(x) for x in ids if isinstance(x, str)] if isinstance(ids, list) else []
         if "ble_max_age_s" in msg:
             payload["ble_max_age_s"] = max(30, min(600, int(msg["ble_max_age_s"])))
         if "scanner_offsets" in msg:

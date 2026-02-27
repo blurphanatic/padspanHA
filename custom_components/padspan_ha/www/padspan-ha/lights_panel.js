@@ -8,8 +8,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.55";
-const BUILD_ID = "20260227T233322Z";
+const APP_VERSION = "0.5.56";
+const BUILD_ID = "20260227T233446Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -287,7 +287,12 @@ class PadSpanLightsApp extends HTMLElement {
     try{ return new Set(JSON.parse(localStorage.getItem(LS_HIDDEN)||"[]")); }catch(_){ return new Set(); }
   }
   _saveHidden(){
-    try{ localStorage.setItem(LS_HIDDEN, JSON.stringify([...this.state._hidden])); }catch(_){}
+    const arr = [...this.state._hidden];
+    try{ localStorage.setItem(LS_HIDDEN, JSON.stringify(arr)); }catch(_){}
+    // Also persist to HA backend so it survives across devices/reboots
+    if(this._hass){
+      try{ this._hass.callWS({ type:"padspan_ha/settings_set", lights_hidden: arr }); }catch(_){}
+    }
   }
 
   set hass(hass){
@@ -341,6 +346,11 @@ class PadSpanLightsApp extends HTMLElement {
       } else {
         try{ this.state._hiddenMapIds = new Set(JSON.parse(localStorage.getItem("padspan_hiddenMapIds")||"[]")); }
         catch(e){ this.state._hiddenMapIds = new Set(); }
+      }
+      // Restore hidden lights from backend (authoritative over localStorage)
+      if(Array.isArray(s.lights_hidden) && s.lights_hidden.length){
+        this.state._hidden = new Set(s.lights_hidden);
+        try{ localStorage.setItem(LS_HIDDEN, JSON.stringify(s.lights_hidden)); }catch(_){}
       }
     }catch(e){}
   }
