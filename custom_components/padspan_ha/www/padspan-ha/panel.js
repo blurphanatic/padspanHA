@@ -13,9 +13,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.46";
+const APP_VERSION = "0.5.47";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260227T190305Z";
+const BUILD_ID = "20260227T194601Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -1011,6 +1011,22 @@ class PadSpanHaApp extends HTMLElement {
 
     // Actions row
     const actionsRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #1b3526;margin-top:8px"});
+    // Follow toggle
+    const _followKey = addr || obj.entity_id || "";
+    if(_followKey){
+      const _isFollowed = this.state.followAddr === _followKey;
+      const followBtn = el("button",{
+        class:"btn inline",
+        style: _isFollowed ? "background:#1a3a2a;border-color:#52b788;color:#52b788" : "",
+      }, _isFollowed ? "Following" : "Follow");
+      followBtn.addEventListener("click", ()=>{
+        this.state.followAddr = _isFollowed ? "" : _followKey;
+        followBtn.textContent = this.state.followAddr === _followKey ? "Following" : "Follow";
+        followBtn.style.cssText = this.state.followAddr === _followKey
+          ? "width:auto;margin-top:0;background:#1a3a2a;border-color:#52b788;color:#52b788" : "width:auto;margin-top:0";
+      });
+      actionsRow.appendChild(followBtn);
+    }
     actionsRow.appendChild(el("button",{class:"btn inline",onclick:()=>this._closeModal()}, "Close"));
     body.appendChild(actionsRow);
 
