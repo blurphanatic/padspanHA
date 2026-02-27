@@ -123,8 +123,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._room_votes: dict[str, deque] = {}
         # {key: confirmed_room | None}  — the current stable room assignment
         self._confirmed_room: dict[str, str | None] = {}
-        # {key: float}  — room assignment confidence ∈ [0, 1]
+        # {key: float}  — vote-window confidence ∈ [0, 1]
         self._room_confidence: dict[str, float] = {}
+        # {key: float}  — RSSI margin confidence ∈ [0, 1] (gap between best and 2nd-best scanner)
+        self._rssi_margin_confidence: dict[str, float] = {}
 
     # ── main update ──────────────────────────────────────────────────────────
 
@@ -225,6 +227,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     obj["room"] = smoothed_room
                 obj["_smoothed"] = True
                 obj["room_confidence"] = self._room_confidence.get(key, 0.0)
+                obj["rssi_margin_confidence"] = self._rssi_margin_confidence.get(key, 0.0)
                 # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(addr, {}))
                 # Propagate TX power if seen in advertisements
@@ -248,6 +251,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     obj["room"] = smoothed_room
                 obj["_smoothed"] = True
                 obj["room_confidence"] = self._room_confidence.get(key, 0.0)
+                obj["rssi_margin_confidence"] = self._rssi_margin_confidence.get(key, 0.0)
                 # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(key, {}))
                 self._known_objs[key] = dict(obj)  # refresh with smoothed data
@@ -340,10 +344,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     kp.pop(src, None)
 
         # Candidate room: area of source with highest Kalman-smoothed RSSI
+        # Also compute RSSI margin confidence: how clearly the winner beats the runner-up.
+        # margin 0 dBm → 0% confidence; margin ≥15 dBm → 100% confidence.
         candidate: str | None = None
+        rssi_margin_confidence: float = 0.0
         if ema:
+            sorted_vals = sorted(ema.values(), reverse=True)
             best_src = max(ema, key=lambda s: ema[s])
             candidate = source_to_area.get(best_src)
+            if len(sorted_vals) >= 2:
+                margin = sorted_vals[0] - sorted_vals[1]
+                rssi_margin_confidence = round(min(1.0, max(0.0, margin / 15.0)), 2)
+            else:
+                rssi_margin_confidence = 1.0  # only one scanner — it wins uncontested
 
         # ── Stage 2: majority-vote window (size adjusts to room_change_delay_s) ──
         existing = self._room_votes.get(key)
@@ -375,4 +388,5 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._confirmed_room[key] = confirmed
         self._room_confidence[key] = confidence
+        self._rssi_margin_confidence[key] = rssi_margin_confidence
         return confirmed

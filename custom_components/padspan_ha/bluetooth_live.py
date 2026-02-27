@@ -172,7 +172,7 @@ class BluetoothLive:
         except Exception as e:
             _LOGGER.debug("BLE seed failed: %s", e)
 
-    def get_snapshot(self, max_ads: int = 300, max_age_s: int = 120) -> Dict[str, Any]:
+    def get_snapshot(self, max_ads: int = 300, max_age_s: int = 45) -> Dict[str, Any]:
         """Return a lightweight BLE snapshot for the UI.
 
         radios: active scanners/adapters (local + remote proxies)

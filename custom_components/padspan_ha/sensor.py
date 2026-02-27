@@ -185,6 +185,7 @@ class PadSpanAreaSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity):
             "sources": obj.get("sources") if home else None,
             "home": home,
             "room_confidence": obj.get("room_confidence"),
+            "rssi_margin_confidence": obj.get("rssi_margin_confidence"),
         }
         if obj.get("ibeacon_uuid"):
             attrs["ibeacon_uuid"] = obj["ibeacon_uuid"]
