@@ -647,6 +647,37 @@ function _settingsPresence(ctx, el){
     ),
   ]));
 
+  // ── BLE Advertisement Timeout ─────────────────────────────────────────────
+  const currentBleAge = (settings.ble_max_age_s != null ? Number(settings.ble_max_age_s) : 300);
+  const bleAgeInp = el("input", {
+    type: "number", min: "30", max: "600", step: "10", value: String(currentBleAge), style: inpStyle,
+  });
+  const bleAgeSaveBtn = el("button", { class: "btn" }, "Save");
+  bleAgeSaveBtn.addEventListener("click", async () => {
+    const v = Math.max(30, Math.min(600, parseInt(bleAgeInp.value) || 300));
+    try {
+      await ctx.actions.settingsSet({ ble_max_age_s: v });
+      ctx.toast(`BLE timeout set to ${v}s`);
+    } catch(e) { ctx.toast("Failed to save setting", true); }
+  });
+  wrap.appendChild(el("div", { class: "card" }, [
+    el("div", { class: "h2" }, "BLE Advertisement Timeout"),
+    el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
+      "How long to keep a BLE device visible after its last advertisement. " +
+      "Higher values show more devices (especially slow-broadcasting ones). " +
+      "Lower values keep the list cleaner but may drop intermittent devices."
+    ),
+    el("div", { style: rowStyle }, [
+      el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Max age"),
+      bleAgeInp,
+      el("div", { class: "muted", style: "font-size:12px" }, "seconds"),
+      bleAgeSaveBtn,
+    ]),
+    el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
+      `Current: ${currentBleAge}s. Default: 300s (5 min). Range: 30s – 600s (10 min).`
+    ),
+  ]));
+
   // ── Distance Calibration ───────────────────────────────────────────────────
   const currentRefPower   = (settings.ref_power    != null ? Number(settings.ref_power)    : -59);
   const currentPathLoss   = (settings.path_loss_exp != null ? Number(settings.path_loss_exp) : 2.5);

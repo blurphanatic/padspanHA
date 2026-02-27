@@ -43,9 +43,9 @@ Three-stage pipeline applied each poll cycle:
 
   Stage 2 — Majority-vote window
     At each poll, the candidate room (from Gaussian scoring or k-NN) is added to
-    a rolling window of VOTE_WINDOW (3) entries.  The confirmed room only changes
-    when one room appears ≥ VOTE_THRESHOLD (2) times in the window.
-    At 10 s/poll this means a room switch requires ~20 s of consistent dominance.
+    a rolling window of VOTE_WINDOW (5) entries.  The confirmed room only changes
+    when one room appears ≥ VOTE_THRESHOLD (3) times in the window.
+    At 10 s/poll this means a room switch requires ~30 s of consistent dominance.
 
     The vote window is cleared when a device re-appears after being away, preventing
     stale votes from the previous location from influencing re-entry assignment.
@@ -96,11 +96,14 @@ _KALMAN_R: float = DEFAULT_KALMAN_R   # measurement noise
 
 # Rolling window for majority-vote room confirmation.
 # Candidate room must win VOTE_THRESHOLD out of the last VOTE_WINDOW polls.
-_VOTE_WINDOW: int = 3
-_VOTE_THRESHOLD: int = 2
+# At 10s/poll, window=5 means a room switch needs ~30s of consistent dominance.
+_VOTE_WINDOW: int = 5
+_VOTE_THRESHOLD: int = 3
 
 # RSSI threshold below which a silent source is pruned from the Kalman cache.
-_EMA_PRUNE_DBM: float = -95.0
+# Relaxed from -95 to -98 to preserve Kalman state longer across silent periods,
+# giving ~7-8 polls (~70-80s) of memory instead of ~4-5 polls.
+_EMA_PRUNE_DBM: float = -98.0
 
 # Phantom RSSI injected each poll for sources that have gone silent (drives decay).
 _EMA_SILENCE_DBM: float = -100.0
@@ -156,6 +159,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         from .websocket import _live_snapshot  # noqa: PLC0415  (circular-import guard)
+        from .private_ble_resolver import get_resolver  # noqa: PLC0415
 
         try:
             snap = await _live_snapshot(self.hass)
@@ -164,15 +168,34 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         now = time.monotonic()
 
-        # Build {addr_upper: {source: rssi}} and {addr_upper: tx_power} from advertisements
+        # ── Resolve rotating MACs to canonical IDs ────────────────────────────
+        # Build a mapping {raw_addr_upper → canonical_key} so that all rotating
+        # MACs from the same phone merge into one Kalman state entry.
+        resolver = await get_resolver(self.hass)
+        _rpa_map: dict[str, str] = {}  # raw_addr → canonical_key
+        if resolver.has_devices():
+            for ad in (snap.get("ble") or {}).get("advertisements") or []:
+                raw = str(ad.get("address") or "").upper()
+                if raw and raw not in _rpa_map:
+                    res = resolver.resolve_address(raw)
+                    if res:
+                        _rpa_map[raw] = str(res["canonical_id"]).upper()
+
+        # Build {key: {source: rssi}} and {key: tx_power} from advertisements.
+        # For resolved RPAs, use the canonical_id as key so all rotations share
+        # one Kalman state.
         addr_src_rssi: dict[str, dict[str, float]] = {}
         addr_tx_power: dict[str, int] = {}
         for ad in (snap.get("ble") or {}).get("advertisements") or []:
-            addr = str(ad.get("address") or "").upper()
+            raw_addr = str(ad.get("address") or "").upper()
+            addr = _rpa_map.get(raw_addr, raw_addr)  # canonical or raw
             src  = ad.get("source")
             rssi = ad.get("rssi")
             if addr and src and rssi is not None:
-                addr_src_rssi.setdefault(addr, {})[str(src)] = float(rssi)
+                existing = addr_src_rssi.setdefault(addr, {})
+                # For merged RPAs, keep the strongest RSSI per source
+                if str(src) not in existing or float(rssi) > existing[str(src)]:
+                    existing[str(src)] = float(rssi)
             # Capture TX Power Level from the advertisement (BLE AD type 0x0A)
             tx_pwr = ad.get("tx_power")
             if addr and tx_pwr is not None and addr not in addr_tx_power:
@@ -227,7 +250,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._room_confidence.pop(key, None)
                 self._knn_position.pop(key, None)
                 if obj.get("kind") in ("ble", "private_ble"):
-                    addr_clear = str(obj.get("address") or "").upper()
+                    # For private_ble, use canonical_id as Kalman key
+                    _raw_addr = str(obj.get("address") or "").upper()
+                    addr_clear = _rpa_map.get(_raw_addr, _raw_addr)
                     self._ema_rssi.pop(addr_clear, None)
                     self._kalman_p.pop(addr_clear, None)
                 elif obj.get("kind") == "ibeacon":
@@ -244,9 +269,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # smoothed by their source integration, e.g. Bermuda).
             if obj.get("kind") in ("ble", "private_ble"):
                 obj = dict(obj)  # copy — don't mutate the snapshot list in place
-                addr = str(obj.get("address") or "").upper()
+                raw_addr = str(obj.get("address") or "").upper()
+                # For private_ble, use canonical_id as Kalman state key so all
+                # rotating MACs share one continuous smoothing state.
+                smooth_addr = _rpa_map.get(raw_addr, raw_addr)
                 smoothed_room = self._smooth_room(
-                    key, addr, addr_src_rssi, source_to_area,
+                    key, smooth_addr, addr_src_rssi, source_to_area,
                     _dyn_vote_window, _dyn_vote_threshold)
                 if smoothed_room:
                     obj["room"] = smoothed_room
@@ -260,10 +288,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     obj["y_frac"] = _knn.get("y_frac")
                     obj["knn_confidence"] = _knn.get("confidence")
                 # Store Kalman-smoothed per-source RSSI for scanner distance sensors
-                obj["_source_rssi"] = dict(self._ema_rssi.get(addr, {}))
+                obj["_source_rssi"] = dict(self._ema_rssi.get(smooth_addr, {}))
                 # Propagate TX power if seen in advertisements
-                if addr in addr_tx_power:
-                    obj.setdefault("tx_power", addr_tx_power[addr])
+                if smooth_addr in addr_tx_power:
+                    obj.setdefault("tx_power", addr_tx_power[smooth_addr])
+                elif raw_addr in addr_tx_power:
+                    obj.setdefault("tx_power", addr_tx_power[raw_addr])
                 self._known_objs[key] = dict(obj)  # refresh with smoothed data
             elif obj.get("kind") == "ibeacon":
                 obj = dict(obj)
@@ -410,7 +440,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 rssi_margin_confidence = 1.0
 
-            # Gaussian room scoring
+            # Gaussian room scoring with hysteresis
             room_scores: dict[str, float] = {}
             for _src, _rssi in ema.items():
                 _room = source_to_area.get(_src)
@@ -421,7 +451,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if _room not in room_scores or _score > room_scores[_room]:
                     room_scores[_room] = _score
             if room_scores:
-                candidate = max(room_scores, key=lambda r: room_scores[r])
+                _best_room = max(room_scores, key=lambda r: room_scores[r])
+                _cur_room = self._confirmed_room.get(key)
+                # Hysteresis: stick with current room unless new room's score
+                # exceeds current room's score by a margin.  Prevents flipping
+                # when two scanners are nearly equal (boundary device).
+                _HYSTERESIS_MARGIN = 0.12
+                if _cur_room and _cur_room in room_scores and _best_room != _cur_room:
+                    if room_scores[_best_room] - room_scores[_cur_room] < _HYSTERESIS_MARGIN:
+                        candidate = _cur_room  # stay — margin too small
+                    else:
+                        candidate = _best_room
+                else:
+                    candidate = _best_room
 
         # ── Change B: k-NN fingerprint override ──────────────────────────────
         # When calibration data exists and the fingerprint match is confident

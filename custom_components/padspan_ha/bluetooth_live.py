@@ -172,7 +172,7 @@ class BluetoothLive:
         except Exception as e:
             _LOGGER.debug("BLE seed failed: %s", e)
 
-    def get_snapshot(self, max_ads: int = 300, max_age_s: int = 45) -> Dict[str, Any]:
+    def get_snapshot(self, max_ads: int = 300, max_age_s: int = 300) -> Dict[str, Any]:
         """Return a lightweight BLE snapshot for the UI.
 
         radios: active scanners/adapters (local + remote proxies)
@@ -251,6 +251,18 @@ class BluetoothLive:
 
             now = _now()
             ads: List[Dict[str, Any]] = []
+            # Prune very old entries from cache (>10 min) to prevent unbounded growth
+            _prune_age = 600
+            _prune_addrs: List[str] = []
+            for addr, src_map in self._seen_by_source.items():
+                _dead = [s for s, a in src_map.items() if (now - a.seen).total_seconds() > _prune_age]
+                for s in _dead:
+                    del src_map[s]
+                if not src_map:
+                    _prune_addrs.append(addr)
+            for addr in _prune_addrs:
+                del self._seen_by_source[addr]
+
             for addr, src_map in self._seen_by_source.items():
                 for src, a in src_map.items():
                     age_s = (now - a.seen).total_seconds()
