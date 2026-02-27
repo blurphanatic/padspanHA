@@ -13,9 +13,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.49";
+const APP_VERSION = "0.5.50";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260227T211238Z";
+const BUILD_ID = "20260227T214250Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -182,6 +182,8 @@ class PadSpanHaApp extends HTMLElement {
       tagFilter: "",
       wsCounts: {},
       timing: { lastRefreshMs: null, lastDiagMs: null },
+      _sessionEvents: [],
+      _sessionStart: Date.now(),
       lastToast: null,
       versionInfo: null,
       settings: {},               // full settings dict from settings_get
@@ -400,9 +402,15 @@ class PadSpanHaApp extends HTMLElement {
     this.state.wsCounts[type] = (this.state.wsCounts[type]||0)+1;
   }
 
+  _logEvent(type, detail){
+    this.state._sessionEvents.push({ ts: Date.now(), type, detail: detail || "" });
+    if(this.state._sessionEvents.length > 500) this.state._sessionEvents.shift();
+  }
+
   async _callWS(payload){
     if(!this._hass) throw new Error("hass not ready");
     this._wsCount(payload.type);
+    this._logEvent("ws_call", payload.type);
     return await this._hass.callWS(payload);
   }
 
@@ -505,6 +513,8 @@ class PadSpanHaApp extends HTMLElement {
     this.state.live.snapshot = res?.snapshot || null;
     this.state.live.error = null;
     this._recomputeDerived();
+    const objCount = this.state.live.snapshot?.objects?.summary?.total ?? 0;
+    this._logEvent("snapshot", `${objCount} objects`);
   }
 
   async _getMapsList(){
@@ -602,7 +612,7 @@ class PadSpanHaApp extends HTMLElement {
       const btn = el("button",{
         class:"navbtn"+(this.state.view===id?" active":""),
         style:`--navcolor:${color}`,
-        onclick:()=>{ this.state.view=id; this._renderNav(); this._renderCurrentView(); }
+        onclick:()=>{ this.state.view=id; this._logEvent("view_change", id); this._renderNav(); this._renderCurrentView(); }
       }, [el("span",{class:"navdot"}), el("span",{}, label)]);
       this.$nav.appendChild(btn);
     }
@@ -673,6 +683,7 @@ class PadSpanHaApp extends HTMLElement {
         radioLostSet: async (source, lost)=>await this._callWS({ type:"padspan_ha/radio_lost_set", source, lost }),
         radioDisabledSet: async (source, disabled)=>await this._callWS({ type:"padspan_ha/radio_disabled_set", source, disabled }),
         refreshSnapshot: async ()=>{ await this._getLiveSnapshot(); this._renderCurrentView(); },
+        clearSessionEvents: ()=>{ this.state._sessionEvents.length = 0; this._renderCurrentView(); },
         followAlertSave: async (payload)=>await this._callWS({ type:"padspan_ha/follow_alert_save", ...payload }),
         followAlertGet: async ()=>{
           try {
@@ -808,6 +819,7 @@ class PadSpanHaApp extends HTMLElement {
       if(!label){ status.textContent = "Label cannot be empty."; return; }
       try {
         await this._callWS({ type:"padspan_ha/object_label_set", address: addr, label });
+        this._logEvent("tag", `${addr} → ${label}`);
         this._closeModal();
         this._toast(`Tagged: ${label}`);
         await this._getLiveSnapshot();
@@ -820,6 +832,7 @@ class PadSpanHaApp extends HTMLElement {
     clearBtn.addEventListener("click", async ()=>{
       try {
         await this._callWS({ type:"padspan_ha/object_label_delete", address: addr });
+        this._logEvent("tag", `${addr} untagged`);
         this._closeModal();
         this._toast("Label removed.");
         await this._getLiveSnapshot();
