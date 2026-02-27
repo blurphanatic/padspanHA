@@ -479,15 +479,14 @@ export function render(ctx){
     const allObjects = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
     const allRadios_live = radios;
 
-    // Ensure _hiddenMapIds is initialised even when Maps tab has never rendered
-    if(!ctx.state.maps._hiddenMapIds){
-      const savedIds = ctx.state.settings?.hidden_map_ids;
-      if(Array.isArray(savedIds)){
-        ctx.state.maps._hiddenMapIds = new Set(savedIds);
-      } else {
-        try{ ctx.state.maps._hiddenMapIds = new Set(JSON.parse(localStorage.getItem("padspan_hiddenMapIds")||"[]")); }
-        catch(e){ ctx.state.maps._hiddenMapIds = new Set(); }
-      }
+    // Sync _hiddenMapIds from settings (authoritative, fetched on every refresh).
+    // Fall back to localStorage only if settings hasn't populated it yet.
+    const _savedHiddenIds = ctx.state.settings?.hidden_map_ids;
+    if(Array.isArray(_savedHiddenIds)){
+      ctx.state.maps._hiddenMapIds = new Set(_savedHiddenIds);
+    } else if(!ctx.state.maps._hiddenMapIds){
+      try{ ctx.state.maps._hiddenMapIds = new Set(JSON.parse(localStorage.getItem("padspan_hiddenMapIds")||"[]")); }
+      catch(e){ ctx.state.maps._hiddenMapIds = new Set(); }
     }
     // Filter hidden maps
     const hiddenIds = ctx.state.maps._hiddenMapIds;

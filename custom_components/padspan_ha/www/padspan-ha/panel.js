@@ -13,9 +13,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.33";
+const APP_VERSION = "0.5.34";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260227T020002Z";
+const BUILD_ID = "20260227T023255Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -387,6 +387,18 @@ class PadSpanHaApp extends HTMLElement {
     return await this._hass.callWS(payload);
   }
 
+  // Fetch settings and store quietly (no re-render, no toast) — called from _refreshAll
+  async _fetchSettings(){
+    try{
+      const res = await this._callWS({ type: "padspan_ha/settings_get" });
+      if(res?.settings){
+        this.state.settings = res.settings;
+        const mode = (res.settings.data_mode || "sample").toLowerCase();
+        this.state.dataMode = (mode === "live") ? "live" : "sample";
+      }
+    }catch(e){}
+  }
+
   // ---------- Data loading ----------
   async _loadSettings(){
     try {
@@ -521,6 +533,7 @@ class PadSpanHaApp extends HTMLElement {
       this._getMapsList(),
       this._getModel(),
       this._runAutoDiag(false),
+      this._fetchSettings(),
     ]);
     // Log any WS failures to console for debugging
     const names = ["getVersionInfo","getStatus","getRoomTags","getLiveSnapshot","getMapsList","getModel","runAutoDiag"];
