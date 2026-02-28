@@ -646,13 +646,15 @@ function _edit(ctx, map){
 
     // Markers
     overlay.querySelectorAll(".marker").forEach(n=>n.remove());
+    const _sid = ctx.helpers.radioShortId || (src => (src||"").slice(0,3).toUpperCase());
     for(const r of ctx.state.maps._draftReceivers){
       const mk = document.createElement("div");
       mk.className = "marker" + (ctx.state.maps._selectedRxId===r.id ? " selected" : "");
       mk.style.left = `${Math.round((r.x||0)*10000)/100}%`;
       mk.style.top  = `${Math.round((r.y||0)*10000)/100}%`;
-      mk.title = (r.label || r.id || "receiver") + (r.room ? ` • ${r.room}` : "");
-      mk.textContent = (r.label || r.id || "R").slice(0,2).toUpperCase();
+      const sid = r.source ? _sid(r.source) : "";
+      mk.title = (r.label || r.id || "receiver") + (sid ? ` [${sid}]` : "") + (r.room ? ` • ${r.room}` : "");
+      mk.textContent = sid || (r.label || r.id || "R").slice(0,2).toUpperCase();
       mk.addEventListener("click", (ev)=>{
         ev.stopPropagation();
         if(ctx.state.maps._mode!=="receivers") return;
