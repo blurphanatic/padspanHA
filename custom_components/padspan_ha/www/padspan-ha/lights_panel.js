@@ -12,8 +12,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.5.61";
-const BUILD_ID = "20260228T002425Z";
+const APP_VERSION = "0.5.62";
+const BUILD_ID = "20260228T002821Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -638,7 +638,35 @@ class PadSpanLightsApp extends HTMLElement {
       const row=el("tr",{style:`cursor:pointer;opacity:${isHidden?"0.45":"1"}`},[
         el("td",{style:"font-family:monospace;font-weight:700;color:#52b788;font-size:12px"},l.code),
         el("td",{},l.friendly_name),
-        el("td",{class:"muted"},l.area_name||"\u2014"),
+        el("td",{class:"muted"},l.area_name
+          ? el("span",{},l.area_name)
+          : (()=>{
+              const areas = this.state.model.areas || [];
+              if(!areas.length) return "\u2014";
+              const sel = document.createElement("select");
+              sel.style.cssText = "background:#1a2e1e;color:#52b788;border:1px solid #2d4a36;border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer";
+              sel.appendChild(el("option",{value:""},"Assign room\u2026"));
+              for(const a of areas.sort((x,y)=>x.name.localeCompare(y.name))){
+                sel.appendChild(el("option",{value:a.id}, a.name));
+              }
+              sel.addEventListener("click", e=>e.stopPropagation());
+              sel.addEventListener("change", async ()=>{
+                if(!sel.value) return;
+                sel.disabled = true;
+                try{
+                  await this._hass.callWS({ type:"config/entity_registry/update", entity_id: l.entity_id, area_id: sel.value });
+                  this._toast(`Assigned ${l.friendly_name} to room`);
+                  this.state._lightsReg = null;
+                  await this._loadLightsReg();
+                  this._render();
+                }catch(e){
+                  this._toast("Failed to assign room: "+(e.message||e), true);
+                  sel.disabled = false;
+                }
+              });
+              return sel;
+            })()
+        ),
         el("td",{},el("span",{
           style:`display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;`+
                 `background:${on?"#fbbf24":"#374151"};color:${on?"#111827":"#fbbf24"}`,
