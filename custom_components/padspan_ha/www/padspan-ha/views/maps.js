@@ -2885,11 +2885,11 @@ function _stack(ctx, maps, helpBtn){
             liveSourceSet.has(r.id) || liveSourceSet.has(r.label) || liveNameSet.has(r.label)
           );
           if(kept.length < orig.length){
+            // Only send receivers + required fields; omit stack/room_bounds/floor_id
+            // so the backend doesn't re-process alignment data
             await ctx.actions.mapsUpdate({
               map_id: m.id, receivers: kept,
               calibration: m.calibration||{}, notes: m.notes||"",
-              floor_id: m.floor_id||"", room_bounds: m.room_bounds||{},
-              stack: m.stack||{},
             });
           }
         }
