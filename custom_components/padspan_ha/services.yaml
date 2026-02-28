@@ -1,6 +1,6 @@
 set_room_tag_map:
-  name: Set Room→Tag Map
-  description: Replace the in-memory room_tag_map (for testing).
+  name: "Set Room Tag Map"
+  description: "Replace the in-memory room_tag_map (for testing)."
   fields:
     room_tag_map:
       required: true
@@ -8,15 +8,15 @@ set_room_tag_map:
         object:
 
 dump_devices:
-  name: Dump Devices
+  name: "Dump Devices"
   description: >
     Returns all tracked BLE devices with current room, RSSI, age, and smoothing state.
-    Equivalent to Bermuda's bermuda.dump_devices service. Supports response data for
+    Equivalent to Bermuda BLE Trilateration dump_devices service. Supports response data for
     use in templates, scripts, and automations. Also creates a persistent notification.
-  response: optional
+  target:
   fields:
     notify:
-      description: Create a persistent notification summary in HA (default true).
+      description: "Create a persistent notification summary in HA (default true)."
       default: true
       selector:
         boolean:
