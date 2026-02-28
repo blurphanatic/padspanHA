@@ -438,7 +438,8 @@ function _edit(ctx, map){
       label: r.label||"",
       x: Number(r.x||0),
       y: Number(r.y||0),
-      room: r.room || ""
+      room: r.room || "",
+      source: r.source || ""
     }));
     ctx.state.maps._draftRoomBounds = JSON.parse(JSON.stringify(map.room_bounds||{}));
     ctx.state.maps._draftFloorId = map.floor_id || (floors[0] && floors[0].id) || "main";
@@ -535,7 +536,7 @@ function _edit(ctx, map){
     }}, "Save Layout"),
     el("button",{class:"btn inline", onclick:()=>{
       // reset drafts from last saved map
-      ctx.state.maps._draftReceivers = (map.receivers||[]).map(r=>({id:r.id||"", label:r.label||"", x:Number(r.x||0), y:Number(r.y||0), room:r.room||""}));
+      ctx.state.maps._draftReceivers = (map.receivers||[]).map(r=>({id:r.id||"", label:r.label||"", x:Number(r.x||0), y:Number(r.y||0), room:r.room||"", source:r.source||""}));
       ctx.state.maps._draftRoomBounds = JSON.parse(JSON.stringify(map.room_bounds||{}));
       ctx.state.maps._drawing = null;
       ctx.state.maps._selectedRxId = null;
@@ -766,7 +767,7 @@ function _edit(ctx, map){
         right.appendChild(el("div",{class:"muted", style:"font-size:11px;margin-top:2px;margin-bottom:6px"}, "Click Add to place on map, then drag to position."));
         const radList = el("div",{style:"display:flex;flex-direction:column;gap:5px"});
         for(const radio of liveRadios){
-          const alreadyPlaced = ctx.state.maps._draftReceivers.some(r => r.label === radio.name || r.id === radio.source);
+          const alreadyPlaced = ctx.state.maps._draftReceivers.some(r => (r.source && r.source === radio.source) || r.label === radio.name || r.id === radio.source);
           const sid = _sid(radio.source || "");
           const borderColor = radio.disabled ? "#5b3b7a" : radio.lost ? "#7d5c2b" : "#1b3526";
           const bg = radio.disabled ? "rgba(148,100,220,.06)" : radio.lost ? "rgba(245,158,11,.06)" : "#0a150e";
@@ -791,6 +792,7 @@ function _edit(ctx, map){
                 id, label: radio.name || radio.source || id,
                 x: 0.5, y: 0.5,
                 room: radio.area_name || "",
+                source: radio.source || "",
               });
               ctx.state.maps._selectedRxId = id;
               renderAll(); refreshList(); renderTools();
@@ -2866,7 +2868,9 @@ function _stack(ctx, maps, helpBtn){
   let staleCount = 0;
   for(const m of maps){
     for(const r of (m.receivers||[])){
-      if(!liveSourceSet.has(r.id) && !liveSourceSet.has(r.label) && !liveNameSet.has(r.label)){
+      const matchBySource = r.source && liveSourceSet.has(r.source);
+      const matchByLabel = r.label && (liveSourceSet.has(r.label) || liveNameSet.has(r.label));
+      if(!matchBySource && !matchByLabel){
         staleCount++;
       }
     }
@@ -2882,7 +2886,7 @@ function _stack(ctx, maps, helpBtn){
         for(const m of maps){
           const orig = m.receivers || [];
           const kept = orig.filter(r =>
-            liveSourceSet.has(r.id) || liveSourceSet.has(r.label) || liveNameSet.has(r.label)
+            (r.source && liveSourceSet.has(r.source)) || (r.label && (liveSourceSet.has(r.label) || liveNameSet.has(r.label)))
           );
           if(kept.length < orig.length){
             // Only send receivers + required fields; omit stack/room_bounds/floor_id

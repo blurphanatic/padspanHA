@@ -54,12 +54,13 @@ class MapsStore:
             m.setdefault("notes", "")
             m.setdefault("floor_id", DEFAULT_FLOOR_ID)
             m.setdefault("room_bounds", {})
-            # Normalize receivers to include optional room assignment
+            # Normalize receivers to include optional fields
             recs = m.get("receivers") or []
             if isinstance(recs, list):
                 for r in recs:
                     if isinstance(r, dict):
                         r.setdefault("room", "")
+                        r.setdefault("source", "")
             m.setdefault("stack", {"z_level": 0, "x_offset": 0.0, "y_offset": 0.0, "scale": 1.0, "ceiling_height_m": 2.4})
             m.setdefault("created", _now_iso())
             m.setdefault("updated", m.get("created", _now_iso()))
@@ -126,6 +127,7 @@ class MapsStore:
                     "x": float(r.get("x") or 0.0),
                     "y": float(r.get("y") or 0.0),
                     "room": str(r.get("room") or "")[:120],
+                    "source": str(r.get("source") or "")[:80],
                 }
                 rx["x"] = max(0.0, min(1.0, rx["x"]))
                 rx["y"] = max(0.0, min(1.0, rx["y"]))

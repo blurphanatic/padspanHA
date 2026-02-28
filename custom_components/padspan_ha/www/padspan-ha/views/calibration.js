@@ -1280,7 +1280,7 @@ function _tuneTab(ctx, el, cs, calData) {
   if (!Object.keys(ts.draftReceivers).length || (mapsStamp !== ts._mapsStamp && !hasDirty)) {
     for (const m of maps_list) {
       ts.draftReceivers[m.id] = (m.receivers || []).map(r => ({
-        id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || ""
+        id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
       }));
     }
     // Remove drafts for maps that no longer exist
@@ -1704,8 +1704,6 @@ function _tuneTab(ctx, el, cs, calData) {
         await ctx.actions.mapsUpdate({
           map_id: mapId,
           receivers: ts.draftReceivers[mapId],
-          room_bounds: origMap.room_bounds || {},
-          floor_id: origMap.floor_id || origMap.stack?.floor_id || "",
           calibration: origMap.calibration || {},
           notes: origMap.notes || "",
         });
@@ -1735,7 +1733,7 @@ function _tuneTab(ctx, el, cs, calData) {
     ts.draftReceivers = {};
     for (const m of maps_list) {
       ts.draftReceivers[m.id] = (m.receivers || []).map(r => ({
-        id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || ""
+        id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
       }));
     }
     ts.dirtyMaps = {};
