@@ -35,7 +35,7 @@ _LOGGER = logging.getLogger(__name__)
 def _clamp_interval(value: Any) -> int:
     try:
         v = int(value)
-    except Exception:
+    except (ValueError, TypeError):
         v = DEFAULT_SCAN_INTERVAL
     return max(5, min(3600, v))
 

@@ -233,13 +233,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await presence_coord.async_config_entry_first_refresh()
     except Exception as err:
-        _LOGGER.debug("Presence coordinator initial fetch deferred: %s", err)
+        _LOGGER.info("Presence coordinator initial fetch deferred (BLE may not be ready yet): %s", err)
 
     # Forward platforms (safe even if they don't create entities yet)
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception as err:
         _LOGGER.exception("Forward entry setups failed: %s", err)
+        return False
 
     return True
 
@@ -248,8 +249,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = True
     try:
         unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    except Exception:
-        unload_ok = True
+    except Exception as err:
+        _LOGGER.warning("Platform unload error: %s", err)
+        unload_ok = False
 
     # Clear panel registration flag so setup_entry re-registers with the
     # current BUILD_ID on next load (e.g. after a HACS update + reload).
@@ -271,7 +273,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if bl:
             bl.unload()
         hass.data.get(DOMAIN, {}).pop(DATA_KEY, None)
-    except Exception:
-        pass
+    except Exception as err:
+        _LOGGER.debug("BLE cleanup error: %s", err)
 
     return unload_ok

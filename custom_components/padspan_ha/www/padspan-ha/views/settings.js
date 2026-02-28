@@ -3,7 +3,7 @@
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 export function render(ctx){
-  const { el, roomColor, helpBtn } = ctx.helpers;
+  const { el, esc, roomColor, helpBtn } = ctx.helpers;
   const isBasic = ctx.state.complexity === "basic";
   const root = el("section",{id:"settings"});
   root.className = ctx.state.view==="settings" ? "" : "hidden";
@@ -229,7 +229,7 @@ function _scannerMap(ctx, el, haFloors){
         // Room name above ring
         const labelY = (r.y_frac * vbH - parseFloat(outerR) - 0.8).toFixed(1);
         const shortName = r.name.length > 12 ? r.name.slice(0,10)+"…" : r.name;
-        markersSvg += `<text x="${cx}" y="${labelY}" text-anchor="middle" font-size="2.4" fill="${col}" font-weight="bold" paint-order="stroke" stroke="#071008" stroke-width="0.7">${shortName}</text>`;
+        markersSvg += `<text x="${cx}" y="${labelY}" text-anchor="middle" font-size="2.4" fill="${col}" font-weight="bold" paint-order="stroke" stroke="#071008" stroke-width="0.7">${esc(shortName)}</text>`;
       });
 
       const mapDiv = el("div",{style:"border-radius:6px;overflow:hidden;border:1px solid #1b3526;margin-bottom:8px"});

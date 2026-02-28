@@ -1281,7 +1281,7 @@ async def ws_scanner_offset_set(hass: HomeAssistant, connection, msg) -> None:
     if not source:
         connection.send_error(msg["id"], "invalid_source", "source required")
         return
-    offset = float(msg.get("offset_db", 0.0))
+    offset = max(-50.0, min(50.0, float(msg.get("offset_db", 0.0))))
     st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
     if st:
         offsets: dict[str, float] = dict(st.data.get("scanner_offsets") or {})
@@ -1555,7 +1555,7 @@ async def ws_radio_area_set(hass: HomeAssistant, connection, msg) -> None:
         dr_u.async_update_device(dev_id, area_id=area_id)
         connection.send_result(msg["id"], {"ok": True, "device_id": dev_id, "area_id": area_id, "area_name": area_name or None})
     except Exception as e:
-        connection.send_error(msg["id"], "update_failed", str(e))
+        connection.send_error(msg["id"], "update_failed", str(e)[:500])
 
 
 @websocket_api.websocket_command(
@@ -1639,6 +1639,9 @@ async def ws_follow_alert_save(hass: HomeAssistant, connection, msg) -> None:
     """
     addr = str(msg.get("addr") or "").strip()
     config = msg.get("config") or {}
+    if len(str(config)) > 50000:
+        connection.send_error(msg["id"], "config_too_large", "Alert config exceeds size limit")
+        return
     # Persist to AlertStore (disk-backed)
     from .const import DATA_ALERTS
     alert_store = hass.data.get(DOMAIN, {}).get(DATA_ALERTS)
@@ -1647,7 +1650,7 @@ async def ws_follow_alert_save(hass: HomeAssistant, connection, msg) -> None:
     else:
         # Fallback: session-only (shouldn't happen if stores loaded)
         hass.data.setdefault(DOMAIN, {}).setdefault("follow_alerts", {})[addr] = config
-    _LOGGER.debug("PadSpan HA follow_alert_save: addr=%s config=%s", addr, config)
+    _LOGGER.debug("PadSpan HA follow_alert_save: addr=%s keys=%s", addr, list(config.keys()) if isinstance(config, dict) else "?")
     connection.send_result(msg["id"], {"ok": True, "addr": addr})
 
 

@@ -254,7 +254,9 @@ class MapsStore:
         raw = base64.b64decode(png_base64)
 
         # Overwrite the same file so the browser cache-busts via map.updated timestamp
-        file_path = self.maps_dir / m["image"]["filename"]
+        file_path = (self.maps_dir / m["image"]["filename"]).resolve()
+        if not str(file_path).startswith(str(self.maps_dir.resolve())):
+            raise ValueError("Invalid filename")
         await asyncio.to_thread(file_path.write_bytes, raw)
 
         m["image"]["width"]      = int(width)
@@ -298,8 +300,8 @@ class MapsStore:
             return
         fn = m.get("image", {}).get("filename")
         if fn:
-            fp = self.maps_dir / str(fn)
-            if fp.exists():
+            fp = (self.maps_dir / str(fn)).resolve()
+            if str(fp).startswith(str(self.maps_dir.resolve())) and fp.exists():
                 try:
                     await asyncio.to_thread(fp.unlink)
                 except Exception:

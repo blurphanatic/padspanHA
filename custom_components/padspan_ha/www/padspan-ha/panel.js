@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.80";
+const APP_VERSION = "0.5.81";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260228T210821Z";
+const BUILD_ID = "20260228T215541Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
