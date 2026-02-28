@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.73";
+const APP_VERSION = "0.5.74";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260228T043229Z";
+const BUILD_ID = "20260228T044837Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -1254,6 +1254,16 @@ class PadSpanHaApp extends HTMLElement {
     if(scanner.connectable != null) statusRow.appendChild(el("span", {class:"badge"}, scanner.connectable?"connectable":"not connectable"));
     if(scanner.adapter) statusRow.appendChild(el("span", {class:"muted", style:"font-family:monospace;font-size:12px"}, `adapter: ${scanner.adapter}`));
     body.appendChild(statusRow);
+
+    // Network info (IP, SSID, WiFi signal)
+    if(scanner.ip || scanner.ssid || scanner.wifi_signal != null || scanner.connection_type){
+      const netRow = el("div", {style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center"});
+      if(scanner.ip) netRow.appendChild(el("span", {class:"badge", style:"font-family:monospace;font-size:11px"}, scanner.ip));
+      if(scanner.ssid) netRow.appendChild(el("span", {class:"badge", style:"font-size:11px"}, scanner.ssid));
+      else if(scanner.connection_type) netRow.appendChild(el("span", {class:"badge", style:"font-size:11px"}, scanner.connection_type));
+      if(scanner.wifi_signal != null) netRow.appendChild(el("span", {class:"muted", style:"font-size:11px"}, `WiFi ${scanner.wifi_signal} dBm`));
+      body.appendChild(netRow);
+    }
 
     // Area + Lost toggle
     const areaSection = el("div", {});

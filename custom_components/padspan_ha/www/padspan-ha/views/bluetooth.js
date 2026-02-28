@@ -202,10 +202,15 @@ function renderScanners(ctx, radios, sources) {
       currentOffset !== 0 ? el("span", { class: "badge", style: "font-size:10px;background:#1a3a2a;color:#52b788" }, `${currentOffset > 0 ? "+" : ""}${currentOffset} dBm active`) : null,
     ].filter(Boolean));
 
-    const subRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px" }, [
+    const subParts = [
       r.area_name ? el("span", { class: "pill", style: "font-size:10px" }, r.area_name) : el("span", { class: "muted", style: "font-size:10px" }, "no room"),
       el("div", { class: "bt-scanner-src", style: "font-size:10px" }, src || "—"),
-    ]);
+      r.ip ? el("span", { class: "muted", style: "font-family:monospace;font-size:10px" }, r.ip) : null,
+      r.ssid ? el("span", { class: "muted", style: "font-size:10px" }, r.ssid) : null,
+      (!r.ssid && r.connection_type) ? el("span", { class: "muted", style: "font-size:10px" }, r.connection_type) : null,
+      r.wifi_signal != null ? el("span", { class: "muted", style: "font-size:10px" }, `WiFi ${r.wifi_signal} dBm`) : null,
+    ].filter(Boolean);
+    const subRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px" }, subParts);
 
     const div = el("div", { class: "bt-scanner-row" + (r.lost || r.disabled ? " warn" : "") }, [
       el("div", { class: "bt-scanner-main" }, [ nameRow, subRow, offsetRow ]),

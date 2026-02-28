@@ -795,7 +795,11 @@ function _edit(ctx, map){
           // Name + room
           const info = el("div",{style:"flex:1;min-width:0"});
           info.appendChild(el("div",{style:"font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, radio.name || radio.source || "Unknown"));
-          info.appendChild(el("div",{class:"muted",style:"font-size:10px"}, radio.area_name || "no room"));
+          const _netParts = [radio.area_name || "no room"];
+          if(radio.ip) _netParts.push(radio.ip);
+          if(radio.ssid) _netParts.push(radio.ssid);
+          else if(radio.connection_type) _netParts.push(radio.connection_type);
+          info.appendChild(el("div",{class:"muted",style:"font-size:10px"}, _netParts.join(" · ")));
           row.appendChild(info);
           if(radio.disabled){
             row.appendChild(el("span",{style:"font-size:10px;color:#c084fc;white-space:nowrap"}, "⊘ Disabled"));

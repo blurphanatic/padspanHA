@@ -580,6 +580,45 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception:
         pass
 
+    # Attach network info (IP, WiFi SSID) from entity states for each radio's device
+    try:
+        er_net = entity_registry.async_get(hass)
+        # Build device_id → list of entity entries (only for devices we care about)
+        radio_dev_ids = {r.get("device_id") for r in ((snapshot.get("ble") or {}).get("radios") or []) if r.get("device_id")}
+        if radio_dev_ids:
+            dev_entities: dict[str, list] = {}
+            for ent in er_net.entities.values():
+                if ent.device_id in radio_dev_ids:
+                    dev_entities.setdefault(ent.device_id, []).append(ent)
+            for radio in ((snapshot.get("ble") or {}).get("radios") or []):
+                did = radio.get("device_id")
+                if not did or did not in dev_entities:
+                    continue
+                for ent in dev_entities[did]:
+                    eid = ent.entity_id or ""
+                    eid_lower = eid.lower()
+                    st = hass.states.get(eid)
+                    if not st or st.state in ("unknown", "unavailable", ""):
+                        continue
+                    val = st.state
+                    # IP address sensor
+                    if not radio.get("ip") and ("ip_address" in eid_lower or "_ip" in eid_lower):
+                        radio["ip"] = val
+                    # WiFi SSID sensor
+                    elif not radio.get("ssid") and ("ssid" in eid_lower or "wifi_ssid" in eid_lower or "connected_ssid" in eid_lower):
+                        radio["ssid"] = val
+                    # WiFi signal strength
+                    elif not radio.get("wifi_signal") and ("wifi_signal" in eid_lower or "signal_strength" in eid_lower or "wifi_rssi" in eid_lower):
+                        try:
+                            radio["wifi_signal"] = int(float(val))
+                        except (ValueError, TypeError):
+                            pass
+                    # Connection type (wired/wireless)
+                    elif not radio.get("connection_type") and ("connection_type" in eid_lower or "network_type" in eid_lower):
+                        radio["connection_type"] = val
+    except Exception:
+        pass
+
     # Mark radios flagged as "lost" or "disabled" in PadSpan settings
     try:
         _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS, None)
