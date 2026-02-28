@@ -1,5 +1,6 @@
 {
   "after_dependencies": [
+    "bluetooth",
     "frontend",
     "http",
     "panel_custom",
@@ -17,6 +18,5 @@
   "name": "PadSpan HA",
   "requirements": [],
   "single_config_entry": true,
-  "icon": "mdi:bluetooth",
   "version": "0.5.77"
 }
