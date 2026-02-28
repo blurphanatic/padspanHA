@@ -58,11 +58,10 @@ export function render(ctx){
 
   // ---------- Modal helpers ----------
   function openRoomsList(){
-    const _followAddr = ctx.state.followAddr || "";
     const body = el("div",{});
     const rows = Object.keys(roomTagMap).sort().map((room)=>{
       const eids = roomTagMap[room] || [];
-      const hasFollowed = _followAddr && eids.some(eid => String(eid) === _followAddr);
+      const hasFollowed = eids.some(eid => ctx.actions.followedHas(String(eid)));
       const roomLabel = el("td",{},[
         el("span",{}, room),
         hasFollowed ? el("span",{style:"margin-left:6px;font-size:10px;color:#fbbf24;font-weight:700"}, "\u25C9 tracked") : null,
@@ -815,11 +814,10 @@ export function render(ctx){
       // Track which object keys are rendered (to avoid duplicate dots for unlabeled layer)
       const _renderedObjKeys = new Set();
 
-      // Followed beacon — fingerprint-positioned using all live RSSI data
-      const _followAddr = ctx.state.followAddr || "";
-      const followedObjects = _followAddr ? allObjects.filter(o =>
-        (o.address || "") === _followAddr || (o.entity_id || "") === _followAddr
-      ) : [];
+      // Followed beacons — fingerprint-positioned using all live RSSI data
+      const followedObjects = allObjects.filter(o =>
+        ctx.actions.followedHas(o.address || "") || ctx.actions.followedHas(o.entity_id || "") || ctx.actions.followedHas(o.key || "")
+      );
       const BEACON_CLR = "#fbbf24";
       for(const o of followedObjects){
         _renderedObjKeys.add(o.key || o.address || o.entity_id || "");
@@ -1007,7 +1005,6 @@ export function render(ctx){
     ovRoomRows.sort((a,b)=>a.room.localeCompare(b.room));
 
     if(ovRoomRows.length){
-      const _followAddr = ctx.state.followAddr || "";
       const thStyle = "padding:5px 8px;color:#94a3b8;font-weight:500;text-align:left";
       const tbl = el("table",{style:"width:100%;border-collapse:collapse;font-size:13px"},[
         el("thead",{},el("tr",{style:"border-bottom:1px solid #1b3526"},[
@@ -1021,12 +1018,12 @@ export function render(ctx){
       const roomColorFn2 = ctx.helpers.roomColor;
       for(const rr of ovRoomRows){
         const color = roomColorFn2(rr.room);
-        const hasFollowed = _followAddr && rr.objects.some(o=>(o.address||o.entity_id||"")===_followAddr);
+        const hasFollowed = rr.objects.some(o=> ctx.actions.followedHas(o.address||"") || ctx.actions.followedHas(o.entity_id||""));
         // Build object summary chips
         const objChips = el("div",{style:"display:flex;flex-wrap:wrap;gap:3px;margin-top:2px"});
         for(const o of (rr.objects||[]).slice(0,6)){
           const oKey = o.address || o.entity_id || "";
-          const isF = _followAddr && oKey === _followAddr;
+          const isF = ctx.actions.followedHas(oKey);
           const lbl = (o.user_label || o.name || o.address || "?").substring(0,16);
           const oc = isF ? "#fbbf24" : (o.identified ? "#5eead488" : "#f59e0b88");
           const chip = el("span",{style:`font-size:10px;padding:1px 5px;border-radius:3px;background:${oc}22;color:${isF?"#fbbf24":"#94a3b8"};border:1px solid ${oc};white-space:nowrap${isF?";font-weight:700":""}`}, isF ? lbl + " \u25C9" : lbl);
