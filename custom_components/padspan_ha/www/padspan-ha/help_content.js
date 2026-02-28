@@ -160,4 +160,80 @@ export const HELP = {
       "This tab is only visible in Advanced mode. For deeper data management (orphan cleanup, entity deletion, integration controls) use the Manage sidebar tab.",
     ],
   },
+
+  // ── Zones ──────────────────────────────────────────────────────────────────
+  zones: {
+    title: "Zones — Room occupancy at a glance",
+    body: [
+      "Zones shows every room in your home as a card, sorted by how many tracked devices are inside.",
+      "Occupied rooms have a coloured left border; empty rooms are dimmed. Each card lists the devices currently in that room with their signal strength.",
+      "Click a room card to open the full room detail. Click any device name to see its detail panel.",
+      "If your Home Assistant has floors configured, rooms are grouped by floor automatically.",
+    ],
+  },
+
+  // ── Insights ───────────────────────────────────────────────────────────────
+  insights: {
+    title: "Insights — Analytics from your live data",
+    body: [
+      "Insights turns your live BLE data into visual analytics so you can spot patterns and gaps.",
+      "Room Occupancy — horizontal bar chart showing which rooms have the most tracked devices. Click any bar to open that room's detail.",
+      "Signal Quality — per-scanner table with device count, average RSSI, and a quality grade. Click a row to see scanner details.",
+      "Object Mobility — devices seen in the most rooms, based on the room-tag map. Coverage Gaps — rooms with no devices or scanners not placed on maps.",
+    ],
+  },
+
+  // ── Monitor ────────────────────────────────────────────────────────────────
+  monitor: {
+    title: "Monitor — System health dashboard",
+    body: [
+      "Monitor shows the technical health of your PadSpan setup — websocket call counts, timing, scanner performance, and data freshness.",
+      "The Per-Scanner Breakdown table shows each scanner's device count, average RSSI, and quality grade. Click any row for full scanner details.",
+      "Advertisement Freshness shows how many BLE advertisements are fresh (under 10 seconds old), stale, or old — a quick way to spot connectivity problems.",
+      "Session Info shows your current data mode, panel uptime, and how many events have been logged this session.",
+    ],
+  },
+
+  // ── History ────────────────────────────────────────────────────────────────
+  history: {
+    title: "History — Session event timeline",
+    body: [
+      "History shows every action taken during this browser session — view changes, data refreshes, tagging, and websocket calls.",
+      "Use the type filter buttons to show or hide specific event types. The timeline is newest-first.",
+      "This data is session-scoped and resets when you reload the page. It is not stored on the server.",
+      "Click Clear History to reset the event log.",
+    ],
+  },
+
+  // ── Events ─────────────────────────────────────────────────────────────────
+  events: {
+    title: "Events — Notable activity stream",
+    body: [
+      "Events shows only the actionable events from your session — tagging, navigation, and data refreshes.",
+      "Click a navigation event to jump back to that view.",
+      "Unlike History (which logs everything), Events filters to the activity that matters most for understanding what's happened.",
+    ],
+  },
+
+  // ── QA ─────────────────────────────────────────────────────────────────────
+  qa: {
+    title: "QA — Configuration quality checks",
+    body: [
+      "QA runs automated health checks on your PadSpan setup and highlights anything that needs attention.",
+      "Config Health — seven pass/fail checks covering maps, rooms, scanners, BLE feed, tagging, and snapshot availability. Failed checks include a fix suggestion.",
+      "Data Consistency — detects orphaned objects, unmapped scanners, and rooms without scanner coverage. Click any item to see its detail.",
+      "Quick Actions — refresh the snapshot, export the full panel state as JSON for debugging, or jump to diagnostics.",
+    ],
+  },
+
+  // ── Sandbox ────────────────────────────────────────────────────────────────
+  sandbox: {
+    title: "Sandbox — Experimental data playground",
+    body: [
+      "Sandbox is a collection of visual debugging widgets for exploring your live data.",
+      "State Inspector — current data mode, snapshot age, and counts. Room Color Grid — visual tiles showing each room's assigned colour and device count.",
+      "RSSI Distribution — histogram of all current signal strengths bucketed by 10 dBm. Live Signal Bars — per-scanner bar chart showing device count.",
+      "Click any room tile or scanner bar for full details.",
+    ],
+  },
 };

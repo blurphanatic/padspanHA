@@ -3,12 +3,16 @@
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 export function render(ctx){
-  const { el, radioShortId } = ctx.helpers;
+  const { el, helpBtn, radioShortId } = ctx.helpers;
   const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const root = el("section",{id:"sandbox"});
 
-  root.appendChild(el("div",{style:"font-size:20px;font-weight:800;margin-bottom:16px"},"Sandbox"));
+  // Header
+  root.appendChild(el("div",{class:"row",style:"align-items:center;gap:8px;margin-bottom:14px"},[
+    el("h2",{},"Sandbox"),
+    helpBtn("sandbox"),
+  ]));
 
   const grid = el("div",{class:"grid"});
 
@@ -31,8 +35,6 @@ export function render(ctx){
   ]));
 
   // ── Room Color Grid ──
-  const PALETTE = ["#5eead4","#52b788","#ff8a65","#4db6ac","#43a047","#ba68c8","#81c784","#ffd54f","#f06292","#4caf50","#ffb74d","#e57373","#b0bec5","#9575cd","#26c6da","#9ccc65"];
-
   if(rooms.length > 0){
     const roomGrid = el("div",{style:"display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px"});
     for(let i = 0; i < rooms.length; i++){
@@ -40,6 +42,8 @@ export function render(ctx){
       const rc = ctx.helpers.roomColor(room);
       const count = objects.filter(o=>o.room===room).length;
       const tile = el("div",{style:`background:${rc}22;border:1px solid ${rc}44;border-radius:6px;padding:8px;text-align:center;cursor:pointer`});
+      tile.addEventListener("mouseenter", ()=>{ tile.style.borderColor = rc; });
+      tile.addEventListener("mouseleave", ()=>{ tile.style.borderColor = `${rc}44`; });
       tile.appendChild(el("div",{style:`font-size:11px;color:${rc};font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`}, room));
       tile.appendChild(el("div",{style:"font-size:18px;font-weight:800;color:#e2e8f0;margin-top:2px"}, String(count)));
       tile.addEventListener("click", ()=>ctx.actions.showRoomDetail(room));
@@ -54,7 +58,6 @@ export function render(ctx){
   // ── RSSI Distribution ──
   const ads = snap ? ((snap.ble && snap.ble.advertisements) || []) : [];
   if(ads.length > 0){
-    // Bucket by 10 dBm ranges
     const buckets = {};
     for(const ad of ads){
       if(ad.rssi == null) continue;
@@ -72,13 +75,14 @@ export function render(ctx){
     const chart = el("div",{style:"display:flex;align-items:flex-end;gap:4px;height:100px"});
     for(const [range, count] of sortedBuckets){
       const pct = Math.round((count / maxBucket) * 100);
-      // Color gradient: green for strong, yellow for mid, red for weak
       let barColor = "#52b788";
       if(range < -80) barColor = "#ef5350";
       else if(range < -70) barColor = "#ffd54f";
       else if(range < -60) barColor = "#81c784";
 
       const col = el("div",{style:"display:flex;flex-direction:column;align-items:center;flex:1;min-width:0"});
+      // Count label on top
+      col.appendChild(el("div",{style:`font-size:9px;color:${barColor};font-weight:600;margin-bottom:2px`}, String(count)));
       col.appendChild(el("div",{style:`height:${pct}px;width:100%;background:${barColor};border-radius:2px 2px 0 0;min-height:2px`}));
       col.appendChild(el("div",{style:"font-size:9px;color:#64748b;margin-top:2px;white-space:nowrap"}, `${range}`));
       chart.appendChild(col);
@@ -102,11 +106,14 @@ export function render(ctx){
     barsCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:8px"},"Live Signal Bars"));
 
     const barList = el("div",{style:"display:flex;flex-direction:column;gap:6px"});
-    const sorted = radios.sort((a,b)=>(scannerDevCounts[b.source]||0)-(scannerDevCounts[a.source]||0));
+    const sorted = [...radios].sort((a,b)=>(scannerDevCounts[b.source]||0)-(scannerDevCounts[a.source]||0));
     for(const radio of sorted){
       const count = scannerDevCounts[radio.source] || 0;
       const pct = Math.round((count / maxDevs) * 100);
-      const row = el("div",{style:"display:flex;align-items:center;gap:8px"});
+      const row = el("div",{style:"display:flex;align-items:center;gap:8px;cursor:pointer;padding:2px 0;border-radius:3px"});
+      row.addEventListener("mouseenter", ()=>{ row.style.background = "rgba(255,255,255,0.04)"; });
+      row.addEventListener("mouseleave", ()=>{ row.style.background = ""; });
+      row.addEventListener("click", ()=>ctx.actions.showScannerDetail(radio));
       const rsid = _sid(radio.source);
       row.appendChild(el("div",{style:"width:110px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0"}, [
         el("span",{style:"font-family:monospace;font-weight:700;letter-spacing:.04em;margin-right:4px"}, rsid),

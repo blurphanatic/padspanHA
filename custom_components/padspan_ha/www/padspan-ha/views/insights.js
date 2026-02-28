@@ -3,12 +3,16 @@
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 export function render(ctx){
-  const { el, radioShortId } = ctx.helpers;
+  const { el, helpBtn, radioShortId } = ctx.helpers;
   const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const root = el("section",{id:"insights"});
 
-  root.appendChild(el("div",{style:"font-size:20px;font-weight:800;margin-bottom:16px"},"Insights"));
+  // Header
+  root.appendChild(el("div",{class:"row",style:"align-items:center;gap:8px;margin-bottom:14px"},[
+    el("h2",{},"Insights"),
+    helpBtn("insights"),
+  ]));
 
   if(!snap){
     root.appendChild(el("div",{class:"card"},[
@@ -44,7 +48,10 @@ export function render(ctx){
     for(const [room, count] of sortedRC.slice(0, 12)){
       const pct = Math.round((count / maxCount) * 100);
       const rc = ctx.helpers.roomColor(room);
-      const row = el("div",{style:"display:flex;align-items:center;gap:8px"});
+      const row = el("div",{style:"display:flex;align-items:center;gap:8px;cursor:pointer;padding:2px 0;border-radius:3px"});
+      row.addEventListener("mouseenter", ()=>{ row.style.background = "rgba(255,255,255,0.04)"; });
+      row.addEventListener("mouseleave", ()=>{ row.style.background = ""; });
+      row.addEventListener("click", ()=>ctx.actions.showRoomDetail(room));
       row.appendChild(el("div",{style:"width:100px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0"}, room));
       row.appendChild(el("div",{style:"flex:1;background:#1a2e1e;border-radius:3px;height:14px;position:relative"}, [
         el("div",{style:`width:${pct}%;height:100%;background:${rc};border-radius:3px;min-width:2px`}),
@@ -89,13 +96,18 @@ export function render(ctx){
       }
       const radio = radios.find(r=>r.source===src);
       const name = (radio && radio.name) || src;
-      tbl.appendChild(el("tr",{},[
-        el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em"}, _sid(src)),
-        el("td",{style:"padding:4px 6px;max-width:120px;overflow:hidden;text-overflow:ellipsis"}, name),
-        el("td",{style:"padding:4px 6px;text-align:right"}, String(st.total)),
-        el("td",{style:"padding:4px 6px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "—"),
-        el("td",{style:`padding:4px 6px;color:${gradeColor};font-weight:600`}, grade),
-      ]));
+      const tr = el("tr",{style:"cursor:pointer"});
+      tr.addEventListener("mouseenter", ()=>{ tr.style.background = "rgba(255,255,255,0.04)"; });
+      tr.addEventListener("mouseleave", ()=>{ tr.style.background = ""; });
+      tr.addEventListener("click", ()=>{
+        if(radio) ctx.actions.showScannerDetail(radio);
+      });
+      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em"}, _sid(src)));
+      tr.appendChild(el("td",{style:"padding:4px 6px;max-width:120px;overflow:hidden;text-overflow:ellipsis"}, name));
+      tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right"}, String(st.total)));
+      tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "—"));
+      tr.appendChild(el("td",{style:`padding:4px 6px;color:${gradeColor};font-weight:600`}, grade));
+      tbl.appendChild(tr);
     }
     sigCard.appendChild(tbl);
   }
@@ -122,10 +134,16 @@ export function render(ctx){
   } else {
     const list = el("div",{style:"display:flex;flex-direction:column;gap:4px"});
     for(const x of topMobile){
-      list.appendChild(el("div",{style:"font-size:12px;display:flex;justify-content:space-between"},[
-        el("span",{}, x.t),
-        el("span",{class:"badge"}, `${x.n} rooms`),
-      ]));
+      const obj = objects.find(o => o.entity_id === x.t || o.key === x.t);
+      const row = el("div",{style:"font-size:12px;display:flex;justify-content:space-between;align-items:center;padding:3px 4px;border-radius:3px;" + (obj ? "cursor:pointer;" : "")});
+      if(obj){
+        row.addEventListener("mouseenter", ()=>{ row.style.background = "rgba(255,255,255,0.04)"; });
+        row.addEventListener("mouseleave", ()=>{ row.style.background = ""; });
+        row.addEventListener("click", ()=>ctx.actions.showObjectDetail(obj));
+      }
+      row.appendChild(el("span",{}, obj ? (obj.user_label || obj.name || x.t) : x.t));
+      row.appendChild(el("span",{class:"badge"}, `${x.n} rooms`));
+      list.appendChild(row);
     }
     mobCard.appendChild(list);
   }
@@ -139,9 +157,15 @@ export function render(ctx){
   // Rooms with no objects
   const emptyRooms = rooms.filter(r=>!(roomCounts[r]));
   if(emptyRooms.length > 0){
+    const roomLinks = el("div",{style:"display:flex;flex-wrap:wrap;gap:4px;margin-top:4px"});
+    for(const r of emptyRooms){
+      const chip = el("span",{style:"font-size:11px;color:#ffd54f;cursor:pointer;text-decoration:underline;text-decoration-style:dotted"}, r);
+      chip.addEventListener("click", ()=>ctx.actions.showRoomDetail(r));
+      roomLinks.appendChild(chip);
+    }
     gapItems.push(el("div",{style:"font-size:12px;margin-bottom:6px"},[
-      el("span",{style:"color:#ffd54f;font-weight:600"}, `${emptyRooms.length} empty room${emptyRooms.length>1?"s":""}: `),
-      el("span",{class:"muted"}, emptyRooms.join(", ")),
+      el("span",{style:"color:#ffd54f;font-weight:600"}, `${emptyRooms.length} empty room${emptyRooms.length>1?"s":""}:`),
+      roomLinks,
     ]));
   }
 
@@ -152,9 +176,15 @@ export function render(ctx){
   }
   const unmappedScanners = radios.filter(r=>!mappedReceivers.has(r.source) && !mappedReceivers.has(r.name));
   if(unmappedScanners.length > 0){
+    const scanLinks = el("div",{style:"display:flex;flex-wrap:wrap;gap:4px;margin-top:4px"});
+    for(const s of unmappedScanners){
+      const chip = el("span",{style:"font-size:11px;color:#ffd54f;cursor:pointer;text-decoration:underline;text-decoration-style:dotted"}, s.name||s.source);
+      chip.addEventListener("click", ()=>ctx.actions.showScannerDetail(s));
+      scanLinks.appendChild(chip);
+    }
     gapItems.push(el("div",{style:"font-size:12px;margin-bottom:6px"},[
-      el("span",{style:"color:#ffd54f;font-weight:600"}, `${unmappedScanners.length} scanner${unmappedScanners.length>1?"s":""} not on any map: `),
-      el("span",{class:"muted"}, unmappedScanners.map(s=>s.name||s.source).join(", ")),
+      el("span",{style:"color:#ffd54f;font-weight:600"}, `${unmappedScanners.length} scanner${unmappedScanners.length>1?"s":""} not on any map:`),
+      scanLinks,
     ]));
   }
 

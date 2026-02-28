@@ -3,11 +3,15 @@
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 export function render(ctx){
-  const { el } = ctx.helpers;
+  const { el, helpBtn } = ctx.helpers;
   const root = el("section",{id:"history"});
   const events = ctx.state._sessionEvents || [];
 
-  root.appendChild(el("div",{style:"font-size:20px;font-weight:800;margin-bottom:16px"},"History"));
+  // Header
+  root.appendChild(el("div",{class:"row",style:"align-items:center;gap:8px;margin-bottom:14px"},[
+    el("h2",{},"History"),
+    helpBtn("history"),
+  ]));
 
   if(events.length === 0){
     root.appendChild(el("div",{class:"card"},[
@@ -17,7 +21,7 @@ export function render(ctx){
     return root;
   }
 
-  // Type colors
+  // Type colors & labels
   const TYPE_COLORS = {
     view_change: "#5eead4",
     snapshot: "#52b788",
@@ -31,28 +35,69 @@ export function render(ctx){
     ws_call: "WS",
   };
 
-  // Filter state (store on root so it persists across renders within session)
+  // Filter state — persist across re-renders
   const allTypes = [...new Set(events.map(e=>e.type))].sort();
+  if(!ctx.state._historyFilters){
+    ctx.state._historyFilters = new Set(allTypes);
+  }
+  // Ensure new types are visible
+  for(const t of allTypes){
+    if(!ctx.state._historyFilters.has(t)) ctx.state._historyFilters.add(t);
+  }
+  const activeFilters = ctx.state._historyFilters;
 
-  // Filter bar
-  const filterRow = el("div",{class:"row",style:"gap:6px;flex-wrap:wrap;margin-bottom:12px"});
+  // Toolbar: filters + clear
+  const toolbar = el("div",{style:"display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px"});
 
-  // Active filters tracking — start with all visible
-  const activeFilters = new Set(allTypes);
+  // Filter toggle buttons
+  for(const type of allTypes){
+    const color = TYPE_COLORS[type] || "#94a3b8";
+    const label = TYPE_LABELS[type] || type;
+    const isActive = activeFilters.has(type);
+    const count = events.filter(e=>e.type===type).length;
+    const btn = el("button",{
+      style:`font-size:11px;padding:3px 10px;border-radius:12px;border:1px solid ${color};cursor:pointer;font-weight:600;transition:all 0.15s;`
+        + (isActive
+          ? `background:${color}22;color:${color};`
+          : `background:transparent;color:#64748b;border-color:#333;text-decoration:line-through;opacity:0.5;`)
+    }, `${label} (${count})`);
+    btn.addEventListener("click", ()=>{
+      if(activeFilters.has(type)) activeFilters.delete(type);
+      else activeFilters.add(type);
+      ctx.actions.renderRooms();
+    });
+    toolbar.appendChild(btn);
+  }
 
+  // Spacer + clear button
+  toolbar.appendChild(el("div",{style:"flex:1"}));
   const clearBtn = el("button",{class:"btn inline",style:"font-size:11px;padding:2px 8px"}, "Clear History");
   clearBtn.addEventListener("click", ()=>ctx.actions.clearSessionEvents());
-  filterRow.appendChild(clearBtn);
+  toolbar.appendChild(clearBtn);
 
-  filterRow.appendChild(el("span",{class:"muted",style:"font-size:11px;margin-left:8px"}, `${events.length} events`));
+  root.appendChild(toolbar);
 
-  root.appendChild(filterRow);
+  // Apply filters
+  const filtered = events.filter(e => activeFilters.has(e.type));
 
-  // Timeline
+  // Count info
+  root.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:8px"},
+    filtered.length === events.length
+      ? `${events.length} events`
+      : `Showing ${filtered.length} of ${events.length} events`
+  ));
+
+  if(filtered.length === 0){
+    root.appendChild(el("div",{class:"card"},[
+      el("div",{class:"muted"},"All event types are filtered out. Click a filter button above to show events."),
+    ]));
+    return root;
+  }
+
+  // Timeline (newest first)
   const listContainer = el("div",{class:"list-scroll",style:"max-height:500px;overflow-y:auto;display:flex;flex-direction:column;gap:2px"});
 
-  // Newest first
-  const sorted = [...events].reverse();
+  const sorted = [...filtered].reverse();
   for(const ev of sorted){
     const time = new Date(ev.ts);
     const hh = String(time.getHours()).padStart(2, "0");

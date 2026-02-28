@@ -3,14 +3,29 @@
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 export function render(ctx){
-  const { el, radioShortId } = ctx.helpers;
+  const { el, helpBtn, radioShortId } = ctx.helpers;
   const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const root = el("section",{id:"monitor"});
 
-  root.appendChild(el("div",{style:"font-size:20px;font-weight:800;margin-bottom:16px"},"Monitor"));
+  // Header
+  root.appendChild(el("div",{class:"row",style:"align-items:center;gap:8px;margin-bottom:14px"},[
+    el("h2",{},"Monitor"),
+    helpBtn("monitor"),
+  ]));
 
   const grid = el("div",{class:"grid"});
+
+  // ── BLE Diag Errors (top-level warning) ──
+  const bleDiag = snap && snap.ble && snap.ble.diag;
+  if(bleDiag && bleDiag.ok === false){
+    const errors = (bleDiag.errors || []).join("; ") || "BLE subsystem unhealthy";
+    root.insertBefore(el("div",{class:"card",style:"border:1px solid #7f1d1d;background:#1a0a0a;margin-bottom:14px"},[
+      el("div",{style:"font-weight:700;color:#ef5350;margin-bottom:4px"},"BLE Feed Unhealthy"),
+      el("div",{style:"font-size:12px;color:#fca5a5"}, errors),
+      el("div",{class:"muted",style:"font-size:11px;margin-top:6px"},"Try restarting Home Assistant (Settings → System → Restart)."),
+    ]), grid);
+  }
 
   // ── Websocket Call Counts ──
   const wsCounts = ctx.state.wsCounts || {};
@@ -34,14 +49,24 @@ export function render(ctx){
     const total = objSummary.total || 0;
     const ble = objSummary.ble || 0;
     const unid = objSummary.unidentified || 0;
+
+    const unidBadge = unid > 0
+      ? el("span",{class:"badge warn",style:"cursor:pointer"}, `${unid} unidentified`)
+      : el("span",{class:"badge"}, "All identified");
+    if(unid > 0){
+      unidBadge.addEventListener("click", ()=>{
+        ctx.state.view = "objects";
+        ctx.actions.renderRooms();
+      });
+      unidBadge.title = "Click to view in Objects tab";
+    }
+
     grid.appendChild(el("div",{class:"card"},[
       el("div",{style:"font-weight:700"},"BLE Objects"),
       el("div",{class:"row",style:"gap:8px;flex-wrap:wrap;margin-top:8px"},[
         el("span",{class:"badge"}, `${total} total`),
         el("span",{class:"badge"}, `${ble} BLE ads`),
-        unid > 0
-          ? el("span",{class:"badge warn"}, `${unid} unidentified`)
-          : el("span",{class:"badge"}, "All identified"),
+        unidBadge,
       ]),
     ]));
   } else {
@@ -56,10 +81,10 @@ export function render(ctx){
   const ads = (snap && snap.ble && snap.ble.advertisements) || [];
   if(radios.length > 0){
     const scannerData = {};
-    for(const r of radios) scannerData[r.source] = { name: r.name || r.source, devs: 0, rssiSum: 0, rssiCount: 0 };
+    for(const r of radios) scannerData[r.source] = { name: r.name || r.source, devs: 0, rssiSum: 0, rssiCount: 0, radio: r };
     for(const ad of ads){
       const src = ad.source || "";
-      if(!scannerData[src]) scannerData[src] = { name: src, devs: 0, rssiSum: 0, rssiCount: 0 };
+      if(!scannerData[src]) scannerData[src] = { name: src, devs: 0, rssiSum: 0, rssiCount: 0, radio: null };
       scannerData[src].devs++;
       if(ad.rssi != null){ scannerData[src].rssiSum += ad.rssi; scannerData[src].rssiCount++; }
     }
@@ -81,13 +106,18 @@ export function render(ctx){
         else if(avg >= -80){ quality = "Fair"; qColor = "#ffd54f"; }
         else { quality = "Poor"; qColor = "#ef5350"; }
       }
-      tbl.appendChild(el("tr",{},[
-        el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em"}, _sid(src)),
-        el("td",{style:"padding:4px 6px"}, st.name),
-        el("td",{style:"padding:4px 6px;text-align:right"}, String(st.devs)),
-        el("td",{style:"padding:4px 6px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "\u2014"),
-        el("td",{style:`padding:4px 6px;color:${qColor};font-weight:600`}, quality),
-      ]));
+      const tr = el("tr",{style:"cursor:pointer"});
+      tr.addEventListener("mouseenter", ()=>{ tr.style.background = "rgba(255,255,255,0.04)"; });
+      tr.addEventListener("mouseleave", ()=>{ tr.style.background = ""; });
+      tr.addEventListener("click", ()=>{
+        if(st.radio) ctx.actions.showScannerDetail(st.radio);
+      });
+      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em"}, _sid(src)));
+      tr.appendChild(el("td",{style:"padding:4px 6px"}, st.name));
+      tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right"}, String(st.devs)));
+      tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "\u2014"));
+      tr.appendChild(el("td",{style:`padding:4px 6px;color:${qColor};font-weight:600`}, quality));
+      tbl.appendChild(tr);
     }
     grid.appendChild(el("div",{class:"card"},[
       el("div",{style:"font-weight:700;margin-bottom:8px"},"Per-Scanner Breakdown"),
