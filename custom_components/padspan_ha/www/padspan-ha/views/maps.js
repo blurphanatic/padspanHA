@@ -769,7 +769,7 @@ function _edit(ctx, map){
         right.appendChild(el("div",{class:"muted", style:"font-size:11px;margin-top:2px;margin-bottom:6px"}, "Click Add to place on map, then drag to position."));
         const radList = el("div",{style:"display:flex;flex-direction:column;gap:5px"});
         for(const radio of liveRadios){
-          const alreadyPlaced = ctx.state.maps._draftReceivers.some(r => (r.source && r.source === radio.source) || r.label === radio.name || r.id === radio.source);
+          const alreadyPlaced = ctx.state.maps._draftReceivers.some(r => (r.source && r.source === radio.source) || (r.label && radio.name && r.label.toLowerCase() === radio.name.toLowerCase()) || r.id === radio.source);
           const sid = _sid(radio.source || "");
           const borderColor = radio.disabled ? "#5b3b7a" : radio.lost ? "#7d5c2b" : "#1b3526";
           const bg = radio.disabled ? "rgba(148,100,220,.06)" : radio.lost ? "rgba(245,158,11,.06)" : "#0a150e";
@@ -2864,17 +2864,52 @@ function _stack(ctx, maps, helpBtn){
     }
   }, "Reset");
   // Clean stale receivers button
+  // Build lookup maps from live BLE radios
   const snap_rx = (ctx.state.live?.snapshot?.ble?.radios) || [];
   const liveSourceSet = new Set(snap_rx.map(r => r.source).filter(Boolean));
-  const liveNameSet = new Set(snap_rx.map(r => r.name).filter(Boolean));
+  // name→source and source→name lookups for backfill matching
+  const nameToSource = new Map();
+  const liveNameLower = new Map(); // lowercase name → source
+  for(const radio of snap_rx){
+    if(radio.name && radio.source) nameToSource.set(radio.name, radio.source);
+    if(radio.name && radio.source) liveNameLower.set(radio.name.toLowerCase(), radio.source);
+    // Also map source→source so label matching works when label IS the source address
+    if(radio.source) liveNameLower.set(radio.source.toLowerCase(), radio.source);
+  }
+
+  // Backfill: if a receiver has no source but its label matches a live radio name,
+  // populate source so future stale checks work reliably
+  const backfillMaps = [];
+  for(const m of maps){
+    let changed = false;
+    for(const r of (m.receivers||[])){
+      if(r.source) continue; // already has source
+      // Try exact name match first, then case-insensitive
+      const matched = nameToSource.get(r.label) || liveNameLower.get((r.label||"").toLowerCase());
+      if(matched){ r.source = matched; changed = true; }
+    }
+    if(changed) backfillMaps.push(m);
+  }
+  // Persist backfill silently (fire-and-forget)
+  if(backfillMaps.length){
+    (async ()=>{
+      for(const m of backfillMaps){
+        try{ await ctx.actions.mapsUpdate({ map_id: m.id, receivers: m.receivers||[], calibration: m.calibration||{}, notes: m.notes||"" }); }catch(e){}
+      }
+    })();
+  }
+
+  // Now count stale — a receiver matches if source is in live set OR label matches a live radio
+  const _rxIsLive = (r) => {
+    if(r.source && liveSourceSet.has(r.source)) return true;
+    if(r.label && nameToSource.has(r.label)) return true;
+    if(r.label && liveNameLower.has((r.label||"").toLowerCase())) return true;
+    return false;
+  };
   let staleCount = 0;
   for(const m of maps){
     for(const r of (m.receivers||[])){
-      const matchBySource = r.source && liveSourceSet.has(r.source);
-      const matchByLabel = r.label && (liveSourceSet.has(r.label) || liveNameSet.has(r.label));
-      if(!matchBySource && !matchByLabel){
-        staleCount++;
-      }
+      if(!_rxIsLive(r)) staleCount++;
     }
   }
   const cleanLbl = el("span",{class:"muted",style:"font-size:11px;min-width:50px"}, "");
@@ -2887,12 +2922,8 @@ function _stack(ctx, maps, helpBtn){
       try{
         for(const m of maps){
           const orig = m.receivers || [];
-          const kept = orig.filter(r =>
-            (r.source && liveSourceSet.has(r.source)) || (r.label && (liveSourceSet.has(r.label) || liveNameSet.has(r.label)))
-          );
+          const kept = orig.filter(r => _rxIsLive(r));
           if(kept.length < orig.length){
-            // Only send receivers + required fields; omit stack/room_bounds/floor_id
-            // so the backend doesn't re-process alignment data
             await ctx.actions.mapsUpdate({
               map_id: m.id, receivers: kept,
               calibration: m.calibration||{}, notes: m.notes||"",
