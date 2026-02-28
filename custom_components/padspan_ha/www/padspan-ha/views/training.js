@@ -489,7 +489,7 @@ function _svgManageOverview() {
 .activeTab{animation:tabHL 2s ease-in-out infinite}
 </style>
 <rect x="0" y="0" width="108" height="220" fill="#050e08"/>
-<text x="8" y="20" fill="#52b788" font-size="9" font-weight="700" font-family="system-ui">PadSpan HA</text>
+<text x="8" y="20" fill="#52b788" font-size="9" font-weight="700" font-family="system-ui">PadSpan™ HA</text>
 <rect x="3" y="28" width="102" height="22" rx="5" fill="#071008"/>
 <text x="16" y="43" fill="#94a3b8" font-size="9" font-family="system-ui">Settings</text>
 <rect class="activeTab" x="3" y="54" width="102" height="22" rx="5" fill="#0d2318" stroke="#78909c" stroke-width="1.5"/>
@@ -804,10 +804,10 @@ const WALKTHROUGHS = [
 const MANUAL_SECTIONS = [
   {
     id: "intro",
-    title: "What is PadSpan HA?",
+    title: "What is PadSpan™ HA?",
     icon: "🏠",
     paragraphs: [
-      "PadSpan HA is a custom Home Assistant integration that adds whole-home Bluetooth Low Energy (BLE) presence tracking. It turns your existing Bluetooth scanners (ESPresense, Bermuda, or similar) into a real-time people and object tracking system.",
+      "PadSpan™ HA is a custom Home Assistant integration that adds whole-home Bluetooth Low Energy (BLE) presence tracking. It turns your existing Bluetooth scanners (ESPresense, Bermuda, or similar) into a real-time people and object tracking system.",
       "Unlike basic presence detection that only knows if someone is home or away, PadSpan tells you which room a person or device is in — and updates every 5 seconds.",
       "PadSpan shows all tracked devices on a live room map, lets you follow a specific tag, draw floor plans with room boundaries, and build multi-floor 3D visualisations. Everything runs locally inside Home Assistant — no cloud required.",
     ],

@@ -1856,7 +1856,7 @@ function _buildDemoSVG(fp){
   s += `<rect x="620" y="375" width="175" height="46" fill="#0a150e" stroke="#1b3526" stroke-width="1" rx="4"/>`;
   s += `<text x="632" y="391" fill="#52b788" font-size="10" font-weight="700">Smith Residence (Demo)</text>`;
   s += `<text x="632" y="404" fill="#94a3b8" font-size="8">3 scanners · 5 objects · 5 rooms</text>`;
-  s += `<text x="632" y="415" fill="#52b78870" font-size="8">PadSpan HA Sample Mode</text>`;
+  s += `<text x="632" y="415" fill="#52b78870" font-size="8">PadSpan™ HA Sample Mode</text>`;
 
   s += `</svg>`;
   return s;

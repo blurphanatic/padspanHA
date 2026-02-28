@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.58";
+const APP_VERSION = "0.5.59";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260227T235816Z";
+const BUILD_ID = "20260228T000154Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -234,7 +234,7 @@ class PadSpanHaApp extends HTMLElement {
           <div class="brand">
             <img src="/padspan_ha_static/padspan-ha/assets/padspan-mark.svg?b=${BUILD_ID}" alt="PadSpan" onerror="this.style.display='none'">
             <div>
-              <div class="label">PadSpan HA</div>
+              <div class="label">PadSpan™ HA</div>
               <div class="muted" style="margin-top:2px">v${APP_VERSION} • build ${BUILD_ID}</div>
             </div>
           </div>
@@ -1350,7 +1350,7 @@ class PadSpanHaApp extends HTMLElement {
         const msg = document.createElement("div");
         msg.style.cssText = "flex:1;font-size:12px;color:#fca5a5;line-height:1.5";
         msg.innerHTML = "<b style='font-size:13px'>Bluetooth feed unavailable</b><br>"
-          + "PadSpan can't see BLE scanners. This usually means Home Assistant needs a <b>full restart</b> "
+          + "PadSpan™ can't see BLE scanners. This usually means Home Assistant needs a <b>full restart</b> "
           + "(Settings → System → Restart) — a reload isn't enough after first install.";
         const dismissBtn = document.createElement("button");
         dismissBtn.className = "btn inline";

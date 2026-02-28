@@ -51,7 +51,7 @@ export function render(ctx) {
   root.appendChild(el("div", { style: "margin-bottom:10px" }, [
     el("div", { style: "font-weight:700;font-size:16px;color:#52b788" }, "BLE Location Calibration"),
     el("div", { style: "font-size:12px;color:#78909c;margin-top:2px" },
-      "Build a fingerprint database so PadSpan can pinpoint every beacon in 3D space."),
+      "Build a fingerprint database so PadSpan™ can pinpoint every beacon in 3D space."),
   ]));
 
   // Tab bar

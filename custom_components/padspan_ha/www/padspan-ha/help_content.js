@@ -13,7 +13,7 @@ export const HELP = {
     title: "Follow — Track a tag in real time",
     body: [
       "The Follow page lets you watch exactly where a specific person or object is right now.",
-      "Pick any tracked tag from the dropdown — a phone, key fob, AirTag, Tile tracker, or anything Bluetooth. PadSpan shows you which room it's currently in, how strong the signal is, and which of your scanners can see it.",
+      "Pick any tracked tag from the dropdown — a phone, key fob, AirTag, Tile tracker, or anything Bluetooth. PadSpan™ shows you which room it's currently in, how strong the signal is, and which of your scanners can see it.",
       "The location updates automatically every few seconds. You don't need to refresh the page.",
       "Click Details → in the status card to open the full device detail view — per-scanner RSSI, signal history, and quick access to Tag/Relabel.",
     ],
@@ -126,7 +126,7 @@ export const HELP = {
 
   // ── Settings ─────────────────────────────────────────────────────────────────
   settings: {
-    title: "Settings — Customise PadSpan",
+    title: "Settings — Customise PadSpan™",
     body: [
       "In Advanced mode, Settings has four tabs: Appearance, Scanner Map, Presence, and Manage.",
       "Appearance — change room colours. Your floors and rooms are read from HA; add or rename them in HA Settings → Areas & Zones.",

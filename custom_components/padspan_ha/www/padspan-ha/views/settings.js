@@ -164,7 +164,7 @@ function _scannerMap(ctx, el, haFloors){
   if(!calData.points || calData.points.length === 0){
     wrap.appendChild(el("div",{class:"card"},[
       el("div",{style:"font-weight:700;font-size:13px;color:#f59e0b;margin-bottom:4px"},"⚠ No calibration data"),
-      el("div",{class:"muted",style:"font-size:11px"},"Collect calibration fingerprints in the PadSpan Calib panel first."),
+      el("div",{class:"muted",style:"font-size:11px"},"Collect calibration fingerprints in the PadSpan™ Calib panel first."),
     ]));
     return wrap;
   }

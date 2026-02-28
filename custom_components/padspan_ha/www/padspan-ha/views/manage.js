@@ -506,12 +506,12 @@ export function render(ctx){
   // ── Integration Controls ─────────────────────────────────────────────────────
   const ctrlCard = el("div",{class:"card"});
   ctrlCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;margin-bottom:8px"},"Integration Controls"));
-  ctrlCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:14px"},"Low-level control over the PadSpan HA integration."));
+  ctrlCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:14px"},"Low-level control over the PadSpan™ HA integration."));
   const ctrlGrid = el("div",{style:"display:flex;flex-direction:column;gap:10px"});
 
   const reloadWrap = el("div",{style:"display:flex;gap:8px;align-items:center"});
   const makeReloadBtn = ()=>{
-    const b = el("button",{class:"btn"},"Reload PadSpan HA integration");
+    const b = el("button",{class:"btn"},"Reload PadSpan™ HA integration");
     b.addEventListener("click", ()=>{
       reloadWrap.innerHTML = "";
       const yes = el("button",{class:"btn",style:"background:#7f1d1d;border-color:#dc2626"},"Yes, reload");
@@ -530,7 +530,7 @@ export function render(ctx){
   reloadWrap.appendChild(makeReloadBtn());
   ctrlGrid.appendChild(el("div",{},[
     el("div",{style:"font-weight:600;margin-bottom:4px"},"Reload integration"),
-    el("div",{class:"muted",style:"font-size:12px;margin-bottom:6px"},"Forces HA to reinitialize PadSpan HA without a full HA restart. Useful after config changes."),
+    el("div",{class:"muted",style:"font-size:12px;margin-bottom:6px"},"Forces HA to reinitialize PadSpan™ HA without a full HA restart. Useful after config changes."),
     reloadWrap,
   ]));
 
