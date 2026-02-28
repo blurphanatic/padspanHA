@@ -226,6 +226,17 @@ export const HELP = {
     ],
   },
 
+  qa_radio_analysis: {
+    title: "Radio Analysis — Per-scanner health check",
+    body: [
+      "Radio Analysis shows a detailed health report for every Bluetooth scanner (radio) in your system.",
+      "Each row shows the scanner\u2019s short ID badge, name, device count, average signal strength, and a health verdict (Healthy / Degraded / Unhealthy). Scanners with problems are listed first.",
+      "Click any row to expand it and see full details: IP address, WiFi signal, connection type, area assignment, activity metrics (RSSI range, advertisement freshness), and cross-scanner overlap analysis.",
+      "Cross-scanner overlap shows which scanners share the most devices \u2014 scanners that share many devices are likely physically close. Unique device count identifies isolated scanners.",
+      "Click a scanner\u2019s name to open the full scanner detail modal with per-device signal bars and area controls.",
+    ],
+  },
+
   // ── Sandbox ────────────────────────────────────────────────────────────────
   sandbox: {
     title: "Sandbox — Experimental data playground",

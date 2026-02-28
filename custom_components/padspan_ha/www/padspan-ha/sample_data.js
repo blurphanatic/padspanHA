@@ -38,9 +38,9 @@ export const SAMPLE_SNAPSHOT = {
 
   ble: {
     radios: [
-      { source: "living_room_hub", name: "Living Room Hub", scanning: true,  connectable: true,  adapter: "hci0", area_name: "Living Room" },
-      { source: "bedroom_hub",     name: "Bedroom Hub",     scanning: true,  connectable: true,  adapter: "hci0", area_name: "Master Bedroom" },
-      { source: "kitchen_hub",     name: "Kitchen Hub",     scanning: true,  connectable: false, adapter: "hci0", area_name: "Kitchen" },
+      { source: "living_room_hub", name: "Living Room Hub", scanning: true,  connectable: true,  adapter: "hci0", area_name: "Living Room",    ip: "192.168.1.40", ssid: "HomeNetwork", wifi_signal: -42, connection_type: "wireless" },
+      { source: "bedroom_hub",     name: "Bedroom Hub",     scanning: true,  connectable: true,  adapter: "hci0", area_name: "Master Bedroom", ip: "192.168.1.41", ssid: "HomeNetwork", wifi_signal: -58, connection_type: "wireless" },
+      { source: "kitchen_hub",     name: "Kitchen Hub",     scanning: true,  connectable: false, adapter: "hci0", area_name: "Kitchen",        ip: "192.168.1.42", connection_type: "wired" },
     ],
     advertisements: [
       { address: "AA:BB:CC:11:22:33", name: "Alice's Phone",  source: "living_room_hub", rssi: -58, age_s: 3,  service_uuids: ["0x180F","0x180A"] },
