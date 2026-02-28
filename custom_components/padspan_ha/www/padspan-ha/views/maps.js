@@ -1891,7 +1891,7 @@ function _buildDemoSVG(fp){
 const _LEVEL_NAMES = ["Basement", "Ground", "Level 1", "Level 2", "Level 3"];
 
 function _stack(ctx, maps, helpBtn){
-  const { el } = ctx.helpers;
+  const { el, esc } = ctx.helpers;
   helpBtn = helpBtn || (()=>null);
 
   // Init alignment state
