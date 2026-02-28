@@ -16,7 +16,7 @@
  */
 
 export function render(ctx){
-  const { el, pill, helpBtn, radioShortId } = ctx.helpers;
+  const { el, esc, pill, helpBtn, radioShortId } = ctx.helpers;
   const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
   const isBasic = ctx.state.complexity === "basic";
 
@@ -1310,7 +1310,7 @@ export function render(ctx){
     for(const r of (fp.rooms||[])){
       s += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${r.color}18" stroke="${r.color}" stroke-width="1.5" rx="3"/>`;
       const tx = r.x + r.w/2, ty = r.y + 16;
-      s += `<text x="${tx}" y="${ty}" text-anchor="middle" fill="${r.color}" font-size="12" font-family="system-ui,sans-serif" font-weight="600">${r.name}</text>`;
+      s += `<text x="${tx}" y="${ty}" text-anchor="middle" fill="${r.color}" font-size="12" font-family="system-ui,sans-serif" font-weight="600">${esc(r.name)}</text>`;
     }
 
     // Radio markers (concentric rings = scanning BT proxy)
@@ -1324,14 +1324,14 @@ export function render(ctx){
       s += `<circle cx="${x}" cy="${y}" r="8"  fill="none" stroke="#52b788" stroke-width="1.5" opacity="0.7"/>`;
       s += `<circle cx="${x}" cy="${y}" r="4"  fill="#52b788" opacity="1"/>`;
       s += `<text x="${x}" y="${y-26}" text-anchor="middle" fill="#52b788" font-size="10" font-weight="700" font-family="monospace">${rsid}</text>`;
-      s += `<text x="${x}" y="${y+30}" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui,sans-serif">${radio.name}</text>`;
+      s += `<text x="${x}" y="${y+30}" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui,sans-serif">${esc(radio.name)}</text>`;
     }
 
     // Objects (phones, keys, trackers)
     for(const obj of (fp.objects||[])){
       const {x,y,color,name} = obj;
       s += `<circle cx="${x}" cy="${y}" r="7" fill="${color}" opacity="0.95"/>`;
-      s += `<text x="${x}" y="${y-11}" text-anchor="middle" fill="${color}" font-size="9" font-family="system-ui,sans-serif">${name}</text>`;
+      s += `<text x="${x}" y="${y-11}" text-anchor="middle" fill="${color}" font-size="9" font-family="system-ui,sans-serif">${esc(name)}</text>`;
     }
 
     s += `</svg>`;

@@ -3007,9 +3007,9 @@ function _stack(ctx, maps, helpBtn){
       const tr2 = document.createElement("tr");
       tr2.style.cssText = "border-bottom:1px solid #0f2017";
       tr2.innerHTML = `<td style="padding:5px 8px"><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${color};vertical-align:middle"></span></td>
-        <td style="padding:5px 8px;font-weight:600;color:#e2e8f0">${rr.room}</td>
-        <td style="padding:5px 8px;color:#94a3b8">${rr.floor||"—"}</td>
-        <td style="padding:5px 8px;color:#94a3b8">${rr.map}</td>`;
+        <td style="padding:5px 8px;font-weight:600;color:#e2e8f0">${esc(rr.room)}</td>
+        <td style="padding:5px 8px;color:#94a3b8">${esc(rr.floor)||"—"}</td>
+        <td style="padding:5px 8px;color:#94a3b8">${esc(rr.map)}</td>`;
       tbody2.appendChild(tr2);
     }
     tbl.appendChild(tbody2);

@@ -1351,15 +1351,19 @@ async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
     if not ms:
         connection.send_error(msg["id"], "no_maps_store", "Maps store not initialized")
         return
-    info = await ms.async_add_map(
-        msg.get("name") or "Untitled Map",
-        msg.get("filename") or "map",
-        msg.get("mime") or "image/*",
-        msg.get("width") or 0,
-        msg.get("height") or 0,
-        msg.get("png_base64") or "",
-        msg.get("floor_id") or DEFAULT_FLOOR_ID,
-    )
+    try:
+        info = await ms.async_add_map(
+            msg.get("name") or "Untitled Map",
+            msg.get("filename") or "map",
+            msg.get("mime") or "image/*",
+            msg.get("width") or 0,
+            msg.get("height") or 0,
+            msg.get("png_base64") or "",
+            msg.get("floor_id") or DEFAULT_FLOOR_ID,
+        )
+    except ValueError as exc:
+        connection.send_error(msg["id"], "upload_too_large", str(exc))
+        return
     connection.send_result(msg["id"], {"map": info})
 
 
@@ -1430,6 +1434,7 @@ async def ws_maps_replace_image(hass: HomeAssistant, connection, msg) -> None:
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/maps_delete", "map_id": str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_maps_delete(hass: HomeAssistant, connection, msg) -> None:
     ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
@@ -1652,6 +1657,7 @@ async def ws_follow_alert_save(hass: HomeAssistant, connection, msg) -> None:
         "area_id": str,
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_area_delete(hass: HomeAssistant, connection, msg) -> None:
     """Delete an HA area and clean up PadSpan room_meta."""
@@ -1685,6 +1691,7 @@ async def ws_area_delete(hass: HomeAssistant, connection, msg) -> None:
         "entity_id": str,
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_entity_delete(hass: HomeAssistant, connection, msg) -> None:
     """Remove an entity from the HA entity registry."""
@@ -1721,6 +1728,7 @@ async def ws_room_tag_purge_missing(hass: HomeAssistant, connection, msg) -> Non
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/integration_reload"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_integration_reload(hass: HomeAssistant, connection, msg) -> None:
     """Reload the PadSpan HA config entry."""
@@ -1793,6 +1801,7 @@ async def ws_calibration_delete_point(hass: HomeAssistant, connection, msg) -> N
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/calibration_clear"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_calibration_clear(hass: HomeAssistant, connection, msg) -> None:
     """Delete all calibration points and reset the model."""

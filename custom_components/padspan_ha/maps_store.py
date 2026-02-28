@@ -18,6 +18,8 @@ from homeassistant.helpers.storage import Store
 
 from .const import MAPS_STORE_KEY, MAPS_DIR, DEFAULT_FLOOR_ID
 
+MAX_MAP_BYTES = 20 * 1024 * 1024  # 20 MB decoded limit
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -77,7 +79,13 @@ class MapsStore:
         return None
 
     async def async_add_map(self, name: str, filename: str, mime: str, width: int, height: int, png_base64: str, floor_id: str | None = None) -> dict[str, Any]:
+        # Reject oversized uploads before decoding
+        max_b64_len = (MAX_MAP_BYTES * 4) // 3 + 4
+        if len(png_base64) > max_b64_len:
+            raise ValueError(f"Map image exceeds {MAX_MAP_BYTES // (1024*1024)} MB limit")
         raw = base64.b64decode(png_base64)
+        if len(raw) > MAX_MAP_BYTES:
+            raise ValueError(f"Map image exceeds {MAX_MAP_BYTES // (1024*1024)} MB limit")
         map_id = os.urandom(8).hex()
         file_name = f"{map_id}.png"
         file_path = self.maps_dir / file_name
