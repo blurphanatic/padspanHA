@@ -435,79 +435,134 @@ function _settingsManage(ctx, el, haAreas, haFloors){
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
 
   // ── Section 1: BLE Tags ──────────────────────────────────────────────────
-  const taggedObjs = (snap?.objects?.list || []).filter(
-    o => o.user_label && (o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon")
-  );
+  // Load tags from persistent ObjectStore (not just live snapshot)
   const tagsCard = el("div",{class:"card"});
   tagsCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:8px"},[
     el("div",{style:"font-weight:700"},"BLE Tags"),
-    el("span",{class:"badge",style:"font-size:10px"}, String(taggedObjs.length)),
   ]));
   tagsCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
     "Tagged devices can be followed and appear by label across the panel. Untagging removes the label permanently."
   ));
 
-  if(!taggedObjs.length){
-    tagsCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},
-      "No BLE devices have been tagged yet. Use the Objects tab to tag a device."));
-  } else {
+  // Async-load stored labels from backend, then populate table
+  const tagsLoading = el("div",{class:"muted",style:"font-size:12px"},"Loading tags…");
+  tagsCard.appendChild(tagsLoading);
+  (async ()=>{
+    let storedLabels = {};
+    try {
+      const res = await ctx.actions.objectLabelList();
+      storedLabels = (res && res.labels) || {};
+    } catch(e){ /* fallback to empty */ }
+
+    // Build list of tagged entries: merge store data with live snapshot info
+    const liveObjects = (snap?.objects?.list || []);
+    const liveByAddr = {};
+    for(const o of liveObjects){
+      const addr = (o.address || o.canonical_id || o.key || "").toUpperCase();
+      if(addr) liveByAddr[addr] = o;
+    }
+
+    const taggedList = [];
+    for(const [mac, entry] of Object.entries(storedLabels)){
+      const live = liveByAddr[mac.toUpperCase()] || null;
+      taggedList.push({
+        address: mac,
+        label: entry.label || mac,
+        tagged_at: entry.tagged_at || null,
+        kind: live ? live.kind : null,
+        age_s: live ? live.age_s : null,
+        room: live ? live.room : null,
+        live: live,
+      });
+    }
+    taggedList.sort((a,b) => a.label.localeCompare(b.label));
+
+    // Remove loading indicator
+    tagsLoading.remove();
+
+    // Badge count
+    const countBadge = el("span",{class:"badge",style:"font-size:10px"}, String(taggedList.length));
+    tagsCard.querySelector("div").appendChild(countBadge);
+
+    if(!taggedList.length){
+      tagsCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},
+        "No BLE devices have been tagged yet. Use the Objects tab to tag a device."));
+      return;
+    }
+
     const table = el("table",{style:"width:100%;border-collapse:collapse;font-size:12px"});
     const thead = el("thead",{});
     thead.innerHTML = `<tr>
       <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Label</th>
-      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Address / Key</th>
-      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Kind</th>
-      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Last seen</th>
+      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Address</th>
+      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Status</th>
+      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Room</th>
       <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #1e3a28"></th>
     </tr>`;
     table.appendChild(thead);
     const tbody = el("tbody",{});
-    for(const o of taggedObjs){
-      const k = o.kind;
-      const tagAddr = k === "private_ble" ? (o.canonical_id || o.address)
-                    : k === "ibeacon"     ? (o.key || o.address)
-                    : o.address;
-      const displayAddr = k === "ibeacon"
-        ? (o.ibeacon_uuid ? o.ibeacon_uuid.slice(0,8)+"…" : o.address)
-        : o.address;
-      const kindLabel   = k === "ibeacon" ? "iBeacon" : k === "private_ble" ? "Private BLE" : "BLE";
-      const kindStyle   = k === "ibeacon"
-        ? "font-size:10px;background:#3a2a0a;color:#fbbf24;border-color:#d97706"
-        : k === "private_ble"
-        ? "font-size:10px;background:#1a3a5a;color:#7dd3fc;border-color:#3b82f6"
-        : "font-size:10px";
-      const ageS = o.age_s != null ? Number(o.age_s) : null;
-      const ageStr = ageS == null ? "—" : ageS < 60 ? Math.round(ageS)+"s"
-                   : Math.floor(ageS/60)+"m "+Math.round(ageS%60)+"s";
+    for(const t of taggedList){
+      const isOnline = t.age_s != null && t.age_s < 120;
+      const statusDot = isOnline ? "●" : "○";
+      const statusColor = isOnline ? "#52b788" : "#64748b";
+      const statusText = t.age_s != null
+        ? (t.age_s < 60 ? Math.round(t.age_s)+"s ago" : Math.floor(t.age_s/60)+"m ago")
+        : "offline";
+      const roomStr = t.room || "—";
+      const isFollowed = ctx.actions.followedHas(t.address);
+
       const tr = el("tr",{style:"border-bottom:1px solid #131f17"});
-      tr.appendChild(el("td",{style:"padding:8px;font-weight:600"}, o.user_label));
-      tr.appendChild(el("td",{style:"padding:8px;font-family:monospace;font-size:11px;color:#6b9e7e"}, displayAddr));
-      tr.appendChild(el("td",{style:"padding:8px"},[
-        el("span",{class:"badge",style:kindStyle}, kindLabel),
+
+      // Label + follow indicator
+      const labelCell = el("td",{style:"padding:8px;font-weight:600"});
+      if(isFollowed) labelCell.appendChild(el("span",{style:"color:#fbbf24;margin-right:4px"},"◉"));
+      labelCell.appendChild(document.createTextNode(t.label));
+      tr.appendChild(labelCell);
+
+      // Address
+      tr.appendChild(el("td",{style:"padding:8px;font-family:monospace;font-size:11px;color:#6b9e7e"}, t.address));
+
+      // Status
+      tr.appendChild(el("td",{style:"padding:8px;font-size:11px"},[
+        el("span",{style:`color:${statusColor};margin-right:4px`}, statusDot),
+        el("span",{style:`color:${statusColor}`}, statusText),
       ]));
-      tr.appendChild(el("td",{style:"padding:8px;color:#6b9e7e;font-size:11px"}, ageStr));
-      const untagTd = el("td",{style:"padding:8px;text-align:right"});
+
+      // Room
+      tr.appendChild(el("td",{style:"padding:8px;font-size:11px;color:#94a3b8"}, roomStr));
+
+      // Actions: Follow + Untag
+      const actionsTd = el("td",{style:"padding:8px;text-align:right;white-space:nowrap"});
+
+      const followBtn = el("button",{class:"btn inline",style:"font-size:11px;margin-right:6px;color:" + (isFollowed ? "#fbbf24" : "#5eead4") + ";border-color:" + (isFollowed ? "#92400e" : "#134e4a")},
+        isFollowed ? "Unfollow" : "Follow");
+      followBtn.addEventListener("click", ()=>{
+        ctx.actions.followedToggle(t.address);
+      });
+      actionsTd.appendChild(followBtn);
+
       const untagBtn = el("button",{class:"btn",style:"font-size:11px;color:#f87171;border-color:#7f1d1d"}, "Untag");
       untagBtn.addEventListener("click", async ()=>{
-        if(!confirm(`Remove tag "${o.user_label}"?`)) return;
+        if(!confirm(`Remove tag "${t.label}"?`)) return;
         untagBtn.disabled = true; untagBtn.textContent = "Removing…";
         try {
-          await ctx.actions.objectLabelDelete(tagAddr);
+          await ctx.actions.objectLabelDelete(t.address);
           await ctx.actions.refreshSnapshot();
           ctx.actions.renderRooms();
-          ctx.toast(`Removed tag "${o.user_label}"`);
+          ctx.toast(`Removed tag "${t.label}"`);
         } catch(e){
           ctx.toast("Failed to remove tag", true);
           untagBtn.disabled = false; untagBtn.textContent = "Untag";
         }
       });
-      untagTd.appendChild(untagBtn);
-      tr.appendChild(untagTd);
+      actionsTd.appendChild(untagBtn);
+
+      tr.appendChild(actionsTd);
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
     tagsCard.appendChild(table);
-  }
+  })();
   wrap.appendChild(tagsCard);
 
   // ── Section 2: HA Areas ──────────────────────────────────────────────────

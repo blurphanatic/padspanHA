@@ -49,6 +49,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_model_update)
     websocket_api.async_register_command(hass, ws_object_label_set)
     websocket_api.async_register_command(hass, ws_object_label_delete)
+    websocket_api.async_register_command(hass, ws_object_label_list)
     websocket_api.async_register_command(hass, ws_radio_area_set)
     websocket_api.async_register_command(hass, ws_radio_lost_set)
     websocket_api.async_register_command(hass, ws_radio_disabled_set)
@@ -1408,6 +1409,17 @@ async def ws_object_label_delete(hass: HomeAssistant, connection, msg) -> None:
     if addr:
         await obj_store.async_delete(addr)
     connection.send_result(msg["id"], {"ok": True, "address": addr})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/object_label_list"})
+@websocket_api.async_response
+async def ws_object_label_list(hass: HomeAssistant, connection, msg) -> None:
+    """Return all stored object labels from the persistent ObjectStore."""
+    obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+    if not obj_store:
+        connection.send_result(msg["id"], {"labels": {}})
+        return
+    connection.send_result(msg["id"], {"labels": obj_store.all()})
 
 
 @websocket_api.websocket_command(

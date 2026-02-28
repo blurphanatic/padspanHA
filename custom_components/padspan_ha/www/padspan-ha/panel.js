@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.62";
+const APP_VERSION = "0.5.63";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260228T002821Z";
+const BUILD_ID = "20260228T010312Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -733,6 +733,9 @@ class PadSpanHaApp extends HTMLElement {
         },
         objectLabelDelete: async (address)=>{
           return await this._callWS({ type:"padspan_ha/object_label_delete", address });
+        },
+        objectLabelList: async ()=>{
+          return await this._callWS({ type:"padspan_ha/object_label_list" });
         },
         tagObjectPrompt: (addr, currentLabel)=>this._tagObjectPrompt(addr, currentLabel),
         radioAreaSet: async (payload)=>await this._callWS({ type:"padspan_ha/radio_area_set", ...payload }),
