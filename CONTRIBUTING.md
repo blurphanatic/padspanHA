@@ -1,14 +1,45 @@
 # Contributing to PadSpan HA
 
-Thanks for helping!
+Thanks for your interest in contributing to PadSpan HA! This is a Home Assistant
+custom integration for BLE room-level presence tracking.
 
-## Dev quickstart
-- Use Home Assistant OS or Container with `/config/custom_components/padspan_ha/` mapped.
-- Copy `custom_components/padspan_ha` into your HA instance.
-- Restart HA after backend changes.
-- Hard refresh browser after UI changes.
+## Reporting Bugs
 
-## PRs
-- Keep changes minimal and reversible.
-- Prefer WebSocket calls over custom HTTP endpoints.
-- Avoid adding optional dependencies unless required.
+Please use the [Bug Report](https://github.com/gbroeckling/padspanHA/issues/new?template=bug_report.yml)
+issue template. Include your PadSpan HA version, Home Assistant version, and
+BLE scanner type so we can reproduce the problem.
+
+## Requesting Features
+
+Use the [Feature Request](https://github.com/gbroeckling/padspanHA/issues/new?template=feature_request.yml)
+template. Describe your use case so we understand *why* the feature matters.
+
+## Development Setup
+
+1. Fork the repository and clone it.
+2. Copy (or symlink) the `custom_components/padspan_ha` folder into your Home
+   Assistant `config/custom_components/` directory.
+3. Restart Home Assistant to load the integration.
+4. Alternatively, add this repo as a HACS custom repository for easier testing:
+   - HACS > Integrations > three-dot menu > Custom repositories
+   - URL: `https://github.com/gbroeckling/padspanHA`
+   - Category: Integration
+
+## Code Style
+
+- **Python** -- Follow standard Home Assistant conventions (`black`, `isort`,
+  type hints where practical).
+- **JavaScript** -- Vanilla JS, no frameworks. The frontend lives in
+  `www/padspan-ha/` (panel.js + views/).
+
+## Pull Request Process
+
+1. Create a feature branch from `main`.
+2. Keep commits focused -- one logical change per commit.
+3. Test your changes against a running Home Assistant instance.
+4. Open a PR to `main` with a short description of what changed and why.
+5. A maintainer will review and merge when ready.
+
+## Code of Conduct
+
+Be kind, be constructive. We are all here to make presence tracking better.
