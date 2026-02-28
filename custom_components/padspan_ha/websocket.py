@@ -582,40 +582,71 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
     # Attach network info (IP, WiFi SSID) from entity states for each radio's device
     try:
+        import re as _re
         er_net = entity_registry.async_get(hass)
-        # Build device_id → list of entity entries (only for devices we care about)
-        radio_dev_ids = {r.get("device_id") for r in ((snapshot.get("ble") or {}).get("radios") or []) if r.get("device_id")}
-        if radio_dev_ids:
-            dev_entities: dict[str, list] = {}
-            for ent in er_net.entities.values():
-                if ent.device_id in radio_dev_ids:
-                    dev_entities.setdefault(ent.device_id, []).append(ent)
-            for radio in ((snapshot.get("ble") or {}).get("radios") or []):
-                did = radio.get("device_id")
-                if not did or did not in dev_entities:
+
+        # Strategy 1: device_id based lookup (most reliable when device_id is set)
+        dev_entities: dict[str, list] = {}
+        for ent in er_net.entities.values():
+            if ent.device_id:
+                dev_entities.setdefault(ent.device_id, []).append(ent)
+
+        # Strategy 2: entity slug prefix lookup (works even without device_id)
+        # ESPHome entities follow the pattern: sensor.<slug>_ip_address, etc.
+        # Build a map from slug prefix → list of entity entries
+        # Radio name "Office Proxy" → slug "office_proxy"
+        def _name_to_slug(name: str) -> str:
+            return _re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+        def _find_net_entities(radio: dict) -> list:
+            """Find network-related entities for a radio via device_id or name slug."""
+            candidates: list = []
+            # Try device_id first
+            did = radio.get("device_id")
+            if did and did in dev_entities:
+                candidates = dev_entities[did]
+            # Fallback: search by entity slug prefix matching radio name
+            if not candidates:
+                rname = radio.get("name") or ""
+                if rname:
+                    slug = _name_to_slug(rname)
+                    if slug and len(slug) >= 3:
+                        prefix_sensor = f"sensor.{slug}_"
+                        prefix_text = f"text_sensor.{slug}_"
+                        for ent in er_net.entities.values():
+                            eid = ent.entity_id or ""
+                            if eid.startswith(prefix_sensor) or eid.startswith(prefix_text):
+                                candidates.append(ent)
+            return candidates
+
+        def _apply_net_info(radio: dict, entities: list) -> None:
+            for ent in entities:
+                eid = ent.entity_id or ""
+                eid_lower = eid.lower()
+                st = hass.states.get(eid)
+                if not st or st.state in ("unknown", "unavailable", ""):
                     continue
-                for ent in dev_entities[did]:
-                    eid = ent.entity_id or ""
-                    eid_lower = eid.lower()
-                    st = hass.states.get(eid)
-                    if not st or st.state in ("unknown", "unavailable", ""):
-                        continue
-                    val = st.state
-                    # IP address sensor
-                    if not radio.get("ip") and ("ip_address" in eid_lower or "_ip" in eid_lower):
-                        radio["ip"] = val
-                    # WiFi SSID sensor
-                    elif not radio.get("ssid") and ("ssid" in eid_lower or "wifi_ssid" in eid_lower or "connected_ssid" in eid_lower):
-                        radio["ssid"] = val
-                    # WiFi signal strength
-                    elif not radio.get("wifi_signal") and ("wifi_signal" in eid_lower or "signal_strength" in eid_lower or "wifi_rssi" in eid_lower):
-                        try:
-                            radio["wifi_signal"] = int(float(val))
-                        except (ValueError, TypeError):
-                            pass
-                    # Connection type (wired/wireless)
-                    elif not radio.get("connection_type") and ("connection_type" in eid_lower or "network_type" in eid_lower):
-                        radio["connection_type"] = val
+                val = st.state
+                # IP address sensor
+                if not radio.get("ip") and ("ip_address" in eid_lower or eid_lower.endswith("_ip")):
+                    radio["ip"] = val
+                # WiFi SSID sensor
+                elif not radio.get("ssid") and ("ssid" in eid_lower):
+                    radio["ssid"] = val
+                # WiFi signal strength
+                elif not radio.get("wifi_signal") and ("wifi_signal" in eid_lower or "signal_strength" in eid_lower):
+                    try:
+                        radio["wifi_signal"] = int(float(val))
+                    except (ValueError, TypeError):
+                        pass
+                # Connection type (wired/wireless)
+                elif not radio.get("connection_type") and ("connection_type" in eid_lower or "network_type" in eid_lower):
+                    radio["connection_type"] = val
+
+        for radio in ((snapshot.get("ble") or {}).get("radios") or []):
+            ents = _find_net_entities(radio)
+            if ents:
+                _apply_net_info(radio, ents)
     except Exception:
         pass
 
