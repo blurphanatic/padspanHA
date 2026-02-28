@@ -1268,16 +1268,26 @@ function _tuneTab(ctx, el, cs, calData) {
     draftReceivers: {},   // mapId → [{id,label,x,y,room}]
     dirtyMaps: {},        // mapId → true
     selectedRx: null,     // {mapId, rxId}
+    _mapsStamp: null,     // tracks when maps data last changed
   };
   const ts = ctx.state._calibTune;
 
-  // Clone receivers from maps list into draft state (once per session or after reset)
-  if (!Object.keys(ts.draftReceivers).length) {
+  // Build a stamp from maps data to detect external updates
+  const mapsStamp = maps_list.map(m => `${m.id}:${m.updated||""}:${(m.receivers||[]).length}`).join("|");
+  const hasDirty = Object.values(ts.dirtyMaps).some(Boolean);
+
+  // Re-sync draft receivers when maps data changes externally (and no unsaved edits)
+  if (!Object.keys(ts.draftReceivers).length || (mapsStamp !== ts._mapsStamp && !hasDirty)) {
     for (const m of maps_list) {
       ts.draftReceivers[m.id] = (m.receivers || []).map(r => ({
         id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || ""
       }));
     }
+    // Remove drafts for maps that no longer exist
+    for (const id of Object.keys(ts.draftReceivers)) {
+      if (!maps_list.find(m => m.id === id)) delete ts.draftReceivers[id];
+    }
+    ts._mapsStamp = mapsStamp;
   }
 
   let _fg = ts.fg, _hg = ts.hg;
@@ -1701,6 +1711,9 @@ function _tuneTab(ctx, el, cs, calData) {
         });
       }
       ts.dirtyMaps = {};
+      // Update stamp so we don't re-sync over our own save
+      const freshMaps = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
+      ts._mapsStamp = freshMaps.map(m => `${m.id}:${m.updated||""}:${(m.receivers||[]).length}`).join("|");
       statusLbl.textContent = "Saved ✓";
       ctx.toast("Receiver positions saved");
       setTimeout(() => { statusLbl.textContent = ""; }, 2500);
