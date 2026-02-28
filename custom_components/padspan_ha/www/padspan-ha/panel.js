@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.65";
+const APP_VERSION = "0.5.66";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260228T023924Z";
+const BUILD_ID = "20260228T024428Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -478,9 +478,11 @@ class PadSpanHaApp extends HTMLElement {
         this.state.settings = res.settings;
         const mode = (res.settings.data_mode || "sample").toLowerCase();
         this.state.dataMode = (mode === "live") ? "live" : "sample";
-        // Load followed addrs from server (overrides localStorage)
-        if(Array.isArray(res.settings.followed_addrs)){
+        // Load followed addrs from server ONCE on boot (not on every poll,
+        // which would race with local toggles and revert user clicks)
+        if(!this._followedLoadedFromServer && Array.isArray(res.settings.followed_addrs)){
           this.state.followedAddrs = new Set(res.settings.followed_addrs);
+          this._followedLoadedFromServer = true;
         }
       }
     }catch(e){}
