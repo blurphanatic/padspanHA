@@ -27,7 +27,10 @@ export function render(ctx) {
 
   // ── Resolve chosen object ────────────────────────────────────────────────────
   const addr   = ctx.state.followAddr || "";
-  const chosen = addr ? (allObjects.find(o => (o.address||o.entity_id||"") === addr) || null) : null;
+  const chosen = addr ? (allObjects.find(o => {
+    const id = o.address||o.entity_id||"";
+    return id === addr || id.toUpperCase() === addr.toUpperCase();
+  }) || null) : null;
 
   // Track movement (ring-buffer per tag)
   if (chosen) {
@@ -124,6 +127,11 @@ function _buildSelector(ctx, el, helpBtn, allObjects, currentAddr, isBasic) {
 
   sel.addEventListener("change", () => {
     ctx.state.followAddr = sel.value;
+    // Also add to followed set when selecting in Follow tab
+    if(sel.value && !ctx.actions.followedHas(sel.value)){
+      ctx.actions.followedToggle(sel.value);
+      return; // followedToggle already triggers re-render
+    }
     ctx.actions.renderRooms();
   });
 

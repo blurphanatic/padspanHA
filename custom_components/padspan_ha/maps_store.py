@@ -187,7 +187,7 @@ class MapsStore:
             sc = max(0.1, min(10.0, float(stack.get("scale", 1.0))))
             ceil_h = max(1.5, min(20.0, float(stack.get("ceiling_height_m", 2.4))))
             rot = float(stack.get("rotation", 0.0))
-            m["stack"] = {
+            new_stack: dict[str, Any] = {
                 "z_level": z,
                 "x_offset": float(stack.get("x_offset", 0.0)),
                 "y_offset": float(stack.get("y_offset", 0.0)),
@@ -195,6 +195,28 @@ class MapsStore:
                 "ceiling_height_m": ceil_h,
                 "rotation": rot,
             }
+            # Preserve alignment fields
+            if "is_master" in stack:
+                new_stack["is_master"] = bool(stack["is_master"])
+            elif m.get("stack", {}).get("is_master"):
+                new_stack["is_master"] = True
+            if "ref_map_id" in stack:
+                new_stack["ref_map_id"] = str(stack["ref_map_id"]) if stack["ref_map_id"] else None
+            elif m.get("stack", {}).get("ref_map_id"):
+                new_stack["ref_map_id"] = m["stack"]["ref_map_id"]
+            if "ref_ar" in stack:
+                new_stack["ref_ar"] = float(stack["ref_ar"]) if stack["ref_ar"] is not None else None
+            elif m.get("stack", {}).get("ref_ar") is not None:
+                new_stack["ref_ar"] = m["stack"]["ref_ar"]
+            if "scale_x_adj" in stack:
+                new_stack["scale_x_adj"] = max(0.01, min(100.0, float(stack.get("scale_x_adj", 1.0))))
+            elif m.get("stack", {}).get("scale_x_adj") is not None:
+                new_stack["scale_x_adj"] = m["stack"]["scale_x_adj"]
+            if "tie_ins" in stack:
+                new_stack["tie_ins"] = stack["tie_ins"] if isinstance(stack["tie_ins"], list) else []
+            elif m.get("stack", {}).get("tie_ins"):
+                new_stack["tie_ins"] = m["stack"]["tie_ins"]
+            m["stack"] = new_stack
 
         m["updated"] = _now_iso()
         await self.store.async_save(self.data)

@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.63";
+const APP_VERSION = "0.5.64";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260228T010312Z";
+const BUILD_ID = "20260228T021925Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -478,6 +478,10 @@ class PadSpanHaApp extends HTMLElement {
         this.state.settings = res.settings;
         const mode = (res.settings.data_mode || "sample").toLowerCase();
         this.state.dataMode = (mode === "live") ? "live" : "sample";
+        // Load followed addrs from server (overrides localStorage)
+        if(Array.isArray(res.settings.followed_addrs)){
+          this.state.followedAddrs = new Set(res.settings.followed_addrs);
+        }
       }
     }catch(e){}
   }
@@ -799,13 +803,24 @@ class PadSpanHaApp extends HTMLElement {
         calibrationComputeModel: async () => await this._callWS({ type: "padspan_ha/calibration_compute_model" }),
         calibrationSwapRadio: async (old_source, new_source) => await this._callWS({ type: "padspan_ha/calibration_swap_radio", old_source, new_source }),
         calibrationHealthCheck: async () => await this._callWS({ type: "padspan_ha/calibration_health_check" }),
-        // Followed beacons — toggle follow state; re-renders current view to update button
-        followedHas: (addr) => !!addr && String(addr) === String(this.state.followAddr || ""),
+        // Followed beacons — multi-device follow; persisted to server via settings
+        followedHas: (addr) => !!addr && this.state.followedAddrs.has(String(addr).toUpperCase()),
         followedToggle: (addr) => {
           if(!addr) return;
-          const cur = String(this.state.followAddr || "");
-          this.state.followAddr = (cur === String(addr)) ? "" : String(addr);
-          try { localStorage.setItem("padspan_followAddr", this.state.followAddr); } catch(e){}
+          const key = String(addr).toUpperCase();
+          if(this.state.followedAddrs.has(key)){
+            this.state.followedAddrs.delete(key);
+          } else {
+            this.state.followedAddrs.add(key);
+          }
+          // Persist to server (fire-and-forget)
+          this._callWS({
+            type: "padspan_ha/settings_set",
+            data_mode: this.state.dataMode,
+            followed_addrs: [...this.state.followedAddrs],
+          }).catch(()=>{});
+          // Also mirror to localStorage as fallback
+          try { localStorage.setItem("padspan_followed", JSON.stringify([...this.state.followedAddrs])); } catch(e){}
           this._renderCurrentView();
         },
       },
@@ -1097,19 +1112,28 @@ class PadSpanHaApp extends HTMLElement {
 
     // Actions row
     const actionsRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #1b3526;margin-top:8px"});
-    // Follow toggle
-    const _followKey = addr || obj.entity_id || "";
+    // Follow toggle (multi-device Set)
+    const _followKey = (addr || obj.entity_id || "").toUpperCase();
     if(_followKey){
-      const _isFollowed = this.state.followAddr === _followKey;
+      const _isFollowed = this.state.followedAddrs.has(_followKey);
       const followBtn = el("button",{
         class:"btn inline",
         style: _isFollowed ? "background:#1a3a2a;border-color:#52b788;color:#52b788" : "",
       }, _isFollowed ? "Following" : "Follow");
       followBtn.addEventListener("click", ()=>{
-        this.state.followAddr = _isFollowed ? "" : _followKey;
-        try { localStorage.setItem("padspan_followAddr", this.state.followAddr); } catch(e){}
-        followBtn.textContent = this.state.followAddr === _followKey ? "Following" : "Follow";
-        followBtn.style.cssText = this.state.followAddr === _followKey
+        const wasFollowed = this.state.followedAddrs.has(_followKey);
+        if(wasFollowed) this.state.followedAddrs.delete(_followKey);
+        else this.state.followedAddrs.add(_followKey);
+        // Persist to server
+        this._callWS({
+          type: "padspan_ha/settings_set",
+          data_mode: this.state.dataMode,
+          followed_addrs: [...this.state.followedAddrs],
+        }).catch(()=>{});
+        try { localStorage.setItem("padspan_followed", JSON.stringify([...this.state.followedAddrs])); } catch(e){}
+        const nowFollowed = this.state.followedAddrs.has(_followKey);
+        followBtn.textContent = nowFollowed ? "Following" : "Follow";
+        followBtn.style.cssText = nowFollowed
           ? "width:auto;margin-top:0;background:#1a3a2a;border-color:#52b788;color:#52b788" : "width:auto;margin-top:0";
       });
       actionsRow.appendChild(followBtn);
@@ -1144,11 +1168,10 @@ class PadSpanHaApp extends HTMLElement {
       el("div", {style:"font-weight:600;margin-bottom:6px"}, `Objects now (${objects.length})`),
     ]);
     if(objects.length){
-      const followAddr = this.state.followAddr || "";
       for(const o of objects){
         const oName = o.user_label || o.name || o.entity_id || o.address || "Unknown";
-        const oKey = o.address || o.entity_id || "";
-        const isFollowed = followAddr && (oKey === followAddr);
+        const oKey = (o.address || o.entity_id || "").toUpperCase();
+        const isFollowed = oKey && this.state.followedAddrs.has(oKey);
         const oc = isFollowed ? "#fbbf24" : (o.identified ? "#5eead4" : "#f59e0b");
         const rssiTxt = o.rssi != null ? `${o.rssi} dBm` : "";
         const ageTxt = o.age_s != null ? `${Math.round(o.age_s)}s` : "";

@@ -1011,6 +1011,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("kalman_r"): vol.Coerce(float),
         vol.Optional("room_sigma_m"): vol.Coerce(float),
         vol.Optional("hidden_map_ids"): list,
+        vol.Optional("followed_addrs"): list,
         vol.Optional("health_reminder_enabled"): bool,
         vol.Optional("health_reminder_last_ts"): vol.Any(float, int, None),
         vol.Optional("maps_iso_floor_gap"): vol.Coerce(int),
@@ -1049,6 +1050,9 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         if "hidden_map_ids" in msg:
             ids = msg["hidden_map_ids"]
             payload["hidden_map_ids"] = [str(x) for x in ids if isinstance(x, str)] if isinstance(ids, list) else []
+        if "followed_addrs" in msg:
+            addrs = msg["followed_addrs"]
+            payload["followed_addrs"] = [str(x).upper() for x in addrs if isinstance(x, str)] if isinstance(addrs, list) else []
         if "health_reminder_enabled" in msg:
             payload["health_reminder_enabled"] = bool(msg["health_reminder_enabled"])
         if "health_reminder_last_ts" in msg:

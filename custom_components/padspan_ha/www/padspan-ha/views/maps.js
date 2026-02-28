@@ -2859,6 +2859,47 @@ function _stack(ctx, maps, helpBtn){
       isoResetBtn.disabled = false;
     }
   }, "Reset");
+  // Clean stale receivers button
+  const snap_rx = (ctx.state.live?.snapshot?.ble?.radios) || [];
+  const liveSourceSet = new Set(snap_rx.map(r => r.source).filter(Boolean));
+  const liveNameSet = new Set(snap_rx.map(r => r.name).filter(Boolean));
+  let staleCount = 0;
+  for(const m of maps){
+    for(const r of (m.receivers||[])){
+      if(!liveSourceSet.has(r.id) && !liveSourceSet.has(r.label) && !liveNameSet.has(r.label)){
+        staleCount++;
+      }
+    }
+  }
+  const cleanLbl = el("span",{class:"muted",style:"font-size:11px;min-width:50px"}, "");
+  const cleanBtn = el("button",{class:"btn inline",style:"padding:2px 10px;font-size:12px" + (staleCount > 0 ? ";color:#ffd54f;border-color:#92400e" : ";opacity:0.5"),
+    title: staleCount > 0 ? `Remove ${staleCount} receiver(s) not matching any live BLE scanner` : "All receivers match live scanners",
+    onclick: async ()=>{
+      if(!staleCount){ cleanLbl.textContent = "All clean"; setTimeout(()=>{ cleanLbl.textContent = ""; }, 2000); return; }
+      if(!confirm(`Remove ${staleCount} stale receiver(s) from your maps?\n\nThese receivers don't match any active BLE scanner.`)) return;
+      cleanBtn.disabled = true; cleanLbl.textContent = "Cleaning…";
+      try{
+        for(const m of maps){
+          const orig = m.receivers || [];
+          const kept = orig.filter(r =>
+            liveSourceSet.has(r.id) || liveSourceSet.has(r.label) || liveNameSet.has(r.label)
+          );
+          if(kept.length < orig.length){
+            await ctx.actions.mapsUpdate({
+              map_id: m.id, receivers: kept,
+              calibration: m.calibration||{}, notes: m.notes||"",
+              floor_id: m.floor_id||"", room_bounds: m.room_bounds||{},
+              stack: m.stack||{},
+            });
+          }
+        }
+        cleanLbl.textContent = `Removed ${staleCount} ✓`;
+        setTimeout(()=>{ cleanLbl.textContent = ""; ctx.actions.renderRooms(); }, 1500);
+      }catch(e){ cleanLbl.textContent = "Error"; }
+      cleanBtn.disabled = false;
+    }
+  }, staleCount > 0 ? `Clean ${staleCount} stale` : "No stale");
+
   card.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap"},[
     el("span",{class:"muted",style:"font-size:12px"},"Floor:"),
     focusSlider,
@@ -2872,7 +2913,9 @@ function _stack(ctx, maps, helpBtn){
     isoSaveBtn,
     isoResetBtn,
     persistentBtn,
+    cleanBtn,
     isoSaveLbl,
+    cleanLbl,
     roomListToggle,
   ]));
 
