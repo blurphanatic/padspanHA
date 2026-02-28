@@ -721,6 +721,130 @@ function _svgHaEntities() {
 </svg>`;
 }
 
+function _svgCalibSetup() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes phonePulse{0%,100%{opacity:1}50%{opacity:0.5}}
+.phone{animation:phonePulse 1.5s ease-in-out infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Step 1: Choose a device and a floor plan</text>
+<rect x="20" y="28" width="360" height="80" rx="8" fill="#0d2318" stroke="#52b788" stroke-width="1.5"/>
+<text x="36" y="50" fill="#94a3b8" font-size="10" font-family="system-ui">Calibration Device</text>
+<rect x="36" y="56" width="160" height="22" rx="5" fill="#071008" stroke="#1b3526" stroke-width="1"/>
+<text x="48" y="72" fill="#cbd5e1" font-size="10" font-family="system-ui">Alice's Phone ▾</text>
+<g class="phone"><circle cx="330" cy="68" r="14" fill="#14b8a6" opacity="0.2" stroke="#14b8a6" stroke-width="1.5"/><circle cx="330" cy="68" r="6" fill="#14b8a6"/></g>
+<text x="36" y="96" fill="#94a3b8" font-size="10" font-family="system-ui">Floor Plan</text>
+<rect x="136" y="86" width="160" height="22" rx="5" fill="#071008" stroke="#1b3526" stroke-width="1"/>
+<text x="148" y="102" fill="#cbd5e1" font-size="10" font-family="system-ui">Ground Floor ▾</text>
+<text x="200" y="140" text-anchor="middle" fill="#4a6052" font-size="10" font-family="system-ui">Open the Calibration tab (or standalone phone panel)</text>
+<text x="200" y="156" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Pick the BLE device you'll carry and the map to calibrate on</text>
+<text x="200" y="180" text-anchor="middle" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Tip: Use the standalone Calibration panel on your phone</text>
+<text x="200" y="196" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">It's optimised for one-handed use while walking around</text>
+</svg>`;
+}
+
+function _svgCalibPin() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes pinDrop{0%{r:0;opacity:0}50%{r:8;opacity:1}100%{r:6;opacity:0.8}}
+.pin1{animation:pinDrop 0.5s ease-out 0.3s both}
+.pin2{animation:pinDrop 0.5s ease-out 1s both}
+.pin3{animation:pinDrop 0.5s ease-out 1.7s both}
+@keyframes listenRing{0%{r:8;opacity:0.6}100%{r:22;opacity:0}}
+.listen{animation:listenRing 1.5s ease-out infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Step 2: Tap map → stand still → collect</text>
+<rect x="10" y="26" width="240" height="180" rx="6" fill="#0a1a0f" stroke="#1b3526" stroke-width="1"/>
+<rect x="20" y="36" width="100" height="70" rx="4" fill="#1b3526" opacity="0.2" stroke="#253e2e" stroke-width="1"/>
+<text x="70" y="76" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Kitchen</text>
+<rect x="130" y="36" width="110" height="70" rx="4" fill="#1b3526" opacity="0.2" stroke="#253e2e" stroke-width="1"/>
+<text x="185" y="76" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Living Room</text>
+<rect x="20" y="116" width="220" height="80" rx="4" fill="#1b3526" opacity="0.15" stroke="#253e2e" stroke-width="1"/>
+<text x="130" y="160" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Hallway</text>
+<circle class="listen" cx="60" cy="56" fill="none" stroke="#14b8a6" stroke-width="1.5"/>
+<circle class="pin1" cx="60" cy="56" fill="#14b8a6"/>
+<circle class="pin2" cx="170" cy="56" fill="#14b8a6"/>
+<circle class="pin3" cx="100" cy="150" fill="#14b8a6"/>
+<rect x="260" y="26" width="132" height="180" rx="6" fill="#050e08" stroke="#1b3526" stroke-width="1"/>
+<text x="272" y="46" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Pin &amp; Listen</text>
+<text x="272" y="66" fill="#4a6052" font-size="9" font-family="system-ui">1. Tap map where</text>
+<text x="272" y="79" fill="#4a6052" font-size="9" font-family="system-ui">   you're standing</text>
+<text x="272" y="99" fill="#4a6052" font-size="9" font-family="system-ui">2. Stand still 10s</text>
+<text x="272" y="119" fill="#4a6052" font-size="9" font-family="system-ui">3. PadSpan records</text>
+<text x="272" y="132" fill="#4a6052" font-size="9" font-family="system-ui">   RSSI from every</text>
+<text x="272" y="145" fill="#4a6052" font-size="9" font-family="system-ui">   scanner</text>
+<text x="272" y="172" fill="#14b8a6" font-size="9" font-weight="600" font-family="system-ui">3 points collected</text>
+<text x="272" y="192" fill="#4a6052" font-size="8" font-family="system-ui">More points = better</text>
+</svg>`;
+}
+
+function _svgCalibHeatmap() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes heatPulse{0%,100%{opacity:0.6}50%{opacity:0.9}}
+.heat{animation:heatPulse 2s ease-in-out infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Step 3: Coverage heatmap shows where to walk next</text>
+<rect x="10" y="26" width="240" height="180" rx="6" fill="#0a1a0f" stroke="#1b3526" stroke-width="1"/>
+<g class="heat">
+<rect x="20" y="36" width="46" height="34" rx="2" fill="#52b788" opacity="0.7"/>
+<rect x="68" y="36" width="46" height="34" rx="2" fill="#52b788" opacity="0.5"/>
+<rect x="116" y="36" width="46" height="34" rx="2" fill="#ffd54f" opacity="0.4"/>
+<rect x="164" y="36" width="46" height="34" rx="2" fill="#ef5350" opacity="0.3"/>
+<rect x="20" y="72" width="46" height="34" rx="2" fill="#52b788" opacity="0.6"/>
+<rect x="68" y="72" width="46" height="34" rx="2" fill="#ffd54f" opacity="0.4"/>
+<rect x="116" y="72" width="46" height="34" rx="2" fill="#ef5350" opacity="0.2"/>
+<rect x="164" y="72" width="46" height="34" rx="2" fill="#ef5350" opacity="0.15"/>
+<rect x="20" y="108" width="46" height="34" rx="2" fill="#52b788" opacity="0.8"/>
+<rect x="68" y="108" width="46" height="34" rx="2" fill="#52b788" opacity="0.5"/>
+<rect x="116" y="108" width="46" height="34" rx="2" fill="#ffd54f" opacity="0.35"/>
+<rect x="164" y="108" width="46" height="34" rx="2" fill="#ef5350" opacity="0.2"/>
+</g>
+<circle cx="178" cy="84" r="8" fill="none" stroke="#ffd54f" stroke-width="2" stroke-dasharray="4,3"/>
+<text x="178" y="88" text-anchor="middle" fill="#ffd54f" font-size="8" font-weight="700" font-family="system-ui">?</text>
+<rect x="260" y="26" width="132" height="180" rx="6" fill="#050e08" stroke="#1b3526" stroke-width="1"/>
+<text x="272" y="46" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Roam</text>
+<text x="272" y="68" fill="#4a6052" font-size="9" font-family="system-ui">Green = good</text>
+<text x="272" y="82" fill="#4a6052" font-size="9" font-family="system-ui">coverage</text>
+<text x="272" y="102" fill="#ffd54f" font-size="9" font-family="system-ui">Yellow = some data</text>
+<text x="272" y="122" fill="#ef5350" font-size="9" font-family="system-ui">Red = needs more</text>
+<text x="272" y="148" fill="#94a3b8" font-size="9" font-weight="600" font-family="system-ui">Walk to red areas</text>
+<text x="272" y="162" fill="#4a6052" font-size="9" font-family="system-ui">and collect more</text>
+<text x="272" y="176" fill="#4a6052" font-size="9" font-family="system-ui">fingerprints there</text>
+</svg>`;
+}
+
+function _svgCalibModel() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes barGrow{0%{width:0}100%{width:100%}}
+.bar{animation:barGrow 1s ease-out both}
+@keyframes checkPop{0%{transform:scale(0)}100%{transform:scale(1)}}
+.check{animation:checkPop 0.3s ease-out 1.5s both}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Step 4: Compute model and check accuracy</text>
+<rect x="20" y="28" width="360" height="60" rx="8" fill="#0d2318" stroke="#52b788" stroke-width="1.5"/>
+<text x="36" y="48" fill="#52b788" font-size="11" font-weight="700" font-family="system-ui">Compute Model</text>
+<text x="36" y="64" fill="#4a6052" font-size="9" font-family="system-ui">Fits k-NN fingerprint + OLS path-loss model per scanner</text>
+<rect x="36" y="70" width="160" height="8" rx="4" fill="#1b3526"/>
+<rect class="bar" x="36" y="70" width="160" height="8" rx="4" fill="#52b788" style="width:140px"/>
+<g class="check"><text x="340" y="62" text-anchor="middle" fill="#52b788" font-size="20" font-family="system-ui">✓</text></g>
+<rect x="20" y="100" width="170" height="108" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1.5"/>
+<text x="36" y="120" fill="#94a3b8" font-size="10" font-weight="600" font-family="system-ui">Model Stats</text>
+<text x="36" y="140" fill="#4a6052" font-size="9" font-family="system-ui">Points collected: 24</text>
+<text x="36" y="156" fill="#4a6052" font-size="9" font-family="system-ui">Scanners used: 3</text>
+<text x="36" y="172" fill="#4a6052" font-size="9" font-family="system-ui">LOO accuracy: 87%</text>
+<text x="36" y="192" fill="#52b788" font-size="9" font-weight="600" font-family="system-ui">Model quality: Good</text>
+<rect x="210" y="100" width="170" height="108" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1.5"/>
+<text x="226" y="120" fill="#94a3b8" font-size="10" font-weight="600" font-family="system-ui">What happens</text>
+<text x="226" y="140" fill="#4a6052" font-size="9" font-family="system-ui">k-NN matches new</text>
+<text x="226" y="154" fill="#4a6052" font-size="9" font-family="system-ui">signals to your</text>
+<text x="226" y="168" fill="#4a6052" font-size="9" font-family="system-ui">collected fingerprints</text>
+<text x="226" y="188" fill="#4a6052" font-size="9" font-family="system-ui">LOO = leave-one-out</text>
+<text x="226" y="202" fill="#4a6052" font-size="9" font-family="system-ui">cross-validation score</text>
+</svg>`;
+}
+
 // ─── Walkthrough Definitions ──────────────────────────────────────────────────
 
 const WALKTHROUGHS = [
@@ -782,6 +906,18 @@ const WALKTHROUGHS = [
       { title: "Away Badge Appears in Objects Tab",       text: "Once a device hasn't been seen for longer than the away timeout (default 5 minutes), a red Away badge replaces the signal bar in the Objects tab. 'Last: Kitchen' shows where it was before it went out of range. The normal teal/green badge returns the moment it reappears.", svg: _svgAwayBadge },
       { title: "HA Entities Switch to not_home",         text: "PadSpan creates a device_tracker entity (e.g. device_tracker.car_keys) and an area sensor (sensor.car_keys_area) for every tagged BLE device. When the device goes away, both entities automatically change state to not_home — ready for use in HA automations, the logbook, and Person tracking.", svg: _svgHaEntities },
       { title: "Configure the Timeout",                  text: "Go to Settings → Presence → Home/Away Timeout to change how long before a device is marked away. Default is 5 minutes. Raise it if devices drop off briefly in thick-walled rooms or during normal use (10–30 min is common). Set it lower for fast away detection (minimum 1 minute).", svg: _svgPresenceSettings },
+    ],
+  },
+  {
+    id: "calibration",
+    title: "Calibrate for Accuracy",
+    icon: "🎯",
+    summary: "Walk around your home collecting signal fingerprints to build a calibration model for precise room detection.",
+    steps: [
+      { title: "Choose a Device and Floor Plan",           text: "Open the Calibration tab (sidebar, Advanced mode) or use the standalone Calibration panel on your phone. Pick the BLE device you'll carry — usually your phone — and select which floor plan to calibrate. The standalone panel is optimised for one-handed phone use while walking around.", svg: _svgCalibSetup },
+      { title: "Pin & Listen — Collect Fingerprints",      text: "In the Pin & Listen tab, tap the floor plan where you're physically standing. Stand still for about 10 seconds while PadSpan records the RSSI signal strength from every scanner that can see your device. Each tap-and-wait creates one calibration point. Collect 15–30 points spread around your home for a good model.", svg: _svgCalibPin },
+      { title: "Roam — Check Coverage",                    text: "Switch to the Roam tab to see a coverage heatmap. Green cells have good fingerprint data, yellow have some, red need more. Walk to the red areas and collect more points there. The guided 'walk here next' target helps you fill gaps efficiently.", svg: _svgCalibHeatmap },
+      { title: "Compute Model & Validate",                 text: "Switch to the Model tab and click Compute Model. PadSpan fits a k-NN fingerprint model and per-scanner OLS path-loss model from your collected data. Leave-one-out cross-validation scores the accuracy. 80%+ is good, 90%+ is excellent. You can always collect more points and recompute to improve the score.", svg: _svgCalibModel },
     ],
   },
   {
@@ -871,6 +1007,75 @@ const MANUAL_SECTIONS = [
     title: "Settings",
     icon: "⚙️",
     helpKeys: ["settings", "settings_colors", "settings_presence", "settings_manage"],
+  },
+  {
+    id: "help_zones",
+    title: "Zones",
+    icon: "📍",
+    helpKeys: ["zones"],
+  },
+  {
+    id: "help_insights",
+    title: "Insights",
+    icon: "📈",
+    helpKeys: ["insights"],
+  },
+  {
+    id: "help_monitor",
+    title: "Monitor",
+    icon: "🖥️",
+    helpKeys: ["monitor"],
+  },
+  {
+    id: "help_history",
+    title: "History",
+    icon: "📜",
+    helpKeys: ["history"],
+  },
+  {
+    id: "help_events",
+    title: "Events",
+    icon: "⚡",
+    helpKeys: ["events"],
+  },
+  {
+    id: "help_qa",
+    title: "QA",
+    icon: "✅",
+    helpKeys: ["qa"],
+  },
+  {
+    id: "help_sandbox",
+    title: "Sandbox",
+    icon: "🧪",
+    helpKeys: ["sandbox"],
+  },
+  {
+    id: "bluetooth_section",
+    title: "Bluetooth & Scanners",
+    icon: "📡",
+    paragraphs: [
+      "The Bluetooth tab shows all BLE scanners detected by Home Assistant and the advertisements they're receiving.",
+      "Scanners tab — lists every radio with its name, area assignment, device count, average RSSI, and quality grade. Use the Area dropdown to assign each scanner to the correct HA room. Click any row for full scanner details including WiFi SSID, IP address, and connection type.",
+      "Monitor sub-tab — per-scanner breakdown of device counts, signal quality, and advertisement freshness. Useful for spotting connectivity problems (stale ads) or overloaded scanners.",
+      "Visualization sub-tab — SVG diagrams showing scanner coverage and signal strength across your rooms.",
+      "Scanner placement matters — scanners in the centre of a room perform better than those in corners. Avoid placing scanners behind large metal objects, inside cabinets, or directly against exterior walls. One scanner per room is the minimum; two per room gives significantly better accuracy for larger rooms.",
+    ],
+  },
+  {
+    id: "calibration_section",
+    title: "Calibration",
+    icon: "🎯",
+    paragraphs: [
+      "Calibration improves room detection accuracy by collecting real signal fingerprints from your home. Instead of relying solely on 'strongest signal wins', PadSpan can match new signals against your calibration data using k-NN (k-Nearest Neighbours).",
+      "Setup tab — choose the BLE device you'll carry (usually your phone) and the floor plan to calibrate on.",
+      "Pin & Listen tab — tap the map where you're physically standing, then hold still for ~10 seconds. PadSpan records the RSSI from every scanner. Repeat at 15–30 locations spread around your home.",
+      "Roam tab — shows a coverage heatmap (10×10 grid). Green = well-covered, red = needs more data. A guided target marker suggests where to collect next.",
+      "Model tab — click Compute Model to fit the calibration data. Shows point count, scanner count, and LOO (leave-one-out) cross-validation accuracy. 80%+ is good, 90%+ is excellent. You can export or clear the model here.",
+      "Tune tab — 3D isometric view with draggable receiver markers for visual fine-tuning of scanner positions.",
+      "Standalone phone panel — a separate HA sidebar panel (PadSpan Calibration) optimised for one-handed phone use. Same calibration system, simpler shell — perfect for walk-around data collection.",
+      "Tips: collect points in doorways and room boundaries (that's where room detection is hardest). Collect at least 3 points per room. Hold the phone at a natural height (waist to chest). Recompute the model after adding new points.",
+    ],
   },
   {
     id: "ha_entities_section",
