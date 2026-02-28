@@ -242,7 +242,13 @@ export function render(ctx){
         class:"btn tiny",
         style: isF ? "background:#1a3a2a;border-color:#52b788;color:#52b788" : "",
       }, isF ? "✓ Following" : "Follow");
-      btn.addEventListener("click",(e)=>{ e.stopPropagation(); ctx.actions.followedToggle(followKey); });
+      btn.addEventListener("click",(e)=>{
+        e.stopPropagation();
+        ctx.actions.followedToggle(followKey);
+        const nowF = ctx.actions.followedHas(followKey);
+        btn.textContent = nowF ? "✓ Following" : "Follow";
+        btn.style.cssText = nowF ? "background:#1a3a2a;border-color:#52b788;color:#52b788" : "";
+      });
       return el("td",{}, btn);
     })();
 
@@ -366,7 +372,12 @@ export function render(ctx){
           class:"btn tiny",
           style: isF ? "background:#1a3a2a;border-color:#52b788;color:#52b788" : "",
         }, isF ? "✓ Following" : "Follow");
-        fBtn.addEventListener("click", ()=> ctx.actions.followedToggle(followKey));
+        fBtn.addEventListener("click", ()=>{
+          ctx.actions.followedToggle(followKey);
+          const nowF = ctx.actions.followedHas(followKey);
+          fBtn.textContent = nowF ? "✓ Following" : "Follow";
+          fBtn.style.cssText = nowF ? "background:#1a3a2a;border-color:#52b788;color:#52b788" : "";
+        });
         actions.appendChild(fBtn);
       }
       const tagAddr2 = o.kind === "private_ble" ? (o.canonical_id || addr)
