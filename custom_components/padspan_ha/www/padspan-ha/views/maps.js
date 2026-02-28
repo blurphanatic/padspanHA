@@ -441,6 +441,22 @@ function _edit(ctx, map){
       room: r.room || "",
       source: r.source || ""
     }));
+    // Backfill source on old receivers that lack it
+    const _snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+    const _radios = (_snap && _snap.ble && Array.isArray(_snap.ble.radios)) ? _snap.ble.radios : [];
+    if(_radios.length){
+      let _backfilled = false;
+      for(const dr of ctx.state.maps._draftReceivers){
+        if(dr.source) continue;
+        const match = _radios.find(r => (r.name && dr.label && r.name.toLowerCase() === dr.label.toLowerCase()) || r.source === dr.id);
+        if(match){ dr.source = match.source; _backfilled = true; }
+      }
+      // Persist backfill to backend so it sticks
+      if(_backfilled){
+        const _bfRx = ctx.state.maps._draftReceivers;
+        ctx.actions.mapsUpdate({ map_id: map.id, receivers: _bfRx, calibration: map.calibration||{}, notes: map.notes||"" }).catch(()=>{});
+      }
+    }
     ctx.state.maps._draftRoomBounds = JSON.parse(JSON.stringify(map.room_bounds||{}));
     ctx.state.maps._draftFloorId = map.floor_id || (floors[0] && floors[0].id) || "main";
     ctx.state.maps._draftMapId = map.id;
