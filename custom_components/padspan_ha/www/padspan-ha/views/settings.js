@@ -136,6 +136,7 @@ function _settingsAppearance(ctx, el, helpBtn, draft, haFloors, haAreas, roomCol
 // Uses calibration fingerprint data to estimate where each BLE scanner physically
 // sits on the floor plans, then renders those guessed positions on each map.
 function _scannerMap(ctx, el, haFloors){
+  const esc = ctx.helpers.esc;
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const maps  = (ctx.state.maps && ctx.state.maps.list) || [];
