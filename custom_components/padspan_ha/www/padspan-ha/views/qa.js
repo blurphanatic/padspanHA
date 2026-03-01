@@ -239,27 +239,29 @@ export function render(ctx){
         if(!seenElsewhere) uniqueDevices++;
       }
 
-      // Health verdict
+      // Health verdict — only flag provable issues
       let health, healthColor, healthIcon, reason;
       if(!r.scanning || r.lost || r.disabled){
+        // Hard failure: radio is definitively not working
         health = "Unhealthy"; healthColor = "#ef5350"; healthIcon = "\uD83D\uDD34";
         reason = r.lost ? "Radio marked as lost" : r.disabled ? "Radio is disabled" : "Not scanning";
-      } else if(totalDevices === 0){
+      } else if(totalDevices === 0 && radios.filter(rx => rx.source !== src && (radioDevSets[rx.source]||new Set()).size > 0).length > 0){
+        // Provable: this radio hears nothing but other radios are hearing devices
         health = "Unhealthy"; healthColor = "#ef5350"; healthIcon = "\uD83D\uDD34";
+        reason = "No advertisements while other radios are active";
+      } else if(totalDevices === 0){
+        // No ads but no other radios to compare against — fair, not provable failure
+        health = "Fair"; healthColor = "#ffd54f"; healthIcon = "\uD83D\uDFE1";
         reason = "No advertisements received";
-      } else if(totalDevices <= 1 || (freshestAge != null && freshestAge > 30) || (avgRssi != null && avgRssi < -85)){
-        health = "Degraded"; healthColor = "#ffd54f"; healthIcon = "\uD83D\uDFE1";
-        const reasons = [];
-        if(totalDevices <= 1) reasons.push(`only ${totalDevices} device${totalDevices===1?"":"s"}`);
-        if(freshestAge != null && freshestAge > 30) reasons.push(`${Math.round(freshestAge)}s since last ad`);
-        if(avgRssi != null && avgRssi < -85) reasons.push(`weak avg RSSI ${avgRssi} dBm`);
-        reason = reasons.join(", ");
+      } else if(freshestAge != null && freshestAge > 60){
+        // Provable: radio has gone quiet for over a minute
+        health = "Fair"; healthColor = "#ffd54f"; healthIcon = "\uD83D\uDFE1";
+        reason = `${Math.round(freshestAge)}s since last advertisement`;
       } else {
         health = "Healthy"; healthColor = "#52b788"; healthIcon = "\uD83D\uDFE2";
         const parts = [];
-        if(avgRssi != null && avgRssi >= -65) parts.push("strong signal");
-        else if(avgRssi != null) parts.push("good signal");
         parts.push(`${totalDevices} device${totalDevices>1?"s":""}`);
+        if(avgRssi != null) parts.push(`avg ${avgRssi} dBm`);
         if(freshestAge != null) parts.push(`${Math.round(freshestAge)}s fresh`);
         reason = parts.join(", ");
       }
@@ -268,7 +270,7 @@ export function render(ctx){
         radio: r, src, totalDevices, strongestRssi, weakestRssi, avgRssi,
         freshestAge, stalestAge, taggedVisible, overlaps, uniqueDevices,
         health, healthColor, healthIcon, reason,
-        healthOrder: health === "Unhealthy" ? 0 : health === "Degraded" ? 1 : 2,
+        healthOrder: health === "Unhealthy" ? 0 : health === "Fair" ? 1 : 2,
       };
     });
 
@@ -288,8 +290,8 @@ export function render(ctx){
     for(const a of analyses){
       const r = a.radio;
       const isOpen = expanded.has(a.src);
-      const borderCol = a.health==="Unhealthy" ? "#7f1d1d" : a.health==="Degraded" ? "#5c4b1f" : "#1a4228";
-      const bgCol = a.health==="Unhealthy" ? "#1a0a0a" : a.health==="Degraded" ? "#1a1808" : "#0f1a12";
+      const borderCol = a.health==="Unhealthy" ? "#7f1d1d" : a.health==="Fair" ? "#5c4b1f" : "#1a4228";
+      const bgCol = a.health==="Unhealthy" ? "#1a0a0a" : a.health==="Fair" ? "#1a1808" : "#0f1a12";
 
       // Collapsed summary row — 2 lines: name row + metrics row
       const summary = el("div",{style:`padding:8px 10px;cursor:pointer;border-radius:${isOpen?"8px 8px 0 0":"8px"};border:1px solid ${borderCol};background:${bgCol}`});
