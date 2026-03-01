@@ -26,6 +26,7 @@ from .build_info import BUILD_ID, BUILD_VERSION
 from .bluetooth_live import get_bluetooth_live
 from .vendor_lookup import async_lookup_vendor
 from .private_ble_resolver import get_resolver as _get_ble_resolver
+from .ble_enrichment import enrich_object as _enrich_ble_object
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -735,6 +736,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     "last_seen": a.get("last_seen"),
                     "age_s": a.get("age_s"),
                     "sources": set(),
+                    "connectable": a.get("connectable"),
                     # Extra fields for identification hints (mirrors HA advertisement monitor)
                     "manufacturer_data": a.get("manufacturer_data") or {},
                     "service_data": a.get("service_data") or {},
@@ -757,6 +759,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     rec["service_data"] = sd
                 if su and (not rec.get("service_uuids")):
                     rec["service_uuids"] = su
+                # Connectable: prefer True over None
+                ac = a.get("connectable")
+                if ac is True or rec.get("connectable") is None:
+                    rec["connectable"] = ac
             except Exception:
                 pass
 
@@ -908,6 +914,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "manufacturer_data": rec.get("manufacturer_data") or {},
                 "service_data": rec.get("service_data") or {},
                 "service_uuids": rec.get("service_uuids") or [],
+                "connectable": rec.get("connectable"),
                 "prefix": prefix or None,
                 "prefix_count": prefix_counts.get(prefix, 0),
                 "identified": bool(identified),
@@ -966,6 +973,14 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                             obj["identified"] = True
         except Exception:
             pass
+
+        # BLE enrichment: decode company names, device types, service names
+        for obj in objects:
+            if obj.get("kind") in ("ble", "private_ble", "ibeacon"):
+                try:
+                    _enrich_ble_object(obj)
+                except Exception:
+                    pass
 
         unidentified = [o for o in objects if o.get("kind") == "ble" and not o.get("identified")]
         identified = [o for o in objects if not (o.get("kind") == "ble" and not o.get("identified"))]

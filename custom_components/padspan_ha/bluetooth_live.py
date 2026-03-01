@@ -110,12 +110,16 @@ def _service_info_to_record(si: Any, seen: Optional[dt.datetime] = None) -> Dict
         adv = getattr(si, "advertisement", None)
         tx_power = getattr(adv, "tx_power", None) if adv is not None else None
 
+    # Connectable flag — can this device accept BLE connections?
+    connectable = getattr(si, "connectable", None)
+
     return {
         "address": address,
         "name": name or address,
         "source": source,
         "rssi": rssi,
         "tx_power": int(tx_power) if tx_power is not None else None,
+        "connectable": bool(connectable) if connectable is not None else None,
         "last_seen": seen_dt.isoformat(),
         # age_s is filled in get_snapshot so it's relative to snapshot time
         "manufacturer_data": manuf_out,

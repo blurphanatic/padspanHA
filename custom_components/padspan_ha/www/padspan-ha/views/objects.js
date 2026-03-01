@@ -269,7 +269,7 @@ export function render(ctx){
     const tr = el("tr",{
       "data-kind": kind,
       "data-identified": identified ? "1" : "0",
-      "data-search": `${kind} ${displayName} ${addr} ${userLabel} ${o.entity_id||""} ${scanner} ${o.ibeacon_uuid||""} ${isAway?"away":""}`.toLowerCase(),
+      "data-search": `${kind} ${displayName} ${addr} ${userLabel} ${o.entity_id||""} ${scanner} ${o.ibeacon_uuid||""} ${o.company_name||""} ${o.device_type||""} ${(o.service_names||[]).join(" ")} ${isAway?"away":""}`.toLowerCase(),
     },[
       el("td",{}, [
         isPrivateBle
@@ -286,8 +286,16 @@ export function render(ctx){
           ? el("div",{class:"muted",style:"font-size:11px"}, `\u{1F512} ${o.private_ble_name}`) : null),
         (isIbeacon && o.ibeacon_uuid
           ? el("div",{class:"muted",style:"font-size:11px"}, `UUID: ${o.ibeacon_uuid.slice(0,8)}\u2026 \u00B7 M${o.ibeacon_major}.${o.ibeacon_minor}`) : null),
-        ((kind==="ble") && o.manufacturer_data && Object.keys(o.manufacturer_data).length
-          ? el("div",{class:"muted",style:"font-size:11px"}, `Apple/Manuf: ${Object.keys(o.manufacturer_data).slice(0,2).join(", ")}`) : null),
+        // Enrichment: company + device type + services
+        ((o.company_name || o.device_type || (o.service_names && o.service_names.length))
+          ? el("div",{style:"display:flex;flex-wrap:wrap;gap:4px;margin-top:2px"}, [
+              o.company_name ? el("span",{class:"badge",style:"font-size:9px;padding:1px 5px;background:#1a2a3a;color:#7dd3fc;border-color:#1e4976"}, o.company_name) : null,
+              o.device_type  ? el("span",{class:"badge",style:"font-size:9px;padding:1px 5px;background:#2a1a3a;color:#c4b5fd;border-color:#5b21b6"}, o.device_type) : null,
+              ...(o.service_names || []).slice(0,2).map(sn =>
+                el("span",{class:"badge",style:"font-size:9px;padding:1px 5px;background:#1a3a2a;color:#86efac;border-color:#166534"}, sn)
+              ),
+            ].filter(Boolean))
+          : null),
       ].filter(Boolean)),
       el("td",{}, rssi && !isAway ? el("span",{class:"badge"}, rssi) : "—"),
       el("td",{}, isAway
@@ -400,7 +408,7 @@ export function render(ctx){
           el("div",{class:"basic-obj-room"}, isObjAway
             ? (room && room !== "—" ? `Last: ${room}` : "—")
             : room),
-          el("div",{class:"basic-obj-sub"}, [kind, isObjAway ? null : rssi].filter(Boolean).join(" · ")),
+          el("div",{class:"basic-obj-sub"}, [kind, o.company_name, o.device_type, isObjAway ? null : rssi].filter(Boolean).join(" · ")),
         ]),
         actions,
       ]);

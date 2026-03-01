@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.85";
+const APP_VERSION = "0.5.86";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260301T010125Z";
+const BUILD_ID = "20260301T014122Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -975,6 +975,18 @@ class PadSpanHaApp extends HTMLElement {
       ]),
       addr ? el("div", {class:"muted", style:"font-family:monospace;font-size:12px"}, addr) : null,
       obj.entity_id ? el("div", {class:"muted", style:"font-size:12px"}, `Entity: ${obj.entity_id}`) : null,
+      // Enrichment badges
+      (obj.company_name || obj.device_type || (obj.service_names && obj.service_names.length) || obj.connectable != null)
+        ? el("div", {style:"display:flex;flex-wrap:wrap;gap:5px;margin-top:6px"}, [
+            obj.company_name ? el("span",{class:"badge",style:"background:#1a2a3a;color:#7dd3fc;border-color:#1e4976"}, obj.company_name) : null,
+            obj.device_type  ? el("span",{class:"badge",style:"background:#2a1a3a;color:#c4b5fd;border-color:#5b21b6"}, obj.device_type) : null,
+            ...(obj.service_names || []).map(sn =>
+              el("span",{class:"badge",style:"background:#1a3a2a;color:#86efac;border-color:#166534"}, sn)
+            ),
+            obj.connectable === true  ? el("span",{class:"badge",style:"font-size:10px"}, "Connectable") : null,
+            obj.connectable === false ? el("span",{class:"badge",style:"font-size:10px;background:#2a1a0a;color:#fbbf24;border-color:#92400e"}, "Non-connectable") : null,
+          ].filter(Boolean))
+        : null,
     ].filter(Boolean)));
 
     // Location
@@ -1039,7 +1051,8 @@ class PadSpanHaApp extends HTMLElement {
     // Raw BLE data (collapsible)
     const manufData = obj.manufacturer_data || {};
     const svcUUIDs = obj.service_uuids || [];
-    if(kind==="ble" && (Object.keys(manufData).length || svcUUIDs.length)){
+    const svcUuidMap = obj.service_uuid_map || {};
+    if((kind==="ble"||kind==="private_ble"||kind==="ibeacon") && (Object.keys(manufData).length || svcUUIDs.length)){
       const det = document.createElement("details");
       det.style.cssText = "margin-top:4px";
       const sum = document.createElement("summary");
@@ -1048,16 +1061,25 @@ class PadSpanHaApp extends HTMLElement {
       det.appendChild(sum);
       if(Object.keys(manufData).length){
         det.appendChild(el("table", {class:"table", style:"margin-top:8px"}, [
-          el("thead", {}, el("tr", {}, [el("th",{},"Manufacturer key"),el("th",{},"Value (hex)")])),
+          el("thead", {}, el("tr", {}, [el("th",{},"Company ID"),el("th",{},"Company"),el("th",{},"Payload (hex)")])),
           el("tbody", {}, Object.entries(manufData).map(([k,v]) =>
-            el("tr", {}, [el("td",{},String(k)), el("td",{class:"muted",style:"font-family:monospace;font-size:11px"},String(v))])
+            el("tr", {}, [
+              el("td",{},String(k)),
+              el("td",{style:"font-size:11px;color:#7dd3fc"}, obj.company_name && String(k) === Object.keys(manufData)[0] ? obj.company_name : "—"),
+              el("td",{class:"muted",style:"font-family:monospace;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis"},String(v)),
+            ])
           )),
         ]));
       }
       if(svcUUIDs.length){
         det.appendChild(el("div", {style:"font-size:12px;color:#94a3b8;margin-top:8px"}, "Service UUIDs:"));
         det.appendChild(el("div", {style:"margin-top:4px;display:flex;flex-wrap:wrap;gap:6px"},
-          svcUUIDs.map(u => el("span", {class:"pill"}, String(u)))
+          svcUUIDs.map(u => {
+            const uStr = String(u);
+            const svcName = svcUuidMap[uStr];
+            const label = svcName ? `${uStr} (${svcName})` : uStr;
+            return el("span", {class:"pill"}, label);
+          })
         ));
       }
       body.appendChild(det);

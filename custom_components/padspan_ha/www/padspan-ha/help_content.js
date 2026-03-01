@@ -72,9 +72,10 @@ export const HELP = {
     body: [
       "Objects lists every device PadSpan can see — phones tracked by Home Assistant, AirTags, Tile trackers, key fobs, and any other Bluetooth device your scanners have detected.",
       "Badge colours tell you the device type: green BLE = standard Bluetooth device, orange BLE? = unidentified, blue Private BLE = phone using rotating MAC address (resolved automatically), amber iBeacon = AirTag / Tile / HA Companion App iBeacon grouped by stable UUID.",
+      "Each object shows enrichment badges decoded from its BLE advertisement: a blue Company badge (e.g. Apple, Samsung, Google), a purple Device Type badge (e.g. Find My, AirPods, Nearby Info), and green Service badges (e.g. Battery, Device Information, Tile). These help identify unknown devices without tagging them.",
       "A red Away badge appears when a BLE device hasn't been seen for longer than the configured away timeout (default 5 min). 'Last: Kitchen' shows where it was last detected. The corresponding device_tracker entity in HA also shows not_home.",
-      "Use the search box to find a device by name, address, or type 'away' to filter to absent devices. The status dropdown also has an Away option.",
-      "Click any row (anywhere except the buttons) to open a full detail panel — per-scanner RSSI, signal bars, all addresses, and quick Tag/Relabel/Untag actions.",
+      "Use the search box to find a device by name, address, company, or device type. Type 'apple' to see all Apple devices, 'tile' for Tile trackers, or 'away' for absent devices.",
+      "Click any row (anywhere except the buttons) to open a full detail panel — per-scanner RSSI, signal bars, company info, decoded service UUIDs, connectable status, and quick Tag/Relabel/Untag actions.",
     ],
   },
   objects_tag: {
