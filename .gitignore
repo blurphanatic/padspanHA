@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .DS_Store
+.claude/
+*.tmp
+*_preview.html
+bermuda_vs_padspan_comparison.txt

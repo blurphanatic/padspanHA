@@ -1812,7 +1812,7 @@ function _buildDemoSVG(fp){
   for(const r of rooms){
     const cx = r.x + r.w/2;
     const cy = r.y + (r.id === "hallway" ? 28 : 24);
-    s += `<text x="${cx}" y="${cy}" text-anchor="middle" fill="${r.color}" font-size="${r.id==="hallway"?"11":"13"}" font-weight="600" opacity="0.85">${r.name}</text>`;
+    s += `<text x="${cx}" y="${cy}" text-anchor="middle" fill="${r.color}" font-size="${r.id==="hallway"?"11":"13"}" font-weight="600" opacity="0.85">${_escSVG(r.name)}</text>`;
   }
 
   // Doors (gap + arc swing)
@@ -1858,7 +1858,7 @@ function _buildDemoSVG(fp){
     s += `<circle cx="${x}" cy="${y}" r="18" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.45"/>`;
     s += `<circle cx="${x}" cy="${y}" r="8"  fill="#52b788" opacity="0.95"/>`;
     s += `<circle cx="${x}" cy="${y}" r="3.5" fill="#071008"/>`;
-    s += `<text x="${x}" y="${y+28}" text-anchor="middle" fill="#52b788" font-size="9" opacity="0.8">${name}</text>`;
+    s += `<text x="${x}" y="${y+28}" text-anchor="middle" fill="#52b788" font-size="9" opacity="0.8">${_escSVG(name)}</text>`;
   }
 
   // Objects
@@ -1873,7 +1873,7 @@ function _buildDemoSVG(fp){
     } else {
       s += `<polygon points="${x},${y-10} ${x+9},${y+5} ${x-9},${y+5}" fill="${color}" opacity="0.85"/>`;
     }
-    s += `<text x="${x}" y="${y-13}" text-anchor="middle" fill="${color}" font-size="9" font-weight="500">${name}</text>`;
+    s += `<text x="${x}" y="${y-13}" text-anchor="middle" fill="${color}" font-size="9" font-weight="500">${_escSVG(name)}</text>`;
   }
 
   // Title in top-right corner

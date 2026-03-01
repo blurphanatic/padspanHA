@@ -1,1 +1,0 @@
-After installing, open PadSpan and copy the diagnostics text shown.
