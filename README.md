@@ -132,6 +132,14 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 
 ---
 
+## Development
+
+PadSpan HA is built by [Garry Broeckling](https://github.com/gbroeckling) — a 30+ year veteran of coding and scripting who has never claimed to be a fast typist. All architecture, product decisions, testing, and releases are human-directed. Implementation is AI-assisted using [Claude](https://claude.ai) by Anthropic, which accelerates the write–test–ship cycle considerably. Think of it as one developer with strong opinions and a very patient pair-programming partner.
+
+The result: a solo project that ships features at a pace that would normally require a team — without compromising on quality, security, or code review.
+
+---
+
 ## License
 
 Copyright (C) 2026 Garry Broeckling. Licensed under the [GNU General Public License v3.0](LICENSE).
