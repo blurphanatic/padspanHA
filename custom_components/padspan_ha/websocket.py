@@ -599,17 +599,22 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             return _re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
         def _find_net_entities(radio: dict) -> list:
-            """Find network-related entities for a radio via device_id or name slug."""
+            """Find network-related entities for a radio via device_id or name/source slug."""
             candidates: list = []
             # Try device_id first
             did = radio.get("device_id")
             if did and did in dev_entities:
                 candidates = dev_entities[did]
-            # Fallback: search by entity slug prefix matching radio name
+            # Fallback: search by entity slug prefix matching radio name or source
             if not candidates:
+                slugs_to_try = set()
                 rname = radio.get("name") or ""
+                rsource = radio.get("source") or ""
                 if rname:
-                    slug = _name_to_slug(rname)
+                    slugs_to_try.add(_name_to_slug(rname))
+                if rsource:
+                    slugs_to_try.add(_name_to_slug(rsource))
+                for slug in slugs_to_try:
                     if slug and len(slug) >= 3:
                         prefix_sensor = f"sensor.{slug}_"
                         prefix_text = f"text_sensor.{slug}_"
@@ -617,6 +622,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                             eid = ent.entity_id or ""
                             if eid.startswith(prefix_sensor) or eid.startswith(prefix_text):
                                 candidates.append(ent)
+                    if candidates:
+                        break
             return candidates
 
         def _apply_net_info(radio: dict, entities: list) -> None:

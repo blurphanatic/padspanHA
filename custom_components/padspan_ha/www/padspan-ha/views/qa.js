@@ -278,9 +278,9 @@ export function render(ctx){
     if(!ctx.state._qaExpandedRadios) ctx.state._qaExpandedRadios = new Set();
     const expanded = ctx.state._qaExpandedRadios;
 
-    const kv = (label, value, valueColor) => el("div",{style:"display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #0d1f12;font-size:12px"},[
-      el("span",{class:"muted"}, label),
-      el("span",{style:"font-weight:600;" + (valueColor ? `color:${valueColor}` : "")}, String(value != null ? value : "\u2014")),
+    const kv = (label, value, valueColor) => el("div",{style:"display:flex;align-items:baseline;gap:8px;padding:3px 0;border-bottom:1px solid #0d1f12;font-size:12px"},[
+      el("span",{class:"muted",style:"min-width:110px;flex-shrink:0"}, label + ":"),
+      el("span",{style:"font-weight:600;word-break:break-all;" + (valueColor ? `color:${valueColor}` : "")}, String(value != null ? value : "\u2014")),
     ]);
 
     const list = el("div",{style:"display:flex;flex-direction:column;gap:6px"});
@@ -291,21 +291,28 @@ export function render(ctx){
       const borderCol = a.health==="Unhealthy" ? "#7f1d1d" : a.health==="Degraded" ? "#5c4b1f" : "#1a4228";
       const bgCol = a.health==="Unhealthy" ? "#1a0a0a" : a.health==="Degraded" ? "#1a1808" : "#0f1a12";
 
-      // Collapsed summary row
-      const summary = el("div",{style:`display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;border-radius:${isOpen?"8px 8px 0 0":"8px"};border:1px solid ${borderCol};background:${bgCol}`});
-      summary.appendChild(el("span",{style:`font-size:10px;color:#94a3b8;flex-shrink:0;transition:transform .15s;transform:rotate(${isOpen?"90":"0"}deg)`}, "\u25B6"));
-      summary.appendChild(el("span",{style:"flex-shrink:0;font-size:14px"}, a.healthIcon));
+      // Collapsed summary row — 2 lines: name row + metrics row
+      const summary = el("div",{style:`padding:8px 10px;cursor:pointer;border-radius:${isOpen?"8px 8px 0 0":"8px"};border:1px solid ${borderCol};background:${bgCol}`});
 
-      const nameLink = el("span",{style:"font-weight:600;color:#e2e8f0;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"}, esc(r.name || r.source));
+      // Line 1: arrow + health icon + SID + name
+      const nameLink = el("span",{style:"font-weight:600;color:#e2e8f0;cursor:pointer;text-decoration:underline;text-decoration-style:dotted"}, esc(r.name || r.source));
       nameLink.addEventListener("click", (ev)=>{ ev.stopPropagation(); ctx.actions.showScannerDetail(r); });
-      summary.appendChild(el("div",{style:"display:flex;align-items:center;gap:6px;flex:1;min-width:0"},[
+      summary.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px"},[
+        el("span",{style:`font-size:10px;color:#94a3b8;flex-shrink:0;transition:transform .15s;transform:rotate(${isOpen?"90":"0"}deg)`}, "\u25B6"),
+        el("span",{style:"flex-shrink:0;font-size:14px"}, a.healthIcon),
         el("span",{class:"pill",style:"font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px;flex-shrink:0"}, _sid(a.src)),
         nameLink,
       ]));
 
-      summary.appendChild(el("span",{class:"muted",style:"font-size:11px;flex-shrink:0"}, `${a.totalDevices} dev`));
-      if(a.avgRssi != null) summary.appendChild(el("span",{class:"muted",style:"font-size:11px;font-family:monospace;flex-shrink:0"}, `${a.avgRssi}dBm`));
-      summary.appendChild(el("span",{style:`font-size:11px;font-weight:600;color:${a.healthColor};flex-shrink:0`}, a.health));
+      // Line 2: metrics + health badge + reason
+      const metricsLine = [
+        el("span",{class:"muted",style:"font-size:11px"}, `${a.totalDevices} device${a.totalDevices!==1?"s":""}`),
+      ];
+      if(a.avgRssi != null) metricsLine.push(el("span",{class:"muted",style:"font-size:11px;font-family:monospace"}, `avg ${a.avgRssi} dBm`));
+      if(r.area_name) metricsLine.push(el("span",{class:"muted",style:"font-size:11px"}, r.area_name));
+      metricsLine.push(el("span",{style:`font-size:11px;font-weight:600;color:${a.healthColor}`}, a.health));
+      metricsLine.push(el("span",{class:"muted",style:"font-size:10px"}, `\u2014 ${a.reason}`));
+      summary.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;padding-left:42px"}, metricsLine));
 
       summary.addEventListener("click", ()=>{
         if(expanded.has(a.src)) expanded.delete(a.src); else expanded.add(a.src);
@@ -321,14 +328,14 @@ export function render(ctx){
 
         // Identity & Network
         detail.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin-bottom:6px;color:#94a3b8"},"Identity & Network"));
-        const netGrid = el("div",{style:"display:grid;grid-template-columns:1fr 1fr;gap:0 20px"});
+        const netGrid = el("div",{});
         netGrid.appendChild(kv("Source ID", a.src));
         netGrid.appendChild(kv("Area", r.area_name || "Unassigned"));
         netGrid.appendChild(kv("Adapter", r.adapter || "\u2014"));
-        netGrid.appendChild(kv("IP", r.ip || "\u2014"));
-        netGrid.appendChild(kv("SSID", r.ssid || "\u2014"));
-        netGrid.appendChild(kv("Connection", r.connection_type || "\u2014"));
-        netGrid.appendChild(kv("WiFi Signal", r.wifi_signal != null ? `${r.wifi_signal} dBm` : "\u2014",
+        netGrid.appendChild(kv("IP Address", r.ip || "not available"));
+        netGrid.appendChild(kv("SSID", r.ssid || "not available"));
+        netGrid.appendChild(kv("Connection", r.connection_type || "not available"));
+        netGrid.appendChild(kv("WiFi Signal", r.wifi_signal != null ? `${r.wifi_signal} dBm` : "not available",
           r.wifi_signal != null && r.wifi_signal >= -50 ? "#52b788" : r.wifi_signal != null && r.wifi_signal < -70 ? "#ef5350" : null));
         detail.appendChild(netGrid);
 
