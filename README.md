@@ -52,7 +52,9 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 - Leave-one-out cross-validation for model quality scoring
 - 3D isometric tune view with draggable receiver markers
 
-### Scanner Management
+### Scanner Hardware & Management
+- **Tested with 20+ ESP32 boards** — ESP32-S3 and C3 with external antennas recommended for room-level accuracy
+- The antenna matters more than the chip — full-size external antennas dramatically outperform chip/PCB antennas for room discrimination
 - Auto-discover BLE scanners from Home Assistant integrations
 - Per-scanner signal quality metrics and coverage analysis
 - WiFi SSID, IP address, and connection type display

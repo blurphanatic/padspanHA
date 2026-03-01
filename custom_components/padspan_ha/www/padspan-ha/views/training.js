@@ -845,6 +845,107 @@ function _svgCalibModel() {
 </svg>`;
 }
 
+// ─── Hardware SVG Builders ────────────────────────────────────────────────────
+
+function _svgAntennaComparison() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes goodPulse{0%,100%{r:28;opacity:0.3}50%{r:36;opacity:0.15}}
+@keyframes badPulse{0%,100%{r:12;opacity:0.25}50%{r:16;opacity:0.1}}
+.gp{animation:goodPulse 2s ease-in-out infinite}
+.bp{animation:badPulse 2s ease-in-out infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">External antenna vs chip antenna</text>
+<rect x="20" y="28" width="160" height="180" rx="8" fill="#0a150e" stroke="#ef4444" stroke-width="1.5" opacity="0.8"/>
+<text x="100" y="48" text-anchor="middle" fill="#ef4444" font-size="10" font-weight="600" font-family="system-ui">Chip Antenna</text>
+<rect x="68" y="62" width="64" height="40" rx="4" fill="#1b3526" stroke="#2a5038" stroke-width="1.5"/>
+<rect x="120" y="68" width="8" height="6" rx="1" fill="#4a6052"/>
+<text x="100" y="86" text-anchor="middle" fill="#4a6052" font-size="7" font-family="system-ui">ESP32</text>
+<circle class="bp" cx="100" cy="82" fill="none" stroke="#ef4444" stroke-width="1" r="12"/>
+<text x="100" y="122" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">RSSI: −78 to −91 dBm</text>
+<text x="100" y="138" text-anchor="middle" fill="#ef4444" font-size="9" font-family="system-ui">Inconsistent signal</text>
+<text x="100" y="158" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">OK for home/away</text>
+<text x="100" y="174" text-anchor="middle" fill="#ef4444" font-size="9" font-family="system-ui">Poor for room tracking</text>
+<text x="100" y="198" text-anchor="middle" fill="#4a6052" font-size="8" font-family="system-ui">Old ESP32 boards</text>
+<rect x="220" y="28" width="160" height="180" rx="8" fill="#0d2318" stroke="#52b788" stroke-width="1.5"/>
+<text x="300" y="48" text-anchor="middle" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">External Antenna</text>
+<rect x="268" y="62" width="64" height="40" rx="4" fill="#1b3526" stroke="#52b788" stroke-width="1.5"/>
+<line x1="326" y1="72" x2="342" y2="56" stroke="#52b788" stroke-width="2" stroke-linecap="round"/>
+<line x1="342" y1="56" x2="342" y2="42" stroke="#52b788" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="336" y1="48" x2="342" y2="42" stroke="#52b788" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="348" y1="48" x2="342" y2="42" stroke="#52b788" stroke-width="1.5" stroke-linecap="round"/>
+<text x="300" y="86" text-anchor="middle" fill="#52b788" font-size="7" font-family="system-ui">ESP32-S3</text>
+<circle class="gp" cx="300" cy="82" fill="none" stroke="#52b788" stroke-width="1" r="28"/>
+<text x="300" y="122" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">RSSI: −48 to −72 dBm</text>
+<text x="300" y="138" text-anchor="middle" fill="#52b788" font-size="9" font-family="system-ui">Stable, consistent</text>
+<text x="300" y="158" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600" font-family="system-ui">Great for room tracking</text>
+<text x="300" y="174" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Accurate room edges</text>
+<text x="300" y="198" text-anchor="middle" fill="#4a6052" font-size="8" font-family="system-ui">ESP32-S3 / C3</text>
+</svg>`;
+}
+
+function _svgBoardRanking() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes slideIn{0%{opacity:0;transform:translateX(-20px)}100%{opacity:1;transform:translateX(0)}}
+.r1{animation:slideIn 0.4s ease-out both}
+.r2{animation:slideIn 0.4s ease-out 0.2s both}
+.r3{animation:slideIn 0.4s ease-out 0.4s both}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Recommended boards (tested with 20+ units)</text>
+<g class="r1">
+<rect x="20" y="28" width="360" height="50" rx="6" fill="#0d2318" stroke="#52b788" stroke-width="1.5"/>
+<rect x="26" y="34" width="22" height="22" rx="11" fill="#52b788"/>
+<text x="37" y="50" text-anchor="middle" fill="#071008" font-size="12" font-weight="700" font-family="system-ui">1</text>
+<text x="58" y="48" fill="#52b788" font-size="10" font-weight="700" font-family="system-ui">ESP32-S3 + Ethernet + External Antenna</text>
+<text x="58" y="64" fill="#4a6052" font-size="8.5" font-family="system-ui">Wired = no WiFi interference · Best stability for always-on scanners</text>
+</g>
+<g class="r2">
+<rect x="20" y="88" width="360" height="50" rx="6" fill="#0d2318" stroke="#43a047" stroke-width="1.5"/>
+<rect x="26" y="94" width="22" height="22" rx="11" fill="#43a047"/>
+<text x="37" y="110" text-anchor="middle" fill="#071008" font-size="12" font-weight="700" font-family="system-ui">2</text>
+<text x="58" y="108" fill="#43a047" font-size="10" font-weight="700" font-family="system-ui">ESP32-S3 + External Antenna (WiFi)</text>
+<text x="58" y="124" fill="#4a6052" font-size="8.5" font-family="system-ui">Excellent BLE 5.0 · Most practical for most setups</text>
+</g>
+<g class="r3">
+<rect x="20" y="148" width="360" height="50" rx="6" fill="#0a150e" stroke="#2a5038" stroke-width="1.5"/>
+<rect x="26" y="154" width="22" height="22" rx="11" fill="#2a5038"/>
+<text x="37" y="170" text-anchor="middle" fill="#52b788" font-size="12" font-weight="700" font-family="system-ui">3</text>
+<text x="58" y="168" fill="#94a3b8" font-size="10" font-weight="700" font-family="system-ui">ESP32-C3 + External Antenna</text>
+<text x="58" y="184" fill="#4a6052" font-size="8.5" font-family="system-ui">Budget-friendly · Good BLE 5.0 · Solid with a proper antenna</text>
+</g>
+<text x="200" y="215" text-anchor="middle" fill="#4a6052" font-size="8.5" font-family="system-ui">All three use ESPresense or Bluetooth Proxy firmware</text>
+</svg>`;
+}
+
+function _svgAntennaDetail() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes signalGrow{0%{opacity:0}50%{opacity:0.6}100%{opacity:0}}
+.sg1{animation:signalGrow 2.5s ease-out infinite}
+.sg2{animation:signalGrow 2.5s ease-out 0.8s infinite}
+.sg3{animation:signalGrow 2.5s ease-out 1.6s infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Why the antenna matters for room-level accuracy</text>
+<rect x="20" y="30" width="360" height="85" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1"/>
+<text x="36" y="50" fill="#94a3b8" font-size="10" font-weight="600" font-family="system-ui">The challenge</text>
+<text x="36" y="66" fill="#4a6052" font-size="9" font-family="system-ui">Home/away only needs to detect a signal somewhere. Room-level</text>
+<text x="36" y="80" fill="#4a6052" font-size="9" font-family="system-ui">tracking needs to distinguish −55 dBm from −62 dBm reliably —</text>
+<text x="36" y="94" fill="#4a6052" font-size="9" font-family="system-ui">that 7 dBm difference decides which room a device is assigned to.</text>
+<text x="36" y="108" fill="#52b788" font-size="9" font-weight="600" font-family="system-ui">A full-size antenna turns noise into a clear signal.</text>
+<rect x="20" y="124" width="175" height="84" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1"/>
+<text x="36" y="144" fill="#94a3b8" font-size="10" font-weight="600" font-family="system-ui">What to look for</text>
+<text x="36" y="162" fill="#52b788" font-size="9" font-family="system-ui">✓ IPEX / u.FL antenna connector</text>
+<text x="36" y="178" fill="#52b788" font-size="9" font-family="system-ui">✓ Included 2.4 GHz antenna</text>
+<text x="36" y="194" fill="#52b788" font-size="9" font-family="system-ui">✓ ESP32-S3 or ESP32-C3 chip</text>
+<rect x="205" y="124" width="175" height="84" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1"/>
+<text x="221" y="144" fill="#94a3b8" font-size="10" font-weight="600" font-family="system-ui">What to avoid</text>
+<text x="221" y="162" fill="#ef4444" font-size="9" font-family="system-ui">✗ Onboard chip/PCB antenna only</text>
+<text x="221" y="178" fill="#ef4444" font-size="9" font-family="system-ui">✗ Original ESP32 (not S3/C3)</text>
+<text x="221" y="194" fill="#ef4444" font-size="9" font-family="system-ui">✗ No external antenna connector</text>
+</svg>`;
+}
+
 // ─── Walkthrough Definitions ──────────────────────────────────────────────────
 
 const WALKTHROUGHS = [
@@ -859,6 +960,17 @@ const WALKTHROUGHS = [
       { title: "Room Assignment Updates Live",            text: "PadSpan maps the signal data to your Home Assistant Areas. The location is recalculated every 5 seconds automatically — no manual refresh needed. In Sample mode you can explore with demo data before going live.", svg: _svgRoomAssignment },
       { title: "iBeacon Devices Survive MAC Rotation",    text: "Apple AirTags, Tile trackers, and the HA Companion App's iBeacon transmitter rotate their Bluetooth MAC address for privacy. PadSpan recognises these as iBeacon devices by the Apple manufacturer data (company ID 0x004C). All rotating MACs sharing the same UUID/Major/Minor are merged into one stable amber-badged object. Tag it once — the name sticks forever.", svg: _svgIbeacon },
       { title: "Track Anything Bluetooth",                text: "Phones tracked by the HA companion app, AirTags, Tile trackers, key fobs, smartwatches, fitness bands — if it emits a BLE signal, PadSpan can see it. Tag devices with friendly names so you always know what's what.", svg: _svgDeviceTypes },
+    ],
+  },
+  {
+    id: "scanner_hardware",
+    title: "Choosing Scanner Hardware",
+    icon: "🔧",
+    summary: "Which ESP32 boards and antennas actually work for room-level tracking — tested with 20+ units.",
+    steps: [
+      { title: "The Antenna Makes the Difference",            text: "After testing over 20 ESP32 boards, the single biggest factor for accurate room-level tracking was antenna quality — not the chip variant. Older ESP32 boards with tiny onboard chip antennas produced noisy, inconsistent RSSI readings. The same rooms showed wildly different signal strengths from one scan to the next, making reliable room discrimination nearly impossible. Swapping to boards with a full-size external antenna immediately improved consistency.", svg: _svgAntennaComparison },
+      { title: "Recommended Boards",                          text: "Three boards stood out in testing. First: an ESP32-S3 with an Ethernet (LAN) port and external antenna — the wired connection eliminates WiFi radio interference, making it theoretically the cleanest BLE listener. Second: an ESP32-S3 with WiFi and an external antenna — the most practical option for most homes. Third: an ESP32-C3 with an external antenna — a budget-friendly alternative with solid BLE 5.0 support. All three produced stable, room-accurate readings.", svg: _svgBoardRanking },
+      { title: "Why Room Tracking Is Harder Than Home/Away",   text: "Basic home/away detection just needs to see any signal from any scanner — the bar is low. Room-level tracking needs to reliably tell which scanner has the strongest signal, and by how much. A 7 dBm difference between two scanners decides which room gets assigned. Chip antennas introduce enough noise to flip that decision randomly. A proper external antenna keeps readings stable enough for PadSpan to make the right call consistently.", svg: _svgAntennaDetail },
     ],
   },
   {
@@ -1060,6 +1172,20 @@ const MANUAL_SECTIONS = [
       "Monitor sub-tab — per-scanner breakdown of device counts, signal quality, and advertisement freshness. Useful for spotting connectivity problems (stale ads) or overloaded scanners.",
       "Visualization sub-tab — SVG diagrams showing scanner coverage and signal strength across your rooms.",
       "Scanner placement matters — scanners in the centre of a room perform better than those in corners. Avoid placing scanners behind large metal objects, inside cabinets, or directly against exterior walls. One scanner per room is the minimum; two per room gives significantly better accuracy for larger rooms.",
+    ],
+  },
+  {
+    id: "hardware_section",
+    title: "Scanner Hardware",
+    icon: "🔧",
+    paragraphs: [
+      "Room-level BLE tracking is more demanding than basic home/away detection. The scanner hardware you choose — especially the antenna — has a direct impact on tracking accuracy.",
+      "The antenna matters most. After testing over 20 ESP32 boards (a mix of older boards and newer purchases), the single biggest factor was whether the board had a full-size external antenna or just an onboard chip/PCB antenna. Chip antennas produced noisy RSSI readings that made room discrimination unreliable. External antennas gave consistent, stable readings that PadSpan could use for accurate room assignment.",
+      "Recommended: ESP32-S3 with Ethernet port and external antenna — a wired connection eliminates WiFi radio interference with BLE scanning. This is the cleanest option for always-on scanners, though in practice it performed similarly to WiFi-connected boards with good antennas.",
+      "Recommended: ESP32-S3 with external antenna (WiFi) — excellent BLE 5.0 support and the most practical choice for most setups. No need to run Ethernet to every room.",
+      "Recommended: ESP32-C3 with external antenna — a budget-friendly option with good BLE 5.0 support. Performs well for room-level tracking when paired with a proper antenna.",
+      "What to avoid: original ESP32 boards (not S3 or C3) with only a chip antenna. These are fine for simple Bluetooth proxies and home/away detection, but the inconsistent signal readings make accurate room assignment difficult.",
+      "Whatever board you choose, look for an IPEX or u.FL antenna connector and use the included 2.4 GHz antenna. The chip matters less than the antenna — a C3 with a good antenna outperforms an S3 with a chip antenna every time.",
     ],
   },
   {
