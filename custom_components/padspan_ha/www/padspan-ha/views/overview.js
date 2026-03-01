@@ -944,7 +944,7 @@ export function render(ctx){
     const isoTipEl = document.createElement("div");
     isoTipEl.style.cssText = "position:absolute;top:8px;left:8px;background:rgba(7,16,8,0.92);" +
       "border:1px solid #2d6a4f;border-radius:8px;padding:6px 10px;font-size:11px;color:#a7f3d0;" +
-      "pointer-events:none;white-space:pre-line;max-width:260px;z-index:5;display:none;" +
+      "pointer-events:none;white-space:pre-line;max-width:min(260px,calc(100vw - 40px));z-index:5;display:none;" +
       "font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.5";
     isoWrap.appendChild(isoDiv);
     isoWrap.appendChild(isoTipEl);

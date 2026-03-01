@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.88";
+const APP_VERSION = "0.5.89";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260301T015011Z";
+const BUILD_ID = "20260301T035053Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -333,9 +333,17 @@ class PadSpanHaApp extends HTMLElement {
 
 
   disconnectedCallback(){
-    // Only stop the data poll — keep activity + watchdog alive so the panel
-    // recovers automatically if HA temporarily disconnects/reconnects the element.
+    // Stop data poll + clean up document-level listeners to prevent leaks.
+    // Activity + watchdog are intentionally kept alive for reconnect recovery.
     this._stopDataPoll();
+    if(this._visibilityHandler){
+      document.removeEventListener("visibilitychange", this._visibilityHandler);
+      this._visibilityHandler = null;
+    }
+    if(this._modalEsc){
+      window.removeEventListener("keydown", this._modalEsc);
+      this._modalEsc = null;
+    }
   }
 
   // ── Anti-blank system ─────────────────────────────────────────────────────
@@ -395,7 +403,7 @@ class PadSpanHaApp extends HTMLElement {
     // Visibility handler: immediate wake-up when tab becomes visible again.
     if(!this._visibilityHandler){
       this._visibilityHandler = ()=>{
-        if(document.visibilityState === "visible"){
+        if(document.visibilityState === "visible" && this._hass && this.isConnected){
           this._renderCurrentView();
           this._refreshAll(false);
           if(this.state.dataMode === "live" && !this._pollTimer) this._startDataPoll();
@@ -864,7 +872,8 @@ class PadSpanHaApp extends HTMLElement {
     overlay.addEventListener("click",(e)=>{ if(e.target === overlay) this._closeModal(); });
     this.$modal.appendChild(overlay);
 
-    // ESC closes
+    // ESC closes — remove stale handler before registering new one
+    if(this._modalEsc) window.removeEventListener("keydown", this._modalEsc);
     const esc = (e)=>{ if(e.key === "Escape"){ this._closeModal(); } };
     this._modalEsc = esc;
     window.addEventListener("keydown", esc, { once: true });
@@ -880,7 +889,7 @@ class PadSpanHaApp extends HTMLElement {
   _tagObjectPrompt(addr, currentLabel){
     const input = el("input",{type:"text", placeholder:"Enter a label…"});
     input.value = currentLabel || "";
-    input.style.minWidth = "240px";
+    input.style.minWidth = "min(240px, 100%)";
 
     const status = el("div",{class:"muted", style:"min-height:20px;margin-top:6px"});
 

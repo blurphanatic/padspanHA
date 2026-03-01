@@ -553,4 +553,8 @@
   .mobile-topbar{gap:7px;padding:7px 10px}
   .card{padding:10px}
   .kpi-num,.kpi{font-size:20px}
+  .controls input[type="text"]{min-width:unset;width:100%}
+  .toolbar{flex-wrap:wrap;gap:6px}
+  .toolbar select{min-width:0;flex:1;max-width:100%}
+  .h2{font-size:15px}
 }
