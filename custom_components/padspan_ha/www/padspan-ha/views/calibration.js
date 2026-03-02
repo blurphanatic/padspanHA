@@ -1262,6 +1262,11 @@ function _tuneTab(ctx, el, cs, calData) {
     return `hsl(${(h >>> 0) % 360} 70% 55%)`;
   });
 
+  // Live radios from snapshot — used to filter stale receivers
+  const _snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const _liveRadios = _snap?.ble?.radios || [];
+  const _isLiveRadio = (r) => _liveRadios.some(rd => rd.name === (r.label || "") || rd.source === (r.id || ""));
+
   if (!ctx.state._calibTune) ctx.state._calibTune = {
     fg: ctx.state.settings?.overview_iso_floor_gap ?? 150,
     hg: ctx.state.settings?.overview_iso_horiz_gap ?? 0,
@@ -1278,11 +1283,14 @@ function _tuneTab(ctx, el, cs, calData) {
   const hasDirty = Object.values(ts.dirtyMaps).some(Boolean);
 
   // Re-sync draft receivers when maps data changes externally (and no unsaved edits)
+  // Filter out stale receivers that no longer match a live radio
   if (!Object.keys(ts.draftReceivers).length || (mapsStamp !== ts._mapsStamp && !hasDirty)) {
     for (const m of maps_list) {
-      ts.draftReceivers[m.id] = (m.receivers || []).map(r => ({
-        id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
-      }));
+      ts.draftReceivers[m.id] = (m.receivers || [])
+        .filter(r => _isLiveRadio(r))
+        .map(r => ({
+          id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
+        }));
     }
     // Remove drafts for maps that no longer exist
     for (const id of Object.keys(ts.draftReceivers)) {
@@ -1790,10 +1798,104 @@ function _tuneTab(ctx, el, cs, calData) {
   }
   _refreshInfo();
 
+  // ── Unplaced radios list ──────────────────────────────────────────────────
+  const unplacedCard = document.createElement("div");
+  unplacedCard.className = "card";
+  function _refreshUnplaced() {
+    unplacedCard.innerHTML = "";
+    // Gather all placed receiver ids/labels across all maps
+    const placedIds = new Set();
+    const placedLabels = new Set();
+    for (const recs of Object.values(ts.draftReceivers)) {
+      for (const r of recs) {
+        if (r.id) placedIds.add(r.id);
+        if (r.source) placedIds.add(r.source);
+        if (r.label) placedLabels.add(r.label);
+      }
+    }
+    // Find live radios not yet placed on any map
+    const unplaced = _liveRadios.filter(rd => {
+      const src = rd.source || "";
+      const nm = rd.name || "";
+      return !placedIds.has(src) && !placedLabels.has(nm);
+    });
+    if (!unplaced.length) { unplacedCard.style.display = "none"; return; }
+    unplacedCard.style.display = "";
+    const hdr = document.createElement("div");
+    hdr.style.cssText = "font-weight:700;font-size:13px;margin-bottom:8px;color:#52b788";
+    hdr.textContent = `Unplaced Radios (${unplaced.length})`;
+    unplacedCard.appendChild(hdr);
+    const hint = document.createElement("div");
+    hint.style.cssText = "font-size:11px;color:#94a3b8;margin-bottom:8px";
+    hint.textContent = "Click a radio to place it on a map at the center. Drag to reposition after placing.";
+    unplacedCard.appendChild(hint);
+
+    for (const rd of unplaced) {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;transition:background 0.15s";
+      row.addEventListener("mouseenter", () => { row.style.background = "#0d2818"; });
+      row.addEventListener("mouseleave", () => { row.style.background = ""; });
+      // Green circle icon
+      const icon = document.createElement("div");
+      icon.style.cssText = "width:14px;height:14px;border-radius:50%;border:2px solid #52b788;background:rgba(82,183,136,0.2);flex-shrink:0;display:flex;align-items:center;justify-content:center";
+      const dot = document.createElement("div");
+      dot.style.cssText = "width:6px;height:6px;border-radius:50%;background:#52b788";
+      icon.appendChild(dot);
+      row.appendChild(icon);
+      const lbl = document.createElement("span");
+      lbl.style.cssText = "flex:1;font-size:12px;color:#d1d5db";
+      const area = rd.area_name ? ` (${rd.area_name})` : "";
+      lbl.textContent = `${rd.name || rd.source || "Unknown"}${area}`;
+      row.appendChild(lbl);
+      const placeBtn = document.createElement("button");
+      placeBtn.className = "btn inline";
+      placeBtn.style.cssText = "font-size:11px;padding:2px 10px;color:#52b788;border-color:#52b788";
+      placeBtn.textContent = "Place";
+
+      // Map picker for this radio
+      const mapPick = document.createElement("select");
+      mapPick.style.cssText = "font-size:11px;max-width:120px;";
+      for (const m of sorted.length ? sorted : maps_list) {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = (m.name || m.id).substring(0, 20);
+        mapPick.appendChild(opt);
+      }
+      row.appendChild(mapPick);
+
+      placeBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const targetMapId = mapPick.value;
+        if (!targetMapId) return;
+        const newRx = {
+          id: rd.source || rd.name || ("rx_" + Math.random().toString(16).slice(2, 10)),
+          label: rd.name || rd.source || "",
+          x: 0.5,
+          y: 0.5,
+          room: rd.area_name || "",
+          source: rd.source || "",
+        };
+        if (!ts.draftReceivers[targetMapId]) ts.draftReceivers[targetMapId] = [];
+        ts.draftReceivers[targetMapId].push(newRx);
+        ts.dirtyMaps[targetMapId] = true;
+        ts.selectedRx = { mapId: targetMapId, rxId: newRx.id };
+        _refreshSVG();
+        _refreshInfo();
+        _refreshDirtyLabel();
+        _refreshUnplaced();
+      });
+      row.addEventListener("click", () => { placeBtn.click(); });
+      row.appendChild(placeBtn);
+      unplacedCard.appendChild(row);
+    }
+  }
+  _refreshUnplaced();
+
   // ── Assemble ──────────────────────────────────────────────────────────────
   wrap.appendChild(ctrlRow);
   wrap.appendChild(isoWrap);
   wrap.appendChild(infoCard);
+  wrap.appendChild(unplacedCard);
 
   return wrap;
 }
@@ -2032,8 +2134,11 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           s += `<text x="${Math.round(lix)}" y="${Math.round(liy) + lidx * 2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
         }
 
-        // Receiver markers (non-draggable green reference)
+        // Receiver markers (non-draggable green reference) — skip stale
+        const _liveRadios = snap?.ble?.radios || [];
         for (const r of (m.receivers || [])) {
+          const _lr = _liveRadios.find(rd => rd.name === (r.label || "") || rd.source === (r.id || ""));
+          if (!_lr) continue; // stale receiver — scanner no longer exists
           const [wx, wy] = xf.mapPt(r.x || 0, r.y || 0);
           const [px, py] = iso(wx, wy, z);
           const rx = Math.round(px), ry = Math.round(py);

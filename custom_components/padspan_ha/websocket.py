@@ -1370,10 +1370,33 @@ async def ws_vendor_lookup(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], res)
 
 
+_last_receiver_prune: float = 0.0  # monotonic timestamp of last prune
+
 @websocket_api.websocket_command({"type": "padspan_ha/maps_list"})
 @websocket_api.async_response
 async def ws_maps_list(hass: HomeAssistant, connection, msg) -> None:
+    global _last_receiver_prune
     ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+
+    # Auto-prune stale receivers at most once per 5 minutes
+    if ms:
+        import time
+        now = time.monotonic()
+        if now - _last_receiver_prune > 300:
+            try:
+                bl = get_bluetooth_live(hass)
+                if bl is not None:
+                    snap = bl.get_snapshot(max_age_s=300)
+                    radios = snap.get("radios") or []
+                    known_sources = {str(r.get("source") or "") for r in radios if r.get("source")}
+                    known_names = {str(r.get("name") or "") for r in radios if r.get("name")}
+                    removed = await ms.async_prune_stale_receivers(known_sources, known_names)
+                    if removed:
+                        _LOGGER.info("Pruned %d stale receiver(s) from maps", removed)
+            except Exception:
+                pass
+            _last_receiver_prune = now
+
     maps = ms.list_maps() if ms else []
     connection.send_result(msg["id"], {"maps": maps})
 

@@ -770,12 +770,13 @@ export function render(ctx){
             const [lix,liy]=iso(lwx,lwy,z);
             s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
           }
-          // Placed receivers (with scanner tooltip + SID label)
+          // Placed receivers (with scanner tooltip + SID label) — skip stale
           for(const r of (m.receivers||[])){
+            const liveRadio = allRadios_live.find(rd=>rd.name===(r.label||"")||rd.source===(r.id||""));
+            if(!liveRadio) continue; // stale receiver — scanner no longer exists
             const[wx,wy]=mapPt(r.x||0,r.y||0);
             const [px,py]=iso(wx,wy,z);
-            const liveRadio = allRadios_live.find(rd=>rd.name===(r.label||"")||rd.source===(r.id||""));
-            const rsid = _sid(liveRadio ? liveRadio.source : (r.id || r.label || ""));
+            const rsid = _sid(liveRadio.source || r.id || r.label || "");
             const _rTip = `${rsid} · ${r.label||r.id||"receiver"}${r.room ? "\nArea: "+r.room : ""}${liveRadio?.scanning!=null ? "\nScanning: "+(liveRadio.scanning?"Yes":"No") : ""}`;
             s += `<g data-tip="${_esc(_rTip)}">`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.3"/>`;

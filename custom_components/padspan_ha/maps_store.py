@@ -319,6 +319,32 @@ class MapsStore:
         await self.store.async_save(self.data)
         return m
 
+    async def async_prune_stale_receivers(self, known_sources: set[str], known_names: set[str]) -> int:
+        """Remove receivers from all maps that don't match any known radio.
+
+        Returns the number of receivers removed.
+        """
+        removed = 0
+        dirty = False
+        for m in self.data.get("maps", []):
+            recs = m.get("receivers")
+            if not isinstance(recs, list) or not recs:
+                continue
+            before = len(recs)
+            m["receivers"] = [
+                r for r in recs
+                if (r.get("id") or "") in known_sources
+                or (r.get("source") or "") in known_sources
+                or (r.get("label") or "") in known_names
+            ]
+            diff = before - len(m["receivers"])
+            if diff > 0:
+                removed += diff
+                dirty = True
+        if dirty:
+            await self.store.async_save(self.data)
+        return removed
+
     async def async_delete_map(self, map_id: str) -> None:
         m = self.get_map(map_id)
         if not m:
