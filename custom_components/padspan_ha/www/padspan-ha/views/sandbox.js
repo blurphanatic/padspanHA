@@ -72,9 +72,9 @@ export function render(ctx){
     const histCard = el("div",{class:"card"});
     histCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:8px"},"RSSI Distribution"));
 
-    const chart = el("div",{style:"display:flex;align-items:flex-end;gap:4px;height:100px"});
+    const chart = el("div",{style:"display:flex;align-items:flex-end;gap:4px;height:100px;overflow:hidden"});
     for(const [range, count] of sortedBuckets){
-      const pct = Math.round((count / maxBucket) * 100);
+      const barH = Math.round((count / maxBucket) * 72);
       let barColor = "#52b788";
       if(range < -80) barColor = "#ef5350";
       else if(range < -70) barColor = "#ffd54f";
@@ -83,7 +83,7 @@ export function render(ctx){
       const col = el("div",{style:"display:flex;flex-direction:column;align-items:center;flex:1;min-width:0"});
       // Count label on top
       col.appendChild(el("div",{style:`font-size:9px;color:${barColor};font-weight:600;margin-bottom:2px`}, String(count)));
-      col.appendChild(el("div",{style:`height:${pct}px;width:100%;background:${barColor};border-radius:2px 2px 0 0;min-height:2px`}));
+      col.appendChild(el("div",{style:`height:${barH}px;width:100%;background:${barColor};border-radius:2px 2px 0 0;min-height:2px`}));
       col.appendChild(el("div",{style:"font-size:9px;color:#64748b;margin-top:2px;white-space:nowrap"}, `${range}`));
       chart.appendChild(col);
     }

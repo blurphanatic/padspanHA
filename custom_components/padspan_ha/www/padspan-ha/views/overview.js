@@ -845,12 +845,14 @@ export function render(ctx){
       }
 
       // Persistent pins + unlabeled objects with known room positions.
-      // When persistent ON: show ALL objects at their last known room (away = red crosshair, active = teal dot).
+      // When persistent ON: show followed items at their last known room (away = red crosshair, active = teal dot).
       // When persistent OFF: only unlabeled objects shown as dim amber dots.
       {
+        const _isFollowed = (o) => ctx.actions.followedHas(o.address || "") || ctx.actions.followedHas(o.entity_id || "") || ctx.actions.followedHas(o.key || "");
         const _mapObjs = allObjects.filter(o =>
           o.room && o.room !== "unknown" && o.room !== "not_home" && roomIsoPos[o.room] &&
-          !_renderedObjKeys.has(o.key || o.address || o.entity_id || ""));
+          !_renderedObjKeys.has(o.key || o.address || o.entity_id || "") &&
+          (!ctx.state._overviewPersistentPins || _isFollowed(o)));
         const _roomObjCount = {};
         for(const obj of _mapObjs){
           const oKey = obj.key || obj.address || obj.entity_id || "";

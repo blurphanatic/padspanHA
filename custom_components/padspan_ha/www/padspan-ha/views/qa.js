@@ -704,7 +704,7 @@ export function render(ctx){
       const summary = el("div",{style:`padding:8px 10px;cursor:pointer;border-radius:${isOpen?"8px 8px 0 0":"8px"};border:1px solid ${borderCol};background:${bgCol}`});
 
       // Line 1: arrow + rank badge + health icon + SID + name + overall score
-      const nameLink = el("span",{style:"font-weight:600;color:#e2e8f0;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, esc(r.name || r.source));
+      const nameLink = el("span",{style:"display:inline-block;max-width:100%;vertical-align:middle;font-weight:600;color:#e2e8f0;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, esc(r.name || r.source));
       nameLink.addEventListener("click", (ev)=>{ ev.stopPropagation(); ctx.actions.showScannerDetail(r); });
       const medal = a.rank <= 3 ? medals[a.rank-1] : "";
       const rankBadge = el("span",{style:"font-weight:800;font-size:12px;color:#94a3b8;flex-shrink:0;min-width:24px"}, `#${a.rank}`);
