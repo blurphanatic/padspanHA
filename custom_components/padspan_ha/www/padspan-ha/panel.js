@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.97";
+const APP_VERSION = "0.5.98";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260302T034514Z";
+const BUILD_ID = "20260302T162238Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -59,8 +59,8 @@ const _viewsPromise = Promise.allSettled([
 });
 
 const MENU = [
-  ["follow","Follow","mdi:crosshairs-gps"],
   ["overview","Overview","mdi:view-dashboard-outline"],
+  ["follow","Follow","mdi:crosshairs-gps"],
   ["objects","Objects","mdi:tag-multiple-outline"],
   ["devices","Devices","mdi:devices"],
   ["bluetooth","Bluetooth","mdi:bluetooth"],

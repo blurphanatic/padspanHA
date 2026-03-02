@@ -52,11 +52,15 @@ export function render(ctx){
       if(o.address) objIndex.set(String(o.address).toUpperCase(), o);
     }
 
-    // Build scanner name lookup
+    // Build scanner name + area lookup
     const radioNames = {};
+    const radioAreas = {};
     for(const r of radios){
       const src = String(r.source || "");
-      if(src) radioNames[src] = r.name || src;
+      if(src){
+        radioNames[src] = r.name || src;
+        if(r.area_name) radioAreas[src] = r.area_name;
+      }
     }
 
     // Group advertisements by scanner source, keep best RSSI per address
@@ -104,9 +108,13 @@ export function render(ctx){
           ]);
         };
 
+        const areaName = radioAreas[src];
         const card = el("div",{class:"card"},[
           el("div",{class:"row"},[
-            el("div",{class:"h2", style:"flex:1"}, scannerName),
+            el("div",{style:"flex:1"},[
+              el("div",{class:"h2"}, scannerName),
+              areaName ? el("div",{class:"muted",style:"font-size:12px;margin-top:2px"}, areaName) : null,
+            ].filter(Boolean)),
             el("span",{class:"badge"}, `${tagged.length} tagged`),
             el("span",{class:"badge warn"}, `${untagged.length} untagged`),
           ]),

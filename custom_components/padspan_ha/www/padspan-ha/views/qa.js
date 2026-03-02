@@ -521,14 +521,18 @@ export function render(ctx){
         // Hard failure: radio is definitively not working
         health = "Unhealthy"; healthColor = "#ef5350"; healthIcon = "\uD83D\uDD34";
         reason = r.lost ? "Radio marked as lost" : r.disabled ? "Radio is disabled" : "Not scanning";
+      } else if(totalDevices === 0 && overlaps.length === 0){
+        // No overlap with any other radio — could be too far away, not enough data yet
+        health = "Unknown"; healthColor = "#94a3b8"; healthIcon = "\u2753";
+        reason = "No advertisements yet \u2014 may be out of range of other radios";
       } else if(totalDevices === 0 && radios.filter(rx => rx.source !== src && (radioDevSets[rx.source]||new Set()).size > 0).length > 0){
-        // Provable: this radio hears nothing but other radios are hearing devices
+        // Has nearby radios with data but hears nothing — likely a problem
         health = "Unhealthy"; healthColor = "#ef5350"; healthIcon = "\uD83D\uDD34";
-        reason = "No advertisements while other radios are active";
+        reason = "No advertisements while nearby radios are active";
       } else if(totalDevices === 0){
-        // No ads but no other radios to compare against — fair, not provable failure
-        health = "Fair"; healthColor = "#ffd54f"; healthIcon = "\uD83D\uDFE1";
-        reason = "No advertisements received";
+        // No ads but no other radios to compare against
+        health = "Unknown"; healthColor = "#94a3b8"; healthIcon = "\u2753";
+        reason = "No advertisements received \u2014 awaiting data";
       } else if(freshestAge != null && freshestAge > 60){
         // Provable: radio has gone quiet for over a minute
         health = "Fair"; healthColor = "#ffd54f"; healthIcon = "\uD83D\uDFE1";
@@ -546,7 +550,7 @@ export function render(ctx){
         radio: r, src, totalDevices, strongestRssi, weakestRssi, avgRssi,
         freshestAge, stalestAge, taggedVisible, overlaps, uniqueDevices,
         health, healthColor, healthIcon, reason,
-        healthOrder: health === "Unhealthy" ? 0 : health === "Fair" ? 1 : 2,
+        healthOrder: health === "Unhealthy" ? 0 : health === "Unknown" ? 1 : health === "Fair" ? 2 : 3,
       };
     });
 
@@ -651,14 +655,15 @@ export function render(ctx){
       a.relScore = relRaw[a.src];
       // Overall: Hardware 40% + Coverage 30% + Reliability 30%
       a.overallScore = Math.round(a.hwScore * 0.4 + a.covScore * 0.3 + a.relScore * 0.3);
-      // Sink unhealthy radios regardless of score
-      if(a.health === "Unhealthy") a.overallScore = Math.min(a.overallScore, 10);
+      // Sink unhealthy/unknown radios regardless of score
+      if(a.health === "Unhealthy" || a.health === "Unknown") a.overallScore = Math.min(a.overallScore, 10);
     }
 
-    // Sort by overall score descending (best first), unhealthy last
+    // Sort by overall score descending (best first), unhealthy/unknown last
+    const _sinkHealth = h => h === "Unhealthy" || h === "Unknown";
     analyses.sort((a,b) => {
-      if(a.health === "Unhealthy" && b.health !== "Unhealthy") return 1;
-      if(b.health === "Unhealthy" && a.health !== "Unhealthy") return -1;
+      if(_sinkHealth(a.health) && !_sinkHealth(b.health)) return 1;
+      if(_sinkHealth(b.health) && !_sinkHealth(a.health)) return -1;
       return b.overallScore - a.overallScore;
     });
 
@@ -692,25 +697,25 @@ export function render(ctx){
     for(const a of analyses){
       const r = a.radio;
       const isOpen = expanded.has(a.src);
-      const borderCol = a.health==="Unhealthy" ? "#7f1d1d" : a.health==="Fair" ? "#5c4b1f" : "#1a4228";
-      const bgCol = a.health==="Unhealthy" ? "#1a0a0a" : a.health==="Fair" ? "#1a1808" : "#0f1a12";
+      const borderCol = a.health==="Unhealthy" ? "#7f1d1d" : a.health==="Unknown" ? "#334155" : a.health==="Fair" ? "#5c4b1f" : "#1a4228";
+      const bgCol = a.health==="Unhealthy" ? "#1a0a0a" : a.health==="Unknown" ? "#0f172a" : a.health==="Fair" ? "#1a1808" : "#0f1a12";
 
       // Collapsed summary row — 3 lines: rank + name, metrics, score
       const summary = el("div",{style:`padding:8px 10px;cursor:pointer;border-radius:${isOpen?"8px 8px 0 0":"8px"};border:1px solid ${borderCol};background:${bgCol}`});
 
       // Line 1: arrow + rank badge + health icon + SID + name + overall score
-      const nameLink = el("span",{style:"font-weight:600;color:#e2e8f0;cursor:pointer;text-decoration:underline;text-decoration-style:dotted"}, esc(r.name || r.source));
+      const nameLink = el("span",{style:"font-weight:600;color:#e2e8f0;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, esc(r.name || r.source));
       nameLink.addEventListener("click", (ev)=>{ ev.stopPropagation(); ctx.actions.showScannerDetail(r); });
       const medal = a.rank <= 3 ? medals[a.rank-1] : "";
-      const rankBadge = el("span",{style:"font-weight:800;font-size:12px;color:#94a3b8;flex-shrink:0;min-width:32px"}, `#${a.rank}`);
-      const scoreBadge = el("span",{style:`font-size:11px;font-weight:700;color:${_scoreColor(a.overallScore)};background:${_scoreColor(a.overallScore)}18;padding:1px 6px;border-radius:4px;flex-shrink:0`}, `${a.overallScore}/100`);
-      summary.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px"},[
+      const rankBadge = el("span",{style:"font-weight:800;font-size:12px;color:#94a3b8;flex-shrink:0;min-width:24px"}, `#${a.rank}`);
+      const scoreBadge = el("span",{style:`font-size:11px;font-weight:700;color:${_scoreColor(a.overallScore)};background:${_scoreColor(a.overallScore)}18;padding:1px 6px;border-radius:4px;flex-shrink:0;white-space:nowrap`}, `${a.overallScore}/100`);
+      summary.appendChild(el("div",{style:"display:flex;align-items:center;gap:6px;min-width:0"},[
         el("span",{style:`font-size:10px;color:#94a3b8;flex-shrink:0;transition:transform .15s;transform:rotate(${isOpen?"90":"0"}deg)`}, "\u25B6"),
         rankBadge,
         medal ? el("span",{style:"font-size:14px;flex-shrink:0"}, medal) : null,
         el("span",{style:"flex-shrink:0;font-size:14px"}, a.healthIcon),
         el("span",{class:"pill",style:"font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px;flex-shrink:0"}, _sid(a.src)),
-        nameLink,
+        el("span",{style:"flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"},[nameLink]),
         scoreBadge,
       ].filter(Boolean)));
 
