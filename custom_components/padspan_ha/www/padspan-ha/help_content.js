@@ -146,11 +146,12 @@ export const HELP = {
     ],
   },
   settings_presence: {
-    title: "Presence — Smoothing and timeouts",
+    title: "Presence — Smoothing, timeouts, and adaptive learning",
     body: [
       "Room Change Delay — how many seconds a scanner must consistently win before PadSpan switches a device to that room. Raise this (e.g. 30–60 s) to prevent flickering when a device sits on the boundary between two scanners. Set to 0 for instant switching.",
       "Home/Away Timeout — if a device hasn't been detected for this long, its device_tracker entity in HA changes to not_home and a red Away badge appears in the Objects tab. Default is 5 minutes. Raise it if devices briefly drop off in thick-walled rooms or during normal use.",
-      "Both settings take effect on the next poll (every 10 seconds) — no restart needed.",
+      "Adaptive Learning (Experimental) — when enabled, PadSpan passively learns room RSSI fingerprints from high-confidence room assignments. Over days, this tightens radio propagation models without manual calibration. The maturity bar shows progress: 0–25% = collecting baseline, 25–75% = building model, 75–100% = model active. Floor detection enhancement learns cross-floor signal attenuation for better multi-story accuracy.",
+      "All settings take effect on the next poll (every 10 seconds) — no restart needed.",
     ],
   },
   settings_manage: {

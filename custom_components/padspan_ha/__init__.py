@@ -36,8 +36,10 @@ from .const import (
     DATA_OBJECTS,
     DATA_ALERTS,
     DATA_MOVEMENT,
+    DATA_ADAPTIVE,
     DATA_PANEL_REGISTERED,
 )
+from .adaptive_store import AdaptiveStore
 from .coordinator import PadSpanCoordinator
 from .maps_store import MapsStore
 from .model_store import ModelStore
@@ -96,6 +98,12 @@ async def _ensure_stores(hass: HomeAssistant) -> None:
         await mv_store.async_load()
         hass.data[DOMAIN][DATA_MOVEMENT] = mv_store
         _LOGGER.debug("MovementStore ready (%d entries)", len(mv_store.entries))
+
+    if DATA_ADAPTIVE not in hass.data[DOMAIN]:
+        ad_store = AdaptiveStore(hass)
+        await ad_store.async_load()
+        hass.data[DOMAIN][DATA_ADAPTIVE] = ad_store
+        _LOGGER.debug("AdaptiveStore ready (%d observations)", ad_store.data.get("stats", {}).get("total_observations", 0))
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:

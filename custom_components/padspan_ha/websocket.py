@@ -20,7 +20,7 @@ from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers import area_registry, device_registry, entity_registry
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DATA_OBJECTS, DEFAULT_FLOOR_ID, DATA_COORDINATOR, DATA_CALIBRATION
+from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DATA_OBJECTS, DEFAULT_FLOOR_ID, DATA_COORDINATOR, DATA_CALIBRATION, DATA_ADAPTIVE
 from .calibration_store import CalibrationStore
 from .build_info import BUILD_ID, BUILD_VERSION
 from .bluetooth_live import get_bluetooth_live
@@ -69,6 +69,8 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_calibration_health_check)
     websocket_api.async_register_command(hass, ws_movement_history_get)
     websocket_api.async_register_command(hass, ws_notify_services_list)
+    websocket_api.async_register_command(hass, ws_adaptive_status_get)
+    websocket_api.async_register_command(hass, ws_adaptive_reset)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -1115,6 +1117,8 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("overview_iso_horiz_gap"): vol.Coerce(int),
         vol.Optional("overview_iso_focus"): vol.Any(int, None),
         vol.Optional("lights_hidden"): list,
+        vol.Optional("adaptive_learning_enabled"): bool,
+        vol.Optional("adaptive_floor_detection"): bool,
     }
 )
 @websocket_api.async_response
@@ -1175,6 +1179,10 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             raw = msg["scanner_offsets"]
             if isinstance(raw, dict):
                 payload["scanner_offsets"] = {str(k): float(v) for k, v in raw.items()}
+        if "adaptive_learning_enabled" in msg:
+            payload["adaptive_learning_enabled"] = bool(msg["adaptive_learning_enabled"])
+        if "adaptive_floor_detection" in msg:
+            payload["adaptive_floor_detection"] = bool(msg["adaptive_floor_detection"])
         await st.async_set(**payload)
     connection.send_result(msg["id"], {"settings": _get_settings(hass)})
 
@@ -1939,3 +1947,28 @@ async def ws_notify_services_list(hass: HomeAssistant, connection, msg) -> None:
     services = hass.services.async_services().get("notify", {})
     result = sorted(services.keys())
     connection.send_result(msg["id"], {"services": result})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Adaptive learning
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@websocket_api.websocket_command({"type": "padspan_ha/adaptive_status_get"})
+@websocket_api.async_response
+async def ws_adaptive_status_get(hass: HomeAssistant, connection, msg) -> None:
+    """Return adaptive learning summary stats."""
+    ad = hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
+    if ad:
+        connection.send_result(msg["id"], {"adaptive": ad.summary()})
+    else:
+        connection.send_result(msg["id"], {"adaptive": {}})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/adaptive_reset"})
+@websocket_api.async_response
+async def ws_adaptive_reset(hass: HomeAssistant, connection, msg) -> None:
+    """Clear all adaptive learning data."""
+    ad = hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
+    if ad:
+        await ad.async_reset()
+    connection.send_result(msg["id"], {"ok": True})

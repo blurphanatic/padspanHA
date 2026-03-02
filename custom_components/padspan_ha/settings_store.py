@@ -34,6 +34,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "room_sigma_m": 4.0,           # Gaussian room-scoring sigma in metres
     "health_reminder_enabled": False,  # monthly calibration accuracy reminder (off by default)
     "health_reminder_last_ts":  None,  # epoch seconds when reminder was last shown
+    "adaptive_learning_enabled": False,  # experimental: passive room fingerprint learning
+    "adaptive_floor_detection": False,   # experimental: cross-floor attenuation learning
     # 3D isometric view layout (Maps tab)
     "maps_iso_floor_gap":    200,   # px spacing between floors
     "maps_iso_horiz_gap":    0,     # px L/R horizontal offset

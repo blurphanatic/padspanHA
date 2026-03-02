@@ -84,7 +84,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
-    DOMAIN, DATA_SETTINGS, DATA_CALIBRATION,
+    DOMAIN, DATA_SETTINGS, DATA_CALIBRATION, DATA_ADAPTIVE,
     DEFAULT_KALMAN_Q, DEFAULT_KALMAN_R,
     DEFAULT_REF_POWER, DEFAULT_PATH_LOSS_EXP, DEFAULT_ROOM_SIGMA_M,
 )
@@ -162,6 +162,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._alert_last_sent: dict[str, float] = {}
         _ALERT_COOLDOWN_S = 60  # min seconds between alerts for same device
 
+        # ── Adaptive learning rate-limit ───────────────────────────────────────
+        # {key: monotonic_ts} — last adaptive observation time per device
+        self._adaptive_last_obs: dict[str, float] = {}
+        # Save counter — only persist to disk every N observations (not every poll)
+        self._adaptive_save_counter: int = 0
+
     # ── main update ──────────────────────────────────────────────────────────
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -209,13 +215,27 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if addr and tx_pwr is not None and addr not in addr_tx_power:
                 addr_tx_power[addr] = int(tx_pwr)
 
-        # Build {source: area} from BLE radios
+        # Build {source: area} and {source: floor} from BLE radios
         source_to_area: dict[str, str] = {}
+        source_to_floor: dict[str, str] = {}
+        # Pre-build area→floor lookup from HA registries (for adaptive floor detection)
+        _area_to_floor: dict[str, str] = {}
+        try:
+            from homeassistant.helpers import area_registry as _ar_reg  # noqa: PLC0415
+            for _a in _ar_reg.async_get(self.hass).async_list_areas():
+                _fl = getattr(_a, "floor_id", None)
+                if _a.name and _fl:
+                    _area_to_floor[_a.name] = str(_fl)
+        except Exception:
+            pass
         for r in (snap.get("ble") or {}).get("radios") or []:
             src  = r.get("source")
             area = r.get("area_name") or r.get("area")
             if src and area:
                 source_to_area[str(src)] = str(area)
+                fl = _area_to_floor.get(str(area))
+                if fl:
+                    source_to_floor[str(src)] = fl
 
         # Apply per-scanner RSSI offsets to the raw addr_src_rssi dict
         try:
@@ -283,7 +303,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 smooth_addr = _rpa_map.get(raw_addr, raw_addr)
                 smoothed_room = self._smooth_room(
                     key, smooth_addr, addr_src_rssi, source_to_area,
-                    _dyn_vote_window, _dyn_vote_threshold)
+                    _dyn_vote_window, _dyn_vote_threshold, source_to_floor)
                 if smoothed_room:
                     obj["room"] = smoothed_room
                 obj["_smoothed"] = True
@@ -315,7 +335,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 synthetic = {key: merged_src} if merged_src else {}
                 smoothed_room = self._smooth_room(
                     key, key, synthetic, source_to_area,
-                    _dyn_vote_window, _dyn_vote_threshold)
+                    _dyn_vote_window, _dyn_vote_threshold, source_to_floor)
                 if smoothed_room:
                     obj["room"] = smoothed_room
                 obj["_smoothed"] = True
@@ -374,6 +394,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         source_to_area: dict[str, str],
         vote_window: int = _VOTE_WINDOW,
         vote_threshold: int = _VOTE_THRESHOLD,
+        source_to_floor: dict[str, str] | None = None,
     ) -> str | None:
         """
         Run one poll of the two-stage smoothing pipeline for a BLE device.
@@ -478,6 +499,72 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else:
                     candidate = _best_room
 
+        # ── Change A2: Adaptive learning blend ──────────────────────────────
+        # When adaptive learning is enabled and has accumulated data, blend
+        # fingerprint-similarity scores into the Gaussian room scores.  Also
+        # apply transition priors and cross-floor penalty.
+        try:
+            _st_ad = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            _d_ad = (_st_ad.data if _st_ad else {}) or {}
+            _adaptive_on = bool(_d_ad.get("adaptive_learning_enabled", False))
+            _floor_on = bool(_d_ad.get("adaptive_floor_detection", False))
+        except Exception:
+            _adaptive_on = False
+            _floor_on = False
+
+        if _adaptive_on and ema and room_scores:
+            try:
+                _ad_store = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
+                if _ad_store and _ad_store.maturity() > 0.05:
+                    _ad_scores = _ad_store.score_rooms(dict(ema), source_to_area)
+                    _blend = min(0.4, _ad_store.maturity() * 0.5)
+                    for _ar in room_scores:
+                        if _ar in _ad_scores:
+                            room_scores[_ar] = (1.0 - _blend) * room_scores[_ar] + _blend * _ad_scores[_ar]
+
+                    # Transition prior — boost rooms that are commonly transitioned to
+                    _cur = self._confirmed_room.get(key)
+                    if _cur:
+                        _priors = _ad_store.transition_prior(_cur, room_scores.keys())
+                        if _priors:
+                            _prior_blend = min(0.15, _ad_store.maturity() * 0.2)
+                            for _ar in room_scores:
+                                room_scores[_ar] *= (1.0 + _prior_blend * _priors.get(_ar, 0.0))
+
+                    # Floor penalty for cross-floor candidates
+                    if _floor_on and source_to_floor and candidate:
+                        _cand_floor = None
+                        _cur_floor = None
+                        _src_to_fl = source_to_floor or {}
+                        # Derive candidate floor from area→floor (via source_to_area→source_to_floor)
+                        for _src, _area in source_to_area.items():
+                            if _area == candidate and _src in _src_to_fl:
+                                _cand_floor = _src_to_fl[_src]
+                                break
+                        if _cur:
+                            for _src, _area in source_to_area.items():
+                                if _area == _cur and _src in _src_to_fl:
+                                    _cur_floor = _src_to_fl[_src]
+                                    break
+                        if _cand_floor and _cur_floor and _cand_floor != _cur_floor:
+                            _fl_conf = _ad_store.floor_confidence(dict(ema), _cand_floor, _src_to_fl)
+                            if _fl_conf < 0.3:
+                                room_scores[candidate] *= 0.5
+
+                    # Recompute best room after blending
+                    _best_room = max(room_scores, key=lambda r: room_scores[r])
+                    _cur_room = self._confirmed_room.get(key)
+                    _HYSTERESIS_MARGIN = 0.12
+                    if _cur_room and _cur_room in room_scores and _best_room != _cur_room:
+                        if room_scores[_best_room] - room_scores[_cur_room] < _HYSTERESIS_MARGIN:
+                            candidate = _cur_room
+                        else:
+                            candidate = _best_room
+                    else:
+                        candidate = _best_room
+            except Exception:
+                pass  # adaptive scoring is best-effort
+
         # ── Change B: k-NN fingerprint override ──────────────────────────────
         # When calibration data exists and the fingerprint match is confident
         # enough, use the k-NN result as the candidate instead of the Gaussian
@@ -533,6 +620,38 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._confirmed_room[key] = confirmed
         self._room_confidence[key] = confidence
         self._rssi_margin_confidence[key] = rssi_margin_confidence
+
+        # ── Adaptive learning: record observation ────────────────────────────
+        # Only learn from high-confidence, stable assignments.  Rate-limited to
+        # one observation per device per 300 s to keep data compact.
+        if _adaptive_on and confirmed and confidence >= 0.7 and ema:
+            try:
+                _now_mono = time.monotonic()
+                _last = self._adaptive_last_obs.get(key, 0.0)
+                if _now_mono - _last >= 300.0:
+                    self._adaptive_last_obs[key] = _now_mono
+                    _ad = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
+                    if _ad:
+                        # Derive floor of confirmed room
+                        _conf_floor = None
+                        if source_to_floor:
+                            for _src, _area in source_to_area.items():
+                                if _area == confirmed and _src in (source_to_floor or {}):
+                                    _conf_floor = source_to_floor[_src]
+                                    break
+                        _ad.observe(confirmed, _conf_floor, dict(ema), source_to_area, source_to_floor or {})
+                        # Record transitions
+                        for _chg_key, _old, _new in self._pending_room_changes:
+                            if _chg_key == key:
+                                _ad.record_transition(_old, _new)
+                        # Periodic save (every 20 observations, not every poll)
+                        self._adaptive_save_counter += 1
+                        if self._adaptive_save_counter >= 20:
+                            self._adaptive_save_counter = 0
+                            self.hass.async_create_task(_ad.async_save_periodic())
+            except Exception:
+                pass  # adaptive learning is best-effort
+
         return confirmed
 
     # ── Follow-alert processing ────────────────────────────────────────────

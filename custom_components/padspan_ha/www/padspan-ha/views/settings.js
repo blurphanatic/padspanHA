@@ -990,5 +990,120 @@ function _settingsPresence(ctx, el){
     reminderResultDiv,
   ]));
 
+  // ── Adaptive Learning (Experimental) ───────────────────────────────────
+  const adaptiveEnabled = settings.adaptive_learning_enabled === true;
+  const floorDetEnabled = settings.adaptive_floor_detection === true;
+
+  const adaptiveToggle = el("input",{type:"checkbox",id:"adaptiveLearningToggle",style:"width:16px;height:16px;accent-color:#52b788;cursor:pointer"});
+  adaptiveToggle.checked = adaptiveEnabled;
+
+  const floorToggle = el("input",{type:"checkbox",id:"adaptiveFloorToggle",style:"width:16px;height:16px;accent-color:#52b788;cursor:pointer"});
+  floorToggle.checked = floorDetEnabled;
+
+  const adaptiveStatusDiv = el("div",{style:"margin-top:10px"});
+
+  const _renderAdaptiveStatus = (s)=>{
+    while(adaptiveStatusDiv.firstChild) adaptiveStatusDiv.removeChild(adaptiveStatusDiv.firstChild);
+    if(!s || !s.total_observations){
+      adaptiveStatusDiv.appendChild(el("div",{class:"muted",style:"font-size:12px"},
+        adaptiveEnabled ? "Learning... waiting for high-confidence room assignments." : "Enable to start learning from device movements."));
+      return;
+    }
+    const matPct = s.maturity_pct || 0;
+    const barColor = matPct < 25 ? "#fbbf24" : matPct < 75 ? "#38bdf8" : "#52b788";
+    const rows = [
+      el("div",{style:"font-size:12px;margin-bottom:6px"},[
+        el("span",{style:"font-weight:600;color:#e2e8f0"},"Maturity: "),
+        el("span",{style:`color:${barColor};font-weight:600`}, `${matPct}%`),
+        el("span",{class:"muted"}, ` — ${matPct < 25 ? "collecting baseline" : matPct < 75 ? "building model" : "model active"}`),
+      ]),
+      el("div",{style:"background:#1e293b;border-radius:4px;height:6px;margin-bottom:8px;overflow:hidden"},[
+        el("div",{style:`width:${Math.min(100,matPct)}%;height:100%;background:${barColor};border-radius:4px;transition:width 0.3s`}),
+      ]),
+      el("div",{style:"display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:12px"},[
+        el("span",{class:"muted"},`Observations: ${(s.total_observations||0).toLocaleString()}`),
+        el("span",{class:"muted"},`Days active: ${s.days_active||0}`),
+        el("span",{class:"muted"},`Rooms learned: ${s.rooms_learned||0}`),
+        el("span",{class:"muted"},`Scanners: ${s.scanners_learned||0}`),
+        el("span",{class:"muted"},`Transitions: ${(s.transitions_total||0).toLocaleString()}`),
+        el("span",{class:"muted"},`Floor pairs: ${s.floor_pairs_learned||0}`),
+      ]),
+    ];
+    for(const r of rows) adaptiveStatusDiv.appendChild(r);
+  };
+
+  // Load adaptive status on render
+  if(adaptiveEnabled){
+    (async()=>{
+      try {
+        const r = await ctx.actions.wsCall("padspan_ha/adaptive_status_get");
+        _renderAdaptiveStatus(r?.adaptive || null);
+      } catch(e){ /* best-effort */ }
+    })();
+  }
+  _renderAdaptiveStatus(null);
+
+  adaptiveToggle.addEventListener("change", async()=>{
+    try {
+      await ctx.actions.settingsSet({ adaptive_learning_enabled: adaptiveToggle.checked });
+      ctx.toast(adaptiveToggle.checked ? "Adaptive learning enabled" : "Adaptive learning disabled");
+      if(!adaptiveToggle.checked){
+        floorToggle.checked = false;
+        floorToggle.disabled = true;
+      } else {
+        floorToggle.disabled = false;
+      }
+      ctx.actions.renderRooms();
+    } catch(e){ ctx.toast("Failed to save setting", true); }
+  });
+
+  floorToggle.addEventListener("change", async()=>{
+    try {
+      await ctx.actions.settingsSet({ adaptive_floor_detection: floorToggle.checked });
+      ctx.toast(floorToggle.checked ? "Floor detection enhancement enabled" : "Floor detection enhancement disabled");
+    } catch(e){ ctx.toast("Failed to save setting", true); }
+  });
+
+  if(!adaptiveEnabled) floorToggle.disabled = true;
+
+  const resetAdaptiveBtn = el("button",{class:"btn",style:"margin-top:8px;background:#991b1b;border-color:#991b1b"},"Reset Learned Data");
+  resetAdaptiveBtn.addEventListener("click", async()=>{
+    if(!confirm("Clear all adaptive learning data? This cannot be undone.")) return;
+    resetAdaptiveBtn.disabled=true; resetAdaptiveBtn.textContent="Resetting…";
+    try {
+      await ctx.actions.wsCall("padspan_ha/adaptive_reset");
+      ctx.toast("Adaptive learning data cleared");
+      _renderAdaptiveStatus(null);
+    } catch(e){ ctx.toast("Reset failed: "+String(e), true); }
+    finally{ resetAdaptiveBtn.disabled=false; resetAdaptiveBtn.textContent="Reset Learned Data"; }
+  });
+
+  wrap.appendChild(el("div",{class:"card"},[
+    el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
+      el("div",{class:"h2",style:"margin:0"},"Adaptive Learning"),
+      el("span",{style:"font-size:10px;font-weight:600;color:#fbbf24;background:#422006;padding:2px 6px;border-radius:4px"},"EXPERIMENTAL"),
+    ]),
+    el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
+      adaptiveToggle,
+      el("label",{for:"adaptiveLearningToggle",style:"font-size:13px;color:#e2e8f0;cursor:pointer"},
+        "Enable adaptive learning"),
+    ]),
+    el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
+      "When enabled, PadSpan passively learns room RSSI fingerprints from high-confidence room " +
+      "assignments. Over days, this tightens radio propagation models for more accurate room detection " +
+      "without manual calibration walks. The system also learns room transition patterns to reduce false " +
+      "room changes."),
+    el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
+      floorToggle,
+      el("label",{for:"adaptiveFloorToggle",style:"font-size:13px;color:#e2e8f0;cursor:pointer"},
+        "Enhance floor-to-floor detection"),
+    ]),
+    el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
+      "Learns cross-floor signal attenuation patterns to better distinguish between rooms on different " +
+      "floors. Requires scanners assigned to rooms on multiple floors in Home Assistant."),
+    adaptiveStatusDiv,
+    resetAdaptiveBtn,
+  ]));
+
   return wrap;
 }
