@@ -92,8 +92,8 @@ export function render(ctx) {
 
   const tabs = el("div", { class: "tabs" }, [tabButton("visualization", "Visualization"), tabButton("monitor", "Advertisement monitor"), tabButton("scanners", "Scanners")]);
 
-  const controls = el("div", { class: "bt-controls" }, [
-    el("div", { class: "field" }, [
+  const controls = el("div", { class: "bt-controls", style: "display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px" }, [
+    el("div", { class: "field", style: "flex:2;min-width:160px" }, [
       el("div", { class: "label" }, "Search"),
       el("input", {
         class: "input",
@@ -105,22 +105,21 @@ export function render(ctx) {
         },
       }),
     ]),
-    el("div", { class: "field" }, [
+    el("div", { class: "field", style: "flex:1;min-width:140px" }, [
       el("div", { class: "label" }, "Source"),
       el(
         "select",
         {
           class: "select",
-          value: ctx.state.btSource,
           onchange: e => {
             ctx.state.btSource = e.target.value;
             ctx.actions.renderRooms();
           },
         },
-        sources.map(s => el("option", { value: s }, s === "all" ? "All scanners" : s))
+        sources.map(s => el("option", { value: s, ...(s === sourceSel ? { selected: "selected" } : {}) }, s === "all" ? "All scanners" : s))
       ),
     ]),
-    el("div", { class: "field" }, [
+    el("div", { class: "field", style: "flex:0 0 90px" }, [
       el("div", { class: "label" }, "Max rows"),
       el("input", {
         class: "input",
@@ -356,13 +355,13 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   }
 
   // Layout: labels on the outer edges, nodes in the middle, lines between nodes.
-  //   [Scanner labels]  (o)----line----(o)  [Device labels]
+  //   [Scanner labels →]  (o)----line----(o)  [← Device labels]
   const w = 920;
   const pad = 24;
-  const scannerLabelX = pad + 10;          // labels on far left
-  const scannerNodeX = pad + 210;          // circles right of labels
-  const deviceNodeX = w - pad - 210;       // circles left of labels
-  const deviceLabelX = w - pad - 10;       // labels on far right
+  const scannerLabelX = pad + 10;          // labels start here (left-aligned)
+  const scannerNodeX = pad + 300;          // scanner circles — more room for labels
+  const deviceNodeX = w - pad - 300;       // device circles — more room for labels
+  const deviceLabelX = w - pad - 10;       // device labels end here
 
   const srcs = Array.from(new Set(radios.map(r => String(r.source || "")).filter(Boolean))).sort();
   const srcIndex = new Map(srcs.map((s, i) => [s, i]));
@@ -459,22 +458,26 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     s += `<line x1="${sn.x + 10}" y1="${sn.y}" x2="${d.x - 10}" y2="${d.y}" class="bt-viz-line ${rc}"/>`;
   }
 
-  // Scanner nodes + labels (labels to the LEFT of nodes, outside the line area)
+  // Truncate helper — keeps SVG text from overflowing
+  const MAX_LABEL = 38;
+  const trunc = (s) => s.length > MAX_LABEL ? s.slice(0, MAX_LABEL - 1) + "…" : s;
+
+  // Scanner nodes + labels (left-aligned, growing rightward toward node)
   for (const sn of scannerNodes) {
     s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner"/>`;
-    s += `<text x="${sn.x - 14}" y="${sn.y}" class="bt-viz-label" text-anchor="end" dominant-baseline="middle">${_escSvg(sn.label)}</text>`;
+    s += `<text x="${scannerLabelX}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(sn.label))}</text>`;
   }
 
-  // Device nodes + labels (labels to the RIGHT of nodes, outside the line area)
+  // Device nodes + labels (left-aligned, growing rightward from node)
   for (const d of deviceNodes) {
     const rc = rssiClass(d.rssi);
     s += `<circle cx="${d.x}" cy="${d.y}" r="5" class="bt-viz-node device ${rc}"/>`;
-    s += `<text x="${d.x + 10}" y="${d.y}" class="bt-viz-label" font-size="11" text-anchor="start" dominant-baseline="middle">${_escSvg(d.label)}</text>`;
+    s += `<text x="${d.x + 10}" y="${d.y}" class="bt-viz-label" font-size="11" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(d.label))}</text>`;
   }
 
   // Titles on top
   s += `<text x="${scannerLabelX}" y="${pad}" class="bt-viz-title" text-anchor="start" dominant-baseline="middle">Scanners</text>`;
-  s += `<text x="${deviceLabelX}" y="${pad}" class="bt-viz-title" text-anchor="start" dominant-baseline="middle">Devices</text>`;
+  s += `<text x="${deviceNodeX + 10}" y="${pad}" class="bt-viz-title" text-anchor="start" dominant-baseline="middle">Devices</text>`;
 
   s += `</svg>`;
 
