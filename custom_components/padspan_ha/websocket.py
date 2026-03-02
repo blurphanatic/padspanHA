@@ -20,7 +20,14 @@ from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers import area_registry, device_registry, entity_registry
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DATA_OBJECTS, DEFAULT_FLOOR_ID, DATA_COORDINATOR, DATA_CALIBRATION, DATA_ADAPTIVE
+from .const import (
+    DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DATA_OBJECTS,
+    DEFAULT_FLOOR_ID, DATA_COORDINATOR, DATA_CALIBRATION, DATA_ADAPTIVE,
+    DATA_ALERTS, DATA_MOVEMENT, BACKUPS_STORE_KEY,
+    SETTINGS_STORE_KEY, CALIBRATION_STORE_KEY, ADAPTIVE_STORE_KEY,
+    OBJECT_STORE_KEY, MAPS_STORE_KEY, MODEL_STORE_KEY,
+    ALERTS_STORE_KEY, MOVEMENT_STORE_KEY,
+)
 from .calibration_store import CalibrationStore
 from .build_info import BUILD_ID, BUILD_VERSION
 from .bluetooth_live import get_bluetooth_live
@@ -71,6 +78,11 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_notify_services_list)
     websocket_api.async_register_command(hass, ws_adaptive_status_get)
     websocket_api.async_register_command(hass, ws_adaptive_reset)
+    websocket_api.async_register_command(hass, ws_propagation_health)
+    websocket_api.async_register_command(hass, ws_store_backup_create)
+    websocket_api.async_register_command(hass, ws_store_backup_list)
+    websocket_api.async_register_command(hass, ws_store_backup_restore)
+    websocket_api.async_register_command(hass, ws_store_backup_delete)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -1972,3 +1984,335 @@ async def ws_adaptive_reset(hass: HomeAssistant, connection, msg) -> None:
     if ad:
         await ad.async_reset()
     connection.send_result(msg["id"], {"ok": True})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Propagation health analysis
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@websocket_api.websocket_command({"type": "padspan_ha/propagation_health"})
+@websocket_api.async_response
+async def ws_propagation_health(hass: HomeAssistant, connection, msg) -> None:
+    """Compute comprehensive propagation model health analysis."""
+    import math as _math
+
+    domain = hass.data.get(DOMAIN, {})
+    ad = domain.get(DATA_ADAPTIVE)
+    calib = domain.get(DATA_CALIBRATION)
+    st = domain.get(DATA_SETTINGS)
+    settings = (st.data if st else {}) or {}
+
+    rooms_discovered: list[str] = []
+    try:
+        from homeassistant.helpers import area_registry as _ar
+        rooms_discovered = [a.name for a in _ar.async_get(hass).async_list_areas()]
+    except Exception:
+        pass
+    total_rooms = max(len(rooms_discovered), 1)
+
+    # ── Fingerprint data from adaptive store ──
+    fp_data = (ad.data if ad else {}).get("room_fingerprints", {})
+    floor_pairs = (ad.data if ad else {}).get("floor_pairs", {})
+    ad_stats = (ad.data if ad else {}).get("stats", {})
+
+    # Per-room analysis
+    per_room: list[dict[str, Any]] = []
+    total_var = 0.0
+    var_count = 0
+    rooms_with_data = 0
+    for room_name in rooms_discovered:
+        room_fp = fp_data.get(room_name, {})
+        scanners = len(room_fp)
+        total_obs = sum(s.get("n", 0) for s in room_fp.values())
+        avg_var = 0.0
+        if room_fp:
+            vars_list = [s.get("var", 0) for s in room_fp.values() if s.get("n", 0) >= 10]
+            avg_var = sum(vars_list) / len(vars_list) if vars_list else 0.0
+            total_var += avg_var
+            var_count += 1
+        status = "no data"
+        if total_obs >= 100 and avg_var < 15:
+            status = "stable"
+        elif total_obs >= 30:
+            status = "building"
+        elif total_obs > 0:
+            status = "sparse"
+        if total_obs > 0:
+            rooms_with_data += 1
+        per_room.append({
+            "room": room_name,
+            "scanners": scanners,
+            "observations": total_obs,
+            "avg_var": round(avg_var, 1),
+            "status": status,
+        })
+    per_room.sort(key=lambda r: r["observations"], reverse=True)
+
+    # Coverage percentage (rooms with any fingerprint data)
+    coverage_pct = round(rooms_with_data / total_rooms, 3) if total_rooms else 0.0
+
+    # Fingerprint stability
+    avg_variance = round(total_var / var_count, 1) if var_count else 0.0
+    rooms_stable = sum(1 for r in per_room if r["status"] == "stable")
+    rooms_unstable = sum(1 for r in per_room if r["status"] in ("sparse", "no data"))
+
+    # ── Calibration model data ──
+    accuracy: dict[str, Any] = {}
+    per_scanner_pl: list[dict[str, Any]] = []
+    if calib:
+        try:
+            maps_store = domain.get(DATA_MAPS)
+            maps_data = maps_store.list_maps() if maps_store else []
+            model = calib.compute_model(maps_data)
+            loo = model.get("loo_accuracy")
+            if loo:
+                accuracy = {
+                    "mean_error_frac": loo.get("mean_error_frac", 0),
+                    "mean_error_m_est": loo.get("mean_error_m_est", 0),
+                }
+            for src, pl in model.get("path_loss", {}).items():
+                r_sq = pl.get("r_squared", 0)
+                quality = "good" if r_sq >= 0.7 else "fair" if r_sq >= 0.4 else "poor"
+                per_scanner_pl.append({
+                    "source": src,
+                    "name": pl.get("scanner_name", src),
+                    "n": pl.get("n", 0),
+                    "rssi_1m": pl.get("rssi_1m", 0),
+                    "r_sq": r_sq,
+                    "quality": quality,
+                })
+        except Exception:
+            pass
+
+    # ── Floor separation ──
+    floor_sep: dict[str, Any] = {"mean_delta": 0, "pairs": 0, "sufficient": False}
+    if floor_pairs:
+        deltas = [v.get("mean", 0) for v in floor_pairs.values() if v.get("n", 0) >= 5]
+        if deltas:
+            floor_sep = {
+                "mean_delta": round(sum(deltas) / len(deltas), 1),
+                "pairs": len(deltas),
+                "sufficient": abs(sum(deltas) / len(deltas)) >= 8,
+            }
+
+    # ── Recommendations ──
+    recs: list[dict[str, str]] = []
+    for r in per_room:
+        if r["status"] == "no data":
+            recs.append({"text": f"No data for {r['room']} — enable adaptive learning or add calibration points", "priority": "high"})
+        elif r["status"] == "sparse":
+            recs.append({"text": f"Only {r['observations']} observations for {r['room']} — needs more time to stabilize", "priority": "medium"})
+        elif r["avg_var"] > 20:
+            recs.append({"text": f"{r['room']} fingerprint is unstable (variance {r['avg_var']}) — nearby interference or obstructions?", "priority": "medium"})
+    for pl in per_scanner_pl:
+        if pl["quality"] == "poor":
+            recs.append({"text": f"Scanner {pl['name']} has poor path-loss fit (R\u00b2={pl['r_sq']}) — consider repositioning or adding calibration points near it", "priority": "medium"})
+    if not settings.get("adaptive_learning_enabled"):
+        recs.append({"text": "Enable adaptive learning in Settings \u2192 Presence to automatically improve accuracy over time", "priority": "low"})
+    if floor_sep["pairs"] == 0 and total_rooms > 3:
+        recs.append({"text": "No cross-floor data yet — enable floor detection enhancement in Settings \u2192 Presence", "priority": "low"})
+    recs = recs[:10]  # cap at 10
+
+    # ── Grade computation ──
+    acc_val = accuracy.get("mean_error_frac", 1.0)
+    grade = "F"
+    if coverage_pct >= 0.8 and acc_val < 0.05 and avg_variance < 15 and (floor_sep["sufficient"] or floor_sep["pairs"] == 0):
+        grade = "A"
+    elif coverage_pct >= 0.6 and acc_val < 0.08:
+        grade = "B"
+    elif coverage_pct >= 0.4 and acc_val < 0.12:
+        grade = "C"
+    elif coverage_pct >= 0.2 or rooms_with_data > 0:
+        grade = "D"
+    # If no calibration data at all, use adaptive data alone for grade
+    if not accuracy and rooms_with_data > 0:
+        if coverage_pct >= 0.8 and avg_variance < 15:
+            grade = "B"
+        elif coverage_pct >= 0.5:
+            grade = "C"
+        else:
+            grade = "D"
+
+    connection.send_result(msg["id"], {
+        "grade": grade,
+        "coverage_pct": coverage_pct,
+        "accuracy": accuracy,
+        "fingerprint_stability": {
+            "avg_variance": avg_variance,
+            "rooms_stable": rooms_stable,
+            "rooms_unstable": rooms_unstable,
+        },
+        "floor_separation": floor_sep,
+        "per_room": per_room,
+        "per_scanner_pl": per_scanner_pl,
+        "recommendations": recs,
+        "settings": {
+            "ref_power": settings.get("ref_power", -59.0),
+            "path_loss_exp": settings.get("path_loss_exp", 2.5),
+            "room_sigma_m": settings.get("room_sigma_m", 4.0),
+            "kalman_q": settings.get("kalman_q", 0.125),
+            "kalman_r": settings.get("kalman_r", 8.0),
+            "adaptive_enabled": bool(settings.get("adaptive_learning_enabled")),
+            "adaptive_maturity": ad.maturity() if ad else 0,
+        },
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Store backup / restore
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_ALL_STORE_KEYS = [
+    SETTINGS_STORE_KEY,
+    CALIBRATION_STORE_KEY,
+    ADAPTIVE_STORE_KEY,
+    OBJECT_STORE_KEY,
+    MAPS_STORE_KEY,
+    MODEL_STORE_KEY,
+    ALERTS_STORE_KEY,
+    MOVEMENT_STORE_KEY,
+]
+
+_DATA_KEY_MAP = {
+    SETTINGS_STORE_KEY: DATA_SETTINGS,
+    CALIBRATION_STORE_KEY: DATA_CALIBRATION,
+    ADAPTIVE_STORE_KEY: DATA_ADAPTIVE,
+    OBJECT_STORE_KEY: DATA_OBJECTS,
+    MAPS_STORE_KEY: DATA_MAPS,
+    MODEL_STORE_KEY: DATA_MODEL,
+    ALERTS_STORE_KEY: DATA_ALERTS,
+    MOVEMENT_STORE_KEY: DATA_MOVEMENT,
+}
+
+_MAX_BACKUPS = 3
+
+
+async def _load_backups(hass: HomeAssistant) -> dict[str, Any]:
+    from homeassistant.helpers.storage import Store as _St
+    st = _St(hass, 1, BACKUPS_STORE_KEY)
+    loaded = await st.async_load()
+    return loaded if isinstance(loaded, dict) else {"backups": []}
+
+
+async def _save_backups(hass: HomeAssistant, data: dict[str, Any]) -> None:
+    from homeassistant.helpers.storage import Store as _St
+    st = _St(hass, 1, BACKUPS_STORE_KEY)
+    await st.async_save(data)
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/store_backup_create",
+    vol.Optional("note"): str,
+})
+@websocket_api.async_response
+async def ws_store_backup_create(hass: HomeAssistant, connection, msg) -> None:
+    """Create a backup snapshot of all persistent stores."""
+    import os
+    from datetime import datetime, timezone as _tz
+
+    domain = hass.data.get(DOMAIN, {})
+    stores_data: dict[str, Any] = {}
+
+    for store_key, data_key in _DATA_KEY_MAP.items():
+        store_obj = domain.get(data_key)
+        if store_obj and hasattr(store_obj, "data"):
+            stores_data[store_key] = store_obj.data
+        else:
+            stores_data[store_key] = {}
+
+    backup_id = f"bk_{os.urandom(6).hex()}"
+    backup = {
+        "id": backup_id,
+        "created_at": datetime.now(_tz.utc).replace(microsecond=0).isoformat(),
+        "version": BUILD_VERSION,
+        "note": str(msg.get("note") or "")[:200],
+        "stores": stores_data,
+    }
+
+    bk_data = await _load_backups(hass)
+    bk_data.setdefault("backups", []).append(backup)
+    # Trim to max
+    while len(bk_data["backups"]) > _MAX_BACKUPS:
+        bk_data["backups"].pop(0)
+    await _save_backups(hass, bk_data)
+
+    connection.send_result(msg["id"], {
+        "backup_id": backup_id,
+        "created_at": backup["created_at"],
+        "store_count": len(stores_data),
+    })
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/store_backup_list"})
+@websocket_api.async_response
+async def ws_store_backup_list(hass: HomeAssistant, connection, msg) -> None:
+    """List all available backups."""
+    bk_data = await _load_backups(hass)
+    items = []
+    for bk in bk_data.get("backups", []):
+        items.append({
+            "id": bk.get("id", ""),
+            "created_at": bk.get("created_at", ""),
+            "version": bk.get("version", ""),
+            "note": bk.get("note", ""),
+            "store_count": len(bk.get("stores", {})),
+        })
+    connection.send_result(msg["id"], {"backups": items})
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/store_backup_restore",
+    vol.Required("backup_id"): str,
+})
+@websocket_api.async_response
+async def ws_store_backup_restore(hass: HomeAssistant, connection, msg) -> None:
+    """Restore all stores from a backup snapshot."""
+    from homeassistant.helpers.storage import Store as _St
+
+    backup_id = msg["backup_id"]
+    bk_data = await _load_backups(hass)
+    backup = None
+    for bk in bk_data.get("backups", []):
+        if bk.get("id") == backup_id:
+            backup = bk
+            break
+    if not backup:
+        connection.send_error(msg["id"], "not_found", f"Backup {backup_id} not found")
+        return
+
+    stores_data = backup.get("stores", {})
+    restored = 0
+    for store_key, data in stores_data.items():
+        if not isinstance(data, dict):
+            continue
+        try:
+            st = _St(hass, 1, store_key)
+            await st.async_save(data)
+            restored += 1
+            # Reload in-memory store
+            data_key = _DATA_KEY_MAP.get(store_key)
+            if data_key:
+                store_obj = hass.data.get(DOMAIN, {}).get(data_key)
+                if store_obj and hasattr(store_obj, "data"):
+                    store_obj.data = data
+        except Exception as e:
+            _LOGGER.warning("Failed to restore %s: %s", store_key, e)
+
+    connection.send_result(msg["id"], {"restored": restored, "total": len(stores_data)})
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/store_backup_delete",
+    vol.Required("backup_id"): str,
+})
+@websocket_api.async_response
+async def ws_store_backup_delete(hass: HomeAssistant, connection, msg) -> None:
+    """Delete a specific backup."""
+    backup_id = msg["backup_id"]
+    bk_data = await _load_backups(hass)
+    before = len(bk_data.get("backups", []))
+    bk_data["backups"] = [b for b in bk_data.get("backups", []) if b.get("id") != backup_id]
+    deleted = before - len(bk_data["backups"])
+    if deleted > 0:
+        await _save_backups(hass, bk_data)
+    connection.send_result(msg["id"], {"deleted": deleted > 0})

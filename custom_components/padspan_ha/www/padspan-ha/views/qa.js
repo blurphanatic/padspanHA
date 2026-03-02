@@ -188,6 +188,266 @@ export function render(ctx){
   }
   grid.appendChild(consistCard);
 
+  // ── Propagation Health ──
+  const propCard = el("div",{class:"card"});
+  propCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
+    el("div",{style:"font-weight:700"},"Propagation Health"),
+    helpBtn("qa_propagation"),
+  ]));
+
+  const propStatusDiv = el("div",{});
+  const _propBar = (label, value, max, color) => {
+    const pct = Math.min(100, Math.round((value / Math.max(max, 0.01)) * 100));
+    return el("div",{style:"margin-bottom:8px"},[
+      el("div",{style:"display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"},[
+        el("span",{class:"muted"}, label),
+        el("span",{style:`font-weight:600;color:${color}`}, typeof value==="number" && max<=1 ? `${Math.round(value*100)}%` : String(Math.round(value))),
+      ]),
+      el("div",{style:"background:#1e293b;border-radius:4px;height:6px;overflow:hidden"},[
+        el("div",{style:`width:${pct}%;height:100%;background:${color};border-radius:4px;transition:width .3s`}),
+      ]),
+    ]);
+  };
+
+  const _gradeColor = (g) => g==="A"?"#52b788":g==="B"?"#38bdf8":g==="C"?"#ffd54f":g==="D"?"#fb923c":"#ef5350";
+
+  // Load propagation health data async
+  if(!ctx.state._qaExpandedProp) ctx.state._qaExpandedProp = false;
+  if(!ctx.state._qaExpandedMath) ctx.state._qaExpandedMath = false;
+
+  const _renderPropHealth = (ph) => {
+    while(propStatusDiv.firstChild) propStatusDiv.removeChild(propStatusDiv.firstChild);
+    if(!ph || !ph.grade){
+      propStatusDiv.appendChild(el("div",{class:"muted",style:"font-size:12px"},"Loading propagation analysis..."));
+      return;
+    }
+    const gc = _gradeColor(ph.grade);
+    // Grade badge
+    propStatusDiv.appendChild(el("div",{style:"display:flex;align-items:center;gap:12px;margin-bottom:12px"},[
+      el("div",{style:`width:48px;height:48px;border-radius:12px;background:${gc}22;border:2px solid ${gc};display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:${gc}`}, ph.grade),
+      el("div",{},[
+        el("div",{style:"font-weight:600;color:#e2e8f0;font-size:14px"}, `Propagation Model: Grade ${ph.grade}`),
+        el("div",{class:"muted",style:"font-size:12px"}, ph.grade==="A"?"Excellent — model is well-calibrated":ph.grade==="B"?"Good — model is performing well":ph.grade==="C"?"Fair — room for improvement":ph.grade==="D"?"Developing — needs more data":"Insufficient — enable adaptive learning or add calibration"),
+      ]),
+    ]));
+
+    // Sub-indicator bars
+    const covColor = ph.coverage_pct>=0.7?"#52b788":ph.coverage_pct>=0.4?"#ffd54f":"#ef5350";
+    propStatusDiv.appendChild(_propBar("Model Coverage", ph.coverage_pct, 1, covColor));
+    const accVal = (ph.accuracy && ph.accuracy.mean_error_frac) || 0;
+    const accColor = accVal>0 && accVal<0.05?"#52b788":accVal<0.1?"#ffd54f":accVal>0?"#ef5350":"#64748b";
+    propStatusDiv.appendChild(_propBar("Distance Accuracy", accVal>0 ? Math.max(0,1-accVal*10) : 0, 1, accColor));
+    const stab = ph.fingerprint_stability || {};
+    const stabVal = stab.avg_variance || 0;
+    const stabColor = stabVal>0 && stabVal<15?"#52b788":stabVal<25?"#ffd54f":stabVal>0?"#ef5350":"#64748b";
+    propStatusDiv.appendChild(_propBar("Fingerprint Stability", stabVal>0 ? Math.max(0,1-stabVal/40) : 0, 1, stabColor));
+    const flr = ph.floor_separation || {};
+    if(flr.pairs > 0){
+      const flrColor = flr.sufficient?"#52b788":"#ffd54f";
+      propStatusDiv.appendChild(_propBar("Floor Separation", Math.min(1, Math.abs(flr.mean_delta)/15), 1, flrColor));
+    } else {
+      propStatusDiv.appendChild(el("div",{style:"margin-bottom:8px"},[
+        el("div",{style:"display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"},[
+          el("span",{class:"muted"}, "Floor Separation"),
+          el("span",{class:"muted",style:"font-size:11px"}, "N/A — single floor or no data"),
+        ]),
+      ]));
+    }
+
+    // Recommendations
+    if(ph.recommendations && ph.recommendations.length > 0){
+      propStatusDiv.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin:10px 0 6px;color:#94a3b8"},"Recommendations"));
+      for(const rec of ph.recommendations.slice(0,5)){
+        const pColor = rec.priority==="high"?"#ef5350":rec.priority==="medium"?"#ffd54f":"#90caf9";
+        propStatusDiv.appendChild(el("div",{style:"font-size:12px;padding:2px 0;display:flex;gap:6px"},[
+          el("span",{style:`color:${pColor};flex-shrink:0`}, rec.priority==="high"?"\u25CF":"\u25CB"),
+          el("span",{class:"muted"}, rec.text),
+        ]));
+      }
+    }
+
+    // More Detail toggle
+    const detailToggle = el("button",{class:"btn inline",style:"margin-top:10px;font-size:11px"}, ctx.state._qaExpandedProp ? "Hide Detail" : "More Detail");
+    detailToggle.addEventListener("click",()=>{
+      ctx.state._qaExpandedProp = !ctx.state._qaExpandedProp;
+      ctx.actions.renderRooms();
+    });
+    propStatusDiv.appendChild(detailToggle);
+
+    if(ctx.state._qaExpandedProp){
+      const detailDiv = el("div",{style:"margin-top:12px;border-top:1px solid #1e293b;padding-top:10px"});
+      // Per-room fingerprint table
+      if(ph.per_room && ph.per_room.length > 0){
+        detailDiv.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin-bottom:6px;color:#94a3b8"},"Per-Room Fingerprint Quality"));
+        const tbl = el("div",{style:"font-size:11px"});
+        tbl.appendChild(el("div",{style:"display:grid;grid-template-columns:1fr 60px 70px 60px 70px;gap:4px;padding:4px 0;border-bottom:1px solid #1e293b;font-weight:600;color:#94a3b8"},
+          ["Room","Scanners","Observations","Avg Var","Status"].map(h=>el("span",{},h))));
+        for(const r of ph.per_room.slice(0,15)){
+          const sColor = r.status==="stable"?"#52b788":r.status==="building"?"#38bdf8":r.status==="sparse"?"#ffd54f":"#64748b";
+          tbl.appendChild(el("div",{style:"display:grid;grid-template-columns:1fr 60px 70px 60px 70px;gap:4px;padding:3px 0;border-bottom:1px solid #0d1f12"},[
+            el("span",{style:"color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, r.room),
+            el("span",{class:"muted"}, String(r.scanners)),
+            el("span",{class:"muted"}, r.observations.toLocaleString()),
+            el("span",{class:"muted"}, r.avg_var > 0 ? r.avg_var.toFixed(1) : "\u2014"),
+            el("span",{style:`color:${sColor};font-weight:600`}, r.status),
+          ]));
+        }
+        detailDiv.appendChild(tbl);
+      }
+      // Per-scanner path-loss table
+      if(ph.per_scanner_pl && ph.per_scanner_pl.length > 0){
+        detailDiv.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin:12px 0 6px;color:#94a3b8"},"Per-Scanner Path-Loss Model"));
+        const tbl2 = el("div",{style:"font-size:11px"});
+        tbl2.appendChild(el("div",{style:"display:grid;grid-template-columns:1fr 50px 55px 45px 55px;gap:4px;padding:4px 0;border-bottom:1px solid #1e293b;font-weight:600;color:#94a3b8"},
+          ["Scanner","n","RSSI@1m","R\u00b2","Quality"].map(h=>el("span",{},h))));
+        for(const pl of ph.per_scanner_pl){
+          const qColor = pl.quality==="good"?"#52b788":pl.quality==="fair"?"#ffd54f":"#ef5350";
+          tbl2.appendChild(el("div",{style:"display:grid;grid-template-columns:1fr 50px 55px 45px 55px;gap:4px;padding:3px 0;border-bottom:1px solid #0d1f12"},[
+            el("span",{style:"color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, pl.name),
+            el("span",{class:"muted"}, pl.n.toFixed(2)),
+            el("span",{class:"muted"}, pl.rssi_1m.toFixed(1)),
+            el("span",{style:`color:${qColor};font-weight:600`}, pl.r_sq.toFixed(2)),
+            el("span",{style:`color:${qColor}`}, pl.quality),
+          ]));
+        }
+        detailDiv.appendChild(tbl2);
+      }
+      // Math explainer toggle
+      const mathToggle = el("button",{class:"btn inline",style:"margin-top:10px;font-size:11px"}, ctx.state._qaExpandedMath ? "Hide Math" : "How It Works");
+      mathToggle.addEventListener("click",()=>{
+        ctx.state._qaExpandedMath = !ctx.state._qaExpandedMath;
+        ctx.actions.renderRooms();
+      });
+      detailDiv.appendChild(mathToggle);
+      if(ctx.state._qaExpandedMath){
+        const s = ph.settings || {};
+        const mathDiv = el("div",{style:"margin-top:8px;padding:10px;background:#0a1a0d;border-radius:8px;font-size:11px;font-family:monospace;line-height:1.8;color:#94a3b8"});
+        mathDiv.innerHTML = [
+          `<b style="color:#e2e8f0">Path-Loss Formula:</b>`,
+          `  distance(m) = 10 ^ ((ref_power - rssi) / (10 \u00d7 n))`,
+          `  ref_power = <span style="color:#5eead4">${s.ref_power||"-59.0"}</span> dBm &nbsp; n = <span style="color:#5eead4">${s.path_loss_exp||"2.5"}</span>`,
+          ``,
+          `<b style="color:#e2e8f0">Gaussian Room Scoring:</b>`,
+          `  score = exp(\u2212(distance / \u03c3)\u00b2)`,
+          `  \u03c3 = <span style="color:#5eead4">${s.room_sigma_m||"4.0"}</span> metres &nbsp; At \u03c3: score=37% &nbsp; At 2\u03c3: score=2%`,
+          ``,
+          `<b style="color:#e2e8f0">Kalman Filter:</b>`,
+          `  Q = <span style="color:#5eead4">${s.kalman_q||"0.125"}</span> (process noise \u2014 higher = faster response)`,
+          `  R = <span style="color:#5eead4">${s.kalman_r||"8.0"}</span> (measurement noise \u2014 higher = more smoothing)`,
+          ``,
+          `<b style="color:#e2e8f0">Adaptive Blending:</b>`,
+          `  ${s.adaptive_enabled ? `Enabled \u2014 maturity <span style="color:#5eead4">${Math.round((s.adaptive_maturity||0)*100)}%</span> \u2014 max influence ${Math.round(Math.min(40,((s.adaptive_maturity||0)*50)))}%` : "Disabled \u2014 enable in Settings \u2192 Presence"}`,
+        ].join("<br>");
+        detailDiv.appendChild(mathDiv);
+      }
+
+      // Reset buttons
+      detailDiv.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin:14px 0 6px;color:#94a3b8"},"Data Management"));
+      const resetRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap"});
+      const resetAdBtn = el("button",{class:"btn",style:"font-size:11px;background:#991b1b;border-color:#991b1b"},"Reset Adaptive Learning");
+      resetAdBtn.addEventListener("click", async()=>{
+        if(!confirm("Clear all passively learned room fingerprints and transition patterns?\n\nManual calibration points are NOT affected.")) return;
+        resetAdBtn.disabled=true;
+        try { await ctx.actions.wsCall("padspan_ha/adaptive_reset"); ctx.toast("Adaptive learning data cleared"); ctx.actions.renderRooms(); }
+        catch(e){ ctx.toast("Reset failed",true); }
+        finally{ resetAdBtn.disabled=false; }
+      });
+      resetRow.appendChild(resetAdBtn);
+      const resetCalBtn = el("button",{class:"btn",style:"font-size:11px;background:#7f1d1d;border-color:#7f1d1d"},"Reset All Calibration");
+      resetCalBtn.addEventListener("click", async()=>{
+        const typed = prompt("This removes ALL calibration data including manual pin-and-listen points.\nThis cannot be undone.\n\nType RESET to confirm:");
+        if(typed !== "RESET") return;
+        resetCalBtn.disabled=true;
+        try { await ctx.actions.wsCall("padspan_ha/calibration_clear"); ctx.toast("All calibration data cleared"); ctx.actions.renderRooms(); }
+        catch(e){ ctx.toast("Reset failed",true); }
+        finally{ resetCalBtn.disabled=false; }
+      });
+      resetRow.appendChild(resetCalBtn);
+      detailDiv.appendChild(resetRow);
+
+      propStatusDiv.appendChild(detailDiv);
+    }
+  };
+
+  // Async load propagation health
+  _renderPropHealth(ctx.state._qaPropHealth || null);
+  (async()=>{
+    try {
+      const r = await ctx.actions.wsCall("padspan_ha/propagation_health");
+      ctx.state._qaPropHealth = r;
+      _renderPropHealth(r);
+    } catch(e){ /* best-effort */ }
+  })();
+  propCard.appendChild(propStatusDiv);
+  grid.appendChild(propCard);
+
+  // ── Data Backup & Recovery ──
+  const backupCard = el("div",{class:"card"});
+  backupCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
+    el("div",{style:"font-weight:700"},"Data Backup & Recovery"),
+    helpBtn("qa_backup"),
+  ]));
+  backupCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
+    "Create a snapshot of all PadSpan data before enabling experimental features. Restore to roll back if needed."));
+
+  const noteInp = el("input",{type:"text",placeholder:"Optional note (e.g. Before adaptive learning)",style:"flex:1;min-width:180px;padding:4px 8px;border-radius:4px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:12px"});
+  const createBkBtn = el("button",{class:"btn",style:"font-size:12px"},"Create Backup");
+  createBkBtn.addEventListener("click", async()=>{
+    createBkBtn.disabled=true; createBkBtn.textContent="Saving\u2026";
+    try {
+      const note = noteInp.value.trim();
+      await ctx.actions.wsCall("padspan_ha/store_backup_create", note ? {note} : {});
+      noteInp.value = "";
+      ctx.toast("Backup created");
+      ctx.actions.renderRooms();
+    } catch(e){ ctx.toast("Backup failed: "+String(e),true); }
+    finally{ createBkBtn.disabled=false; createBkBtn.textContent="Create Backup"; }
+  });
+  backupCard.appendChild(el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"},[noteInp, createBkBtn]));
+
+  // List backups
+  const bkListDiv = el("div",{});
+  const _renderBackups = (list) => {
+    while(bkListDiv.firstChild) bkListDiv.removeChild(bkListDiv.firstChild);
+    if(!list || list.length === 0){
+      bkListDiv.appendChild(el("div",{class:"muted",style:"font-size:12px"},"No backups yet."));
+      return;
+    }
+    for(const bk of list){
+      const dt = bk.created_at ? new Date(bk.created_at).toLocaleString() : "Unknown";
+      const row = el("div",{style:"display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #1e293b;font-size:12px"});
+      row.appendChild(el("div",{style:"flex:1"},[
+        el("div",{style:"font-weight:600;color:#e2e8f0"}, `${dt} (v${bk.version || "?"})`),
+        bk.note ? el("div",{class:"muted",style:"font-size:11px"}, bk.note) : null,
+      ].filter(Boolean)));
+      const restoreBtn = el("button",{class:"btn inline",style:"font-size:11px"},"Restore");
+      restoreBtn.addEventListener("click", async()=>{
+        if(!confirm("Restore this backup? This will overwrite all current PadSpan data.")) return;
+        restoreBtn.disabled=true;
+        try { await ctx.actions.wsCall("padspan_ha/store_backup_restore", {backup_id: bk.id}); ctx.toast("Backup restored — reloading"); setTimeout(()=>location.reload(), 1500); }
+        catch(e){ ctx.toast("Restore failed",true); restoreBtn.disabled=false; }
+      });
+      const delBtn = el("button",{class:"btn inline",style:"font-size:11px;color:#ef5350"},"Delete");
+      delBtn.addEventListener("click", async()=>{
+        if(!confirm("Delete this backup?")) return;
+        try { await ctx.actions.wsCall("padspan_ha/store_backup_delete", {backup_id: bk.id}); ctx.toast("Backup deleted"); ctx.actions.renderRooms(); }
+        catch(e){ ctx.toast("Delete failed",true); }
+      });
+      row.appendChild(restoreBtn);
+      row.appendChild(delBtn);
+      bkListDiv.appendChild(row);
+    }
+  };
+  _renderBackups(null);
+  (async()=>{
+    try {
+      const r = await ctx.actions.wsCall("padspan_ha/store_backup_list");
+      _renderBackups((r && r.backups) || []);
+    } catch(e){ /* best-effort */ }
+  })();
+  backupCard.appendChild(bkListDiv);
+  grid.appendChild(backupCard);
+
   // ── Radio Analysis ──
   const radioCard = el("div",{class:"card"});
   radioCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
@@ -290,7 +550,133 @@ export function render(ctx){
       };
     });
 
-    analyses.sort((a,b) => a.healthOrder - b.healthOrder);
+    // ── Compute ranking scores per radio ──
+
+    // Build per-device RSSI map: { address → { source → rssi } }
+    const deviceRssiMap = {};
+    for(const ad of ads){
+      if(ad.rssi == null) continue;
+      if(!deviceRssiMap[ad.address]) deviceRssiMap[ad.address] = {};
+      // Keep best (highest) RSSI per source for each device
+      const cur = deviceRssiMap[ad.address][ad.source||""];
+      if(cur == null || ad.rssi > cur) deviceRssiMap[ad.address][ad.source||""] = ad.rssi;
+    }
+
+    // Hardware Score: compare shared-device RSSI across radios
+    // For each radio, compute mean RSSI delta vs each neighbor for shared devices
+    const hwDeltas = {}; // src → array of deltas (positive = reads stronger)
+    for(const a of analyses){
+      hwDeltas[a.src] = [];
+      const myDevSet = radioDevSets[a.src] || new Set();
+      for(const a2 of analyses){
+        if(a2.src === a.src) continue;
+        const otherDevSet = radioDevSets[a2.src] || new Set();
+        const deltas = [];
+        for(const addr of myDevSet){
+          if(!otherDevSet.has(addr)) continue;
+          const myR = (deviceRssiMap[addr]||{})[a.src];
+          const thR = (deviceRssiMap[addr]||{})[a2.src];
+          if(myR != null && thR != null) deltas.push(myR - thR);
+        }
+        if(deltas.length >= 2){
+          const avg = deltas.reduce((s,v)=>s+v,0) / deltas.length;
+          hwDeltas[a.src].push(avg);
+        }
+      }
+    }
+    // Compute raw hardware score: mean of mean deltas (higher = better antenna)
+    const hwRaw = {};
+    for(const a of analyses){
+      const d = hwDeltas[a.src];
+      hwRaw[a.src] = d.length > 0 ? d.reduce((s,v)=>s+v,0) / d.length : 0;
+    }
+    // Normalize to 0-100: best = 100, worst = scaled
+    const hwVals = analyses.map(a=>hwRaw[a.src]);
+    const hwMin = Math.min(...hwVals), hwMax = Math.max(...hwVals);
+    const hwRange = hwMax - hwMin || 1;
+
+    // Coverage Score: breadth of device overlap + unique reach
+    const covRaw = {};
+    const maxDevices = Math.max(1, ...analyses.map(a=>a.totalDevices));
+    for(const a of analyses){
+      // Count distinct other scanners this radio shares devices with
+      const overlapPartners = a.overlaps.length;
+      const maxPartners = Math.max(1, analyses.length - 1);
+      const overlapBreadth = overlapPartners / maxPartners; // 0-1
+      const deviceBreadth = a.totalDevices / maxDevices;    // 0-1
+      const uniqueBonus = a.uniqueDevices / Math.max(1, a.totalDevices); // 0-1
+      covRaw[a.src] = Math.round((overlapBreadth * 35 + deviceBreadth * 50 + uniqueBonus * 15));
+    }
+
+    // Reliability Score: freshness + consistency + wifi + scanning
+    const relRaw = {};
+    for(const a of analyses){
+      let score = 0;
+      const r = a.radio;
+      // Freshness (0-35): fresher = better
+      if(a.freshestAge != null){
+        if(a.freshestAge < 5) score += 35;
+        else if(a.freshestAge < 15) score += 28;
+        else if(a.freshestAge < 30) score += 20;
+        else if(a.freshestAge < 60) score += 10;
+      }
+      // RSSI spread (0-25): lower spread = more consistent
+      if(a.strongestRssi != null && a.weakestRssi != null){
+        const spread = a.strongestRssi - a.weakestRssi;
+        if(spread < 20) score += 25;
+        else if(spread < 35) score += 18;
+        else if(spread < 50) score += 10;
+        else score += 5;
+      }
+      // WiFi signal (0-20): stronger = better, wired = perfect
+      if(r.connection_type === "wired") score += 20;
+      else if(r.wifi_signal != null){
+        if(r.wifi_signal >= -45) score += 20;
+        else if(r.wifi_signal >= -55) score += 15;
+        else if(r.wifi_signal >= -65) score += 10;
+        else if(r.wifi_signal >= -75) score += 5;
+      }
+      // Scanning status (0-20)
+      if(r.scanning && !r.lost && !r.disabled) score += 20;
+      else if(r.scanning) score += 10;
+      relRaw[a.src] = score;
+    }
+
+    // Assign scores to each analysis entry
+    for(const a of analyses){
+      a.hwScore = Math.round(50 + (hwRaw[a.src] - (hwMin + hwMax)/2) / hwRange * 100);
+      a.hwScore = Math.max(0, Math.min(100, a.hwScore));
+      a.hwDelta = hwRaw[a.src]; // raw dBm delta for display
+      a.covScore = covRaw[a.src];
+      a.relScore = relRaw[a.src];
+      // Overall: Hardware 40% + Coverage 30% + Reliability 30%
+      a.overallScore = Math.round(a.hwScore * 0.4 + a.covScore * 0.3 + a.relScore * 0.3);
+      // Sink unhealthy radios regardless of score
+      if(a.health === "Unhealthy") a.overallScore = Math.min(a.overallScore, 10);
+    }
+
+    // Sort by overall score descending (best first), unhealthy last
+    analyses.sort((a,b) => {
+      if(a.health === "Unhealthy" && b.health !== "Unhealthy") return 1;
+      if(b.health === "Unhealthy" && a.health !== "Unhealthy") return -1;
+      return b.overallScore - a.overallScore;
+    });
+
+    // Assign rank
+    analyses.forEach((a,i) => { a.rank = i + 1; });
+    const medals = ["\uD83E\uDD47", "\uD83E\uDD48", "\uD83E\uDD49"]; // gold, silver, bronze
+
+    // Score bar helper
+    const _scoreBar = (label, value, color) => el("div",{style:"margin-bottom:6px"},[
+      el("div",{style:"display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px"},[
+        el("span",{class:"muted"}, label),
+        el("span",{style:`font-weight:600;color:${color}`}, `${value}/100`),
+      ]),
+      el("div",{style:"background:#1e293b;border-radius:3px;height:5px;overflow:hidden"},[
+        el("div",{style:`width:${value}%;height:100%;background:${color};border-radius:3px;transition:width .3s`}),
+      ]),
+    ]);
+    const _scoreColor = (v) => v >= 75 ? "#52b788" : v >= 50 ? "#38bdf8" : v >= 30 ? "#ffd54f" : "#ef5350";
 
     // Expand state persists across 5s re-renders
     if(!ctx.state._qaExpandedRadios) ctx.state._qaExpandedRadios = new Set();
@@ -309,18 +695,24 @@ export function render(ctx){
       const borderCol = a.health==="Unhealthy" ? "#7f1d1d" : a.health==="Fair" ? "#5c4b1f" : "#1a4228";
       const bgCol = a.health==="Unhealthy" ? "#1a0a0a" : a.health==="Fair" ? "#1a1808" : "#0f1a12";
 
-      // Collapsed summary row — 2 lines: name row + metrics row
+      // Collapsed summary row — 3 lines: rank + name, metrics, score
       const summary = el("div",{style:`padding:8px 10px;cursor:pointer;border-radius:${isOpen?"8px 8px 0 0":"8px"};border:1px solid ${borderCol};background:${bgCol}`});
 
-      // Line 1: arrow + health icon + SID + name
+      // Line 1: arrow + rank badge + health icon + SID + name + overall score
       const nameLink = el("span",{style:"font-weight:600;color:#e2e8f0;cursor:pointer;text-decoration:underline;text-decoration-style:dotted"}, esc(r.name || r.source));
       nameLink.addEventListener("click", (ev)=>{ ev.stopPropagation(); ctx.actions.showScannerDetail(r); });
+      const medal = a.rank <= 3 ? medals[a.rank-1] : "";
+      const rankBadge = el("span",{style:"font-weight:800;font-size:12px;color:#94a3b8;flex-shrink:0;min-width:32px"}, `#${a.rank}`);
+      const scoreBadge = el("span",{style:`font-size:11px;font-weight:700;color:${_scoreColor(a.overallScore)};background:${_scoreColor(a.overallScore)}18;padding:1px 6px;border-radius:4px;flex-shrink:0`}, `${a.overallScore}/100`);
       summary.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px"},[
         el("span",{style:`font-size:10px;color:#94a3b8;flex-shrink:0;transition:transform .15s;transform:rotate(${isOpen?"90":"0"}deg)`}, "\u25B6"),
+        rankBadge,
+        medal ? el("span",{style:"font-size:14px;flex-shrink:0"}, medal) : null,
         el("span",{style:"flex-shrink:0;font-size:14px"}, a.healthIcon),
         el("span",{class:"pill",style:"font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px;flex-shrink:0"}, _sid(a.src)),
         nameLink,
-      ]));
+        scoreBadge,
+      ].filter(Boolean)));
 
       // Line 2: metrics + health badge + reason
       const metricsLine = [
@@ -343,6 +735,32 @@ export function render(ctx){
       // Expanded detail panel
       if(isOpen){
         const detail = el("div",{style:`padding:10px 12px;border:1px solid ${borderCol};border-top:none;border-radius:0 0 8px 8px;background:#091209`});
+
+        // ── Performance Ranking ──
+        detail.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin-bottom:8px;color:#94a3b8"},"Performance Ranking"));
+        const rankGrid = el("div",{style:"margin-bottom:12px"});
+        const hwLabel = a.hwDelta > 0 ? `reads ${a.hwDelta.toFixed(1)} dBm stronger than neighbors` : a.hwDelta < 0 ? `reads ${Math.abs(a.hwDelta).toFixed(1)} dBm weaker than neighbors` : "comparable to neighbors";
+        rankGrid.appendChild(_scoreBar(`Hardware \u2014 ${hwLabel}`, a.hwScore, _scoreColor(a.hwScore)));
+        rankGrid.appendChild(_scoreBar(`Coverage \u2014 ${a.totalDevices} devices, ${a.overlaps.length} neighbor${a.overlaps.length!==1?"s":""}`, a.covScore, _scoreColor(a.covScore)));
+        rankGrid.appendChild(_scoreBar(`Reliability \u2014 ${a.freshestAge!=null?Math.round(a.freshestAge)+"s fresh":"no ads"}`, a.relScore, _scoreColor(a.relScore)));
+        rankGrid.appendChild(el("div",{style:"display:flex;justify-content:space-between;align-items:center;margin-top:6px;padding-top:6px;border-top:1px solid #1e293b"},[
+          el("span",{style:"font-weight:700;font-size:12px;color:#e2e8f0"}, "Overall"),
+          el("span",{style:`font-weight:800;font-size:14px;color:${_scoreColor(a.overallScore)}`}, `${a.overallScore}/100`),
+        ]));
+        // Hardware insight note
+        if(hwDeltas[a.src].length > 0){
+          const bestNeighbor = analyses.find(x => x.src !== a.src && x.rank === 1);
+          if(bestNeighbor && a.src !== bestNeighbor.src){
+            const delta = hwRaw[a.src] - hwRaw[bestNeighbor.src];
+            if(Math.abs(delta) >= 2){
+              const note = delta > 0
+                ? `This radio's hardware outperforms ${esc(bestNeighbor.radio.name||bestNeighbor.src)} by ~${Math.abs(delta).toFixed(1)} dBm on average for shared devices, suggesting a better antenna or Bluetooth chipset.`
+                : `${esc(bestNeighbor.radio.name||bestNeighbor.src)} outperforms this radio by ~${Math.abs(delta).toFixed(1)} dBm on shared devices \u2014 may have a better antenna or chipset.`;
+              rankGrid.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-top:4px;font-style:italic"}, note));
+            }
+          }
+        }
+        detail.appendChild(rankGrid);
 
         // Identity & Network
         detail.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin-bottom:6px;color:#94a3b8"},"Identity & Network"));

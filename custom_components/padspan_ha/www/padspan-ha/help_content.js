@@ -202,18 +202,55 @@ export const HELP = {
       "QA runs automated health checks on your PadSpan setup and highlights anything that needs attention.",
       "Config Health — seven pass/fail checks covering maps, rooms, scanners, BLE feed, tagging, and snapshot availability. Failed checks include a fix suggestion.",
       "Data Consistency — detects orphaned objects, unmapped scanners, and rooms without scanner coverage. Click any item to see its detail.",
+      "Propagation Health — grades your radio propagation model (A through F) based on room coverage, distance accuracy, fingerprint stability, and floor separation. Click 'More Detail' for per-room and per-scanner breakdowns with improvement recommendations. 'How It Works' shows the underlying math.",
+      "Data Backup & Recovery — create snapshots of all PadSpan data before enabling experimental features. Restore to roll back if needed. Up to 3 backups are kept.",
       "Quick Actions — refresh the snapshot, export the full panel state as JSON for debugging, or jump to diagnostics.",
     ],
   },
 
-  qa_radio_analysis: {
-    title: "Radio Analysis — Per-scanner health check",
+  qa_propagation: {
+    title: "Propagation Health — Model quality analysis",
     body: [
-      "Radio Analysis shows a detailed health report for every Bluetooth scanner (radio) in your system.",
-      "Each row shows the scanner\u2019s short ID badge, name, device count, average signal strength, and a health verdict (Healthy / Degraded / Unhealthy). Scanners with problems are listed first.",
-      "Click any row to expand it and see full details: IP address, WiFi signal, connection type, area assignment, activity metrics (RSSI range, advertisement freshness), and cross-scanner overlap analysis.",
-      "Cross-scanner overlap shows which scanners share the most devices \u2014 scanners that share many devices are likely physically close. Unique device count identifies isolated scanners.",
+      "Propagation Health analyses the quality of PadSpan's underlying radio model \u2014 the math that converts signal strength (RSSI) into room assignments.",
+      "The overall grade (A\u2013F) combines four sub-indicators: Model Coverage (% of rooms with learned fingerprints), Distance Accuracy (cross-validation error from calibration data), Fingerprint Stability (variance in adaptive room models), and Floor Separation (signal attenuation between floors).",
+      "Click 'More Detail' to see per-room fingerprint quality (how many observations each room has, variance, and stability status) and per-scanner path-loss models (exponent, RSSI@1m, R\u00b2 fit quality).",
+      "Improvement recommendations are generated automatically: rooms that need more data, scanners with poor path-loss fits, suggestions to enable adaptive learning or add calibration points.",
+      "'How It Works' shows the actual formulas and current parameter values: path-loss distance calculation, Gaussian room scoring, Kalman filter settings, and adaptive blending weight.",
+      "Reset buttons at the bottom let you clear adaptive learning data (keeps manual calibration) or clear all calibration data (requires typing RESET to confirm).",
+    ],
+  },
+
+  qa_backup: {
+    title: "Data Backup & Recovery",
+    body: [
+      "The backup system lets you create a full snapshot of all PadSpan configuration and learned data before making changes.",
+      "Each backup captures: settings, calibration points, adaptive learning fingerprints, object tags, model data, map metadata, movement history, and follow alert configs.",
+      "Up to 3 backups are stored. Creating a 4th automatically removes the oldest. Each backup shows its timestamp, version, and optional note.",
+      "Click 'Restore' to overwrite all current data with a backup. The page reloads automatically after restore. Click 'Delete' to remove a backup you no longer need.",
+      "Recommended workflow: create a backup before enabling adaptive learning, before major calibration changes, or before upgrading PadSpan.",
+    ],
+  },
+
+  qa_radio_analysis: {
+    title: "Radio Analysis — Per-scanner ranking & health",
+    body: [
+      "Radio Analysis ranks every Bluetooth scanner by overall quality, combining three scores: Hardware (40%), Coverage (30%), and Reliability (30%).",
+      "Hardware Score isolates radio hardware quality from placement. It compares per-device RSSI across scanners that share the same devices \u2014 a radio that consistently reads higher RSSI for shared devices has a better antenna or Bluetooth chipset.",
+      "Coverage Score measures how many devices the scanner sees and how many other scanners it overlaps with. High coverage means the scanner reaches broadly across your home.",
+      "Reliability Score combines advertisement freshness, RSSI consistency (spread), WiFi signal strength (or wired bonus), and scanning status.",
+      "Scanners are sorted by overall score (best first) with medal badges for the top 3. Click any row to expand and see the full score breakdown with comparison notes.",
       "Click a scanner\u2019s name to open the full scanner detail modal with per-device signal bars and area controls.",
+    ],
+  },
+
+  qa_radio_ranking: {
+    title: "Understanding radio ranking scores",
+    body: [
+      "The ranking system helps you identify which radios have the best hardware versus which are just well-placed.",
+      "Hardware Score (0\u2013100): For each pair of radios that share devices, PadSpan compares the RSSI each radio reads for those same devices. A radio that consistently reads stronger signals has better hardware. Score 50 = average; higher = better antenna/chipset.",
+      "Coverage Score (0\u2013100): Combines device count (how many devices seen), overlap breadth (how many other scanners share devices), and unique reach (devices only seen by this scanner).",
+      "Reliability Score (0\u2013100): Freshness of latest advertisement (up to 35 pts), RSSI spread consistency (up to 25 pts), WiFi signal or wired connection (up to 20 pts), and scanning status (up to 20 pts).",
+      "The comparison note in expanded detail tells you exactly how much stronger or weaker a radio reads compared to the top-ranked radio, in dBm. A 3\u20135 dBm difference is noticeable; 6+ dBm suggests meaningfully different hardware.",
     ],
   },
 
