@@ -8,6 +8,33 @@ This guide walks you through your first 30 minutes with PadSpan — from install
 - At least **one BLE scanner** (ESP32 Bluetooth Proxy, ESPresense, or built-in HA Bluetooth)
 - HACS installed (recommended)
 
+## Choosing Scanner Hardware
+
+PadSpan's goal is placing devices in the correct room on your floor plan — not just home/away. That's a harder problem, and hardware matters more than you'd think.
+
+I started with about a dozen old ESP32 boards from a project three years ago and ordered 10 more for testing. Most of the old boards made poor BLE scanners — noisy, inconsistent signal readings. The few that had decent antennas worked OK, which is what narrowed it down: **the antenna is the thing that matters**, more than the chip.
+
+### What worked (ranked)
+
+1. **ESP32-S3 with Ethernet (LAN) port + external antenna** — The wired connection means no WiFi radio competing with BLE scanning. Honestly it didn't test noticeably better than WiFi, but for a permanent always-on scanner it feels like the right call.
+2. **ESP32-S3 with external antenna (WiFi)** — Probably the most practical option for most people. Great BLE 5.0 support, no need to run Ethernet to every room.
+3. **ESP32-C3 with external antenna** — Cheaper than the S3 and still performed well for room-level tracking.
+
+### What to look for
+
+- **IPEX / u.FL antenna connector** with an included 2.4 GHz antenna
+- **ESP32-S3 or ESP32-C3** chip (newer BLE 5.0 support)
+- Any board running **ESPresense** or **Bluetooth Proxy** firmware
+
+### What to avoid
+
+- **Onboard chip/PCB antennas only** — the tiny antennas on most dev boards produce noisy RSSI readings that make room discrimination unreliable
+- **Older ESP32 boards** (not S3/C3) with no external antenna — fine as basic Bluetooth proxies or for home/away, but too inconsistent for room-level accuracy
+
+### Why the antenna matters
+
+Home/away just needs to see *any* signal from *any* scanner — easy. Room-level tracking needs to reliably tell which scanner is closest, and sometimes the difference is only 7 dBm. A noisy chip antenna can flip that decision randomly. A full-size external antenna keeps the readings consistent enough for PadSpan to get the room right.
+
 ## Step 1: Install
 
 ### Via HACS (recommended)

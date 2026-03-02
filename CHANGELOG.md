@@ -4,6 +4,23 @@ All notable changes to PadSpan HA are documented here.
 
 ---
 
+## 0.5.91 — Hardware Guide & Cleanup (2026-03-01)
+
+### Added
+- **Scanner Hardware walkthrough** — New Training Hub walkthrough with animated SVGs covering antenna comparison, board recommendations, and why room-level tracking demands better hardware than home/away
+- **Scanner Hardware manual section** — Detailed reference in Training Hub manual with tested board recommendations (ESP32-S3 + Ethernet, ESP32-S3 + WiFi, ESP32-C3 — all with external antennas)
+- Hardware guidance added to Getting Started guide and README
+- `.gitignore` updated to exclude dev artifacts
+
+### Fixed
+- `esc is not defined` error in Settings → Scanner Map (`_scannerMap()` function was missing `ctx.helpers.esc`)
+- SVG XSS hardening in demo floor plan builder (room/radio/object names now escaped)
+
+### Removed
+- 21 legacy doc files (old v0.3.x install notes, placeholders, duplicates)
+
+---
+
 ## 0.5.88 — Beta Launch Prep (2026-02-28)
 
 ### Added
