@@ -864,9 +864,9 @@ function _svgAntennaComparison() {
 <circle class="bp" cx="100" cy="82" fill="none" stroke="#ef4444" stroke-width="1" r="12"/>
 <text x="100" y="122" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">RSSI: −78 to −91 dBm</text>
 <text x="100" y="138" text-anchor="middle" fill="#ef4444" font-size="9" font-family="system-ui">Inconsistent signal</text>
-<text x="100" y="158" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">OK for home/away</text>
+<text x="100" y="158" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Fine for home/away</text>
 <text x="100" y="174" text-anchor="middle" fill="#ef4444" font-size="9" font-family="system-ui">Poor for room tracking</text>
-<text x="100" y="198" text-anchor="middle" fill="#4a6052" font-size="8" font-family="system-ui">Old ESP32 boards</text>
+<text x="100" y="198" text-anchor="middle" fill="#4a6052" font-size="8" font-family="system-ui">Most of the old boards</text>
 <rect x="220" y="28" width="160" height="180" rx="8" fill="#0d2318" stroke="#52b788" stroke-width="1.5"/>
 <text x="300" y="48" text-anchor="middle" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">External Antenna</text>
 <rect x="268" y="62" width="64" height="40" rx="4" fill="#1b3526" stroke="#52b788" stroke-width="1.5"/>
@@ -892,27 +892,27 @@ function _svgBoardRanking() {
 .r2{animation:slideIn 0.4s ease-out 0.2s both}
 .r3{animation:slideIn 0.4s ease-out 0.4s both}
 </style>
-<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Recommended boards (tested with 20+ units)</text>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">What worked (a dozen old boards + 10 new)</text>
 <g class="r1">
 <rect x="20" y="28" width="360" height="50" rx="6" fill="#0d2318" stroke="#52b788" stroke-width="1.5"/>
 <rect x="26" y="34" width="22" height="22" rx="11" fill="#52b788"/>
 <text x="37" y="50" text-anchor="middle" fill="#071008" font-size="12" font-weight="700" font-family="system-ui">1</text>
 <text x="58" y="48" fill="#52b788" font-size="10" font-weight="700" font-family="system-ui">ESP32-S3 + Ethernet + External Antenna</text>
-<text x="58" y="64" fill="#4a6052" font-size="8.5" font-family="system-ui">Wired = no WiFi interference · Best stability for always-on scanners</text>
+<text x="58" y="64" fill="#4a6052" font-size="8.5" font-family="system-ui">Wired = no WiFi interference · Didn't test better, but best in theory</text>
 </g>
 <g class="r2">
 <rect x="20" y="88" width="360" height="50" rx="6" fill="#0d2318" stroke="#43a047" stroke-width="1.5"/>
 <rect x="26" y="94" width="22" height="22" rx="11" fill="#43a047"/>
 <text x="37" y="110" text-anchor="middle" fill="#071008" font-size="12" font-weight="700" font-family="system-ui">2</text>
 <text x="58" y="108" fill="#43a047" font-size="10" font-weight="700" font-family="system-ui">ESP32-S3 + External Antenna (WiFi)</text>
-<text x="58" y="124" fill="#4a6052" font-size="8.5" font-family="system-ui">Excellent BLE 5.0 · Most practical for most setups</text>
+<text x="58" y="124" fill="#4a6052" font-size="8.5" font-family="system-ui">Great BLE 5.0 · Most practical pick for most people</text>
 </g>
 <g class="r3">
 <rect x="20" y="148" width="360" height="50" rx="6" fill="#0a150e" stroke="#2a5038" stroke-width="1.5"/>
 <rect x="26" y="154" width="22" height="22" rx="11" fill="#2a5038"/>
 <text x="37" y="170" text-anchor="middle" fill="#52b788" font-size="12" font-weight="700" font-family="system-ui">3</text>
 <text x="58" y="168" fill="#94a3b8" font-size="10" font-weight="700" font-family="system-ui">ESP32-C3 + External Antenna</text>
-<text x="58" y="184" fill="#4a6052" font-size="8.5" font-family="system-ui">Budget-friendly · Good BLE 5.0 · Solid with a proper antenna</text>
+<text x="58" y="184" fill="#4a6052" font-size="8.5" font-family="system-ui">Cheaper than the S3 · Good BLE 5.0 · Still did the job well</text>
 </g>
 <text x="200" y="215" text-anchor="middle" fill="#4a6052" font-size="8.5" font-family="system-ui">All three use ESPresense or Bluetooth Proxy firmware</text>
 </svg>`;
@@ -966,11 +966,11 @@ const WALKTHROUGHS = [
     id: "scanner_hardware",
     title: "Choosing Scanner Hardware",
     icon: "🔧",
-    summary: "Which ESP32 boards and antennas actually work for room-level tracking — tested with 20+ units.",
+    summary: "Real-world testing with 20+ ESP32 boards — what actually works for room-level tracking and what doesn't.",
     steps: [
-      { title: "The Antenna Makes the Difference",            text: "After testing over 20 ESP32 boards, the single biggest factor for accurate room-level tracking was antenna quality — not the chip variant. Older ESP32 boards with tiny onboard chip antennas produced noisy, inconsistent RSSI readings. The same rooms showed wildly different signal strengths from one scan to the next, making reliable room discrimination nearly impossible. Swapping to boards with a full-size external antenna immediately improved consistency.", svg: _svgAntennaComparison },
-      { title: "Recommended Boards",                          text: "Three boards stood out in testing. First: an ESP32-S3 with an Ethernet (LAN) port and external antenna — the wired connection eliminates WiFi radio interference, making it theoretically the cleanest BLE listener. Second: an ESP32-S3 with WiFi and an external antenna — the most practical option for most homes. Third: an ESP32-C3 with an external antenna — a budget-friendly alternative with solid BLE 5.0 support. All three produced stable, room-accurate readings.", svg: _svgBoardRanking },
-      { title: "Why Room Tracking Is Harder Than Home/Away",   text: "Basic home/away detection just needs to see any signal from any scanner — the bar is low. Room-level tracking needs to reliably tell which scanner has the strongest signal, and by how much. A 7 dBm difference between two scanners decides which room gets assigned. Chip antennas introduce enough noise to flip that decision randomly. A proper external antenna keeps readings stable enough for PadSpan to make the right call consistently.", svg: _svgAntennaDetail },
+      { title: "The Antenna Makes the Difference",            text: "I had about a dozen old ESP32 boards kicking around from a project three years ago, and ordered 10 more specifically for testing. The old boards made OK BLE scanners when they happened to have a decent antenna, but most were poor. The signal readings jumped around too much from scan to scan — a room that read −62 one moment would read −78 the next. Swapping to boards with a full-size external antenna was the single biggest improvement. The chip matters way less than the antenna.", svg: _svgAntennaComparison },
+      { title: "Three Boards That Worked",                    text: "Out of everything I tested, three setups stood out. First: an ESP32-S3 with a LAN (Ethernet) port and an external antenna — I'll be honest, this one didn't actually test better than the WiFi version, but the theory is sound (no WiFi radio competing with BLE) and it's the one I'd pick for a permanent install. Second: an ESP32-S3 with WiFi and a full-size antenna — this is probably the most practical choice for most people. Third: an ESP32-C3 with a full-size antenna — cheaper, and it still did the job well.", svg: _svgBoardRanking },
+      { title: "Why Room Tracking Is Harder Than Home/Away",   text: "Getting a device's room right on a map is genuinely challenging. Home/away just needs to see any signal from any scanner — easy. Room-level tracking needs to reliably tell which scanner is closest, and sometimes the difference is only 7 dBm. A noisy chip antenna can flip that decision randomly. The whole point of PadSpan is placing devices in the correct room on a floor plan, and that only works when the signal readings are consistent enough to trust.", svg: _svgAntennaDetail },
     ],
   },
   {
@@ -1179,13 +1179,11 @@ const MANUAL_SECTIONS = [
     title: "Scanner Hardware",
     icon: "🔧",
     paragraphs: [
-      "Room-level BLE tracking is more demanding than basic home/away detection. The scanner hardware you choose — especially the antenna — has a direct impact on tracking accuracy.",
-      "The antenna matters most. After testing over 20 ESP32 boards (a mix of older boards and newer purchases), the single biggest factor was whether the board had a full-size external antenna or just an onboard chip/PCB antenna. Chip antennas produced noisy RSSI readings that made room discrimination unreliable. External antennas gave consistent, stable readings that PadSpan could use for accurate room assignment.",
-      "Recommended: ESP32-S3 with Ethernet port and external antenna — a wired connection eliminates WiFi radio interference with BLE scanning. This is the cleanest option for always-on scanners, though in practice it performed similarly to WiFi-connected boards with good antennas.",
-      "Recommended: ESP32-S3 with external antenna (WiFi) — excellent BLE 5.0 support and the most practical choice for most setups. No need to run Ethernet to every room.",
-      "Recommended: ESP32-C3 with external antenna — a budget-friendly option with good BLE 5.0 support. Performs well for room-level tracking when paired with a proper antenna.",
-      "What to avoid: original ESP32 boards (not S3 or C3) with only a chip antenna. These are fine for simple Bluetooth proxies and home/away detection, but the inconsistent signal readings make accurate room assignment difficult.",
-      "Whatever board you choose, look for an IPEX or u.FL antenna connector and use the included 2.4 GHz antenna. The chip matters less than the antenna — a C3 with a good antenna outperforms an S3 with a chip antenna every time.",
+      "PadSpan's goal isn't just home/away — it's putting devices in the right room on your floor plan. That's a harder problem, and the hardware you use matters more than you'd think.",
+      "I started with about a dozen old ESP32 boards left over from a project three years ago, and ordered 10 more for testing. Most of the old boards made poor BLE scanners — the signal readings were noisy and inconsistent, especially the ones with only a tiny chip antenna on the PCB. A few that had decent antennas worked OK, which is what clued me in: the antenna is the thing that matters.",
+      "Three setups worked well. First: an ESP32-S3 with an Ethernet (LAN) port and a full-size external antenna. Being honest, this didn't test noticeably better than WiFi — but the theory is that a wired connection means no WiFi radio competing with BLE scanning, and for a permanent always-on scanner that seems like the right call. Second: an ESP32-S3 with WiFi and a full-size antenna. This is probably the most practical option for most people — great BLE 5.0 support, no need to run Ethernet to every room. Third: an ESP32-C3 with a full-size antenna. Cheaper than the S3, and it still performed well for room-level tracking.",
+      "What to avoid: older ESP32 boards (not S3 or C3) with only an onboard chip antenna. They'll work fine for simple home/away detection or as basic Bluetooth proxies, but the RSSI readings are too inconsistent for reliable room assignment.",
+      "Whatever board you go with, look for an IPEX or u.FL antenna connector and use the included 2.4 GHz antenna. A C3 with a good antenna will outperform an S3 with a chip antenna every time — the antenna matters more than the chip.",
     ],
   },
   {
