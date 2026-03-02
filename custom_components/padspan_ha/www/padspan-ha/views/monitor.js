@@ -110,13 +110,13 @@ export function render(ctx){
       if(ad.rssi != null){ scannerData[src].rssiSum += ad.rssi; scannerData[src].rssiCount++; }
     }
 
-    const tbl = el("table",{style:"width:100%;font-size:12px;border-collapse:collapse"});
+    const tbl = el("table",{style:"width:100%;font-size:12px;border-collapse:collapse;table-layout:fixed"});
     tbl.appendChild(el("tr",{},[
-      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600"},"ID"),
-      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600"},"Scanner"),
-      el("th",{style:"text-align:right;padding:4px 6px;color:#94a3b8;font-weight:600"},"Devices"),
-      el("th",{style:"text-align:right;padding:4px 6px;color:#94a3b8;font-weight:600"},"Avg RSSI"),
-      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600"},"Quality"),
+      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600;width:15%"},"ID"),
+      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600;width:35%;overflow:hidden;text-overflow:ellipsis"},"Scanner"),
+      el("th",{style:"text-align:right;padding:4px 6px;color:#94a3b8;font-weight:600;width:14%"},"Devices"),
+      el("th",{style:"text-align:right;padding:4px 6px;color:#94a3b8;font-weight:600;width:16%"},"Avg RSSI"),
+      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600;width:20%"},"Quality"),
     ]));
     for(const [src, st] of Object.entries(scannerData).sort((a,b)=>b[1].devs-a[1].devs)){
       const avg = st.rssiCount > 0 ? Math.round(st.rssiSum / st.rssiCount) : null;
@@ -133,17 +133,19 @@ export function render(ctx){
       tr.addEventListener("click", ()=>{
         if(st.radio) ctx.actions.showScannerDetail(st.radio);
       });
-      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em"}, _sid(src)));
-      tr.appendChild(el("td",{style:"padding:4px 6px"}, st.name));
+      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, _sid(src)));
+      tr.appendChild(el("td",{style:"padding:4px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, st.name));
       tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right"}, String(st.devs)));
       tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "\u2014"));
       tr.appendChild(el("td",{style:`padding:4px 6px;color:${qColor};font-weight:600`}, quality));
       tbl.appendChild(tr);
     }
-    grid.appendChild(el("div",{class:"card"},[
-      el("div",{style:"font-weight:700;margin-bottom:8px"},"Per-Scanner Breakdown"),
-      tbl,
-    ]));
+    const tblWrap = el("div",{style:"overflow-x:auto"});
+    tblWrap.appendChild(tbl);
+    const scannerCard = el("div",{class:"card",style:"grid-column:1/-1"});
+    scannerCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:8px"},"Per-Scanner Breakdown"));
+    scannerCard.appendChild(tblWrap);
+    grid.appendChild(scannerCard);
   }
 
   // ── Advertisement Freshness ──

@@ -676,7 +676,7 @@ export function render(ctx){
     }
     const LEGEND_H = sortedIsoLevels.length * 30 + 24;
 
-    if(ctx.state._overviewPersistentPins === undefined) ctx.state._overviewPersistentPins = false;
+    if(ctx.state._overviewPersistentPins === undefined) ctx.state._overviewPersistentPins = !!(ctx.state.settings && ctx.state.settings.overview_persistent_pins);
 
     const buildIsoSVG = (focusZ)=>{
       const slabWZ = 18/_ovFG;
@@ -845,7 +845,8 @@ export function render(ctx){
       }
 
       // Persistent pins + unlabeled objects with known room positions.
-      // Labeled away = red crosshair, labeled active = teal dot, unlabeled = dim amber dot.
+      // When persistent ON: show ALL objects at their last known room (away = red crosshair, active = teal dot).
+      // When persistent OFF: only unlabeled objects shown as dim amber dots.
       {
         const _mapObjs = allObjects.filter(o =>
           o.room && o.room !== "unknown" && o.room !== "not_home" && roomIsoPos[o.room] &&
@@ -866,30 +867,32 @@ export function render(ctx){
           const py = Math.round(pos[1] + offY);
           const _ok = _esc(oKey);
           const isAway = typeof obj.age_s === "number" && obj.age_s > 30;
-          const hasLabel = !!obj.user_label;
+          const objLabel = obj.user_label || obj.name || "";
 
-          if(hasLabel && isAway && ctx.state._overviewPersistentPins){
-            // Red crosshair for labeled away objects (persistent mode)
-            s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.92">`;
-            s += `<circle cx="${px}" cy="${py}" r="20" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
-            s += `<circle cx="${px}" cy="${py}" r="11" fill="none" stroke="#ef4444" stroke-width="2"/>`;
-            s += `<circle cx="${px}" cy="${py}" r="4" fill="#ef4444"/>`;
-            s += `<line x1="${px-25}" y1="${py}" x2="${px-13}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
-            s += `<line x1="${px+13}" y1="${py}" x2="${px+25}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
-            s += `<line x1="${px}" y1="${py-25}" x2="${px}" y2="${py-13}" stroke="#ef4444" stroke-width="1.5"/>`;
-            s += `<line x1="${px}" y1="${py+13}" x2="${px}" y2="${py+25}" stroke="#ef4444" stroke-width="1.5"/>`;
-            s += `<text x="${px}" y="${py+36}" text-anchor="middle" fill="#fca5a5" font-size="9" font-weight="600">${_esc(obj.user_label)}</text>`;
-            s += `</g>`;
-          } else if(hasLabel && ctx.state._overviewPersistentPins){
-            // Teal dot for labeled active objects (persistent mode)
-            s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.88">`;
-            s += `<circle cx="${px}" cy="${py}" r="12" fill="#5eead4" opacity="0.15"/>`;
-            s += `<circle cx="${px}" cy="${py}" r="8" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="0.95"/>`;
-            s += `<circle cx="${px}" cy="${py}" r="2.5" fill="#071008" opacity="0.7"/>`;
-            s += `<text x="${px}" y="${py+22}" text-anchor="middle" fill="#5eead4" font-size="9" font-weight="600">${_esc(obj.user_label)}</text>`;
-            s += `</g>`;
-          } else if(!hasLabel){
-            // Small dim amber dot for unlabeled objects — always shown
+          if(ctx.state._overviewPersistentPins){
+            if(isAway){
+              // Red crosshair for away objects (persistent mode)
+              s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.92">`;
+              s += `<circle cx="${px}" cy="${py}" r="20" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
+              s += `<circle cx="${px}" cy="${py}" r="11" fill="none" stroke="#ef4444" stroke-width="2"/>`;
+              s += `<circle cx="${px}" cy="${py}" r="4" fill="#ef4444"/>`;
+              s += `<line x1="${px-25}" y1="${py}" x2="${px-13}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
+              s += `<line x1="${px+13}" y1="${py}" x2="${px+25}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
+              s += `<line x1="${px}" y1="${py-25}" x2="${px}" y2="${py-13}" stroke="#ef4444" stroke-width="1.5"/>`;
+              s += `<line x1="${px}" y1="${py+13}" x2="${px}" y2="${py+25}" stroke="#ef4444" stroke-width="1.5"/>`;
+              if(objLabel) s += `<text x="${px}" y="${py+36}" text-anchor="middle" fill="#fca5a5" font-size="9" font-weight="600">${_esc(objLabel)}</text>`;
+              s += `</g>`;
+            } else {
+              // Teal dot for active objects (persistent mode)
+              s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.88">`;
+              s += `<circle cx="${px}" cy="${py}" r="12" fill="#5eead4" opacity="0.15"/>`;
+              s += `<circle cx="${px}" cy="${py}" r="8" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="0.95"/>`;
+              s += `<circle cx="${px}" cy="${py}" r="2.5" fill="#071008" opacity="0.7"/>`;
+              if(objLabel) s += `<text x="${px}" y="${py+22}" text-anchor="middle" fill="#5eead4" font-size="9" font-weight="600">${_esc(objLabel)}</text>`;
+              s += `</g>`;
+            }
+          } else if(!obj.user_label){
+            // Small dim amber dot for unlabeled objects — always shown when persistent is off
             s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.6">`;
             s += `<circle cx="${px}" cy="${py}" r="5" fill="#f59e0b" stroke="#071008" stroke-width="1" opacity="0.7"/>`;
             s += `</g>`;
@@ -1182,6 +1185,8 @@ export function render(ctx){
         : "color:#94a3b8";
       ovPersistentBtn.textContent = ctx.state._overviewPersistentPins ? "⊕ Persistent ON" : "⊕ Persistent";
       isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+      // Persist to settings so it survives reboots
+      ctx.actions.settingsSet({ overview_persistent_pins: ctx.state._overviewPersistentPins });
     });
     ctrlRow.appendChild(ovPersistentBtn);
     outer.appendChild(ctrlRow);

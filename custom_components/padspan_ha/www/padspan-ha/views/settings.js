@@ -31,7 +31,7 @@ export function render(ctx){
   const setTab = (t) => { ctx.state._settingsTab = t; ctx.actions.renderRooms(); };
 
   const tabBar = el("div",{class:"tabs", style:"margin-bottom:14px;flex-wrap:wrap;gap:4px"});
-  for(const [id, label] of [["appearance","Appearance"],["scannermap","Scanner Map"],["presence","Presence"],["manage","Manage"]]){
+  for(const [id, label] of [["appearance","Appearance"],["scannermap","Scanner Map"],["presence","Presence"]]){
     tabBar.appendChild(el("button",{
       class:"tab" + (activeTab===id ? " active" : ""),
       onclick:()=>setTab(id),
@@ -43,8 +43,6 @@ export function render(ctx){
     root.appendChild(_settingsAppearance(ctx, el, helpBtn, draft, haFloors, haAreas, roomColor, false));
   } else if(activeTab === "presence"){
     root.appendChild(_settingsPresence(ctx, el));
-  } else if(activeTab === "manage"){
-    root.appendChild(_settingsManage(ctx, el, haAreas, haFloors));
   } else {
     root.appendChild(_scannerMap(ctx, el, haFloors));
   }
@@ -428,199 +426,6 @@ function _floorNameForMap(mapData, haFloors){
   if(!fid) return null;
   const f = haFloors.find(f=>f.id===fid);
   return f ? (f.name || f.id) : fid;
-}
-
-// ── Manage tab ────────────────────────────────────────────────────────────────
-function _settingsManage(ctx, el, haAreas, haFloors){
-  const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
-  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
-
-  // ── Section 1: BLE Tags ──────────────────────────────────────────────────
-  // Load tags from persistent ObjectStore (not just live snapshot)
-  const tagsCard = el("div",{class:"card"});
-  tagsCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:8px"},[
-    el("div",{style:"font-weight:700"},"BLE Tags"),
-  ]));
-  tagsCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
-    "Tagged devices can be followed and appear by label across the panel. Untagging removes the label permanently."
-  ));
-
-  // Async-load stored labels from backend, then populate table
-  const tagsLoading = el("div",{class:"muted",style:"font-size:12px"},"Loading tags…");
-  tagsCard.appendChild(tagsLoading);
-  (async ()=>{
-    let storedLabels = {};
-    try {
-      const res = await ctx.actions.objectLabelList();
-      storedLabels = (res && res.labels) || {};
-    } catch(e){ /* fallback to empty */ }
-
-    // Build list of tagged entries: merge store data with live snapshot info
-    const liveObjects = (snap?.objects?.list || []);
-    const liveByAddr = {};
-    for(const o of liveObjects){
-      const addr = (o.address || o.canonical_id || o.key || "").toUpperCase();
-      if(addr) liveByAddr[addr] = o;
-    }
-
-    const taggedList = [];
-    for(const [mac, entry] of Object.entries(storedLabels)){
-      const live = liveByAddr[mac.toUpperCase()] || null;
-      taggedList.push({
-        address: mac,
-        label: entry.label || mac,
-        tagged_at: entry.tagged_at || null,
-        kind: live ? live.kind : null,
-        age_s: live ? live.age_s : null,
-        room: live ? live.room : null,
-        live: live,
-      });
-    }
-    taggedList.sort((a,b) => a.label.localeCompare(b.label));
-
-    // Remove loading indicator
-    tagsLoading.remove();
-
-    // Badge count
-    const countBadge = el("span",{class:"badge",style:"font-size:10px"}, String(taggedList.length));
-    tagsCard.querySelector("div").appendChild(countBadge);
-
-    if(!taggedList.length){
-      tagsCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},
-        "No BLE devices have been tagged yet. Use the Objects tab to tag a device."));
-      return;
-    }
-
-    const table = el("table",{style:"width:100%;border-collapse:collapse;font-size:12px"});
-    const thead = el("thead",{});
-    thead.innerHTML = `<tr>
-      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Label</th>
-      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Address</th>
-      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Status</th>
-      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Room</th>
-      <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #1e3a28"></th>
-    </tr>`;
-    table.appendChild(thead);
-    const tbody = el("tbody",{});
-    for(const t of taggedList){
-      const isOnline = t.age_s != null && t.age_s < 120;
-      const statusDot = isOnline ? "●" : "○";
-      const statusColor = isOnline ? "#52b788" : "#64748b";
-      const statusText = t.age_s != null
-        ? (t.age_s < 60 ? Math.round(t.age_s)+"s ago" : Math.floor(t.age_s/60)+"m ago")
-        : "offline";
-      const roomStr = t.room || "—";
-      const isFollowed = ctx.actions.followedHas(t.address);
-
-      const tr = el("tr",{style:"border-bottom:1px solid #131f17"});
-
-      // Label + follow indicator
-      const labelCell = el("td",{style:"padding:8px;font-weight:600"});
-      if(isFollowed) labelCell.appendChild(el("span",{style:"color:#fbbf24;margin-right:4px"},"◉"));
-      labelCell.appendChild(document.createTextNode(t.label));
-      tr.appendChild(labelCell);
-
-      // Address
-      tr.appendChild(el("td",{style:"padding:8px;font-family:monospace;font-size:11px;color:#6b9e7e"}, t.address));
-
-      // Status
-      tr.appendChild(el("td",{style:"padding:8px;font-size:11px"},[
-        el("span",{style:`color:${statusColor};margin-right:4px`}, statusDot),
-        el("span",{style:`color:${statusColor}`}, statusText),
-      ]));
-
-      // Room
-      tr.appendChild(el("td",{style:"padding:8px;font-size:11px;color:#94a3b8"}, roomStr));
-
-      // Actions: Follow + Untag
-      const actionsTd = el("td",{style:"padding:8px;text-align:right;white-space:nowrap"});
-
-      const followBtn = el("button",{class:"btn inline",style:"font-size:11px;margin-right:6px;color:" + (isFollowed ? "#fbbf24" : "#5eead4") + ";border-color:" + (isFollowed ? "#92400e" : "#134e4a")},
-        isFollowed ? "Unfollow" : "Follow");
-      followBtn.addEventListener("click", ()=>{
-        ctx.actions.followedToggle(t.address);
-      });
-      actionsTd.appendChild(followBtn);
-
-      const untagBtn = el("button",{class:"btn",style:"font-size:11px;color:#f87171;border-color:#7f1d1d"}, "Untag");
-      untagBtn.addEventListener("click", async ()=>{
-        if(!confirm(`Remove tag "${t.label}"?`)) return;
-        untagBtn.disabled = true; untagBtn.textContent = "Removing…";
-        try {
-          await ctx.actions.objectLabelDelete(t.address);
-          await ctx.actions.refreshSnapshot();
-          ctx.actions.renderRooms();
-          ctx.toast(`Removed tag "${t.label}"`);
-        } catch(e){
-          ctx.toast("Failed to remove tag", true);
-          untagBtn.disabled = false; untagBtn.textContent = "Untag";
-        }
-      });
-      actionsTd.appendChild(untagBtn);
-
-      tr.appendChild(actionsTd);
-      tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    tagsCard.appendChild(table);
-  })();
-  wrap.appendChild(tagsCard);
-
-  // ── Section 2: HA Areas ──────────────────────────────────────────────────
-  const areasCard = el("div",{class:"card"});
-  areasCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"},[
-    el("div",{style:"font-weight:700"},"Rooms (HA Areas)"),
-    el("span",{class:"badge",style:"font-size:10px"}, String(haAreas.length)),
-    el("span",{class:"badge warn",style:"font-size:10px;margin-left:auto"},"⚠ Deletes from HA"),
-  ]));
-  areasCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
-    "Deleting an area removes it from Home Assistant entirely. Scanners assigned to it become unassigned."
-  ));
-
-  if(!haAreas.length){
-    areasCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},"No areas found in HA."));
-  } else {
-    const table = el("table",{style:"width:100%;border-collapse:collapse;font-size:12px"});
-    const thead = el("thead",{});
-    thead.innerHTML = `<tr>
-      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Room</th>
-      <th style="text-align:left;padding:6px 8px;color:#6b9e7e;font-size:11px;font-weight:600;text-transform:uppercase;border-bottom:1px solid #1e3a28">Floor</th>
-      <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #1e3a28"></th>
-    </tr>`;
-    table.appendChild(thead);
-    const tbody = el("tbody",{});
-    const sorted = [...haAreas].sort((a,b)=>(a.name||"").localeCompare(b.name||""));
-    for(const area of sorted){
-      const haFloor  = haFloors.find(f=>f.id===area.floor_id);
-      const floorLabel = haFloor ? (haFloor.name||haFloor.id) : (area.floor_id || "—");
-      const tr = el("tr",{style:"border-bottom:1px solid #131f17"});
-      tr.appendChild(el("td",{style:"padding:8px;font-weight:600"}, area.name||area.id));
-      tr.appendChild(el("td",{style:"padding:8px;color:#6b9e7e;font-size:12px"}, floorLabel));
-      const delTd = el("td",{style:"padding:8px;text-align:right"});
-      const delBtn = el("button",{class:"btn",style:"font-size:11px;color:#f87171;border-color:#7f1d1d"},"Delete");
-      delBtn.addEventListener("click", async ()=>{
-        const areaName = area.name || area.id;
-        if(!confirm(`Delete area "${areaName}"? This removes it from Home Assistant and cannot be undone.`)) return;
-        delBtn.disabled = true; delBtn.textContent = "Deleting…";
-        try {
-          await ctx.actions.areaDelete(area.id);
-          await ctx.actions.modelUpdate({floors:[], room_meta:{}});
-          ctx.actions.renderRooms();
-          ctx.toast(`Deleted area "${areaName}"`);
-        } catch(e){
-          ctx.toast("Failed to delete area: "+String(e), true);
-          delBtn.disabled = false; delBtn.textContent = "Delete";
-        }
-      });
-      delTd.appendChild(delBtn);
-      tr.appendChild(delTd);
-      tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    areasCard.appendChild(table);
-  }
-  wrap.appendChild(areasCard);
-  return wrap;
 }
 
 function _toHex(c){

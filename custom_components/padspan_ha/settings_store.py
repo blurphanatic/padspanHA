@@ -37,6 +37,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "adaptive_learning_enabled": False,  # experimental: passive room fingerprint learning
     "adaptive_floor_detection": False,   # experimental: cross-floor attenuation learning
     "beacon_auto_calibrate": True,       # experimental: auto-inject calibration from pinned beacons
+    "overview_persistent_pins": False,   # show away beacons at last known position on overview map
     # 3D isometric view layout (Maps tab)
     "maps_iso_floor_gap":    200,   # px spacing between floors
     "maps_iso_horiz_gap":    0,     # px L/R horizontal offset
