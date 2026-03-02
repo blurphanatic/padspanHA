@@ -1741,9 +1741,11 @@ function _tuneTab(ctx, el, cs, calData) {
   resetBtn.addEventListener("click", () => {
     ts.draftReceivers = {};
     for (const m of maps_list) {
-      ts.draftReceivers[m.id] = (m.receivers || []).map(r => ({
-        id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
-      }));
+      ts.draftReceivers[m.id] = (m.receivers || [])
+        .filter(r => _isLiveRadio(r))
+        .map(r => ({
+          id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
+        }));
     }
     ts.dirtyMaps = {};
     ts.selectedRx = null;
@@ -1754,11 +1756,12 @@ function _tuneTab(ctx, el, cs, calData) {
     gapSlider.value = String(ts.fg); gapLbl.textContent = String(ts.fg);
     hgSlider.value = String(ts.hg); hgLbl.textContent = String(ts.hg);
     focusSlider.value = "0"; focusLbl.textContent = "All floors";
-    statusLbl.textContent = "Reset ✓";
+    statusLbl.textContent = "Reset \u2713";
     setTimeout(() => { statusLbl.textContent = ""; }, 2000);
     _refreshSVG();
     _refreshInfo();
     _refreshDirtyLabel();
+    _refreshRadiosList();
   });
 
   ctrlRow.appendChild(saveBtn);
@@ -1798,104 +1801,143 @@ function _tuneTab(ctx, el, cs, calData) {
   }
   _refreshInfo();
 
-  // ── Unplaced radios list ──────────────────────────────────────────────────
-  const unplacedCard = document.createElement("div");
-  unplacedCard.className = "card";
-  function _refreshUnplaced() {
-    unplacedCard.innerHTML = "";
-    // Gather all placed receiver ids/labels across all maps
-    const placedIds = new Set();
-    const placedLabels = new Set();
-    for (const recs of Object.values(ts.draftReceivers)) {
-      for (const r of recs) {
-        if (r.id) placedIds.add(r.id);
-        if (r.source) placedIds.add(r.source);
-        if (r.label) placedLabels.add(r.label);
-      }
-    }
-    // Find live radios not yet placed on any map
-    const unplaced = _liveRadios.filter(rd => {
-      const src = rd.source || "";
-      const nm = rd.name || "";
-      return !placedIds.has(src) && !placedLabels.has(nm);
-    });
-    if (!unplaced.length) { unplacedCard.style.display = "none"; return; }
-    unplacedCard.style.display = "";
+  // ── Live radios list (placed + unplaced) ────────────────────────────────
+  const radiosCard = document.createElement("div");
+  radiosCard.className = "card";
+  function _refreshRadiosList() {
+    radiosCard.innerHTML = "";
+
+    // Header
     const hdr = document.createElement("div");
     hdr.style.cssText = "font-weight:700;font-size:13px;margin-bottom:8px;color:#52b788";
-    hdr.textContent = `Unplaced Radios (${unplaced.length})`;
-    unplacedCard.appendChild(hdr);
+    hdr.textContent = `Live Radios (${_liveRadios.length})`;
+    radiosCard.appendChild(hdr);
+
+    if (!_liveRadios.length) {
+      const msg = document.createElement("div");
+      msg.style.cssText = "font-size:12px;color:#94a3b8";
+      msg.textContent = "No live radios detected. Switch to Live mode and ensure Bluetooth scanners are active.";
+      radiosCard.appendChild(msg);
+      return;
+    }
+
     const hint = document.createElement("div");
     hint.style.cssText = "font-size:11px;color:#94a3b8;margin-bottom:8px";
-    hint.textContent = "Click a radio to place it on a map at the center. Drag to reposition after placing.";
-    unplacedCard.appendChild(hint);
+    hint.textContent = "Place unplaced radios on a map, or click a placed radio to select it in the 3D view.";
+    radiosCard.appendChild(hint);
 
-    for (const rd of unplaced) {
+    // Build lookup: which map(s) each radio is placed on
+    const radioPlacement = {}; // source → [{mapId, mapName, rxId}]
+    for (const [mapId, recs] of Object.entries(ts.draftReceivers)) {
+      const mapObj = maps_list.find(m => m.id === mapId);
+      const mapName = mapObj?.name || mapId;
+      for (const r of recs) {
+        const keys = [r.id, r.source, r.label].filter(Boolean);
+        for (const k of keys) {
+          if (!radioPlacement[k]) radioPlacement[k] = [];
+          // Avoid duplicates
+          if (!radioPlacement[k].some(p => p.mapId === mapId && p.rxId === r.id)) {
+            radioPlacement[k].push({ mapId, mapName, rxId: r.id });
+          }
+        }
+      }
+    }
+
+    for (const rd of _liveRadios) {
+      const src = rd.source || "";
+      const nm = rd.name || "";
+      const placements = radioPlacement[src] || radioPlacement[nm] || [];
+      const isPlaced = placements.length > 0;
+
       const row = document.createElement("div");
       row.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;transition:background 0.15s";
       row.addEventListener("mouseenter", () => { row.style.background = "#0d2818"; });
       row.addEventListener("mouseleave", () => { row.style.background = ""; });
-      // Green circle icon
+
+      // Status icon
       const icon = document.createElement("div");
-      icon.style.cssText = "width:14px;height:14px;border-radius:50%;border:2px solid #52b788;background:rgba(82,183,136,0.2);flex-shrink:0;display:flex;align-items:center;justify-content:center";
-      const dot = document.createElement("div");
-      dot.style.cssText = "width:6px;height:6px;border-radius:50%;background:#52b788";
-      icon.appendChild(dot);
-      row.appendChild(icon);
-      const lbl = document.createElement("span");
-      lbl.style.cssText = "flex:1;font-size:12px;color:#d1d5db";
-      const area = rd.area_name ? ` (${rd.area_name})` : "";
-      lbl.textContent = `${rd.name || rd.source || "Unknown"}${area}`;
-      row.appendChild(lbl);
-      const placeBtn = document.createElement("button");
-      placeBtn.className = "btn inline";
-      placeBtn.style.cssText = "font-size:11px;padding:2px 10px;color:#52b788;border-color:#52b788";
-      placeBtn.textContent = "Place";
-
-      // Map picker for this radio
-      const mapPick = document.createElement("select");
-      mapPick.style.cssText = "font-size:11px;max-width:120px;";
-      for (const m of sorted.length ? sorted : maps_list) {
-        const opt = document.createElement("option");
-        opt.value = m.id;
-        opt.textContent = (m.name || m.id).substring(0, 20);
-        mapPick.appendChild(opt);
+      if (isPlaced) {
+        icon.style.cssText = "width:14px;height:14px;border-radius:50%;background:#52b788;flex-shrink:0;display:flex;align-items:center;justify-content:center";
+        const check = document.createElement("span");
+        check.style.cssText = "font-size:10px;color:#071008;font-weight:700";
+        check.textContent = "\u2713";
+        icon.appendChild(check);
+      } else {
+        icon.style.cssText = "width:14px;height:14px;border-radius:50%;border:2px solid #94a3b8;background:transparent;flex-shrink:0";
       }
-      row.appendChild(mapPick);
+      row.appendChild(icon);
 
-      placeBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        const targetMapId = mapPick.value;
-        if (!targetMapId) return;
-        const newRx = {
-          id: rd.source || rd.name || ("rx_" + Math.random().toString(16).slice(2, 10)),
-          label: rd.name || rd.source || "",
-          x: 0.5,
-          y: 0.5,
-          room: rd.area_name || "",
-          source: rd.source || "",
-        };
-        if (!ts.draftReceivers[targetMapId]) ts.draftReceivers[targetMapId] = [];
-        ts.draftReceivers[targetMapId].push(newRx);
-        ts.dirtyMaps[targetMapId] = true;
-        ts.selectedRx = { mapId: targetMapId, rxId: newRx.id };
-        _refreshSVG();
-        _refreshInfo();
-        _refreshDirtyLabel();
-        _refreshUnplaced();
-      });
-      row.addEventListener("click", () => { placeBtn.click(); });
-      row.appendChild(placeBtn);
-      unplacedCard.appendChild(row);
+      // Name + area
+      const lbl = document.createElement("span");
+      lbl.style.cssText = `flex:1;font-size:12px;color:${isPlaced ? "#d1d5db" : "#e2e8f0;font-weight:600"}`;
+      const area = rd.area_name ? ` (${rd.area_name})` : "";
+      lbl.textContent = `${nm || src || "Unknown"}${area}`;
+      row.appendChild(lbl);
+
+      if (isPlaced) {
+        // Show which map it's on
+        const mapTag = document.createElement("span");
+        mapTag.style.cssText = "font-size:10px;color:#52b788;background:#52b78818;padding:1px 6px;border-radius:4px;white-space:nowrap";
+        mapTag.textContent = placements.map(p => p.mapName).join(", ");
+        row.appendChild(mapTag);
+        // Click to select in 3D view
+        row.addEventListener("click", () => {
+          const p = placements[0];
+          ts.selectedRx = { mapId: p.mapId, rxId: p.rxId };
+          _refreshSVG();
+          _refreshInfo();
+        });
+      } else {
+        // Map picker + Place button for unplaced radios
+        const mapPick = document.createElement("select");
+        mapPick.style.cssText = "font-size:11px;max-width:120px;";
+        for (const m of sorted.length ? sorted : maps_list) {
+          const opt = document.createElement("option");
+          opt.value = m.id;
+          opt.textContent = (m.name || m.id).substring(0, 20);
+          mapPick.appendChild(opt);
+        }
+        row.appendChild(mapPick);
+
+        const placeBtn = document.createElement("button");
+        placeBtn.className = "btn inline";
+        placeBtn.style.cssText = "font-size:11px;padding:2px 10px;color:#52b788;border-color:#52b788";
+        placeBtn.textContent = "Place";
+        placeBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const targetMapId = mapPick.value;
+          if (!targetMapId) return;
+          const newRx = {
+            id: rd.source || rd.name || ("rx_" + Math.random().toString(16).slice(2, 10)),
+            label: rd.name || rd.source || "",
+            x: 0.5,
+            y: 0.5,
+            room: rd.area_name || "",
+            source: rd.source || "",
+          };
+          if (!ts.draftReceivers[targetMapId]) ts.draftReceivers[targetMapId] = [];
+          ts.draftReceivers[targetMapId].push(newRx);
+          ts.dirtyMaps[targetMapId] = true;
+          ts.selectedRx = { mapId: targetMapId, rxId: newRx.id };
+          _refreshSVG();
+          _refreshInfo();
+          _refreshDirtyLabel();
+          _refreshRadiosList();
+        });
+        row.addEventListener("click", () => { placeBtn.click(); });
+        row.appendChild(placeBtn);
+      }
+
+      radiosCard.appendChild(row);
     }
   }
-  _refreshUnplaced();
+  _refreshRadiosList();
 
   // ── Assemble ──────────────────────────────────────────────────────────────
   wrap.appendChild(ctrlRow);
   wrap.appendChild(isoWrap);
   wrap.appendChild(infoCard);
-  wrap.appendChild(unplacedCard);
+  wrap.appendChild(radiosCard);
 
   return wrap;
 }
