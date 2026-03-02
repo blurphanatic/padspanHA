@@ -36,6 +36,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "health_reminder_last_ts":  None,  # epoch seconds when reminder was last shown
     "adaptive_learning_enabled": False,  # experimental: passive room fingerprint learning
     "adaptive_floor_detection": False,   # experimental: cross-floor attenuation learning
+    "beacon_auto_calibrate": True,       # experimental: auto-inject calibration from pinned beacons
     # 3D isometric view layout (Maps tab)
     "maps_iso_floor_gap":    200,   # px spacing between floors
     "maps_iso_horiz_gap":    0,     # px L/R horizontal offset

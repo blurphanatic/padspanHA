@@ -254,6 +254,19 @@ export const HELP = {
     ],
   },
 
+  // ── Calibration — Beacon Tune ────────────────────────────────────────────
+  calibration_beacon: {
+    title: "Beacon Tune — Pin stationary beacons on floor plans",
+    body: [
+      "Beacon Tune lets you place stationary BLE beacons (AirTags, Tiles, key fobs) at their exact physical positions on your floor plans.",
+      "Pick a map, then add beacons from the dropdown. Each pinned beacon appears as a teal diamond on the floor plan — drag it to match the real-world position.",
+      "Once pinned, PadSpan uses the known position to override the beacon's room assignment — no more flickering between adjacent rooms.",
+      "With Auto-Calibrate enabled, PadSpan automatically builds calibration fingerprints from the beacon's RSSI readings at its pinned location. This improves location accuracy for ALL tracked devices over time.",
+      "Auto-generated calibration points are labelled [auto] in the Model tab and are capped at 50 per beacon to prevent data bloat.",
+      "This is an experimental feature — it works best with stationary beacons that don't move. If you relocate a beacon, update its position on the map and the old auto-calibration data will naturally age out.",
+    ],
+  },
+
   // ── Sandbox ────────────────────────────────────────────────────────────────
   sandbox: {
     title: "Sandbox — Experimental data playground",

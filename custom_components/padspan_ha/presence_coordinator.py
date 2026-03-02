@@ -84,7 +84,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
-    DOMAIN, DATA_SETTINGS, DATA_CALIBRATION, DATA_ADAPTIVE,
+    DOMAIN, DATA_SETTINGS, DATA_CALIBRATION, DATA_ADAPTIVE, DATA_MAPS,
     DEFAULT_KALMAN_Q, DEFAULT_KALMAN_R,
     DEFAULT_REF_POWER, DEFAULT_PATH_LOSS_EXP, DEFAULT_ROOM_SIGMA_M,
 )
@@ -121,6 +121,36 @@ _AWAY_GRACE_POLLS: int = 2
 _KNN_MIN_POINTS: int = 5
 # Minimum k-NN confidence [0, 1] required to override the Gaussian candidate.
 _KNN_LIVE_THRESHOLD: float = 0.30
+
+
+def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
+    """Point-in-polygon / point-in-circle test against room_bounds. Returns room name or ''."""
+    for room_name, b in room_bounds.items():
+        if not isinstance(b, dict):
+            continue
+        btype = b.get("type", "poly")
+        if btype == "circle":
+            cx = float(b.get("cx", 0.5))
+            cy = float(b.get("cy", 0.5))
+            r = float(b.get("r", 0.12))
+            if (x - cx) ** 2 + (y - cy) ** 2 <= r ** 2:
+                return str(room_name)
+        elif btype == "poly":
+            pts = b.get("points") or []
+            if len(pts) < 3:
+                continue
+            inside = False
+            n = len(pts)
+            j = n - 1
+            for i in range(n):
+                xi, yi = float(pts[i][0]), float(pts[i][1])
+                xj, yj = float(pts[j][0]), float(pts[j][1])
+                if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+                    inside = not inside
+                j = i
+            if inside:
+                return str(room_name)
+    return ""
 
 
 class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -161,6 +191,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Throttle: {key: monotonic_ts} — last alert sent time per object
         self._alert_last_sent: dict[str, float] = {}
         _ALERT_COOLDOWN_S = 60  # min seconds between alerts for same device
+
+        # ── Beacon auto-calibration rate-limit ──────────────────────────────────
+        # {key: monotonic_ts} — last auto-calibration injection time per beacon
+        self._beacon_autocal_last: dict[str, float] = {}
 
         # ── Adaptive learning rate-limit ───────────────────────────────────────
         # {key: monotonic_ts} — last adaptive observation time per device
@@ -264,6 +298,27 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         objects: list[dict[str, Any]] = (snap.get("objects") or {}).get("list") or []
         result: dict[str, Any] = {}
 
+        # ── Load pinned beacon positions from maps store ──────────────────────
+        _pinned: dict[str, dict[str, Any]] = {}  # key → {map_id, x, y, room, floor_id}
+        try:
+            _maps_store = self.hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+            if _maps_store:
+                for _m in (_maps_store.data.get("maps") or []):
+                    _rb = _m.get("room_bounds") or {}
+                    for _bk in (_m.get("beacons") or []):
+                        _bk_key = _bk.get("key")
+                        if _bk_key and _bk.get("x") is not None:
+                            _room = _room_from_bounds(_rb, float(_bk.get("x", 0)), float(_bk.get("y", 0)))
+                            _pinned[_bk_key] = {
+                                "map_id": _m.get("id", ""),
+                                "x": float(_bk.get("x", 0)),
+                                "y": float(_bk.get("y", 0)),
+                                "room": _room,
+                                "floor_id": _m.get("floor_id", ""),
+                            }
+        except Exception:
+            pass
+
         for obj in objects:
             key = obj.get("key", "")
             if not key:
@@ -351,7 +406,20 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 obj["_source_rssi"] = dict(self._ema_rssi.get(key, {}))
                 self._known_objs[key] = dict(obj)  # refresh with smoothed data
 
+            # ── Pinned beacon room override ──────────────────────────────────
+            if key in _pinned:
+                _pin = _pinned[key]
+                if _pin["room"]:
+                    obj = dict(obj) if not isinstance(obj, dict) else obj
+                    obj["room"] = _pin["room"]
+                    self._confirmed_room[key] = _pin["room"]
+                obj["_pinned"] = True
+
             result[key] = obj
+
+        # ── Auto-calibration from pinned beacons ─────────────────────────────
+        if _pinned:
+            await self._inject_beacon_calibration(now, _pinned, result)
 
         # ── Carry forward stale objects (home/away persistence) ──────────────
         for key, last_obj in self._known_objs.items():
@@ -653,6 +721,57 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 pass  # adaptive learning is best-effort
 
         return confirmed
+
+    # ── Beacon auto-calibration ────────────────────────────────────────────
+
+    async def _inject_beacon_calibration(
+        self, now: float, pinned: dict[str, dict], result: dict[str, Any]
+    ) -> None:
+        """Auto-inject calibration points from pinned beacons with RSSI data."""
+        try:
+            _st = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if _st and not _st.data.get("beacon_auto_calibrate", True):
+                return
+        except Exception:
+            pass
+
+        cal_store = self.hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+        if not cal_store:
+            return
+
+        _AUTOCAL_INTERVAL = 600.0  # 10 minutes between injections per beacon
+
+        for key, pin in pinned.items():
+            obj = result.get(key)
+            if not obj or obj.get("_stale"):
+                continue
+            # Rate limit: at most 1 injection per beacon per 10 minutes
+            last_ts = self._beacon_autocal_last.get(key, 0.0)
+            if now - last_ts < _AUTOCAL_INTERVAL:
+                continue
+            # Need smoothed per-source RSSI
+            smoothed_rssi: dict[str, float] = obj.get("_source_rssi") or {}
+            if not smoothed_rssi:
+                continue
+            self._beacon_autocal_last[key] = now
+            try:
+                await cal_store.async_add_point({
+                    "map_id": pin["map_id"],
+                    "x_frac": pin["x"],
+                    "y_frac": pin["y"],
+                    "floor_id": pin["floor_id"],
+                    "room": pin["room"],
+                    "label": f"[auto] {obj.get('user_label') or key}",
+                    "device_id": key,
+                    "duration_s": 10,
+                    "scanner_readings": [
+                        {"source": src, "rssi_samples": [rssi]}
+                        for src, rssi in smoothed_rssi.items()
+                    ],
+                })
+                await cal_store.async_prune_auto_points(max_per_beacon=50)
+            except Exception:
+                _LOGGER.debug("Beacon auto-cal injection failed for %s", key)
 
     # ── Follow-alert processing ────────────────────────────────────────────
 

@@ -55,7 +55,7 @@ export function render(ctx) {
   ]));
 
   // Tab bar
-  const TABS = [["setup","Setup"],["pin","Pin & Listen"],["roam","Roam"],["model","Model"],["tune","Tune"]];
+  const TABS = [["setup","Setup"],["pin","Pin & Listen"],["roam","Roam"],["model","Model"],["tune","Tune"],["beacon","Beacon Tune"]];
   const tabBar = el("div", { class: "tabs", style: "margin-bottom:14px;flex-wrap:wrap;gap:4px" });
   for (const [id, label] of TABS) {
     tabBar.appendChild(el("button", {
@@ -70,6 +70,7 @@ export function render(ctx) {
   if (cs.tab === "roam")  root.appendChild(_roam(ctx, el, cs, calData));
   if (cs.tab === "model") root.appendChild(_modelTab(ctx, el, cs, calData));
   if (cs.tab === "tune")  root.appendChild(_tuneTab(ctx, el, cs, calData));
+  if (cs.tab === "beacon") root.appendChild(_beaconTuneTab(ctx, el, cs, calData));
 
   return root;
 }
@@ -1808,6 +1809,341 @@ function _detectRoom(x, y, mapData) {
   }
   return "";
 }
+
+// ── Beacon Tune tab ──────────────────────────────────────────────────────────
+function _beaconTuneTab(ctx, el, cs, calData) {
+  const wrap = el("div", { style: "display:flex;flex-direction:column;gap:10px" });
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const maps_list = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
+
+  if (!maps_list.length) {
+    wrap.appendChild(el("div", { class: "card" }, [
+      el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px;color:#52b788" }, "No Maps Uploaded"),
+      el("div", { style: "font-size:12px;color:#94a3b8" },
+        "Upload floor plan images in the Maps tab first, then return here to pin beacons on your floor plans."),
+    ]));
+    return wrap;
+  }
+
+  // ── Per-session state ───────────────────────────────────────────────────
+  if (!ctx.state._calibBeacon) ctx.state._calibBeacon = {
+    mapId: null,
+    draftBeacons: {},    // mapId → [{id, label, key, kind, x, y}]
+    dirtyMaps: {},       // mapId → true
+    selectedBk: null,    // {mapId, bkId}
+    _mapsStamp: null,
+  };
+  const bs = ctx.state._calibBeacon;
+
+  // Default to first map if none selected
+  if (!bs.mapId && maps_list.length) bs.mapId = maps_list[0].id;
+
+  // Build stamp and sync draft beacons from maps data
+  const mapsStamp = maps_list.map(m => `${m.id}:${m.updated||""}:${(m.beacons||[]).length}`).join("|");
+  const hasDirty = Object.values(bs.dirtyMaps).some(Boolean);
+  if (!Object.keys(bs.draftBeacons).length || (mapsStamp !== bs._mapsStamp && !hasDirty)) {
+    for (const m of maps_list) {
+      bs.draftBeacons[m.id] = (m.beacons || []).map(bk => ({
+        id: bk.id || "", label: bk.label || "", key: bk.key || "",
+        kind: bk.kind || "", x: Number(bk.x || 0), y: Number(bk.y || 0),
+      }));
+    }
+    for (const id of Object.keys(bs.draftBeacons)) {
+      if (!maps_list.find(m => m.id === id)) delete bs.draftBeacons[id];
+    }
+    bs._mapsStamp = mapsStamp;
+  }
+
+  const curMap = maps_list.find(m => m.id === bs.mapId);
+  const curBeacons = bs.draftBeacons[bs.mapId] || [];
+
+  // ── Experimental badge + explainer ────────────────────────────────────
+  wrap.appendChild(el("div", { class: "card", style: "border-color:#f59e0b" }, [
+    el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:6px" }, [
+      el("span", { style: "background:#f59e0b;color:#000;font-weight:700;font-size:11px;padding:2px 8px;border-radius:4px" }, "EXPERIMENTAL"),
+      el("span", { style: "font-weight:700;font-size:14px;color:#f59e0b" }, "Beacon Tune"),
+    ]),
+    el("div", { style: "font-size:12px;color:#94a3b8;line-height:1.5" },
+      "Pin stationary beacons (AirTags, Tiles, key fobs) at their physical locations to improve room accuracy for all tracked devices."),
+  ]));
+
+  // ── Map selector ──────────────────────────────────────────────────────
+  const selRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+  const mapSel = document.createElement("select");
+  mapSel.style.cssText = "flex:1;min-width:160px;";
+  for (const m of maps_list) {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.name || m.id;
+    if (m.id === bs.mapId) opt.selected = true;
+    mapSel.appendChild(opt);
+  }
+  mapSel.addEventListener("change", () => {
+    bs.mapId = mapSel.value;
+    bs.selectedBk = null;
+    ctx.actions.renderRooms();
+  });
+  selRow.appendChild(el("span", { style: "font-weight:600;font-size:13px" }, "Map:"));
+  selRow.appendChild(mapSel);
+  wrap.appendChild(selRow);
+
+  if (!curMap) return wrap;
+
+  // ── Beacon picker ─────────────────────────────────────────────────────
+  // Collect all pinned keys across all maps
+  const allPinnedKeys = new Set();
+  for (const bks of Object.values(bs.draftBeacons)) {
+    for (const bk of bks) allPinnedKeys.add(bk.key);
+  }
+
+  // Available objects from snapshot
+  const availObjs = (snap?.objects?.list || [])
+    .filter(o => (o.user_label || o.identified) && !allPinnedKeys.has(o.key))
+    .sort((a, b) => (a.user_label || a.name || "").localeCompare(b.user_label || b.name || ""));
+
+  const pickerRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+  const bkSel = document.createElement("select");
+  bkSel.style.cssText = "flex:1;min-width:160px;";
+  const ph = document.createElement("option");
+  ph.value = "";
+  ph.textContent = availObjs.length ? "— select beacon to add —" : "— no available beacons —";
+  bkSel.appendChild(ph);
+  for (const o of availObjs) {
+    const opt = document.createElement("option");
+    opt.value = o.key;
+    const kindBadge = o.kind === "ibeacon" ? " [iBeacon]" : o.kind === "private_ble" ? " [Private BLE]" : " [BLE]";
+    opt.textContent = (o.user_label || o.name || o.key) + kindBadge;
+    bkSel.appendChild(opt);
+  }
+
+  const addBtn = el("button", { class: "btn inline" }, "Add");
+  addBtn.addEventListener("click", () => {
+    const selKey = bkSel.value;
+    if (!selKey) return;
+    const obj = (snap?.objects?.list || []).find(o => o.key === selKey);
+    if (!obj) return;
+    const newBk = {
+      id: "bk_" + Math.random().toString(16).slice(2, 10),
+      label: obj.user_label || obj.name || selKey,
+      key: selKey,
+      kind: obj.kind || "ble",
+      x: 0.5,
+      y: 0.5,
+    };
+    if (!bs.draftBeacons[bs.mapId]) bs.draftBeacons[bs.mapId] = [];
+    bs.draftBeacons[bs.mapId].push(newBk);
+    bs.dirtyMaps[bs.mapId] = true;
+    bs.selectedBk = { mapId: bs.mapId, bkId: newBk.id };
+    ctx.actions.renderRooms();
+  });
+  pickerRow.appendChild(el("span", { style: "font-weight:600;font-size:13px" }, "Beacon:"));
+  pickerRow.appendChild(bkSel);
+  pickerRow.appendChild(addBtn);
+  wrap.appendChild(pickerRow);
+
+  // ── Floor plan with overlay ───────────────────────────────────────────
+  const imgUrl = `/local/padspan_ha/maps/${curMap.image?.filename || ""}?v=${curMap.updated || ""}`;
+  const aspect = curMap.image ? (curMap.image.height / curMap.image.width * 100) : 75;
+
+  const mapContainer = el("div", {
+    style: `position:relative;width:100%;padding-bottom:${aspect}%;background:#0a150e;border:1px solid #1b3526;border-radius:8px;overflow:hidden;cursor:crosshair`,
+  });
+
+  const img = document.createElement("img");
+  img.src = imgUrl;
+  img.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none;opacity:0.85;";
+  mapContainer.appendChild(img);
+
+  const overlay = el("div", {
+    style: "position:absolute;top:0;left:0;width:100%;height:100%;",
+  });
+
+  // Render receiver markers (green circles, non-draggable, for reference)
+  for (const rx of (curMap.receivers || [])) {
+    const rxEl = el("div", {
+      style: `position:absolute;left:${(rx.x||0)*100}%;top:${(rx.y||0)*100}%;transform:translate(-50%,-50%);width:16px;height:16px;border-radius:50%;background:rgba(82,183,136,0.3);border:2px solid #52b788;pointer-events:none;`,
+      title: rx.label || rx.source || "Scanner",
+    });
+    const inner = el("div", {
+      style: "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:6px;height:6px;border-radius:50%;background:#52b788;"
+    });
+    rxEl.appendChild(inner);
+    overlay.appendChild(rxEl);
+  }
+
+  // Render beacon markers (teal diamonds, draggable)
+  for (const bk of curBeacons) {
+    const isSelected = bs.selectedBk && bs.selectedBk.bkId === bk.id;
+    const mkr = el("div", {
+      "data-bk-id": bk.id,
+      class: "beacon-marker",
+      style: `position:absolute;left:${bk.x*100}%;top:${bk.y*100}%;transform:translate(-50%,-50%) rotate(45deg);width:18px;height:18px;background:#14b8a6;border:2px solid ${isSelected?"#fff":"#0d9488"};border-radius:3px;cursor:grab;z-index:10;${isSelected?"box-shadow:0 0 8px #14b8a6;":""}`,
+      title: bk.label || bk.key,
+    });
+    mkr.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      bs.selectedBk = { mapId: bs.mapId, bkId: bk.id };
+      let dragging = true;
+      mkr.style.cursor = "grabbing";
+      mkr.setPointerCapture(e.pointerId);
+
+      const onMove = (ev) => {
+        if (!dragging) return;
+        const rect = overlay.getBoundingClientRect();
+        const nx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+        const ny = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
+        bk.x = nx;
+        bk.y = ny;
+        mkr.style.left = `${nx * 100}%`;
+        mkr.style.top = `${ny * 100}%`;
+        bs.dirtyMaps[bs.mapId] = true;
+        // Update info panel if visible
+        const infoX = overlay.parentNode?.querySelector?.(".bk-info-x");
+        const infoY = overlay.parentNode?.querySelector?.(".bk-info-y");
+        if (infoX) infoX.textContent = `x: ${(nx*100).toFixed(1)}%`;
+        if (infoY) infoY.textContent = `y: ${(ny*100).toFixed(1)}%`;
+      };
+      const onUp = () => {
+        dragging = false;
+        mkr.style.cursor = "grab";
+        mkr.removeEventListener("pointermove", onMove);
+        mkr.removeEventListener("pointerup", onUp);
+        ctx.actions.renderRooms();
+      };
+      mkr.addEventListener("pointermove", onMove);
+      mkr.addEventListener("pointerup", onUp);
+    });
+    overlay.appendChild(mkr);
+
+    // Label below marker
+    const lbl = el("div", {
+      style: `position:absolute;left:${bk.x*100}%;top:${bk.y*100}%;transform:translate(-50%,14px);font-size:10px;color:#14b8a6;white-space:nowrap;pointer-events:none;text-align:center;`,
+    }, bk.label || "");
+    overlay.appendChild(lbl);
+  }
+
+  mapContainer.appendChild(overlay);
+  wrap.appendChild(mapContainer);
+
+  // ── Selected beacon info panel ────────────────────────────────────────
+  const selBk = bs.selectedBk ? curBeacons.find(b => b.id === bs.selectedBk.bkId) : null;
+  if (selBk) {
+    const obj = (snap?.objects?.list || []).find(o => o.key === selBk.key);
+    const lastRssi = obj?.rssi != null ? `${obj.rssi} dBm` : "—";
+    const room = obj?.room || "—";
+    const infoCard = el("div", { class: "card", style: "border-color:#14b8a6" }, [
+      el("div", { style: "font-weight:700;font-size:13px;color:#14b8a6;margin-bottom:6px" }, selBk.label || selBk.key),
+      el("div", { style: "display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#94a3b8" }, [
+        el("span", { class: "bk-info-x" }, `x: ${(selBk.x*100).toFixed(1)}%`),
+        el("span", { class: "bk-info-y" }, `y: ${(selBk.y*100).toFixed(1)}%`),
+        el("span", {}, `Room: ${room}`),
+        el("span", {}, `RSSI: ${lastRssi}`),
+        el("span", {}, `Kind: ${selBk.kind || "ble"}`),
+      ]),
+    ]);
+    wrap.appendChild(infoCard);
+  }
+
+  // ── Pinned beacons list ───────────────────────────────────────────────
+  if (curBeacons.length) {
+    const listCard = el("div", { class: "card" });
+    listCard.appendChild(el("div", { style: "font-weight:700;font-size:13px;margin-bottom:8px" },
+      `Pinned Beacons (${curBeacons.length})`));
+    for (const bk of curBeacons) {
+      const isSelected = bs.selectedBk && bs.selectedBk.bkId === bk.id;
+      const row = el("div", {
+        style: `display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;${isSelected?"background:#0d2818;":""}`,
+      });
+      // Teal diamond icon
+      row.appendChild(el("div", {
+        style: "width:12px;height:12px;background:#14b8a6;transform:rotate(45deg);border-radius:2px;flex-shrink:0;"
+      }));
+      row.appendChild(el("span", { style: "flex:1;font-size:12px;color:#d1d5db" },
+        `${bk.label || bk.key} — x:${(bk.x*100).toFixed(1)}% y:${(bk.y*100).toFixed(1)}%`));
+      const removeBtn = el("button", {
+        class: "btn inline",
+        style: "font-size:11px;padding:2px 8px;color:#f87171;border-color:#f87171;",
+      }, "Remove");
+      removeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        bs.draftBeacons[bs.mapId] = curBeacons.filter(b => b.id !== bk.id);
+        bs.dirtyMaps[bs.mapId] = true;
+        if (bs.selectedBk?.bkId === bk.id) bs.selectedBk = null;
+        ctx.actions.renderRooms();
+      });
+      row.appendChild(removeBtn);
+      row.addEventListener("click", () => {
+        bs.selectedBk = { mapId: bs.mapId, bkId: bk.id };
+        ctx.actions.renderRooms();
+      });
+      listCard.appendChild(row);
+    }
+    wrap.appendChild(listCard);
+  }
+
+  // ── Action buttons ────────────────────────────────────────────────────
+  const isDirty = bs.dirtyMaps[bs.mapId] || false;
+  const btnRow = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center" });
+
+  const saveBtn = el("button", { class: "btn" + (isDirty ? "" : " disabled"), style: isDirty ? "background:#14b8a6;color:#000;" : "" }, "Save");
+  saveBtn.addEventListener("click", async () => {
+    if (!isDirty) return;
+    for (const mapId of Object.keys(bs.dirtyMaps)) {
+      if (!bs.dirtyMaps[mapId]) continue;
+      const m = maps_list.find(mp => mp.id === mapId);
+      if (!m) continue;
+      try {
+        await ctx.actions.mapsUpdate({
+          map_id: mapId,
+          beacons: bs.draftBeacons[mapId] || [],
+          receivers: m.receivers || [],
+          calibration: m.calibration || {},
+          notes: m.notes || "",
+        });
+        bs.dirtyMaps[mapId] = false;
+      } catch (err) {
+        ctx.actions.toast?.("Save failed: " + (err.message || err), "error");
+      }
+    }
+    ctx.actions.toast?.("Beacon positions saved", "success");
+    ctx.actions.renderRooms();
+  });
+  btnRow.appendChild(saveBtn);
+
+  const resetBtn = el("button", { class: "btn inline" }, "Reset");
+  resetBtn.addEventListener("click", () => {
+    for (const m of maps_list) {
+      bs.draftBeacons[m.id] = (m.beacons || []).map(bk => ({
+        id: bk.id || "", label: bk.label || "", key: bk.key || "",
+        kind: bk.kind || "", x: Number(bk.x || 0), y: Number(bk.y || 0),
+      }));
+    }
+    bs.dirtyMaps = {};
+    bs.selectedBk = null;
+    bs._mapsStamp = mapsStamp;
+    ctx.actions.renderRooms();
+  });
+  btnRow.appendChild(resetBtn);
+
+  // Auto-calibrate toggle
+  const autoCal = ctx.state.settings?.beacon_auto_calibrate !== false;
+  const toggleLbl = el("span", { style: "font-size:12px;color:#94a3b8;margin-left:8px" }, "Auto-Calibrate:");
+  const toggleBtn = el("button", {
+    class: "btn inline",
+    style: `font-size:11px;padding:2px 10px;${autoCal ? "background:#14b8a6;color:#000;border-color:#14b8a6;" : ""}`,
+  }, autoCal ? "ON" : "OFF");
+  toggleBtn.addEventListener("click", () => {
+    ctx.actions.settingsSet({ beacon_auto_calibrate: !autoCal });
+  });
+  btnRow.appendChild(toggleLbl);
+  btnRow.appendChild(toggleBtn);
+
+  wrap.appendChild(btnRow);
+
+  return wrap;
+}
+
 
 function _pointInPoly(px, py, points) {
   let inside = false;

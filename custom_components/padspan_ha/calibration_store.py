@@ -142,6 +142,27 @@ class CalibrationStore:
         await self.store.async_save(self.data)
         return count
 
+    async def async_prune_auto_points(self, max_per_beacon: int = 50) -> int:
+        """Remove oldest [auto] calibration points when a beacon exceeds the cap."""
+        points = self.data.get("points", [])
+        # Group auto-points by device_id
+        by_dev: dict[str, list[dict]] = {}
+        for p in points:
+            if str(p.get("label", "")).startswith("[auto]"):
+                did = p.get("device_id", "")
+                by_dev.setdefault(did, []).append(p)
+        remove_ids: set[str] = set()
+        for did, auto_pts in by_dev.items():
+            if len(auto_pts) > max_per_beacon:
+                # Sort by collected_at ascending (oldest first), remove extras
+                auto_pts.sort(key=lambda p: p.get("collected_at", ""))
+                for p in auto_pts[: len(auto_pts) - max_per_beacon]:
+                    remove_ids.add(p.get("id", ""))
+        if remove_ids:
+            self.data["points"] = [p for p in points if p.get("id") not in remove_ids]
+            await self.store.async_save(self.data)
+        return len(remove_ids)
+
     # ── Coverage grid ──────────────────────────────────────────────────────────
 
     def compute_coverage(self, map_id: str) -> dict[str, Any]:

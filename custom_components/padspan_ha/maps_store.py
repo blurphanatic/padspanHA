@@ -52,6 +52,7 @@ class MapsStore:
         # Normalize existing
         for m in self.data.get("maps", []):
             m.setdefault("receivers", [])
+            m.setdefault("beacons", [])
             m.setdefault("calibration", {"mode": "none", "px_per_meter": None, "reference_points": []})
             m.setdefault("notes", "")
             m.setdefault("floor_id", DEFAULT_FLOOR_ID)
@@ -108,6 +109,7 @@ class MapsStore:
             },
             "calibration": {"mode": "none", "px_per_meter": None, "reference_points": []},
             "receivers": [],
+            "beacons": [],
             "room_bounds": {},
             "floor_id": str(floor_id or DEFAULT_FLOOR_ID)[:40],
             "notes": "",
@@ -119,7 +121,7 @@ class MapsStore:
         await self.store.async_save(self.data)
         return info
 
-    async def async_update_map(self, map_id: str, *, receivers: list[dict[str, Any]] | None = None, calibration: dict[str, Any] | None = None, notes: str | None = None, floor_id: str | None = None, room_bounds: dict[str, Any] | None = None, stack: dict | None = None) -> dict[str, Any]:
+    async def async_update_map(self, map_id: str, *, receivers: list[dict[str, Any]] | None = None, beacons: list[dict[str, Any]] | None = None, calibration: dict[str, Any] | None = None, notes: str | None = None, floor_id: str | None = None, room_bounds: dict[str, Any] | None = None, stack: dict | None = None) -> dict[str, Any]:
         m = self.get_map(map_id)
         if not m:
             raise KeyError("not_found")
@@ -142,6 +144,25 @@ class MapsStore:
                 if rx["id"] or rx["label"]:
                     clean.append(rx)
             m["receivers"] = clean
+
+        if isinstance(beacons, list):
+            clean_bk: list[dict[str, Any]] = []
+            for bk in beacons:
+                if not isinstance(bk, dict):
+                    continue
+                entry = {
+                    "id": str(bk.get("id") or f"bk_{os.urandom(4).hex()}")[:80],
+                    "label": str(bk.get("label") or "")[:120],
+                    "key": str(bk.get("key") or "")[:200],
+                    "x": float(bk.get("x") or 0.0),
+                    "y": float(bk.get("y") or 0.0),
+                    "kind": str(bk.get("kind") or "")[:20],
+                }
+                entry["x"] = max(0.0, min(1.0, entry["x"]))
+                entry["y"] = max(0.0, min(1.0, entry["y"]))
+                if entry["key"]:
+                    clean_bk.append(entry)
+            m["beacons"] = clean_bk
 
         if isinstance(calibration, dict):
             m["calibration"] = {
@@ -281,6 +302,10 @@ class MapsStore:
                 for r in m.get("receivers", []):
                     r["x"] = _rx(r.get("x", 0))
                     r["y"] = _ry(r.get("y", 0))
+
+                for bk in m.get("beacons", []):
+                    bk["x"] = _rx(bk.get("x", 0))
+                    bk["y"] = _ry(bk.get("y", 0))
 
                 for b in m.get("room_bounds", {}).values():
                     if isinstance(b, dict):

@@ -83,6 +83,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_store_backup_list)
     websocket_api.async_register_command(hass, ws_store_backup_restore)
     websocket_api.async_register_command(hass, ws_store_backup_delete)
+    websocket_api.async_register_command(hass, ws_beacon_positions_get)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -1421,6 +1422,7 @@ async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("floor_id"): str,
         vol.Optional("room_bounds"): dict,
         vol.Optional("stack"): dict,
+        vol.Optional("beacons"): list,
     }
 )
 @websocket_api.async_response
@@ -1434,6 +1436,7 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
         updated = await ms.async_update_map(
             map_id,
             receivers=msg.get("receivers"),
+            beacons=msg.get("beacons"),
             calibration=msg.get("calibration"),
             notes=msg.get("notes"),
             floor_id=msg.get("floor_id"),
@@ -2316,3 +2319,62 @@ async def ws_store_backup_delete(hass: HomeAssistant, connection, msg) -> None:
     if deleted > 0:
         await _save_backups(hass, bk_data)
     connection.send_result(msg["id"], {"deleted": deleted > 0})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/beacon_positions_get"})
+@websocket_api.async_response
+async def ws_beacon_positions_get(hass: HomeAssistant, connection, msg) -> None:
+    """Return all pinned beacon positions across all maps with computed room."""
+    ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+    if not ms:
+        connection.send_result(msg["id"], {"positions": []})
+        return
+    positions: list[dict[str, Any]] = []
+    for m in ms.list_maps():
+        map_id = m.get("id", "")
+        floor_id = m.get("floor_id", "")
+        room_bounds = m.get("room_bounds") or {}
+        for bk in m.get("beacons") or []:
+            room = _room_from_bounds(room_bounds, float(bk.get("x", 0)), float(bk.get("y", 0)))
+            positions.append({
+                "key": bk.get("key", ""),
+                "map_id": map_id,
+                "x": bk.get("x", 0),
+                "y": bk.get("y", 0),
+                "label": bk.get("label", ""),
+                "floor_id": floor_id,
+                "room": room,
+                "kind": bk.get("kind", ""),
+            })
+    connection.send_result(msg["id"], {"positions": positions})
+
+
+def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
+    """Point-in-polygon / point-in-circle test against room_bounds. Returns room name or ''."""
+    for room_name, b in room_bounds.items():
+        if not isinstance(b, dict):
+            continue
+        btype = b.get("type", "poly")
+        if btype == "circle":
+            cx = float(b.get("cx", 0.5))
+            cy = float(b.get("cy", 0.5))
+            r = float(b.get("r", 0.12))
+            if (x - cx) ** 2 + (y - cy) ** 2 <= r ** 2:
+                return str(room_name)
+        elif btype == "poly":
+            pts = b.get("points") or []
+            if len(pts) < 3:
+                continue
+            # Ray-casting point-in-polygon test
+            inside = False
+            n = len(pts)
+            j = n - 1
+            for i in range(n):
+                xi, yi = float(pts[i][0]), float(pts[i][1])
+                xj, yj = float(pts[j][0]), float(pts[j][1])
+                if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+                    inside = not inside
+                j = i
+            if inside:
+                return str(room_name)
+    return ""
