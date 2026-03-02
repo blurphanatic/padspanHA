@@ -358,7 +358,6 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // Layout: labels on the outer edges, nodes in the middle, lines between nodes.
   //   [Scanner labels]  (o)----line----(o)  [Device labels]
   const w = 920;
-  const h = 460;
   const pad = 24;
   const scannerLabelX = pad + 10;          // labels on far left
   const scannerNodeX = pad + 210;          // circles right of labels
@@ -368,13 +367,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const srcs = Array.from(new Set(radios.map(r => String(r.source || "")).filter(Boolean))).sort();
   const srcIndex = new Map(srcs.map((s, i) => [s, i]));
 
-  // Place scanners evenly along the left
-  const scannerNodes = srcs.map((src, i) => {
-    const y = pad + (i + 1) * ((h - pad * 2) / (srcs.length + 1));
-    return { id: src, label: (radios.find(r => String(r.source || "") === src)?.name || src), x: scannerNodeX, y };
-  });
-
-  // Group devices by source, then place near their source band on the right
+  // Group devices by source
   const bySrc = {};
   for (const a of ads) {
     const src = String(a.source || "");
@@ -382,23 +375,68 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     bySrc[src].push(a);
   }
 
+  // Dynamic height: 16px per device row, minimum 460, plus room for titles
+  const DEV_ROW_H = 16;
+  const totalDevCount = Object.values(bySrc).reduce((sum, arr) => sum + Math.min(arr.length, 24), 0);
+  const h = Math.max(460, totalDevCount * DEV_ROW_H + pad * 3 + 30);
+
+  // Place scanners evenly along the left (initial pass, repositioned after devices)
+  const scannerNodes = srcs.map((src, i) => {
+    const y = pad + 20 + (i + 1) * ((h - pad * 2 - 20) / (srcs.length + 1));
+    return { id: src, label: (radios.find(r => String(r.source || "") === src)?.name || src), x: scannerNodeX, y };
+  });
+
+  // Place devices near their source scanner, then resolve overlaps
   const deviceNodes = [];
   for (const src of Object.keys(bySrc)) {
     const sIdx = srcIndex.has(src) ? srcIndex.get(src) : -1;
     const base = scannerNodes[Math.max(0, sIdx)] || { x: scannerNodeX, y: h / 2 };
-    const list = bySrc[src].slice(0, 18);
+    const list = bySrc[src].slice(0, 24);
+    const blockH = list.length * DEV_ROW_H;
+    const startY = base.y - blockH / 2;
     for (let i = 0; i < list.length; i++) {
       const a = list[i];
-      const y = base.y - 90 + (i * 18);
       deviceNodes.push({
         id: String(a.address || a.name || `${src}-${i}`),
         label: String(a.name || a.address || "Unknown"),
         x: deviceNodeX,
-        y: Math.max(pad + 18, Math.min(h - pad - 18, y)),
+        y: startY + i * DEV_ROW_H,
         src,
         rssi: a.rssi,
       });
     }
+  }
+
+  // Resolve vertical overlaps: sort by Y, push apart if too close
+  deviceNodes.sort((a, b) => a.y - b.y);
+  const MIN_GAP = DEV_ROW_H;
+  for (let i = 1; i < deviceNodes.length; i++) {
+    const gap = deviceNodes[i].y - deviceNodes[i - 1].y;
+    if (gap < MIN_GAP) deviceNodes[i].y = deviceNodes[i - 1].y + MIN_GAP;
+  }
+  // Clamp all nodes within canvas bounds
+  for (const d of deviceNodes) {
+    d.y = Math.max(pad + 20, Math.min(h - pad - 10, d.y));
+  }
+
+  // Reposition each scanner to the vertical center of its device cluster
+  for (const sn of scannerNodes) {
+    const myDevs = deviceNodes.filter(d => d.src === sn.id);
+    if (myDevs.length) {
+      const minY = Math.min(...myDevs.map(d => d.y));
+      const maxY = Math.max(...myDevs.map(d => d.y));
+      sn.y = (minY + maxY) / 2;
+    }
+  }
+  // Resolve scanner overlaps too (minimum 30px apart)
+  scannerNodes.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < scannerNodes.length; i++) {
+    if (scannerNodes[i].y - scannerNodes[i - 1].y < 30) {
+      scannerNodes[i].y = scannerNodes[i - 1].y + 30;
+    }
+  }
+  for (const sn of scannerNodes) {
+    sn.y = Math.max(pad + 20, Math.min(h - pad - 10, sn.y));
   }
 
   const rssiClass = rssi => {
@@ -430,8 +468,8 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // Device nodes + labels (labels to the RIGHT of nodes, outside the line area)
   for (const d of deviceNodes) {
     const rc = rssiClass(d.rssi);
-    s += `<circle cx="${d.x}" cy="${d.y}" r="6" class="bt-viz-node device ${rc}"/>`;
-    s += `<text x="${d.x + 12}" y="${d.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle">${_escSvg(d.label)}</text>`;
+    s += `<circle cx="${d.x}" cy="${d.y}" r="5" class="bt-viz-node device ${rc}"/>`;
+    s += `<text x="${d.x + 10}" y="${d.y}" class="bt-viz-label" font-size="11" text-anchor="start" dominant-baseline="middle">${_escSvg(d.label)}</text>`;
   }
 
   // Titles on top
