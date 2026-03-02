@@ -360,6 +360,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ── Fire follow-alerts for room changes ────────────────────────────────
         if self._pending_room_changes:
             await self._process_room_alerts(now, result)
+            await self._record_movement(result)
 
         return result
 
@@ -572,12 +573,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 obj = result.get(key) or self._known_objs.get(key) or {}
                 label = obj.get("user_label") or obj.get("name") or key
 
-                # Find a notify service
+                # Find a notify service — prefer user-configured, fall back to first available
                 services = self.hass.services.async_services().get("notify", {})
                 if not services:
                     _LOGGER.warning("Alert: no notify services available in HA")
                     continue
-                service_name = next(iter(services))
+                preferred = cfg.get("notify_service")
+                service_name = preferred if preferred and preferred in services else next(iter(services))
 
                 message = (
                     f"{label} moved from {old_room or 'unknown'} to {new_room}"
@@ -598,3 +600,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
             except Exception as err:
                 _LOGGER.warning("Follow alert failed for %s: %s", key, err)
+
+    async def _record_movement(self, result: dict[str, Any]) -> None:
+        """Record room transitions to persistent movement history."""
+        from .const import DOMAIN, DATA_MOVEMENT, DATA_OBJECTS
+        try:
+            mv_store = self.hass.data.get(DOMAIN, {}).get(DATA_MOVEMENT)
+            if not mv_store:
+                return
+            obj_store = self.hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+            for key, old_room, new_room in self._pending_room_changes:
+                label = None
+                if obj_store:
+                    label = obj_store.get_label(key)
+                await mv_store.record(key, old_room, new_room, label=label)
+        except Exception as err:
+            _LOGGER.debug("Movement recording failed: %s", err)

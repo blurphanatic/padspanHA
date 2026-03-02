@@ -162,36 +162,14 @@ export const HELP = {
     ],
   },
 
-  // ── Zones ──────────────────────────────────────────────────────────────────
-  zones: {
-    title: "Zones — Room occupancy at a glance",
-    body: [
-      "Zones shows every room in your home as a card, sorted by how many tracked devices are inside.",
-      "Occupied rooms have a coloured left border; empty rooms are dimmed. Each card lists the devices currently in that room with their signal strength.",
-      "Click a room card to open the full room detail. Click any device name to see its detail panel.",
-      "If your Home Assistant has floors configured, rooms are grouped by floor automatically.",
-    ],
-  },
-
-  // ── Insights ───────────────────────────────────────────────────────────────
-  insights: {
-    title: "Insights — Analytics from your live data",
-    body: [
-      "Insights turns your live BLE data into visual analytics so you can spot patterns and gaps.",
-      "Room Occupancy — horizontal bar chart showing which rooms have the most tracked devices. Click any bar to open that room's detail.",
-      "Signal Quality — per-scanner table with device count, average RSSI, and a quality grade. Click a row to see scanner details.",
-      "Object Mobility — devices seen in the most rooms, based on the room-tag map. Coverage Gaps — rooms with no devices or scanners not placed on maps.",
-    ],
-  },
-
   // ── Monitor ────────────────────────────────────────────────────────────────
   monitor: {
-    title: "Monitor — System health dashboard",
+    title: "Monitor — System health & analytics hub",
     body: [
-      "Monitor shows the technical health of your PadSpan setup — websocket call counts, timing, scanner performance, and data freshness.",
-      "The Per-Scanner Breakdown table shows each scanner's device count, average RSSI, and quality grade. Click any row for full scanner details.",
-      "Advertisement Freshness shows how many BLE advertisements are fresh (under 10 seconds old), stale, or old — a quick way to spot connectivity problems.",
-      "Session Info shows your current data mode, panel uptime, and how many events have been logged this session.",
+      "Monitor has three sub-tabs: Diagnostics, Zones, and Insights.",
+      "Diagnostics — websocket call counts, timing, scanner performance, advertisement freshness, and session info. The Per-Scanner Breakdown table shows each scanner's device count, average RSSI, and quality grade.",
+      "Zones — every room as a card sorted by occupancy. Occupied rooms have a coloured border; empty rooms are dimmed. Click a room card to see its detail. Rooms are grouped by floor when configured in HA.",
+      "Insights — visual analytics: room occupancy bar chart, signal quality table, object mobility (devices seen in multiple rooms), coverage gaps, and device breakdown stats.",
     ],
   },
 

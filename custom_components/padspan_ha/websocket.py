@@ -67,6 +67,8 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_calibration_compute_model)
     websocket_api.async_register_command(hass, ws_calibration_swap_radio)
     websocket_api.async_register_command(hass, ws_calibration_health_check)
+    websocket_api.async_register_command(hass, ws_movement_history_get)
+    websocket_api.async_register_command(hass, ws_notify_services_list)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -1901,3 +1903,39 @@ async def ws_calibration_swap_radio(hass: HomeAssistant, connection, msg) -> Non
         "new_source": new_source,
         "updated_readings": updated_readings,
     })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Movement history
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/movement_history_get",
+    vol.Optional("device"): str,
+    vol.Optional("limit", default=100): int,
+})
+@websocket_api.async_response
+async def ws_movement_history_get(hass: HomeAssistant, connection, msg) -> None:
+    """Return recent movement history entries."""
+    from .const import DATA_MOVEMENT
+    mv = hass.data.get(DOMAIN, {}).get(DATA_MOVEMENT)
+    if not mv:
+        connection.send_result(msg["id"], {"entries": []})
+        return
+    device = msg.get("device")
+    limit = msg.get("limit", 100)
+    entries = mv.get_history(device=device, limit=limit)
+    connection.send_result(msg["id"], {"entries": entries})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Notify services list
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@websocket_api.websocket_command({"type": "padspan_ha/notify_services_list"})
+@websocket_api.async_response
+async def ws_notify_services_list(hass: HomeAssistant, connection, msg) -> None:
+    """Return all available HA notify service names."""
+    services = hass.services.async_services().get("notify", {})
+    result = sorted(services.keys())
+    connection.send_result(msg["id"], {"services": result})

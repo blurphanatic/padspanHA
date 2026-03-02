@@ -14,17 +14,38 @@ export function render(ctx){
     helpBtn("monitor"),
   ]));
 
+  // ── Sub-tab bar ──
+  if(!ctx.state._monitorTab) ctx.state._monitorTab = "diagnostics";
+  const activeTab = ctx.state._monitorTab;
+  const setTab = (t) => { ctx.state._monitorTab = t; ctx.actions.renderRooms(); };
+
+  const TABS = [["diagnostics","Diagnostics"],["zones","Zones"],["insights","Insights"]];
+  const tabBar = el("div",{class:"tabs",style:"margin-bottom:14px;flex-wrap:wrap;gap:4px"});
+  for(const [id,label] of TABS){
+    tabBar.appendChild(el("button",{
+      class:"tab"+(activeTab===id?" active":""),
+      onclick:()=>setTab(id),
+    },label));
+  }
+  root.appendChild(tabBar);
+
+  if(activeTab === "zones"){ root.appendChild(_zones(ctx, el)); return root; }
+  if(activeTab === "insights"){ root.appendChild(_insights(ctx, el, _sid)); return root; }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DIAGNOSTICS TAB (default)
+  // ═══════════════════════════════════════════════════════════════════════════
   const grid = el("div",{class:"grid"});
 
   // ── BLE Diag Errors (top-level warning) ──
   const bleDiag = snap && snap.ble && snap.ble.diag;
   if(bleDiag && bleDiag.ok === false){
     const errors = (bleDiag.errors || []).join("; ") || "BLE subsystem unhealthy";
-    root.insertBefore(el("div",{class:"card",style:"border:1px solid #7f1d1d;background:#1a0a0a;margin-bottom:14px"},[
+    root.appendChild(el("div",{class:"card",style:"border:1px solid #7f1d1d;background:#1a0a0a;margin-bottom:14px"},[
       el("div",{style:"font-weight:700;color:#ef5350;margin-bottom:4px"},"BLE Feed Unhealthy"),
       el("div",{style:"font-size:12px;color:#fca5a5"}, errors),
       el("div",{class:"muted",style:"font-size:11px;margin-top:6px"},"Try restarting Home Assistant (Settings → System → Restart)."),
-    ]), grid);
+    ]));
   }
 
   // ── Websocket Call Counts ──
@@ -189,4 +210,381 @@ export function render(ctx){
 
   root.appendChild(grid);
   return root;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ZONES TAB
+// ═══════════════════════════════════════════════════════════════════════════
+function _zones(ctx, el){
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const wrap = el("div",{});
+
+  if(!snap){
+    wrap.appendChild(el("div",{class:"card"},[
+      el("div",{class:"muted"},"No snapshot available. Switch to Live or Sample mode to see zone data."),
+    ]));
+    return wrap;
+  }
+
+  const rooms = snap.rooms_discovered || [];
+  const objects = (snap.objects && snap.objects.list) || [];
+  const model = ctx.state.model || {};
+  const floors = (model.floors || []);
+  const areas = (model.areas || []);
+
+  // Build room → objects map
+  const roomObjs = {};
+  for(const r of rooms) roomObjs[r] = [];
+  for(const o of objects){
+    const r = o.room || "";
+    if(r && roomObjs[r]) roomObjs[r].push(o);
+    else if(r) roomObjs[r] = [o];
+  }
+
+  const occupied = Object.values(roomObjs).filter(v=>v.length>0).length;
+  const empty = rooms.length - occupied;
+
+  // KPI row
+  wrap.appendChild(el("div",{class:"row",style:"gap:10px;flex-wrap:wrap;margin-bottom:16px"},[
+    el("span",{class:"badge"}, `${rooms.length} rooms`),
+    el("span",{class:"badge"}, `${occupied} occupied`),
+    el("span",{class:"badge"}, `${empty} empty`),
+    el("span",{class:"badge"}, `${objects.length} objects`),
+  ]));
+
+  if(rooms.length === 0){
+    wrap.appendChild(el("div",{class:"card"},[
+      el("div",{class:"muted"},"No rooms discovered. Configure areas in Home Assistant."),
+    ]));
+    return wrap;
+  }
+
+  // Build floor→room mapping if floors exist
+  const floorRooms = {};
+  let hasFloors = false;
+  if(floors.length > 0 && areas.length > 0){
+    for(const f of floors) floorRooms[f.floor_id] = { name: f.name || f.floor_id, rooms: [] };
+    floorRooms["_none"] = { name: "Unassigned", rooms: [] };
+    for(const a of areas){
+      const fid = a.floor_id || "_none";
+      if(!floorRooms[fid]) floorRooms[fid] = { name: fid, rooms: [] };
+      if(rooms.includes(a.name)) floorRooms[fid].rooms.push(a.name);
+    }
+    const assignedRooms = new Set(areas.map(a=>a.name));
+    for(const r of rooms){
+      if(!assignedRooms.has(r)) floorRooms["_none"].rooms.push(r);
+    }
+    hasFloors = Object.values(floorRooms).some(f => f.rooms.length > 0 && f.name !== "Unassigned");
+  }
+
+  // Render room card helper
+  const renderRoomCard = (room) => {
+    const objs = roomObjs[room] || [];
+    const isOccupied = objs.length > 0;
+    const rc = ctx.helpers.roomColor(room);
+    const borderColor = isOccupied ? rc : "rgba(255,255,255,0.08)";
+
+    const card = el("div",{class:"card",style:`border-left:4px solid ${borderColor};cursor:pointer`});
+    card.addEventListener("click", (e)=>{
+      if(e.target.closest("[data-obj-click]")) return;
+      ctx.actions.showRoomDetail(room);
+    });
+
+    card.appendChild(el("div",{class:"row",style:"justify-content:space-between;align-items:center;margin-bottom:8px"},[
+      el("div",{style:`font-weight:700;color:${isOccupied ? "#e2e8f0" : "#64748b"}`}, room),
+      el("span",{class:"badge"+(isOccupied?"":" muted")}, `${objs.length}`),
+    ]));
+
+    if(objs.length > 0){
+      const list = el("div",{style:"display:flex;flex-direction:column;gap:3px"});
+      for(const o of objs.slice(0, 8)){
+        const label = o.user_label || o.name || o.address || "Unknown";
+        const rssiText = o.rssi != null ? ` (${o.rssi} dBm)` : "";
+        const isFollowed = ctx.actions.followedHas && ctx.actions.followedHas(o.address || o.key);
+        const objRow = el("div",{"data-obj-click":"1",style:"font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px;display:flex;align-items:center;gap:4px"});
+        objRow.addEventListener("mouseenter", ()=>{ objRow.style.background = "rgba(255,255,255,0.06)"; });
+        objRow.addEventListener("mouseleave", ()=>{ objRow.style.background = ""; });
+        objRow.addEventListener("click", (e)=>{ e.stopPropagation(); ctx.actions.showObjectDetail(o); });
+        if(isFollowed) objRow.appendChild(el("span",{style:"color:#f59e0b;font-size:10px;flex-shrink:0"},"\u25C9"));
+        objRow.appendChild(el("span",{style:"color:#cbd5e1"}, label));
+        objRow.appendChild(el("span",{class:"muted",style:"font-size:11px"}, rssiText));
+        list.appendChild(objRow);
+      }
+      if(objs.length > 8) list.appendChild(el("div",{class:"muted",style:"font-size:11px;font-style:italic;padding-left:4px"}, `+${objs.length - 8} more`));
+      card.appendChild(list);
+    } else {
+      card.appendChild(el("div",{class:"muted",style:"font-size:12px;font-style:italic"},"Empty"));
+    }
+    return card;
+  };
+
+  // Render with floor grouping or flat
+  if(hasFloors){
+    for(const [fid, fdata] of Object.entries(floorRooms)){
+      if(fdata.rooms.length === 0) continue;
+      const sorted = [...fdata.rooms].sort((a,b)=>(roomObjs[b]||[]).length - (roomObjs[a]||[]).length || a.localeCompare(b));
+      wrap.appendChild(el("div",{style:"font-size:14px;font-weight:700;color:#94a3b8;margin:16px 0 8px;border-bottom:1px solid rgba(255,255,255,0.06);padding-bottom:4px"}, fdata.name));
+      const grid = el("div",{class:"grid"});
+      for(const room of sorted) grid.appendChild(renderRoomCard(room));
+      wrap.appendChild(grid);
+    }
+  } else {
+    const grid = el("div",{class:"grid"});
+    const sortedRooms = Object.keys(roomObjs).sort((a,b)=>{
+      const diff = (roomObjs[b]||[]).length - (roomObjs[a]||[]).length;
+      return diff !== 0 ? diff : a.localeCompare(b);
+    });
+    for(const room of sortedRooms) grid.appendChild(renderRoomCard(room));
+    wrap.appendChild(grid);
+  }
+
+  return wrap;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INSIGHTS TAB
+// ═══════════════════════════════════════════════════════════════════════════
+function _insights(ctx, el, _sid){
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const wrap = el("div",{});
+
+  if(!snap){
+    wrap.appendChild(el("div",{class:"card"},[
+      el("div",{class:"muted"},"No snapshot available. Switch to Live or Sample mode to see insights."),
+    ]));
+    return wrap;
+  }
+
+  const rooms = snap.rooms_discovered || [];
+  const objects = (snap.objects && snap.objects.list) || [];
+  const radios = (snap.ble && snap.ble.radios) || [];
+  const ads = (snap.ble && snap.ble.advertisements) || [];
+  const roomTagMap = ctx.state.roomTagMap || {};
+  const maps = (ctx.state.maps && ctx.state.maps.list) || [];
+
+  const grid = el("div",{class:"grid"});
+
+  // ── Room Occupancy bar chart ──
+  const roomCounts = {};
+  for(const o of objects){
+    const r = o.room || "Unknown";
+    roomCounts[r] = (roomCounts[r]||0) + 1;
+  }
+  const sortedRC = Object.entries(roomCounts).sort((a,b)=>b[1]-a[1]);
+  const maxCount = sortedRC.length ? sortedRC[0][1] : 1;
+
+  const occCard = el("div",{class:"card"});
+  occCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Room Occupancy"));
+  if(sortedRC.length === 0){
+    occCard.appendChild(el("div",{class:"muted"},"No objects assigned to rooms."));
+  } else {
+    const bars = el("div",{style:"display:flex;flex-direction:column;gap:6px"});
+    for(const [room, count] of sortedRC.slice(0, 12)){
+      const pct = Math.round((count / maxCount) * 100);
+      const rc = ctx.helpers.roomColor(room);
+      const row = el("div",{style:"display:flex;align-items:center;gap:8px;cursor:pointer;padding:2px 0;border-radius:3px"});
+      row.addEventListener("mouseenter", ()=>{ row.style.background = "rgba(255,255,255,0.04)"; });
+      row.addEventListener("mouseleave", ()=>{ row.style.background = ""; });
+      row.addEventListener("click", ()=>ctx.actions.showRoomDetail(room));
+      row.appendChild(el("div",{style:"width:100px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0"}, room));
+      row.appendChild(el("div",{style:"flex:1;background:#1a2e1e;border-radius:3px;height:14px;position:relative"}, [
+        el("div",{style:`width:${pct}%;height:100%;background:${rc};border-radius:3px;min-width:2px`}),
+      ]));
+      row.appendChild(el("div",{style:"width:24px;text-align:right;font-size:12px;font-weight:600"}, String(count)));
+      bars.appendChild(row);
+    }
+    occCard.appendChild(bars);
+  }
+  grid.appendChild(occCard);
+
+  // ── Signal Quality per scanner ──
+  const scannerStats = {};
+  for(const ad of ads){
+    const src = ad.source || "unknown";
+    if(!scannerStats[src]) scannerStats[src] = { total: 0, rssiSum: 0, count: 0 };
+    scannerStats[src].total++;
+    if(ad.rssi != null){ scannerStats[src].rssiSum += ad.rssi; scannerStats[src].count++; }
+  }
+
+  const sigCard = el("div",{class:"card"});
+  sigCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Signal Quality"));
+  if(Object.keys(scannerStats).length === 0){
+    sigCard.appendChild(el("div",{class:"muted"},"No scanner data available."));
+  } else {
+    const tbl = el("table",{style:"width:100%;font-size:12px;border-collapse:collapse"});
+    tbl.appendChild(el("tr",{},[
+      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600"},"ID"),
+      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600"},"Scanner"),
+      el("th",{style:"text-align:right;padding:4px 6px;color:#94a3b8;font-weight:600"},"Devices"),
+      el("th",{style:"text-align:right;padding:4px 6px;color:#94a3b8;font-weight:600"},"Avg RSSI"),
+      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600"},"Grade"),
+    ]));
+    for(const [src, st] of Object.entries(scannerStats).sort((a,b)=>b[1].total-a[1].total)){
+      const avg = st.count > 0 ? Math.round(st.rssiSum / st.count) : null;
+      let grade = "\u2014", gradeColor = "#64748b";
+      if(avg !== null){
+        if(avg >= -60){ grade = "Excellent"; gradeColor = "#52b788"; }
+        else if(avg >= -70){ grade = "Good"; gradeColor = "#81c784"; }
+        else if(avg >= -80){ grade = "Fair"; gradeColor = "#ffd54f"; }
+        else { grade = "Poor"; gradeColor = "#ef5350"; }
+      }
+      const radio = radios.find(r=>r.source===src);
+      const name = (radio && radio.name) || src;
+      const tr = el("tr",{style:"cursor:pointer"});
+      tr.addEventListener("mouseenter", ()=>{ tr.style.background = "rgba(255,255,255,0.04)"; });
+      tr.addEventListener("mouseleave", ()=>{ tr.style.background = ""; });
+      tr.addEventListener("click", ()=>{
+        if(radio) ctx.actions.showScannerDetail(radio);
+      });
+      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em"}, _sid(src)));
+      tr.appendChild(el("td",{style:"padding:4px 6px;max-width:120px;overflow:hidden;text-overflow:ellipsis"}, name));
+      tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right"}, String(st.total)));
+      tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "\u2014"));
+      tr.appendChild(el("td",{style:`padding:4px 6px;color:${gradeColor};font-weight:600`}, grade));
+      tbl.appendChild(tr);
+    }
+    sigCard.appendChild(tbl);
+  }
+  grid.appendChild(sigCard);
+
+  // ── Object Mobility ──
+  const tagRooms = {};
+  for(const [room, tags] of Object.entries(roomTagMap)){
+    for(const t of (tags || [])){
+      const k = String(t);
+      if(!tagRooms[k]) tagRooms[k] = new Set();
+      tagRooms[k].add(room);
+    }
+  }
+  const mobCard = el("div",{class:"card"});
+  mobCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Object Mobility"));
+  const topMobile = Object.entries(tagRooms)
+    .map(([t, rs])=>({t, n: rs.size}))
+    .filter(x=>x.n > 1)
+    .sort((a,b)=>b.n-a.n)
+    .slice(0, 10);
+  if(topMobile.length === 0){
+    mobCard.appendChild(el("div",{class:"muted"},"No objects seen in multiple rooms yet."));
+  } else {
+    const list = el("div",{style:"display:flex;flex-direction:column;gap:4px"});
+    for(const x of topMobile){
+      const obj = objects.find(o => o.entity_id === x.t || o.key === x.t);
+      const row = el("div",{style:"font-size:12px;display:flex;justify-content:space-between;align-items:center;padding:3px 4px;border-radius:3px;" + (obj ? "cursor:pointer;" : "")});
+      if(obj){
+        row.addEventListener("mouseenter", ()=>{ row.style.background = "rgba(255,255,255,0.04)"; });
+        row.addEventListener("mouseleave", ()=>{ row.style.background = ""; });
+        row.addEventListener("click", ()=>ctx.actions.showObjectDetail(obj));
+      }
+      row.appendChild(el("span",{}, obj ? (obj.user_label || obj.name || x.t) : x.t));
+      row.appendChild(el("span",{class:"badge"}, `${x.n} rooms`));
+      list.appendChild(row);
+    }
+    mobCard.appendChild(list);
+  }
+  grid.appendChild(mobCard);
+
+  // ── Coverage Gaps ──
+  const gapCard = el("div",{class:"card"});
+  gapCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Coverage Gaps"));
+  const gapItems = [];
+
+  const emptyRooms = rooms.filter(r=>!(roomCounts[r]));
+  if(emptyRooms.length > 0){
+    const roomLinks = el("div",{style:"display:flex;flex-wrap:wrap;gap:4px;margin-top:4px"});
+    for(const r of emptyRooms){
+      const chip = el("span",{style:"font-size:11px;color:#ffd54f;cursor:pointer;text-decoration:underline;text-decoration-style:dotted"}, r);
+      chip.addEventListener("click", ()=>ctx.actions.showRoomDetail(r));
+      roomLinks.appendChild(chip);
+    }
+    gapItems.push(el("div",{style:"font-size:12px;margin-bottom:6px"},[
+      el("span",{style:"color:#ffd54f;font-weight:600"}, `${emptyRooms.length} empty room${emptyRooms.length>1?"s":""}:`),
+      roomLinks,
+    ]));
+  }
+
+  const mappedReceivers = new Set();
+  for(const m of maps){
+    for(const r of (m.receivers || [])) mappedReceivers.add(r.source || r.name || r.id);
+  }
+  const unmappedScanners = radios.filter(r=>!mappedReceivers.has(r.source) && !mappedReceivers.has(r.name));
+  if(unmappedScanners.length > 0){
+    const scanLinks = el("div",{style:"display:flex;flex-wrap:wrap;gap:4px;margin-top:4px"});
+    for(const s of unmappedScanners){
+      const chip = el("span",{style:"font-size:11px;color:#ffd54f;cursor:pointer;text-decoration:underline;text-decoration-style:dotted"}, s.name||s.source);
+      chip.addEventListener("click", ()=>ctx.actions.showScannerDetail(s));
+      scanLinks.appendChild(chip);
+    }
+    gapItems.push(el("div",{style:"font-size:12px;margin-bottom:6px"},[
+      el("span",{style:"color:#ffd54f;font-weight:600"}, `${unmappedScanners.length} scanner${unmappedScanners.length>1?"s":""} not on any map:`),
+      scanLinks,
+    ]));
+  }
+
+  if(gapItems.length === 0){
+    gapCard.appendChild(el("div",{style:"font-size:12px;color:#52b788;font-weight:600"},"No coverage gaps detected."));
+  } else {
+    for(const item of gapItems) gapCard.appendChild(item);
+  }
+  grid.appendChild(gapCard);
+
+  // ── Device Breakdown ──
+  const summary = snap.objects && snap.objects.summary;
+  const brkCard = el("div",{class:"card"});
+  brkCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Device Breakdown"));
+  if(!summary){
+    brkCard.appendChild(el("div",{class:"muted"},"No object summary available."));
+  } else {
+    const tagged = objects.filter(o=>o.user_label).length;
+    const identified = summary.identified || 0;
+    const unidentified = summary.unidentified || 0;
+    const total = summary.total || 0;
+
+    const items = [
+      { label: "Total", value: total, color: "#e2e8f0" },
+      { label: "Identified", value: identified, color: "#52b788" },
+      { label: "Unidentified", value: unidentified, color: unidentified > 0 ? "#ef5350" : "#52b788" },
+      { label: "Tagged", value: tagged, color: "#5eead4" },
+    ];
+    const row = el("div",{style:"display:flex;gap:16px;flex-wrap:wrap"});
+    for(const it of items){
+      row.appendChild(el("div",{style:"text-align:center"},[
+        el("div",{style:`font-size:24px;font-weight:800;color:${it.color}`}, String(it.value)),
+        el("div",{class:"muted",style:"font-size:11px"}, it.label),
+      ]));
+    }
+    brkCard.appendChild(row);
+  }
+  grid.appendChild(brkCard);
+
+  // ── Dashboard Card Preview ──
+  const dashCard = el("div",{class:"card"});
+  dashCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Dashboard Card Preview"));
+  dashCard.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:10px"}, "What a Lovelace card could look like with your current data."));
+
+  // Mini room grid
+  const roomCells = Object.entries(roomCounts).sort((a,b)=>b[1]-a[1]).slice(0, 9);
+  if(roomCells.length === 0){
+    dashCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},"No room data to preview."));
+  } else {
+    const cols = Math.min(3, roomCells.length);
+    const miniGrid = el("div",{style:`display:grid;grid-template-columns:repeat(${cols},1fr);gap:6px;max-width:320px`});
+    for(const [room, count] of roomCells){
+      const rc = ctx.helpers.roomColor ? ctx.helpers.roomColor(room) : "#52b788";
+      const cell = el("div",{style:`background:${rc}18;border:1px solid ${rc}44;border-radius:6px;padding:8px;text-align:center`},[
+        el("div",{style:"font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, room),
+        el("div",{style:`font-size:20px;font-weight:800;color:${rc}`}, String(count)),
+        el("div",{style:"display:flex;justify-content:center;gap:2px;margin-top:4px"},
+          Array.from({length: Math.min(count, 5)}, ()=> el("span",{style:`width:6px;height:6px;border-radius:50%;background:${rc}`}))
+        ),
+      ]);
+      miniGrid.appendChild(cell);
+    }
+    dashCard.appendChild(miniGrid);
+  }
+  grid.appendChild(dashCard);
+
+  wrap.appendChild(grid);
+  return wrap;
 }

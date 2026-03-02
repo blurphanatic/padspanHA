@@ -394,6 +394,34 @@ function _buildAlerts(ctx, el, helpBtn, addr, chosen, haAreas, dataMode, isBasic
     oninput: e => { cfg.email = e.target.value; ctx.state.followAlertConfig[addr] = cfg; },
   });
 
+  // Notify service selector (loads once, cached in state)
+  const serviceSelect = el("select", { class: "input", style: "max-width:200px" });
+  serviceSelect.appendChild(el("option", { value: "" }, "Default"));
+  if(!ctx.state._notifyServices){
+    ctx.state._notifyServices = [];
+    ctx.actions.wsCall("padspan_ha/notify_services_list", {}).then(r => {
+      ctx.state._notifyServices = (r && r.services) || [];
+      // Populate dropdown
+      for(const svc of ctx.state._notifyServices){
+        const opt = document.createElement("option");
+        opt.value = svc;
+        opt.textContent = svc;
+        if(cfg.notify_service === svc) opt.selected = true;
+        serviceSelect.appendChild(opt);
+      }
+    }).catch(() => {});
+  } else {
+    for(const svc of ctx.state._notifyServices){
+      const opt = el("option", { value: svc }, svc);
+      if(cfg.notify_service === svc) opt.selected = true;
+      serviceSelect.appendChild(opt);
+    }
+  }
+  serviceSelect.addEventListener("change", () => {
+    cfg.notify_service = serviceSelect.value || undefined;
+    ctx.state.followAlertConfig[addr] = cfg;
+  });
+
   // On-change toggle
   const chkChange = el("input", { type: "checkbox" });
   if (cfg.on_room_change) chkChange.checked = true;
@@ -456,6 +484,10 @@ function _buildAlerts(ctx, el, helpBtn, addr, chosen, haAreas, dataMode, isBasic
       el("div", {}, [
         el("div", { class: "muted", style: "font-size:12px;margin-bottom:4px" }, "Notification email address"),
         emailInput,
+      ]),
+      el("div", {}, [
+        el("div", { class: "muted", style: "font-size:12px;margin-bottom:4px" }, "Notify service (leave as Default for first available)"),
+        serviceSelect,
       ]),
       el("div", {}, [
         el("label", { style: "display:flex;align-items:center;gap:8px;cursor:pointer" }, [

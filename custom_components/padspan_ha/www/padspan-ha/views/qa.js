@@ -23,9 +23,20 @@ export function render(ctx){
   const maps = (ctx.state.maps && ctx.state.maps.list) || [];
   const rooms = snap ? (snap.rooms_discovered || []) : [];
   const radios = snap ? ((snap.ble && snap.ble.radios) || []) : [];
+  const bleAds = snap ? ((snap.ble && snap.ble.advertisements) || []) : [];
   const bleDiag = snap ? ((snap.ble && snap.ble.diag) || {}) : {};
   const objects = snap ? ((snap.objects && snap.objects.list) || []) : [];
 
+  // BLE scanner check: pass if radios exist, warn if no radios but we have ads (data still flowing)
+  const hasRadios = radios.length > 0;
+  const hasAds = bleAds.length > 0;
+  const bleScannersPass = hasRadios;
+  const bleScannersWarn = !hasRadios && hasAds;
+  // BLE feed check: pass if diag ok, warn if diag not ok but we have data (radios or ads)
+  const bleFeedPass = bleDiag.ok === true;
+  const bleFeedWarn = !bleFeedPass && (hasRadios || hasAds);
+
+  // Checks support pass/warn/fail: pass=true → green ✅, warn=true → amber ⚠️, else red ❌
   const checks = [
     {
       label: "Maps configured",
@@ -49,15 +60,17 @@ export function render(ctx){
     },
     {
       label: "BLE scanners active",
-      pass: radios.length > 0,
-      detail: radios.length > 0 ? `${radios.length} scanner${radios.length>1?"s":""}` : "No BLE radios detected",
-      fix: "Add Bluetooth scanner integrations to HA.",
+      pass: bleScannersPass,
+      warn: bleScannersWarn,
+      detail: hasRadios ? `${radios.length} scanner${radios.length>1?"s":""}` : hasAds ? `${bleAds.length} advertisements (radios not enumerated)` : "No BLE radios detected",
+      fix: hasAds ? "BLE data is flowing but radio list unavailable \u2014 this is usually fine." : "Add Bluetooth scanner integrations to HA.",
     },
     {
       label: "BLE feed healthy",
-      pass: bleDiag.ok === true,
-      detail: bleDiag.ok === true ? "OK" : (bleDiag.errors && bleDiag.errors.length ? bleDiag.errors[0] : "Unhealthy or no data"),
-      fix: "Restart HA (Settings \u2192 System \u2192 Restart).",
+      pass: bleFeedPass,
+      warn: bleFeedWarn,
+      detail: bleFeedPass ? "OK" : bleFeedWarn ? "BLE data flowing \u2014 diagnostics report minor issue" : (bleDiag.errors && bleDiag.errors.length ? bleDiag.errors[0] : "Unhealthy or no data"),
+      fix: bleFeedWarn ? "BLE is working. The diagnostics flag can be ignored." : "Restart HA (Settings \u2192 System \u2192 Restart).",
     },
     {
       label: "Objects tagged",
@@ -75,11 +88,12 @@ export function render(ctx){
   ];
 
   const checkList = el("div",{style:"display:flex;flex-direction:column;gap:6px"});
-  let passCount = 0;
+  let passCount = 0, warnCount = 0;
   for(const c of checks){
     if(c.pass) passCount++;
-    const icon = c.pass ? "\u2705" : "\u274C";
-    const color = c.pass ? "#52b788" : "#ef5350";
+    else if(c.warn) warnCount++;
+    const icon = c.pass ? "\u2705" : c.warn ? "\u26A0\uFE0F" : "\u274C";
+    const color = c.pass ? "#52b788" : c.warn ? "#ffd54f" : "#ef5350";
     const row = el("div",{style:"display:flex;align-items:flex-start;gap:8px;font-size:13px"});
     row.appendChild(el("span",{style:"flex-shrink:0"}, icon));
     row.appendChild(el("div",{style:"flex:1"},[
@@ -87,7 +101,7 @@ export function render(ctx){
         el("span",{style:`color:${color};font-weight:600;min-width:140px`}, c.label),
         el("span",{class:"muted",style:"font-size:11px"}, c.detail),
       ]),
-      !c.pass && c.fix ? el("div",{style:"font-size:11px;color:#90caf9;margin-top:2px;display:flex;align-items:center;gap:4px"},[
+      !c.pass && !c.warn && c.fix ? el("div",{style:"font-size:11px;color:#90caf9;margin-top:2px;display:flex;align-items:center;gap:4px"},[
         el("span",{}, c.fix),
         c.fixView ? (() => {
           const link = el("span",{style:"cursor:pointer;text-decoration:underline;text-decoration-style:dotted;color:#5eead4"}, `Go \u2192`);
@@ -98,12 +112,14 @@ export function render(ctx){
           return link;
         })() : null,
       ].filter(Boolean)) : null,
+      c.warn && c.fix ? el("div",{style:"font-size:11px;color:#ffd54f;margin-top:2px"}, c.fix) : null,
     ].filter(Boolean)));
     checkList.appendChild(row);
   }
   healthCard.appendChild(checkList);
-  healthCard.appendChild(el("div",{style:"margin-top:10px;font-size:12px;font-weight:600;color:" + (passCount === checks.length ? "#52b788" : "#ffd54f")},
-    `${passCount}/${checks.length} checks passed`));
+  const allOk = passCount + warnCount === checks.length;
+  healthCard.appendChild(el("div",{style:"margin-top:10px;font-size:12px;font-weight:600;color:" + (passCount === checks.length ? "#52b788" : allOk ? "#ffd54f" : "#ef5350")},
+    `${passCount}/${checks.length} passed` + (warnCount > 0 ? `, ${warnCount} warning${warnCount>1?"s":""}` : "")));
   grid.appendChild(healthCard);
 
   // ── Data Consistency ──
@@ -179,7 +195,7 @@ export function render(ctx){
     helpBtn("qa_radio_analysis"),
   ]));
 
-  const ads = snap ? ((snap.ble && snap.ble.advertisements) || []) : [];
+  const ads = bleAds;
 
   if(radios.length === 0){
     radioCard.appendChild(el("div",{class:"muted"},"No radios detected."));

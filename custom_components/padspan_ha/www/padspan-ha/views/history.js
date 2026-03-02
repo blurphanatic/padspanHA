@@ -5,13 +5,34 @@
 export function render(ctx){
   const { el, helpBtn } = ctx.helpers;
   const root = el("section",{id:"history"});
-  const events = ctx.state._sessionEvents || [];
 
   // Header
   root.appendChild(el("div",{class:"row",style:"align-items:center;gap:8px;margin-bottom:14px"},[
     el("h2",{},"History"),
     helpBtn("history"),
   ]));
+
+  // ── Sub-tab bar ──
+  if(!ctx.state._historyTab) ctx.state._historyTab = "events";
+  const activeTab = ctx.state._historyTab;
+  const setTab = (t) => { ctx.state._historyTab = t; ctx.actions.renderRooms(); };
+
+  const TABS = [["events","Session Events"],["movement","Movement"]];
+  const tabBar = el("div",{class:"tabs",style:"margin-bottom:14px;flex-wrap:wrap;gap:4px"});
+  for(const [id,label] of TABS){
+    tabBar.appendChild(el("button",{
+      class:"tab"+(activeTab===id?" active":""),
+      onclick:()=>setTab(id),
+    },label));
+  }
+  root.appendChild(tabBar);
+
+  if(activeTab === "movement"){ root.appendChild(_movement(ctx, el)); return root; }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SESSION EVENTS TAB (default)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const events = ctx.state._sessionEvents || [];
 
   if(events.length === 0){
     root.appendChild(el("div",{class:"card"},[
@@ -40,7 +61,6 @@ export function render(ctx){
   if(!ctx.state._historyFilters){
     ctx.state._historyFilters = new Set(allTypes);
   }
-  // Ensure new types are visible
   for(const t of allTypes){
     if(!ctx.state._historyFilters.has(t)) ctx.state._historyFilters.add(t);
   }
@@ -49,7 +69,6 @@ export function render(ctx){
   // Toolbar: filters + clear
   const toolbar = el("div",{style:"display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px"});
 
-  // Filter toggle buttons
   for(const type of allTypes){
     const color = TYPE_COLORS[type] || "#94a3b8";
     const label = TYPE_LABELS[type] || type;
@@ -69,7 +88,6 @@ export function render(ctx){
     toolbar.appendChild(btn);
   }
 
-  // Spacer + clear button
   toolbar.appendChild(el("div",{style:"flex:1"}));
   const clearBtn = el("button",{class:"btn inline",style:"font-size:11px;padding:2px 8px"}, "Clear History");
   clearBtn.addEventListener("click", ()=>ctx.actions.clearSessionEvents());
@@ -77,10 +95,8 @@ export function render(ctx){
 
   root.appendChild(toolbar);
 
-  // Apply filters
   const filtered = events.filter(e => activeFilters.has(e.type));
 
-  // Count info
   root.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:8px"},
     filtered.length === events.length
       ? `${events.length} events`
@@ -94,7 +110,6 @@ export function render(ctx){
     return root;
   }
 
-  // Timeline (newest first)
   const listContainer = el("div",{class:"list-scroll",style:"max-height:500px;overflow-y:auto;display:flex;flex-direction:column;gap:2px"});
 
   const sorted = [...filtered].reverse();
@@ -119,4 +134,89 @@ export function render(ctx){
 
   root.appendChild(listContainer);
   return root;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MOVEMENT TAB
+// ═══════════════════════════════════════════════════════════════════════════
+function _movement(ctx, el){
+  const wrap = el("div",{});
+
+  // Load movement data on first render (cached in state)
+  if(!ctx.state._movementLoaded){
+    ctx.state._movementLoaded = true;
+    ctx.state._movementEntries = [];
+    ctx.actions.wsCall("padspan_ha/movement_history_get", {limit: 200}).then(r => {
+      ctx.state._movementEntries = (r && r.entries) || [];
+      ctx.actions.renderRooms();
+    }).catch(() => {});
+  }
+
+  const entries = ctx.state._movementEntries || [];
+
+  if(entries.length === 0){
+    wrap.appendChild(el("div",{class:"card"},[
+      el("div",{class:"muted"},"No movement history recorded yet."),
+      el("div",{class:"muted",style:"font-size:12px;margin-top:6px"},"Room transitions are automatically recorded when tracked devices move between rooms."),
+    ]));
+    // Refresh button
+    const refreshBtn = el("button",{class:"btn inline",style:"margin-top:10px;font-size:11px"}, "Refresh");
+    refreshBtn.addEventListener("click", ()=>{
+      ctx.state._movementLoaded = false;
+      ctx.actions.renderRooms();
+    });
+    wrap.appendChild(refreshBtn);
+    return wrap;
+  }
+
+  // Toolbar
+  const toolbar = el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:12px"});
+  toolbar.appendChild(el("div",{class:"muted",style:"font-size:11px"}, `${entries.length} transitions`));
+  toolbar.appendChild(el("div",{style:"flex:1"}));
+  const refreshBtn = el("button",{class:"btn inline",style:"font-size:11px;padding:2px 8px"}, "Refresh");
+  refreshBtn.addEventListener("click", ()=>{
+    ctx.state._movementLoaded = false;
+    ctx.actions.renderRooms();
+  });
+  toolbar.appendChild(refreshBtn);
+  wrap.appendChild(toolbar);
+
+  // Timeline (newest first)
+  const listContainer = el("div",{class:"list-scroll",style:"max-height:500px;overflow-y:auto;display:flex;flex-direction:column;gap:2px"});
+
+  const sorted = [...entries].reverse();
+  for(const entry of sorted){
+    const ts = entry.ts ? new Date(entry.ts * 1000) : null;
+    let timeStr = "\u2014";
+    let dateStr = "";
+    if(ts){
+      const hh = String(ts.getHours()).padStart(2, "0");
+      const mm = String(ts.getMinutes()).padStart(2, "0");
+      const ss = String(ts.getSeconds()).padStart(2, "0");
+      timeStr = `${hh}:${mm}:${ss}`;
+      const today = new Date();
+      if(ts.toDateString() !== today.toDateString()){
+        dateStr = `${ts.getMonth()+1}/${ts.getDate()} `;
+      }
+    }
+
+    const label = entry.label || entry.device || "Unknown";
+    const fromRoom = entry.from || "unknown";
+    const toRoom = entry.to || "unknown";
+    const rc = ctx.helpers.roomColor ? ctx.helpers.roomColor(toRoom) : "#52b788";
+
+    const row = el("div",{style:"display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:4px;background:rgba(255,255,255,0.02);border-left:3px solid " + rc});
+
+    row.appendChild(el("span",{style:"font-family:monospace;font-size:11px;color:#64748b;flex-shrink:0;width:72px"}, dateStr + timeStr));
+    row.appendChild(el("span",{style:"font-size:12px;font-weight:600;color:#e2e8f0;min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0"}, label));
+    row.appendChild(el("span",{style:"font-size:11px;color:#94a3b8;flex-shrink:0"}, fromRoom));
+    row.appendChild(el("span",{style:"font-size:11px;color:#5eead4"}, "\u2192"));
+    row.appendChild(el("span",{style:`font-size:11px;color:${rc};font-weight:600`}, toRoom));
+
+    listContainer.appendChild(row);
+  }
+
+  wrap.appendChild(listContainer);
+  return wrap;
 }

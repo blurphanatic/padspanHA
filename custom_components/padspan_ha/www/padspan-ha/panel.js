@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.5.94";
+const APP_VERSION = "0.5.95";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260302T004123Z";
+const BUILD_ID = "20260302T030648Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -39,8 +39,6 @@ const _viewsPromise = Promise.allSettled([
   import(`./views/devices.js?b=${BUILD_ID}`).then(m => { VIEWS.devices = m; }),
   import(`./views/bluetooth.js?b=${BUILD_ID}`).then(m => { VIEWS.bluetooth = m; }),
   import(`./views/presence.js?b=${BUILD_ID}`).then(m => { VIEWS.presence = m; }),
-  import(`./views/zones.js?b=${BUILD_ID}`).then(m => { VIEWS.zones = m; }),
-  import(`./views/insights.js?b=${BUILD_ID}`).then(m => { VIEWS.insights = m; }),
   import(`./views/history.js?b=${BUILD_ID}`).then(m => { VIEWS.history = m; }),
   import(`./views/monitor.js?b=${BUILD_ID}`).then(m => { VIEWS.monitor = m; }),
   import(`./views/maps.js?b=${BUILD_ID}`).then(m => { VIEWS.maps = m; }),
@@ -67,8 +65,6 @@ const MENU = [
   ["devices","Devices","mdi:devices"],
   ["bluetooth","Bluetooth","mdi:bluetooth"],
   ["presence","Presence","mdi:map-marker-radius-outline"],
-  ["zones","Zones","mdi:vector-square"],
-  ["insights","Insights","mdi:chart-line"],
   ["monitor","Monitor","mdi:monitor-dashboard"],
   ["maps","Mapping","mdi:map"],
   ["settings","Settings","mdi:cog-outline"],
@@ -452,7 +448,7 @@ class PadSpanHaApp extends HTMLElement {
       this._updateBadges();
 
       // Re-render views that show live data.
-      const liveViews = new Set(["overview","objects","devices","bluetooth","presence","zones","insights","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage"]);
+      const liveViews = new Set(["overview","objects","devices","bluetooth","presence","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage"]);
       if(liveViews.has(this.state.view)) this._renderCurrentView();
     } catch(e){
       // Non-fatal; keep trying.
@@ -813,6 +809,7 @@ class PadSpanHaApp extends HTMLElement {
         calibrationComputeModel: async () => await this._callWS({ type: "padspan_ha/calibration_compute_model" }),
         calibrationSwapRadio: async (old_source, new_source) => await this._callWS({ type: "padspan_ha/calibration_swap_radio", old_source, new_source }),
         calibrationHealthCheck: async () => await this._callWS({ type: "padspan_ha/calibration_health_check" }),
+        wsCall: async (type, data={}) => await this._callWS({ type, ...data }),
         // Followed beacons — multi-device follow; persisted to server via settings
         followedHas: (addr) => !!addr && this.state.followedAddrs.has(String(addr).toUpperCase()),
         followedToggle: (addr) => {
@@ -1432,8 +1429,37 @@ class PadSpanHaApp extends HTMLElement {
       }
     }
 
+    // First-run welcome banner (dismissible, once per session)
+    if(!this.state._welcomeDismissed && this.state.view === "follow"){
+      this.state._welcomeDismissed = true;
+      const welcome = el("div",{class:"card",style:"border:1px solid #1a4228;background:#0f1a12;margin-bottom:14px"});
+      welcome.appendChild(el("div",{style:"display:flex;align-items:center;justify-content:space-between"},[
+        el("div",{style:"font-weight:700;font-size:14px;color:#52b788"}, "Welcome to PadSpan\u2122 HA"),
+        (() => {
+          const x = el("span",{style:"cursor:pointer;color:#64748b;font-size:16px;padding:2px 6px"}, "\u2715");
+          x.addEventListener("click", ()=>welcome.remove());
+          return x;
+        })(),
+      ]));
+      welcome.appendChild(el("div",{style:"display:flex;flex-direction:column;gap:8px;margin-top:10px;font-size:12px;color:#94a3b8"},[
+        el("div",{}, [el("span",{style:"color:#5eead4;font-weight:700;margin-right:6px"},"1."), "Upload a floor plan in the ", el("span",{style:"color:#5eead4"},"Maps"), " tab"]),
+        el("div",{}, [el("span",{style:"color:#5eead4;font-weight:700;margin-right:6px"},"2."), "Place your scanners on the map in ", el("span",{style:"color:#5eead4"},"Maps \u2192 3D Stack")]),
+        el("div",{}, [el("span",{style:"color:#5eead4;font-weight:700;margin-right:6px"},"3."), "Tag your devices in the ", el("span",{style:"color:#5eead4"},"Objects"), " tab, then track them here"]),
+      ]));
+      this.$content.appendChild(welcome);
+    }
+
     if(!mod || typeof mod.render !== "function") {
-      this.$content.appendChild(el("div",{class:"card"}, `View missing: ${v}`));
+      // Skeleton loading placeholder while views load
+      const skel = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
+      for(let i = 0; i < 3; i++){
+        const card = el("div",{class:"card",style:"min-height:80px"});
+        card.appendChild(el("div",{style:"height:14px;width:40%;background:rgba(255,255,255,0.06);border-radius:4px;margin-bottom:12px"}));
+        card.appendChild(el("div",{style:"height:10px;width:70%;background:rgba(255,255,255,0.04);border-radius:3px;margin-bottom:8px"}));
+        card.appendChild(el("div",{style:"height:10px;width:55%;background:rgba(255,255,255,0.04);border-radius:3px"}));
+        skel.appendChild(card);
+      }
+      this.$content.appendChild(skel);
       return;
     }
     try {
