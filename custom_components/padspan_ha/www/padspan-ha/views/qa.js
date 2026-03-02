@@ -703,23 +703,25 @@ export function render(ctx){
       // Collapsed summary row — 3 lines: rank + name, metrics, score
       const summary = el("div",{style:`padding:8px 10px;cursor:pointer;border-radius:${isOpen?"8px 8px 0 0":"8px"};border:1px solid ${borderCol};background:${bgCol}`});
 
-      // Line 1: arrow + rank badge + health icon + SID + name + overall score
-      const nameLink = el("span",{style:"display:inline-block;max-width:100%;vertical-align:middle;font-weight:600;color:#e2e8f0;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, esc(r.name || r.source));
-      nameLink.addEventListener("click", (ev)=>{ ev.stopPropagation(); ctx.actions.showScannerDetail(r); });
+      // Row 1: arrow + rank badge + health icon + SID + overall score
       const medal = a.rank <= 3 ? medals[a.rank-1] : "";
       const rankBadge = el("span",{style:"font-weight:800;font-size:12px;color:#94a3b8;flex-shrink:0;min-width:24px"}, `#${a.rank}`);
-      const scoreBadge = el("span",{style:`font-size:11px;font-weight:700;color:${_scoreColor(a.overallScore)};background:${_scoreColor(a.overallScore)}18;padding:1px 6px;border-radius:4px;flex-shrink:0;white-space:nowrap`}, `${a.overallScore}/100`);
+      const scoreBadge = el("span",{style:`font-size:11px;font-weight:700;color:${_scoreColor(a.overallScore)};background:${_scoreColor(a.overallScore)}18;padding:1px 6px;border-radius:4px;flex-shrink:0;white-space:nowrap;margin-left:auto`}, `${a.overallScore}/100`);
       summary.appendChild(el("div",{style:"display:flex;align-items:center;gap:6px;min-width:0"},[
         el("span",{style:`font-size:10px;color:#94a3b8;flex-shrink:0;transition:transform .15s;transform:rotate(${isOpen?"90":"0"}deg)`}, "\u25B6"),
         rankBadge,
         medal ? el("span",{style:"font-size:14px;flex-shrink:0"}, medal) : null,
         el("span",{style:"flex-shrink:0;font-size:14px"}, a.healthIcon),
         el("span",{class:"pill",style:"font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px;flex-shrink:0"}, _sid(a.src)),
-        el("span",{style:"flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"},[nameLink]),
         scoreBadge,
       ].filter(Boolean)));
 
-      // Line 2: metrics + health badge + reason
+      // Row 2: full radio name (no truncation)
+      const nameLink = el("span",{style:"font-weight:600;color:#e2e8f0;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;word-break:break-word"}, esc(r.name || r.source));
+      nameLink.addEventListener("click", (ev)=>{ ev.stopPropagation(); ctx.actions.showScannerDetail(r); });
+      summary.appendChild(el("div",{style:"padding-left:42px;margin-top:3px"},[nameLink]));
+
+      // Row 3: metrics + health badge + reason
       const metricsLine = [
         el("span",{class:"muted",style:"font-size:11px"}, `${a.totalDevices} device${a.totalDevices!==1?"s":""}`),
       ];
