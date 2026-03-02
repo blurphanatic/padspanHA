@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.0";
+const APP_VERSION = "0.6.1";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260302T165255Z";
+const BUILD_ID = "20260302T171235Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -205,6 +205,7 @@ class PadSpanHaApp extends HTMLElement {
   }
 
   set hass(hass){
+    const prevHass = this._hass;
     this._hass = hass;
     // Avoid spamming refresh on every hass set (HA calls it often)
     if(!this._booted){
@@ -213,6 +214,14 @@ class PadSpanHaApp extends HTMLElement {
       _viewsPromise.then(() => {
         this._refreshAll(false);
         if(this.state.dataMode === "live") this._startPolling();
+      });
+    } else if(hass && prevHass && hass !== prevHass && hass.connection !== prevHass.connection){
+      // HA reconnected with a new WS connection — re-bootstrap
+      this._pollInFlight = false; // clear any stuck poll
+      _viewsPromise.then(() => {
+        this._ensureShadowDom();
+        this._refreshAll(false);
+        if(this.state.dataMode === "live") this._startDataPoll();
       });
     }
   }
@@ -311,6 +320,11 @@ class PadSpanHaApp extends HTMLElement {
     if(Object.keys(VIEWS).length > 0){
       this._renderCurrentView();
       this._startPolling();
+      // On reconnect (not first boot), refresh data to recover from stale state
+      if(this._booted && this._hass){
+        this._pollInFlight = false;
+        this._refreshAll(false);
+      }
     } else {
       // Show loading placeholder — purely inline so it works with no CSS loaded yet
       if(this.$content){
@@ -329,13 +343,11 @@ class PadSpanHaApp extends HTMLElement {
 
 
   disconnectedCallback(){
-    // Stop data poll + clean up document-level listeners to prevent leaks.
-    // Activity + watchdog are intentionally kept alive for reconnect recovery.
+    // Stop data poll only. Keep activity/watchdog/visibility alive for reconnect.
+    // HA may reconnect the element shortly after disconnect; preserving these
+    // handlers ensures the panel recovers immediately.
     this._stopDataPoll();
-    if(this._visibilityHandler){
-      document.removeEventListener("visibilitychange", this._visibilityHandler);
-      this._visibilityHandler = null;
-    }
+    this._pollInFlight = false; // ensure next reconnect isn't blocked
     if(this._modalEsc){
       window.removeEventListener("keydown", this._modalEsc);
       this._modalEsc = null;
@@ -343,10 +355,31 @@ class PadSpanHaApp extends HTMLElement {
   }
 
   // ── Anti-blank system ─────────────────────────────────────────────────────
-  // Three independent mechanisms prevent the panel from going blank:
+  // Four independent mechanisms prevent the panel from going blank:
   // 1. Activity ping — synthetic pointer events keep HA's idle overlay away
-  // 2. Watchdog — detects empty content and forces a re-render
+  // 2. Watchdog — detects empty/stale content and forces a full rebuild
   // 3. Visibility handler — immediate recovery when tab regains focus
+  // 4. hass reconnect detection — re-bootstraps on WS connection change
+
+  _ensureShadowDom(){
+    // Verify shadowRoot has the expected structure. If not, rebuild entirely.
+    if(!this.shadowRoot) return false;
+    const liveContent = this.shadowRoot.querySelector("#content");
+    if(!liveContent || !this.shadowRoot.querySelector("#app")){
+      // Shadow DOM was cleared externally — full rebuild
+      this.connectedCallback();
+      return true;
+    }
+    // Fix stale references: this.$content might point at a detached node
+    if(this.$content !== liveContent){
+      this.$ = (q)=>this.shadowRoot.querySelector(q);
+      this.$content = liveContent;
+      this.$nav = this.$("#nav");
+      this.$modal = this.$("#modal");
+      return true;
+    }
+    return false;
+  }
 
   _startKeepAlive(){
     // Activity ping: dispatch on both document and window every 30s.
@@ -367,39 +400,46 @@ class PadSpanHaApp extends HTMLElement {
       this._activityTimer = setInterval(ping, 30_000);
     }
 
-    // Watchdog: every 15s, check if content area is empty and re-render.
-    // Also checks if the element was disconnected and reattached.
+    // Watchdog: every 10s, verify DOM integrity and re-render if needed.
     if(!this._watchdogTimer){
       this._watchdogTimer = setInterval(()=>{
         try {
-          // If we're not connected to the DOM, skip
           if(!this.isConnected) return;
-          // If content area exists but is empty, re-render
+
+          // 1. Check for stale $content references (shadow DOM rebuilt externally)
+          const rebuilt = this._ensureShadowDom();
+          if(rebuilt){
+            this._renderCurrentView();
+            return;
+          }
+
+          // 2. Check if content area is empty
           if(this.$content && !this.$content.children.length){
             this._renderCurrentView();
           }
-          // If $ selector is broken (shadowRoot was cleared), rebuild
-          if(!this.$ || !this.$content){
-            if(this.shadowRoot && this.shadowRoot.querySelector("#content")){
-              this.$ = (q)=>this.shadowRoot.querySelector(q);
-              this.$content = this.$("#content");
-              this.$nav = this.$("#nav");
-              this.$modal = this.$("#modal");
+
+          // 3. Unstick deadlocked poll (WS call hung > 30s)
+          if(this._pollInFlight && this._pollStartedAt){
+            if(performance.now() - this._pollStartedAt > 30_000){
+              this._pollInFlight = false;
               this._renderCurrentView();
             }
           }
-          // Ensure data poll is alive in live mode
+
+          // 4. Ensure data poll is alive in live mode
           if(this.state.dataMode === "live" && !this._pollTimer){
             this._startDataPoll();
           }
         } catch(e){}
-      }, 15_000);
+      }, 10_000);
     }
 
     // Visibility handler: immediate wake-up when tab becomes visible again.
     if(!this._visibilityHandler){
       this._visibilityHandler = ()=>{
         if(document.visibilityState === "visible" && this._hass && this.isConnected){
+          this._pollInFlight = false; // clear any stuck poll from background throttling
+          this._ensureShadowDom();
           this._renderCurrentView();
           this._refreshAll(false);
           if(this.state.dataMode === "live" && !this._pollTimer) this._startDataPoll();
@@ -440,20 +480,30 @@ class PadSpanHaApp extends HTMLElement {
     if(this.state.view === "maps") return;
 
     this._pollInFlight = true;
-    const t0 = performance.now();
+    this._pollStartedAt = performance.now();
+    const t0 = this._pollStartedAt;
     try{
-      await this._getLiveSnapshot();
-      await this._getStatus();
+      // Race WS calls against a 15s timeout to prevent indefinite hangs
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("poll_timeout")), 15_000));
+      await Promise.race([
+        (async ()=>{
+          await this._getLiveSnapshot();
+          await this._getStatus();
+        })(),
+        timeout,
+      ]);
       this.state.timing.lastRefreshMs = Math.round(performance.now() - t0);
       this._updateBadges();
 
       // Re-render views that show live data.
-      const liveViews = new Set(["overview","objects","devices","bluetooth","presence","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage"]);
+      const liveViews = new Set(["overview","follow","objects","devices","bluetooth","presence","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage","calibration"]);
       if(liveViews.has(this.state.view)) this._renderCurrentView();
     } catch(e){
-      // Non-fatal; keep trying.
+      // Non-fatal — still re-render with whatever data we have to prevent blank screen
+      try { this._renderCurrentView(); } catch(e2){}
     } finally {
       this._pollInFlight = false;
+      this._pollStartedAt = null;
     }
   }
 
@@ -1389,7 +1439,11 @@ class PadSpanHaApp extends HTMLElement {
   }
 
   _renderCurrentView(){
-    if(!this.$content) return;
+    // Verify $content is a live node in the shadow DOM (not a stale detached reference)
+    if(!this.$content || !this.$content.isConnected){
+      this._ensureShadowDom();
+      if(!this.$content) return;
+    }
     const v = this.state.view;
     const mod = VIEWS[v];
 
