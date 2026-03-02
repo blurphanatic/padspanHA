@@ -355,10 +355,15 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     ]);
   }
 
-  // Layout: scanners on left, devices on right, lines between by source.
+  // Layout: labels on the outer edges, nodes in the middle, lines between nodes.
+  //   [Scanner labels]  (o)----line----(o)  [Device labels]
   const w = 920;
   const h = 460;
   const pad = 24;
+  const scannerLabelX = pad + 10;          // labels on far left
+  const scannerNodeX = pad + 210;          // circles right of labels
+  const deviceNodeX = w - pad - 210;       // circles left of labels
+  const deviceLabelX = w - pad - 10;       // labels on far right
 
   const srcs = Array.from(new Set(radios.map(r => String(r.source || "")).filter(Boolean))).sort();
   const srcIndex = new Map(srcs.map((s, i) => [s, i]));
@@ -366,7 +371,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // Place scanners evenly along the left
   const scannerNodes = srcs.map((src, i) => {
     const y = pad + (i + 1) * ((h - pad * 2) / (srcs.length + 1));
-    return { id: src, label: (radios.find(r => String(r.source || "") === src)?.name || src), x: pad + 110, y };
+    return { id: src, label: (radios.find(r => String(r.source || "") === src)?.name || src), x: scannerNodeX, y };
   });
 
   // Group devices by source, then place near their source band on the right
@@ -380,7 +385,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const deviceNodes = [];
   for (const src of Object.keys(bySrc)) {
     const sIdx = srcIndex.has(src) ? srcIndex.get(src) : -1;
-    const base = scannerNodes[Math.max(0, sIdx)] || { x: pad + 110, y: h / 2 };
+    const base = scannerNodes[Math.max(0, sIdx)] || { x: scannerNodeX, y: h / 2 };
     const list = bySrc[src].slice(0, 18);
     for (let i = 0; i < list.length; i++) {
       const a = list[i];
@@ -388,7 +393,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
       deviceNodes.push({
         id: String(a.address || a.name || `${src}-${i}`),
         label: String(a.name || a.address || "Unknown"),
-        x: w - pad - 220,
+        x: deviceNodeX,
         y: Math.max(pad + 18, Math.min(h - pad - 18, y)),
         src,
         rssi: a.rssi,
@@ -408,11 +413,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // document.createElement("circle") / ("line") render as invisible elements.
   let s = `<svg class="bt-viz" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
 
-  // Titles
-  s += `<text x="${pad}" y="${pad}" class="bt-viz-title" text-anchor="start" dominant-baseline="middle">Scanners</text>`;
-  s += `<text x="${w - pad}" y="${pad}" class="bt-viz-title" text-anchor="end" dominant-baseline="middle">Devices</text>`;
-
-  // Lines
+  // Lines first (back layer) — connect between the node circles only
   for (const d of deviceNodes) {
     const sn = scannerNodes.find(n => n.id === d.src);
     if (!sn) continue;
@@ -420,18 +421,22 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     s += `<line x1="${sn.x + 10}" y1="${sn.y}" x2="${d.x - 10}" y2="${d.y}" class="bt-viz-line ${rc}"/>`;
   }
 
-  // Scanner nodes
+  // Scanner nodes + labels (labels to the LEFT of nodes, outside the line area)
   for (const sn of scannerNodes) {
     s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner"/>`;
-    s += `<text x="${sn.x + 14}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle">${_escSvg(sn.label)}</text>`;
+    s += `<text x="${sn.x - 14}" y="${sn.y}" class="bt-viz-label" text-anchor="end" dominant-baseline="middle">${_escSvg(sn.label)}</text>`;
   }
 
-  // Device nodes
+  // Device nodes + labels (labels to the RIGHT of nodes, outside the line area)
   for (const d of deviceNodes) {
     const rc = rssiClass(d.rssi);
     s += `<circle cx="${d.x}" cy="${d.y}" r="6" class="bt-viz-node device ${rc}"/>`;
-    s += `<text x="${d.x - 12}" y="${d.y}" class="bt-viz-label" text-anchor="end" dominant-baseline="middle">${_escSvg(d.label)}</text>`;
+    s += `<text x="${d.x + 12}" y="${d.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle">${_escSvg(d.label)}</text>`;
   }
+
+  // Titles on top
+  s += `<text x="${scannerLabelX}" y="${pad}" class="bt-viz-title" text-anchor="start" dominant-baseline="middle">Scanners</text>`;
+  s += `<text x="${deviceLabelX}" y="${pad}" class="bt-viz-title" text-anchor="start" dominant-baseline="middle">Devices</text>`;
 
   s += `</svg>`;
 
