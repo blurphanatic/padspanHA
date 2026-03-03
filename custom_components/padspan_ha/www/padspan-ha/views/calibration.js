@@ -2167,6 +2167,18 @@ function _detectRoom(x, y, mapData) {
   return "";
 }
 
+function _roomCentroid(roomName, mapData) {
+  const b = (mapData?.room_bounds || {})[roomName];
+  if (!b) return null;
+  if (b.type === "poly" && Array.isArray(b.points) && b.points.length >= 3) {
+    const cx = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
+    const cy = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
+    return [cx, cy];
+  }
+  if (b.type === "circle") return [b.cx, b.cy];
+  return null;
+}
+
 // ── Beacon Tune tab — 3D iso map with draggable beacon markers ───────────────
 function _beaconTuneTab(ctx, el, cs, calData) {
   const wrap = el("div", { style: "display:flex;flex-direction:column;gap:10px" });
@@ -2214,6 +2226,32 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   };
   const bs = ctx.state._calibBeacon;
 
+  const _BLE_KINDS = new Set(["ble", "private_ble", "ibeacon"]);
+  function _autoPinTracked() {
+    const pinnedKeys = new Set();
+    for (const bks of Object.values(bs.draftBeacons)) {
+      for (const bk of bks) if (bk.key) pinnedKeys.add(bk.key);
+    }
+    for (const obj of (snap?.objects?.list || [])) {
+      if (!(obj.user_label || obj.identified)) continue;
+      if (!_BLE_KINDS.has(obj.kind)) continue;
+      if (!obj.room || pinnedKeys.has(obj.key)) continue;
+      for (const m of maps_list) {
+        const c = _roomCentroid(obj.room, m);
+        if (!c) continue;
+        if (!bs.draftBeacons[m.id]) bs.draftBeacons[m.id] = [];
+        bs.draftBeacons[m.id].push({
+          id: "bk_" + Math.random().toString(16).slice(2, 10),
+          label: obj.user_label || obj.name || obj.key,
+          key: obj.key, kind: obj.kind || "ble",
+          x: c[0], y: c[1],
+        });
+        bs.dirtyMaps[m.id] = true;
+        break;
+      }
+    }
+  }
+
   // Build stamp and sync draft beacons from maps data
   const mapsStamp = maps_list.map(m => `${m.id}:${m.updated||""}:${(m.beacons||[]).length}`).join("|");
   const hasDirty = Object.values(bs.dirtyMaps).some(Boolean);
@@ -2228,6 +2266,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       if (!maps_list.find(m => m.id === id)) delete bs.draftBeacons[id];
     }
     bs._mapsStamp = mapsStamp;
+    _autoPinTracked();
   }
 
   let _fg = bs.fg, _hg = bs.hg;
@@ -2645,6 +2684,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       }));
     }
     bs.dirtyMaps = {};
+    _autoPinTracked();
     bs.selectedBk = null;
     bs.fg = ctx.state.settings?.overview_iso_floor_gap ?? 150;
     bs.hg = ctx.state.settings?.overview_iso_horiz_gap ?? 0;
@@ -2956,7 +2996,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   _refreshInfo();
 
   // ── Available beacons (tracked objects from snapshot) ──────────────────
-  const _trackedObjects = (snap?.objects?.list || []).filter(o => o.identified);
+  const _trackedObjects = (snap?.objects?.list || []).filter(o => o.user_label || o.identified);
   const availCard = document.createElement("div");
   availCard.className = "card";
   function _refreshAvailable() {

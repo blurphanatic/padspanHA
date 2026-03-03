@@ -2160,7 +2160,7 @@ function _stack(ctx, maps, helpBtn){
 
   // stageOuter: scrollable canvas with 60px buffer so dragged target remains visible near edges
   const stageOuter = el("div",{style:"margin-top:10px;overflow:auto;max-width:100%;border-radius:8px;background:#071008;padding:60px"});
-  const stageWrap = el("div",{style:`position:relative;overflow:visible;border-radius:6px;background:#071008;width:100%;min-width:220px;transform:scale(${ctx.state.maps._stackViewScale||1.0});transform-origin:50% 0`});
+  const stageWrap = el("div",{style:`position:relative;overflow:visible;border-radius:6px;background:#071008;width:100%;min-width:220px;transform:scale(${ctx.state.maps._stackViewScale||1.0});transform-origin:50% 50%`});
   stageOuter.appendChild(stageWrap);
   card.appendChild(stageOuter);
 
