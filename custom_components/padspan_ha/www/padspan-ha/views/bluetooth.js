@@ -201,6 +201,65 @@ function renderScanners(ctx, radios, sources) {
       currentOffset !== 0 ? el("span", { class: "badge", style: "font-size:10px;background:#1a3a2a;color:#52b788" }, `${currentOffset > 0 ? "+" : ""}${currentOffset} dBm active`) : null,
     ].filter(Boolean));
 
+    // Reset radio button — two-step confirmation
+    const resetWrap = document.createElement("div");
+    resetWrap.style.cssText = "display:flex;align-items:center;gap:4px;margin-top:3px";
+    const makeResetBtn = () => {
+      resetWrap.innerHTML = "";
+      const rb = document.createElement("button");
+      rb.className = "btn tiny";
+      rb.style.cssText = "font-size:10px;padding:1px 8px;color:#f87171;border-color:#f8717140";
+      rb.textContent = "Reset radio";
+      rb.title = "Clear all stored data for this radio (calibration, placement, offsets, fingerprints)";
+      rb.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        resetWrap.innerHTML = "";
+        const lbl2 = document.createElement("span");
+        lbl2.style.cssText = "font-size:10px;color:#f87171";
+        lbl2.textContent = "Erase all data?";
+        const yesBtn = document.createElement("button");
+        yesBtn.className = "btn tiny";
+        yesBtn.style.cssText = "font-size:10px;padding:1px 8px;background:#7f1d1d;border-color:#dc2626;color:#fca5a5";
+        yesBtn.textContent = "Yes, reset";
+        const noBtn = document.createElement("button");
+        noBtn.className = "btn tiny";
+        noBtn.style.cssText = "font-size:10px;padding:1px 8px;color:#94a3b8;border-color:#94a3b840";
+        noBtn.textContent = "No";
+        yesBtn.addEventListener("click", async (ev2) => {
+          ev2.stopPropagation();
+          resetWrap.innerHTML = "";
+          const spin = document.createElement("span");
+          spin.style.cssText = "font-size:10px;color:#94a3b8";
+          spin.textContent = "Resetting…";
+          resetWrap.appendChild(spin);
+          try {
+            const res = await ctx.actions.radioReset(src);
+            const sm = res?.summary || {};
+            const parts = [];
+            if (sm.maps?.receivers_removed) parts.push(`${sm.maps.receivers_removed} placement(s)`);
+            if (sm.calibration?.readings_removed) parts.push(`${sm.calibration.readings_removed} cal reading(s)`);
+            if (sm.adaptive?.room_pairs_removed) parts.push(`${sm.adaptive.room_pairs_removed} fingerprint(s)`);
+            if (sm.settings?.offset_cleared) parts.push("offset cleared");
+            const detail = parts.length ? ": " + parts.join(", ") : "";
+            ctx.toast(`Radio reset${detail}`);
+            ctx.actions.renderRooms();
+          } catch (e) {
+            ctx.toast("Reset failed: " + String(e), true);
+            makeResetBtn();
+          }
+        });
+        noBtn.addEventListener("click", (ev2) => {
+          ev2.stopPropagation();
+          makeResetBtn();
+        });
+        resetWrap.appendChild(lbl2);
+        resetWrap.appendChild(yesBtn);
+        resetWrap.appendChild(noBtn);
+      });
+      resetWrap.appendChild(rb);
+    };
+    makeResetBtn();
+
     const subParts = [
       r.area_name ? el("span", { class: "pill", style: "font-size:10px" }, r.area_name) : el("span", { class: "muted", style: "font-size:10px" }, "no room"),
       el("div", { class: "bt-scanner-src", style: "font-size:10px" }, src || "—"),
@@ -212,7 +271,7 @@ function renderScanners(ctx, radios, sources) {
     const subRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px" }, subParts);
 
     const div = el("div", { class: "bt-scanner-row" + (r.lost || r.disabled ? " warn" : "") }, [
-      el("div", { class: "bt-scanner-main" }, [ nameRow, subRow, offsetRow ]),
+      el("div", { class: "bt-scanner-main" }, [ nameRow, subRow, offsetRow, resetWrap ]),
       el("div", { class: "bt-scanner-meta" }, meta.join(" • ") || "—"),
     ]);
     if(r.lost || r.disabled) div.style.opacity = "0.7";
