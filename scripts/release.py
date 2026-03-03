@@ -95,7 +95,6 @@ import time
 ROOT = pathlib.Path(__file__).parent.parent
 INTEGRATION = ROOT / "custom_components" / "padspan_ha"
 PANEL_JS  = INTEGRATION / "www" / "padspan-ha" / "panel.js"
-CALIB_JS  = INTEGRATION / "www" / "padspan-ha" / "calibration_panel.js"
 ZIP_PATH = ROOT / "dist" / "padspan_ha.zip"
 REPO = "gbroeckling/padspanHA"
 
@@ -241,15 +240,6 @@ def update_version_files(version, build_id):
     content = re.sub(r'\?b=\w+', f'?b={build_id}', content)
     PANEL_JS.write_text(content, encoding="utf-8")
     print(f"  panel.js             -> {version} / {build_id}")
-
-    # calibration_panel.js
-    if CALIB_JS.exists():
-        content = CALIB_JS.read_text(encoding="utf-8")
-        content = re.sub(r'const APP_VERSION\s*=\s*"[^"]+"', f'const APP_VERSION = "{version}"', content)
-        content = re.sub(r'const BUILD_ID\s*=\s*"[^"]+"',    f'const BUILD_ID = "{build_id}"',    content)
-        content = re.sub(r'\?b=\w+', f'?b={build_id}', content)
-        CALIB_JS.write_text(content, encoding="utf-8")
-        print(f"  calibration_panel.js -> {version} / {build_id}")
 
     # lights_panel.js
     lights_js = INTEGRATION / "www" / "padspan-ha" / "lights_panel.js"
