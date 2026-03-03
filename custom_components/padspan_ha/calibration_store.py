@@ -163,6 +163,47 @@ class CalibrationStore:
             await self.store.async_save(self.data)
         return len(remove_ids)
 
+    async def async_remove_scanner(self, source: str) -> dict[str, int]:
+        """Remove all data for a specific scanner source.
+
+        - Removes scanner_readings entries matching source from all points
+        - Deletes points that have zero remaining readings
+        - Clears model scanner_stats[source] and path_loss[source]
+
+        Returns counts: {readings_removed, points_pruned, model_keys_removed}.
+        """
+        readings_removed = 0
+        points_pruned = 0
+        model_keys_removed = 0
+
+        surviving: list[dict[str, Any]] = []
+        for pt in self.data.get("points", []):
+            readings = pt.get("scanner_readings", [])
+            before = len(readings)
+            pt["scanner_readings"] = [
+                r for r in readings if r.get("source") != source
+            ]
+            readings_removed += before - len(pt["scanner_readings"])
+            if pt["scanner_readings"]:
+                surviving.append(pt)
+            else:
+                points_pruned += 1
+        self.data["points"] = surviving
+
+        model = self.data.get("model", {})
+        for section in ("scanner_stats", "path_loss"):
+            sec = model.get(section)
+            if isinstance(sec, dict) and source in sec:
+                del sec[source]
+                model_keys_removed += 1
+
+        await self.store.async_save(self.data)
+        return {
+            "readings_removed": readings_removed,
+            "points_pruned": points_pruned,
+            "model_keys_removed": model_keys_removed,
+        }
+
     # ── Coverage grid ──────────────────────────────────────────────────────────
 
     def compute_coverage(self, map_id: str) -> dict[str, Any]:

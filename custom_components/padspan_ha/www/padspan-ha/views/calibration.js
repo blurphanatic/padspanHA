@@ -1978,6 +1978,74 @@ function _tuneTab(ctx, el, cs, calData) {
         });
       }
 
+      // ── Reset button with two-step confirmation ──
+      const resetWrap = document.createElement("span");
+      resetWrap.style.cssText = "display:inline-flex;gap:4px;align-items:center;margin-left:4px;flex-shrink:0";
+      const makeResetBtn = () => {
+        resetWrap.innerHTML = "";
+        const rb = document.createElement("button");
+        rb.className = "btn inline";
+        rb.style.cssText = "font-size:10px;padding:2px 8px;color:#f87171;border-color:#f8717140";
+        rb.textContent = "Reset";
+        rb.title = "Clear all stored data for this radio (calibration, placement, offsets, fingerprints)";
+        rb.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          resetWrap.innerHTML = "";
+          const yesBtn = document.createElement("button");
+          yesBtn.className = "btn inline";
+          yesBtn.style.cssText = "font-size:10px;padding:2px 8px;background:#7f1d1d;border-color:#dc2626;color:#fca5a5";
+          yesBtn.textContent = "Yes, reset";
+          const noBtn = document.createElement("button");
+          noBtn.className = "btn inline";
+          noBtn.style.cssText = "font-size:10px;padding:2px 8px;color:#94a3b8;border-color:#94a3b840";
+          noBtn.textContent = "No";
+          yesBtn.addEventListener("click", async (ev2) => {
+            ev2.stopPropagation();
+            resetWrap.innerHTML = "";
+            const spin = document.createElement("span");
+            spin.style.cssText = "font-size:10px;color:#94a3b8";
+            spin.textContent = "Resetting…";
+            resetWrap.appendChild(spin);
+            try {
+              const res = await ctx.actions.radioReset(src);
+              const sm = res?.summary || {};
+              const parts = [];
+              if (sm.maps?.receivers_removed) parts.push(`${sm.maps.receivers_removed} placement(s)`);
+              if (sm.calibration?.readings_removed) parts.push(`${sm.calibration.readings_removed} cal reading(s)`);
+              if (sm.calibration?.points_pruned) parts.push(`${sm.calibration.points_pruned} point(s)`);
+              if (sm.adaptive?.room_pairs_removed) parts.push(`${sm.adaptive.room_pairs_removed} fingerprint(s)`);
+              const detail = parts.length ? ": " + parts.join(", ") : "";
+              ctx.toast(`Radio reset${detail}`);
+              // Remove from local drafts too
+              for (const [mapId, recs] of Object.entries(ts.draftReceivers)) {
+                ts.draftReceivers[mapId] = recs.filter(r =>
+                  (r.id || "") !== src && (r.source || "") !== src
+                );
+              }
+              ts.selectedRx = null;
+              ts.pendingPlace = null;
+              _refreshSVG();
+              _refreshRadiosList();
+              _refreshInfo();
+              _refreshDirtyLabel();
+              _refreshPlaceBanner();
+            } catch (e) {
+              ctx.toast("Reset failed: " + String(e), true);
+              makeResetBtn();
+            }
+          });
+          noBtn.addEventListener("click", (ev2) => {
+            ev2.stopPropagation();
+            makeResetBtn();
+          });
+          resetWrap.appendChild(yesBtn);
+          resetWrap.appendChild(noBtn);
+        });
+        resetWrap.appendChild(rb);
+      };
+      makeResetBtn();
+      row.appendChild(resetWrap);
+
       radiosCard.appendChild(row);
     }
   }

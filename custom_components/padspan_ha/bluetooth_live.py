@@ -180,6 +180,20 @@ class BluetoothLive:
         except Exception as e:
             _LOGGER.debug("BLE seed failed: %s", e)
 
+    def clear_scanner(self, source: str) -> int:
+        """Remove all cached advertisements from a specific scanner.
+
+        Returns the number of address entries cleaned.
+        """
+        cleared = 0
+        for addr in list(self._seen_by_source):
+            if source in self._seen_by_source[addr]:
+                del self._seen_by_source[addr][source]
+                cleared += 1
+                if not self._seen_by_source[addr]:
+                    del self._seen_by_source[addr]
+        return cleared
+
     def get_snapshot(self, max_ads: int = 300, max_age_s: int = 300) -> Dict[str, Any]:
         """Return a lightweight BLE snapshot for the UI.
 

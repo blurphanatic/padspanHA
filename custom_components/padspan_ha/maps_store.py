@@ -345,6 +345,32 @@ class MapsStore:
             await self.store.async_save(self.data)
         return removed
 
+    async def async_remove_receiver_by_source(self, source: str) -> int:
+        """Remove receivers matching a specific source from all maps.
+
+        Matches if r["id"] == source or r["source"] == source.
+        Returns the number of receivers removed.
+        """
+        removed = 0
+        dirty = False
+        for m in self.data.get("maps", []):
+            recs = m.get("receivers")
+            if not isinstance(recs, list) or not recs:
+                continue
+            before = len(recs)
+            m["receivers"] = [
+                r for r in recs
+                if (r.get("id") or "") != source
+                and (r.get("source") or "") != source
+            ]
+            diff = before - len(m["receivers"])
+            if diff > 0:
+                removed += diff
+                dirty = True
+        if dirty:
+            await self.store.async_save(self.data)
+        return removed
+
     async def async_delete_map(self, map_id: str) -> None:
         m = self.get_map(map_id)
         if not m:

@@ -61,6 +61,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_radio_area_set)
     websocket_api.async_register_command(hass, ws_radio_lost_set)
     websocket_api.async_register_command(hass, ws_radio_disabled_set)
+    websocket_api.async_register_command(hass, ws_radio_reset)
     websocket_api.async_register_command(hass, ws_follow_alert_get)
     websocket_api.async_register_command(hass, ws_follow_alert_save)
     websocket_api.async_register_command(hass, ws_area_delete)
@@ -1682,6 +1683,86 @@ async def ws_radio_disabled_set(hass: HomeAssistant, connection, msg) -> None:
         disabled_radios.pop(source, None)
     await st.async_set(disabled_radios=disabled_radios)
     connection.send_result(msg["id"], {"ok": True, "source": source, "disabled": disabled})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/radio_reset",
+        "source": str,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_radio_reset(hass: HomeAssistant, connection, msg) -> None:
+    """Reset ALL data for a specific BLE scanner/radio.
+
+    Clears: settings (offset/lost/disabled), map placements, calibration
+    readings, adaptive fingerprints, Kalman smoothing, and BLE cache.
+    """
+    source = str(msg.get("source") or "").strip()
+    if not source:
+        connection.send_error(msg["id"], "invalid_source", "source is required")
+        return
+
+    summary: dict = {}
+
+    # 1. Settings — pop from scanner_offsets, lost_radios, disabled_radios
+    st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    if st:
+        offsets = dict(st.data.get("scanner_offsets") or {})
+        lost = dict(st.data.get("lost_radios") or {})
+        disabled = dict(st.data.get("disabled_radios") or {})
+        had_offset = source in offsets
+        had_lost = source in lost
+        had_disabled = source in disabled
+        offsets.pop(source, None)
+        lost.pop(source, None)
+        disabled.pop(source, None)
+        await st.async_set(
+            scanner_offsets=offsets,
+            lost_radios=lost,
+            disabled_radios=disabled,
+        )
+        summary["settings"] = {
+            "offset_cleared": had_offset,
+            "lost_cleared": had_lost,
+            "disabled_cleared": had_disabled,
+        }
+
+    # 2. Maps — remove receiver placements
+    ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+    if ms:
+        receivers_removed = await ms.async_remove_receiver_by_source(source)
+        summary["maps"] = {"receivers_removed": receivers_removed}
+
+    # 3. Calibration — remove scanner readings + prune empty points
+    try:
+        cal = await _get_cal_store(hass)
+        cal_result = await cal.async_remove_scanner(source)
+        summary["calibration"] = cal_result
+    except Exception as err:
+        _LOGGER.warning("Radio reset: calibration cleanup failed: %s", err)
+
+    # 4. Adaptive — remove room fingerprints
+    ad = hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
+    if ad:
+        ad_removed = await ad.async_remove_scanner(source)
+        summary["adaptive"] = {"room_pairs_removed": ad_removed}
+
+    # 5. Presence coordinator — clear Kalman smoothing state
+    coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
+    if coord and hasattr(coord, "clear_scanner"):
+        pc_cleared = coord.clear_scanner(source)
+        summary["presence"] = {"devices_cleared": pc_cleared}
+
+    # 6. Bluetooth live — clear advertisement cache
+    bl = get_bluetooth_live(hass)
+    if bl:
+        bl_cleared = bl.clear_scanner(source)
+        summary["bluetooth"] = {"addresses_cleared": bl_cleared}
+
+    _LOGGER.info("Radio reset complete for source=%s: %s", source, summary)
+    connection.send_result(msg["id"], {"ok": True, "source": source, "summary": summary})
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/follow_alert_get"})

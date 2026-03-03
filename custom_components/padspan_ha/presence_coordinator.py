@@ -839,6 +839,23 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except Exception as err:
                 _LOGGER.warning("Follow alert failed for %s: %s", key, err)
 
+    def clear_scanner(self, source: str) -> int:
+        """Clear all in-memory smoothing state for a scanner.
+
+        Removes source from _ema_rssi and _kalman_p for all device addresses.
+        Returns the number of device entries cleaned.
+        """
+        cleared = 0
+        for addr in list(self._ema_rssi):
+            if source in self._ema_rssi[addr]:
+                del self._ema_rssi[addr][source]
+                self._kalman_p.get(addr, {}).pop(source, None)
+                cleared += 1
+                if not self._ema_rssi[addr]:
+                    del self._ema_rssi[addr]
+                    self._kalman_p.pop(addr, None)
+        return cleared
+
     async def _record_movement(self, result: dict[str, Any]) -> None:
         """Record room transitions to persistent movement history."""
         from .const import DOMAIN, DATA_MOVEMENT, DATA_OBJECTS

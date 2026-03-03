@@ -312,6 +312,21 @@ class AdaptiveStore:
 
     # ── Reset ────────────────────────────────────────────────────────────────
 
+    async def async_remove_scanner(self, source: str) -> int:
+        """Remove a scanner's fingerprints from all rooms.
+
+        Returns the number of room-scanner pairs removed.
+        """
+        removed = 0
+        fps = self.data.get("room_fingerprints", {})
+        for room_fp in fps.values():
+            if source in room_fp:
+                del room_fp[source]
+                removed += 1
+        if removed:
+            await self._save()
+        return removed
+
     async def async_reset(self) -> None:
         """Clear all learned data."""
         self.data = _empty_data()
