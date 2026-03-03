@@ -1274,6 +1274,7 @@ function _tuneTab(ctx, el, cs, calData) {
     draftReceivers: {},   // mapId → [{id,label,x,y,room}]
     dirtyMaps: {},        // mapId → true
     selectedRx: null,     // {mapId, rxId}
+    pendingPlace: null,   // {source, name, area_name} — awaiting dblclick on map
     _mapsStamp: null,     // tracks when maps data last changed
   };
   const ts = ctx.state._calibTune;
@@ -1618,6 +1619,53 @@ function _tuneTab(ctx, el, cs, calData) {
     }
   });
 
+  // Double-click to place a pending (unplaced) radio at the clicked location
+  isoDiv.addEventListener("dblclick", e => {
+    if (!ts.pendingPlace) return;
+    const svgNode = isoDiv.querySelector("svg");
+    if (!svgNode) return;
+
+    const ctm = svgNode.getScreenCTM();
+    if (!ctm) return;
+    const inv = ctm.inverse();
+    const sx = e.clientX * inv.a + e.clientY * inv.c + inv.e;
+    const sy = e.clientX * inv.b + e.clientY * inv.d + inv.f;
+
+    // Try each floor from top to bottom — first map whose normalized bounds contain the click wins
+    for (let i = sortedIsoLevels.length - 1; i >= 0; i--) {
+      const z = sortedIsoLevels[i];
+      const [wx, wy] = invIso(sx, sy, z);
+      const group = byLevel.get(z) || [];
+      for (const m of group) {
+        const xf = mapXforms[m.id];
+        if (!xf) continue;
+        const [nx, ny] = xf.invMapPt(wx, wy);
+        if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+          const rd = ts.pendingPlace;
+          const newRx = {
+            id: rd.source || rd.name || ("rx_" + Math.random().toString(16).slice(2, 10)),
+            label: rd.name || rd.source || "",
+            x: Math.max(0, Math.min(1, nx)),
+            y: Math.max(0, Math.min(1, ny)),
+            room: _detectRoom(nx, ny, m) || rd.area_name || "",
+            source: rd.source || "",
+          };
+          if (!ts.draftReceivers[m.id]) ts.draftReceivers[m.id] = [];
+          ts.draftReceivers[m.id].push(newRx);
+          ts.dirtyMaps[m.id] = true;
+          ts.selectedRx = { mapId: m.id, rxId: newRx.id };
+          ts.pendingPlace = null;
+          _refreshSVG();
+          _refreshInfo();
+          _refreshDirtyLabel();
+          _refreshRadiosList();
+          _refreshPlaceBanner();
+          return;
+        }
+      }
+    }
+  });
+
   // ── Helper: rebuild SVG without losing scroll ─────────────────────────────
   function _refreshSVG() {
     const scrollTop = isoDiv.scrollTop, scrollLeft = isoDiv.scrollLeft;
@@ -1749,6 +1797,7 @@ function _tuneTab(ctx, el, cs, calData) {
     }
     ts.dirtyMaps = {};
     ts.selectedRx = null;
+    ts.pendingPlace = null;
     ts.fg = ctx.state.settings?.overview_iso_floor_gap ?? 150;
     ts.hg = ctx.state.settings?.overview_iso_horiz_gap ?? 0;
     ts.focusIdx = 0;
@@ -1762,6 +1811,7 @@ function _tuneTab(ctx, el, cs, calData) {
     _refreshInfo();
     _refreshDirtyLabel();
     _refreshRadiosList();
+    _refreshPlaceBanner();
   });
 
   ctrlRow.appendChild(saveBtn);
@@ -1801,6 +1851,26 @@ function _tuneTab(ctx, el, cs, calData) {
   }
   _refreshInfo();
 
+  // ── Placement banner — shows when an unplaced radio is awaiting dblclick ─
+  const placeBanner = document.createElement("div");
+  placeBanner.style.cssText = "display:none;background:#1a2e0e;border:2px solid #52b788;border-radius:8px;padding:8px 14px;font-size:12px;color:#a7f3d0;text-align:center";
+  function _refreshPlaceBanner() {
+    if (ts.pendingPlace) {
+      const nm = ts.pendingPlace.name || ts.pendingPlace.source || "radio";
+      placeBanner.innerHTML = `<b style="color:#52b788">Double-click</b> on the 3D map to place <b style="color:#fbbf24">${_esc(nm)}</b> &nbsp; <span style="color:#94a3b8;cursor:pointer;text-decoration:underline" id="_cancelPlace">Cancel</span>`;
+      placeBanner.style.display = "block";
+      const cancelEl = placeBanner.querySelector("#_cancelPlace");
+      if (cancelEl) cancelEl.addEventListener("click", () => {
+        ts.pendingPlace = null;
+        _refreshPlaceBanner();
+        _refreshRadiosList();
+      });
+    } else {
+      placeBanner.style.display = "none";
+    }
+  }
+  _refreshPlaceBanner();
+
   // ── Live radios list (placed + unplaced) ────────────────────────────────
   const radiosCard = document.createElement("div");
   radiosCard.className = "card";
@@ -1823,7 +1893,7 @@ function _tuneTab(ctx, el, cs, calData) {
 
     const hint = document.createElement("div");
     hint.style.cssText = "font-size:11px;color:#94a3b8;margin-bottom:8px";
-    hint.textContent = "Place unplaced radios on a map, or click a placed radio to select it in the 3D view.";
+    hint.textContent = "Click an unplaced radio, then double-click on the 3D map to place it. Click a placed radio to select it in the 3D view.";
     radiosCard.appendChild(hint);
 
     // Build lookup: which map(s) each radio is placed on
@@ -1888,44 +1958,24 @@ function _tuneTab(ctx, el, cs, calData) {
           _refreshInfo();
         });
       } else {
-        // Map picker + Place button for unplaced radios
-        const mapPick = document.createElement("select");
-        mapPick.style.cssText = "font-size:11px;max-width:120px;";
-        for (const m of sorted.length ? sorted : maps_list) {
-          const opt = document.createElement("option");
-          opt.value = m.id;
-          opt.textContent = (m.name || m.id).substring(0, 20);
-          mapPick.appendChild(opt);
+        // Highlight if this radio is the pending placement target
+        const isPending = ts.pendingPlace && (ts.pendingPlace.source === src || ts.pendingPlace.name === nm);
+        if (isPending) {
+          row.style.background = "#1a2e0e";
+          row.style.border = "1px solid #52b788";
         }
-        row.appendChild(mapPick);
 
-        const placeBtn = document.createElement("button");
-        placeBtn.className = "btn inline";
-        placeBtn.style.cssText = "font-size:11px;padding:2px 10px;color:#52b788;border-color:#52b788";
-        placeBtn.textContent = "Place";
-        placeBtn.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          const targetMapId = mapPick.value;
-          if (!targetMapId) return;
-          const newRx = {
-            id: rd.source || rd.name || ("rx_" + Math.random().toString(16).slice(2, 10)),
-            label: rd.name || rd.source || "",
-            x: 0.5,
-            y: 0.5,
-            room: rd.area_name || "",
-            source: rd.source || "",
-          };
-          if (!ts.draftReceivers[targetMapId]) ts.draftReceivers[targetMapId] = [];
-          ts.draftReceivers[targetMapId].push(newRx);
-          ts.dirtyMaps[targetMapId] = true;
-          ts.selectedRx = { mapId: targetMapId, rxId: newRx.id };
-          _refreshSVG();
-          _refreshInfo();
-          _refreshDirtyLabel();
+        const placeTag = document.createElement("span");
+        placeTag.style.cssText = `font-size:10px;padding:1px 6px;border-radius:4px;white-space:nowrap;${isPending ? "color:#fbbf24;background:#fbbf2418;font-weight:600" : "color:#94a3b8;background:#94a3b818"}`;
+        placeTag.textContent = isPending ? "Double-click map…" : "Not placed";
+        row.appendChild(placeTag);
+
+        // Click row to enter pending-placement mode (select this radio, then dblclick map)
+        row.addEventListener("click", () => {
+          ts.pendingPlace = { source: src, name: nm, area_name: rd.area_name || "" };
           _refreshRadiosList();
+          _refreshPlaceBanner();
         });
-        row.addEventListener("click", () => { placeBtn.click(); });
-        row.appendChild(placeBtn);
       }
 
       radiosCard.appendChild(row);
@@ -1936,6 +1986,7 @@ function _tuneTab(ctx, el, cs, calData) {
   // ── Assemble ──────────────────────────────────────────────────────────────
   wrap.appendChild(ctrlRow);
   wrap.appendChild(isoWrap);
+  wrap.appendChild(placeBanner);
   wrap.appendChild(infoCard);
   wrap.appendChild(radiosCard);
 
