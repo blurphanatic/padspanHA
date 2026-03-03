@@ -2193,99 +2193,6 @@ function _resolveBeaconAddr(bkKey, snap) {
   return bkKey.replace(/^(ble:|entity:|ibeacon:)/, "");
 }
 
-function _checkCollectionWarnings(entry, elapsed) {
-  const warnings = [];
-  const scannerCount = Object.keys(entry.readings).length;
-  const totalSamples = Object.values(entry.readings).reduce((t, r) => t + r.samples.length, 0);
-
-  // 1. No signal — 0 scanners for >10s
-  if (scannerCount === 0 && elapsed > 10000) {
-    warnings.push({ id: "no_signal", severity: "red",
-      text: "No signal — beacon invisible to all scanners for 10+ seconds",
-      actions: ["stop_discard", "continue"] });
-  }
-  // 2. Weak signal — all scanners < -90 dBm after 5s
-  if (scannerCount > 0 && elapsed > 5000) {
-    const allWeak = Object.values(entry.readings).every(r => {
-      if (!r.samples.length) return true;
-      const mean = r.samples.reduce((a, b) => a + b, 0) / r.samples.length;
-      return mean < -90;
-    });
-    if (allWeak) warnings.push({ id: "weak_signal", severity: "amber",
-      text: "Weak signal — all scanners below -90 dBm",
-      actions: ["stop_discard", "continue"] });
-  }
-  // 3. Single scanner — only 1 scanner after 15s
-  if (scannerCount === 1 && elapsed > 15000) {
-    warnings.push({ id: "single_scanner", severity: "amber",
-      text: "Single scanner — only 1 scanner detecting this beacon",
-      actions: ["continue", "check_tune"] });
-  }
-  // 4. Wild variance — std dev > 15 dBm on any scanner (≥5 samples)
-  for (const [src, rd] of Object.entries(entry.readings)) {
-    if (rd.samples.length < 5) continue;
-    const mean = rd.samples.reduce((a, b) => a + b, 0) / rd.samples.length;
-    const variance = rd.samples.reduce((a, v) => a + (v - mean) ** 2, 0) / rd.samples.length;
-    const stdDev = Math.sqrt(variance);
-    if (stdDev > 15) {
-      warnings.push({ id: `variance_${src}`, severity: "amber",
-        text: `Wild variance on ${rd.name || src} (std dev ${stdDev.toFixed(1)} dBm)`,
-        actions: ["exclude_scanner", "continue"], scanner: src });
-    }
-  }
-  // 5. Scanner offline — check snap.ble.radios for lost/disabled
-  // (checked in _startBeaconCollection loop where snap is available)
-  return warnings;
-}
-
-function _buildWarningEl(el, warning, entry, ctx, bs, _refreshCollectionCard) {
-  const isRed = warning.severity === "red";
-  const card = document.createElement("div");
-  card.style.cssText = `padding:6px 10px;border-radius:6px;font-size:11px;margin-top:4px;border:1px solid ${isRed ? "#dc2626" : "#f59e0b"};background:${isRed ? "#1a0808" : "#1a200e"};color:${isRed ? "#fca5a5" : "#fef3c7"}`;
-  card.textContent = "\u26a0 " + warning.text;
-  const btnRow = document.createElement("div");
-  btnRow.style.cssText = "display:flex;gap:6px;margin-top:4px;flex-wrap:wrap";
-  for (const action of warning.actions) {
-    const btn = document.createElement("button");
-    btn.className = "btn inline";
-    btn.style.cssText = "font-size:10px;padding:2px 8px;";
-    if (action === "stop_discard") {
-      btn.textContent = "Stop & Discard";
-      btn.style.cssText += "color:#f87171;border-color:#f87171;";
-      btn.addEventListener("click", () => {
-        entry.discarded = true; entry.completed = true;
-        _refreshCollectionCard();
-      });
-    } else if (action === "exclude_scanner" && warning.scanner) {
-      const scannerName = (entry.readings[warning.scanner]?.name || warning.scanner);
-      btn.textContent = "Exclude " + scannerName;
-      btn.style.cssText += "color:#f59e0b;border-color:#f59e0b;";
-      btn.addEventListener("click", () => {
-        entry._excludedScanners.add(warning.scanner);
-        delete entry.readings[warning.scanner];
-        entry._dismissedWarnings.add(warning.id);
-        _refreshCollectionCard();
-      });
-    } else if (action === "continue") {
-      btn.textContent = "Continue";
-      btn.addEventListener("click", () => {
-        entry._dismissedWarnings.add(warning.id);
-        _refreshCollectionCard();
-      });
-    } else if (action === "check_tune") {
-      btn.textContent = "Check Tune Tab";
-      btn.addEventListener("click", () => {
-        // Navigate to Tune sub-tab — collection continues in background
-        if (ctx.state._calibTune) ctx.state._calibTune._tab = "tune";
-        ctx.actions.renderRooms();
-      });
-    }
-    btnRow.appendChild(btn);
-  }
-  card.appendChild(btnRow);
-  return card;
-}
-
 // ── Beacon Tune tab — 3D iso map with draggable beacon markers ───────────────
 function _beaconTuneTab(ctx, el, cs, calData) {
   const wrap = el("div", { style: "display:flex;flex-direction:column;gap:10px" });
@@ -2308,7 +2215,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       el("span", { style: "font-weight:700;font-size:14px;color:#f59e0b" }, "Beacon Tune"),
     ]),
     el("div", { style: "font-size:12px;color:#94a3b8;line-height:1.5" },
-      "Mark where beacons (AirTags, Tiles, key fobs) are right now on the 3D floor stack. After saving, the system collects radio data at each position for ~1 minute, then releases the beacon — its location is determined by live scanner data from that point on. Drag teal diamonds to adjust. Green circles show scanner positions for reference."),
+      "Mark where beacons (AirTags, Tiles, key fobs) are right now on the 3D floor stack. Drag a beacon to reposition it — a 60-second radio capture starts automatically. After the timer finishes, calibration data is saved and the beacon returns to live tracking. Green circles show scanner positions for reference."),
   ]));
 
   // ── Constants & state ─────────────────────────────────────────────────────
@@ -2330,13 +2237,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     selectedBk: null,    // {mapId, bkId}
     pendingPlace: null,  // {key, label, kind} — awaiting dblclick on map
     _mapsStamp: null,
-    // ── Collection state (active 60s RSSI capture after save) ──
-    _collecting: false,        // blocks re-render + drag
-    _collectBeacons: [],       // [{bk, mapId, readings:{}, warnings:[], completed, discarded, _excludedScanners, _dismissedWarnings}]
-    _collectTimer: null,       // setTimeout ref
-    _collectEndTime: null,     // Date.now() + 60000
-    _collectPollCount: 0,
-    _collectionCardEl: null,   // mutable DOM ref for tab navigation resilience
+    // ── Per-beacon live timers (independent 60s RSSI capture) ──
+    _liveTimers: {},  // bkId → { endTime, mapId, bk:{...}, readings:{}, timer, pollTimer }
   };
   const bs = ctx.state._calibBeacon;
 
@@ -2587,6 +2489,15 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           const lblW = Math.min(lbl.length * 7 + 8, 70);
           s += `<rect x="${bx - lblW / 2}" y="${by + 18}" width="${lblW}" height="13" rx="3" fill="#071008" opacity="0.8"/>`;
           s += `<text x="${bx}" y="${by + 28}" text-anchor="middle" fill="#5eead4" font-size="9" font-weight="600">${_esc(lbl)}</text>`;
+          // Live timer overlay (amber dashed ring + countdown)
+          const timerEntry = bs._liveTimers[bk.id];
+          if (timerEntry && timerEntry.endTime > Date.now()) {
+            const rem = Math.max(0, Math.ceil((timerEntry.endTime - Date.now()) / 1000));
+            s += `<circle cx="${bx}" cy="${by}" r="28" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="8,4" opacity="0.9">`;
+            s += `<animateTransform attributeName="transform" type="rotate" from="0 ${bx} ${by}" to="360 ${bx} ${by}" dur="3s" repeatCount="indefinite"/>`;
+            s += `</circle>`;
+            s += `<text x="${bx}" y="${by + 42}" text-anchor="middle" fill="#f59e0b" font-size="10" font-weight="700">${rem}s</text>`;
+          }
           s += `</g>`;
         }
       }
@@ -2677,6 +2588,30 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   pickerRow.appendChild(el("span", { style: "font-size:12px;color:#94a3b8" }, "on"));
   pickerRow.appendChild(bkMapSel);
   pickerRow.appendChild(addBtn);
+
+  // Timer display area — shows per-beacon countdown inline
+  const timerArea = document.createElement("div");
+  timerArea.style.cssText = "width:100%;display:flex;gap:10px;flex-wrap:wrap;min-height:0";
+  function _refreshTimerRow() {
+    timerArea.innerHTML = "";
+    const ids = Object.keys(bs._liveTimers);
+    if (!ids.length) return;
+    for (const bkId of ids) {
+      const t = bs._liveTimers[bkId];
+      const rem = Math.max(0, Math.ceil((t.endTime - Date.now()) / 1000));
+      const span = document.createElement("span");
+      if (rem > 0) {
+        span.style.cssText = "font-size:12px;color:#f59e0b;font-weight:600;white-space:nowrap";
+        span.textContent = `${t.bk.label || t.bk.key} \u2014 live in ${rem}s`;
+      } else {
+        span.style.cssText = "font-size:12px;color:#52b788;font-weight:600;white-space:nowrap";
+        span.textContent = `\u2713 ${t.bk.label || t.bk.key} live`;
+      }
+      timerArea.appendChild(span);
+    }
+  }
+  _refreshTimerRow();
+  pickerRow.appendChild(timerArea);
   wrap.appendChild(pickerRow);
 
   // ── Controls row ──────────────────────────────────────────────────────────
@@ -2753,9 +2688,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   saveBtn.className = "btn inline";
   saveBtn.style.cssText = "padding:2px 10px;font-size:12px";
   saveBtn.textContent = "Save";
-  saveBtn.title = "Save reference positions — radio data collection begins after save";
+  saveBtn.title = "Save beacon reference positions to maps";
   saveBtn.addEventListener("click", async () => {
-    if (bs._collecting) return;
     const dirtyIds = Object.keys(bs.dirtyMaps).filter(id => bs.dirtyMaps[id]);
     if (!dirtyIds.length) { statusLbl.textContent = "No changes"; setTimeout(() => { statusLbl.textContent = ""; }, 2000); return; }
     saveBtn.disabled = true;
@@ -2772,40 +2706,12 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           notes: origMap.notes || "",
         });
       }
-      // Gather beacons from dirty maps for collection
-      const beaconEntries = [];
-      const autoCal2 = ctx.state.settings?.beacon_auto_calibrate !== false;
-      if (autoCal2) {
-        for (const mapId of dirtyIds) {
-          const bks = bs.draftBeacons[mapId] || [];
-          for (const bk of bks) {
-            beaconEntries.push({
-              bk: { ...bk },
-              mapId,
-              readings: {},
-              warnings: [],
-              completed: false,
-              discarded: false,
-              _excludedScanners: new Set(),
-              _dismissedWarnings: new Set(),
-            });
-          }
-        }
-      }
       bs.dirtyMaps = {};
       bs.selectedBk = null;
       await ctx.actions.mapsRefresh();
-
-      // Start collection if auto-calibrate is ON and there are beacons
-      if (beaconEntries.length) {
-        ctx.toast("Positions saved \u2014 collecting radio data for 60s");
-        statusLbl.textContent = "Collecting\u2026";
-        _startBeaconCollection(beaconEntries);
-      } else {
-        ctx.toast("Reference positions saved");
-        saveBtn.disabled = false;
-        statusLbl.textContent = "";
-      }
+      ctx.toast("Reference positions saved");
+      saveBtn.disabled = false;
+      statusLbl.textContent = "";
     } catch (e) {
       ctx.toast("Save failed: " + String(e), true);
       statusLbl.textContent = "Error saving";
@@ -2820,8 +2726,13 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   resetBtn.textContent = "Reset";
   resetBtn.title = "Discard changes and reload beacon reference positions";
   resetBtn.addEventListener("click", () => {
-    // Stop active collection first
-    if (bs._collecting) _stopAllCollection();
+    // Stop all live timers
+    for (const bkId of Object.keys(bs._liveTimers)) {
+      const t = bs._liveTimers[bkId];
+      if (t.timer) clearTimeout(t.timer);
+      if (t.pollTimer) clearTimeout(t.pollTimer);
+    }
+    bs._liveTimers = {};
     bs.draftBeacons = {};
     for (const m of maps_list) {
       bs.draftBeacons[m.id] = (m.beacons || []).map(bk => ({
@@ -2916,7 +2827,6 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   let _didDrag = false;
 
   isoDiv.addEventListener("pointerdown", e => {
-    if (bs._collecting) return;
     const g = e.target.closest("[data-bk-id]");
     if (!g) return;
     e.preventDefault();
@@ -2972,6 +2882,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       if (_didDrag) {
         const mapObj = maps_list.find(m => m.id === mapId);
         if (mapObj) bkObj.room = _detectRoom(bkObj.x, bkObj.y, mapObj) || bkObj.room || "";
+        // Auto-save position and start live timer
+        _autoSaveAndStartTimer(bkObj, mapId);
       }
       _refreshSVG();
       _refreshInfo();
@@ -3011,6 +2923,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     bs.selectedBk = { mapId: m.id, bkId: newBk.id };
     bs.pendingPlace = null;
     bs._confirming = false;
+    // Auto-save position and start live timer
+    _autoSaveAndStartTimer(newBk, m.id);
     _refreshSVG();
     _refreshInfo();
     _refreshDirtyLabel();
@@ -3085,6 +2999,113 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     popup.appendChild(cancelBtn2);
     isoWrap.appendChild(popup);
   });
+
+  // ── Auto-save beacon position to map + start live timer ──────────────────
+  async function _autoSaveAndStartTimer(bkObj, mapId) {
+    const origMap = maps_list.find(m => m.id === mapId);
+    if (!origMap) return;
+    try {
+      await ctx.actions.mapsUpdateQuiet({
+        map_id: mapId,
+        beacons: bs.draftBeacons[mapId] || [],
+        receivers: origMap.receivers || [],
+        calibration: origMap.calibration || {},
+        notes: origMap.notes || "",
+      });
+      bs.dirtyMaps[mapId] = false;
+      _refreshDirtyLabel();
+    } catch (e) {
+      console.warn("[PadSpan] auto-save failed:", e);
+    }
+    const autoCal = ctx.state.settings?.beacon_auto_calibrate !== false;
+    if (autoCal) _startLiveTimer(bkObj, mapId);
+  }
+
+  // ── Per-beacon live timer: 60s independent RSSI capture ────────────────
+  function _startLiveTimer(bk, mapId) {
+    const bkId = bk.id;
+    // If timer already running for this beacon, clear and restart
+    if (bs._liveTimers[bkId]) {
+      const old = bs._liveTimers[bkId];
+      if (old.timer) clearTimeout(old.timer);
+      if (old.pollTimer) clearTimeout(old.pollTimer);
+      delete bs._liveTimers[bkId];
+    }
+    const entry = {
+      endTime: Date.now() + 60000,
+      mapId,
+      bk: { ...bk },
+      readings: {},
+    };
+    bs._liveTimers[bkId] = entry;
+    _refreshTimerRow();
+    _refreshSVG();
+
+    // 1s poll loop — accumulate RSSI samples
+    const poll = async () => {
+      if (!bs._liveTimers[bkId]) return;
+      try { await ctx.actions.refreshSnapshotQuiet(); } catch (_) { /**/ }
+      const snap2 = (ctx.state.live && ctx.state.live.snapshot) || null;
+      const addr = _resolveBeaconAddr(entry.bk.key, snap2);
+      if (addr) {
+        const { perRadio } = _findBeaconAds(snap2, addr);
+        for (const [src, info] of Object.entries(perRadio)) {
+          if (typeof info.rssi !== "number") continue;
+          if (!entry.readings[src]) {
+            entry.readings[src] = { name: info.name || src, samples: [] };
+          } else if (info.name && info.name !== src) {
+            entry.readings[src].name = info.name;
+          }
+          entry.readings[src].samples.push(info.rssi);
+        }
+      }
+      _refreshTimerRow();
+      _refreshSVG();
+      // Continue polling if time remains
+      if (Date.now() < entry.endTime && bs._liveTimers[bkId]) {
+        const nextIn = Math.min(POLL_MS, entry.endTime - Date.now());
+        entry.pollTimer = setTimeout(poll, nextIn);
+      }
+    };
+    entry.pollTimer = setTimeout(poll, POLL_MS);
+
+    // 60s timer → save calibration point and clean up
+    entry.timer = setTimeout(async () => {
+      if (!bs._liveTimers[bkId]) return;
+      if (entry.pollTimer) clearTimeout(entry.pollTimer);
+      // Save calibration point
+      const readingCount = Object.keys(entry.readings).length;
+      if (readingCount > 0) {
+        const mapObj = maps_list.find(m => m.id === entry.mapId);
+        const room = mapObj ? _detectRoom(entry.bk.x, entry.bk.y, mapObj) : "";
+        const snap3 = (ctx.state.live && ctx.state.live.snapshot) || null;
+        const point = {
+          map_id: entry.mapId,
+          x_frac: entry.bk.x,
+          y_frac: entry.bk.y,
+          room: room,
+          device_id: _resolveBeaconAddr(entry.bk.key, snap3),
+          label: entry.bk.label || entry.bk.key || "",
+          readings: entry.readings,
+        };
+        try {
+          await ctx.actions.calibrationSavePoint(point);
+          ctx.toast(`\u2713 ${entry.bk.label || entry.bk.key} calibration saved`);
+        } catch (e) {
+          console.warn("[PadSpan] live timer save failed:", e);
+        }
+      }
+      // Show green "live" briefly, then remove
+      entry.endTime = 0;
+      _refreshTimerRow();
+      _refreshSVG();
+      setTimeout(() => {
+        delete bs._liveTimers[bkId];
+        _refreshTimerRow();
+        _refreshSVG();
+      }, 2500);
+    }, 60000);
+  }
 
   // ── Helper: rebuild SVG without losing scroll ─────────────────────────────
   function _refreshSVG() {
@@ -3365,314 +3386,10 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   }
   _refreshBeaconList();
 
-  // ── Collection card (status during active 60s RSSI capture) ───────────────
-  const collectionCard = document.createElement("div");
-  collectionCard.className = "card";
-  collectionCard.style.cssText = "display:none;border:2px solid #f59e0b;background:#0d1a0e";
-  bs._collectionCardEl = collectionCard;
-
-  function _refreshCollectionCard() {
-    if (!bs._collecting || !bs._collectBeacons.length) {
-      collectionCard.style.display = "none";
-      return;
-    }
-    collectionCard.style.display = "";
-    collectionCard.innerHTML = "";
-
-    const remaining = Math.max(0, Math.ceil((bs._collectEndTime - Date.now()) / 1000));
-    const allDone = bs._collectBeacons.every(e => e.completed);
-
-    // Header
-    const hdr = document.createElement("div");
-    hdr.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px";
-    const hdrText = document.createElement("span");
-    hdrText.style.cssText = "font-weight:700;font-size:14px;color:#f59e0b;flex:1";
-    hdrText.textContent = allDone
-      ? "Collection Complete"
-      : `Collecting Radio Data \u2014 ${remaining}s`;
-    hdr.appendChild(hdrText);
-    const pollLbl = document.createElement("span");
-    pollLbl.style.cssText = "font-size:11px;color:#94a3b8";
-    pollLbl.textContent = `Poll #${bs._collectPollCount}`;
-    hdr.appendChild(pollLbl);
-    collectionCard.appendChild(hdr);
-
-    // Per-beacon rows
-    for (const entry of bs._collectBeacons) {
-      const row = document.createElement("div");
-      row.style.cssText = "padding:8px;border-radius:6px;margin-bottom:6px;background:#071008;border:1px solid #1b3526";
-
-      // Beacon header row
-      const bkHdr = document.createElement("div");
-      bkHdr.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:4px";
-      // Diamond icon
-      const icon = document.createElement("div");
-      icon.style.cssText = `width:10px;height:10px;transform:rotate(45deg);border-radius:2px;flex-shrink:0;background:${entry.discarded ? "#f87171" : entry.completed ? "#52b788" : "#5eead4"}`;
-      bkHdr.appendChild(icon);
-      const bkLbl = document.createElement("span");
-      bkLbl.style.cssText = "font-size:12px;font-weight:600;color:#e2e8f0;flex:1";
-      const mapObj = maps_list.find(m => m.id === entry.mapId);
-      bkLbl.textContent = `${entry.bk.label || entry.bk.key} \u2014 ${mapObj?.name || entry.mapId}`;
-      bkHdr.appendChild(bkLbl);
-      // Status badge
-      const badge = document.createElement("span");
-      badge.style.cssText = `font-size:10px;padding:1px 6px;border-radius:4px;white-space:nowrap;`;
-      if (entry.discarded) {
-        badge.textContent = "Discarded";
-        badge.style.cssText += "color:#f87171;background:#f8717118;";
-      } else if (entry.completed) {
-        badge.textContent = "Done";
-        badge.style.cssText += "color:#52b788;background:#52b78818;";
-      } else {
-        const sc = Object.keys(entry.readings).length;
-        const sm = Object.values(entry.readings).reduce((t, r) => t + r.samples.length, 0);
-        badge.textContent = `${sc} scanners \u00b7 ${sm} samples`;
-        badge.style.cssText += "color:#5eead4;background:#5eead418;";
-      }
-      bkHdr.appendChild(badge);
-      row.appendChild(bkHdr);
-
-      // Per-scanner RSSI bars
-      if (!entry.completed) {
-        const sortedReadings = Object.entries(entry.readings).sort((a, b) => {
-          const ma = a[1].samples.length ? a[1].samples.reduce((x, y) => x + y, 0) / a[1].samples.length : -200;
-          const mb = b[1].samples.length ? b[1].samples.reduce((x, y) => x + y, 0) / b[1].samples.length : -200;
-          return mb - ma;
-        });
-        if (sortedReadings.length) {
-          for (const [src, rd] of sortedReadings) {
-            const mean = rd.samples.length ? Math.round(rd.samples.reduce((a, b) => a + b, 0) / rd.samples.length) : null;
-            row.appendChild(_rssiRow(el, rd.name || src, mean, rd.samples.length));
-          }
-        } else {
-          const noSig = document.createElement("div");
-          noSig.style.cssText = "font-size:11px;color:#f59e0b;text-align:center;padding:4px";
-          noSig.textContent = "Waiting for scanner readings\u2026";
-          row.appendChild(noSig);
-        }
-      }
-
-      // Warnings
-      if (!entry.completed) {
-        const elapsed = Date.now() - (bs._collectEndTime - 60000);
-        const warnings = _checkCollectionWarnings(entry, elapsed);
-        for (const w of warnings) {
-          if (entry._dismissedWarnings.has(w.id)) continue;
-          row.appendChild(_buildWarningEl(el, w, entry, ctx, bs, _refreshCollectionCard));
-        }
-        // Scanner offline warnings (need snap access)
-        const snap2 = (ctx.state.live && ctx.state.live.snapshot) || null;
-        const liveRadios = snap2?.ble?.radios || [];
-        for (const r of liveRadios) {
-          if ((r.lost || r.disabled) && !entry._dismissedWarnings.has(`offline_${r.source}`)) {
-            const w = { id: `offline_${r.source}`, severity: "amber",
-              text: `Scanner ${r.area_name || r.name || r.source} is ${r.lost ? "lost" : "disabled"}`,
-              actions: ["continue", "check_tune"] };
-            row.appendChild(_buildWarningEl(el, w, entry, ctx, bs, _refreshCollectionCard));
-          }
-        }
-      }
-
-      collectionCard.appendChild(row);
-    }
-
-    // Stop All button
-    if (!allDone) {
-      const stopBtn = document.createElement("button");
-      stopBtn.className = "btn";
-      stopBtn.style.cssText = "margin-top:4px;color:#f87171;border-color:#f87171;font-size:12px;padding:4px 14px";
-      stopBtn.textContent = "Stop All Collection";
-      stopBtn.addEventListener("click", () => _stopAllCollection());
-      collectionCard.appendChild(stopBtn);
-    }
-  }
-
-  // ── SVG overlay: amber ring + countdown for collecting beacons ─────────
-  function _updateCollectionSVGOverlay() {
-    if (!bs._collecting) return;
-    const svgNode = isoDiv.querySelector("svg");
-    if (!svgNode) return;
-    // Remove old overlays
-    svgNode.querySelectorAll(".bk-collect-overlay").forEach(n => n.remove());
-    const remaining = Math.max(0, Math.ceil((bs._collectEndTime - Date.now()) / 1000));
-
-    for (const entry of bs._collectBeacons) {
-      if (entry.completed) continue;
-      const bk = entry.bk;
-      const m = maps_list.find(mm => mm.id === entry.mapId);
-      if (!m) continue;
-      const xf = mapXforms[m.id];
-      if (!xf) continue;
-      const z = m.stack?.z_level || 0;
-      const [wx, wy] = xf.mapPt(bk.x || 0, bk.y || 0);
-      const [px, py] = iso(wx, wy, z);
-      const bx = Math.round(px), by = Math.round(py);
-
-      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      g.setAttribute("class", "bk-collect-overlay");
-      // Amber dashed spinning ring
-      g.innerHTML =
-        `<circle cx="${bx}" cy="${by}" r="28" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="8,4" opacity="0.9">` +
-        `<animateTransform attributeName="transform" type="rotate" from="0 ${bx} ${by}" to="360 ${bx} ${by}" dur="3s" repeatCount="indefinite"/>` +
-        `</circle>` +
-        `<text x="${bx}" y="${by + 42}" text-anchor="middle" fill="#f59e0b" font-size="10" font-weight="700">${remaining}s</text>`;
-      svgNode.appendChild(g);
-    }
-
-    // Show green "Done" rings for completed (non-discarded) beacons
-    for (const entry of bs._collectBeacons) {
-      if (!entry.completed || entry.discarded) continue;
-      const bk = entry.bk;
-      const m = maps_list.find(mm => mm.id === entry.mapId);
-      if (!m) continue;
-      const xf = mapXforms[m.id];
-      if (!xf) continue;
-      const z = m.stack?.z_level || 0;
-      const [wx, wy] = xf.mapPt(bk.x || 0, bk.y || 0);
-      const [px, py] = iso(wx, wy, z);
-      const bx = Math.round(px), by = Math.round(py);
-
-      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      g.setAttribute("class", "bk-collect-overlay");
-      g.innerHTML =
-        `<circle cx="${bx}" cy="${by}" r="28" fill="none" stroke="#52b788" stroke-width="2.5" opacity="0.9"/>` +
-        `<text x="${bx}" y="${by + 42}" text-anchor="middle" fill="#52b788" font-size="10" font-weight="700">Done</text>`;
-      svgNode.appendChild(g);
-    }
-  }
-
-  // ── Start / finish / stop collection ──────────────────────────────────────
-  function _startBeaconCollection(beaconEntries) {
-    bs._collecting = true;
-    bs._collectBeacons = beaconEntries;
-    bs._collectEndTime = Date.now() + 60000;
-    bs._collectPollCount = 0;
-
-    _refreshCollectionCard();
-    _updateCollectionSVGOverlay();
-
-    const loop = async () => {
-      if (!bs._collecting) return;
-
-      // Poll snapshot quietly (no re-render)
-      try { await ctx.actions.refreshSnapshotQuiet(); } catch (_) { /**/ }
-      bs._collectPollCount++;
-
-      const snap2 = (ctx.state.live && ctx.state.live.snapshot) || null;
-
-      // Collect RSSI for each active beacon
-      for (const entry of bs._collectBeacons) {
-        if (entry.completed || entry.discarded) continue;
-        const addr = _resolveBeaconAddr(entry.bk.key, snap2);
-        if (!addr) continue;
-        const { perRadio } = _findBeaconAds(snap2, addr);
-        for (const [src, info] of Object.entries(perRadio)) {
-          if (typeof info.rssi !== "number") continue;
-          if (entry._excludedScanners.has(src)) continue;
-          if (!entry.readings[src]) {
-            entry.readings[src] = { name: info.name || src, samples: [] };
-          } else if (info.name && info.name !== src) {
-            entry.readings[src].name = info.name;
-          }
-          entry.readings[src].samples.push(info.rssi);
-        }
-      }
-
-      _refreshCollectionCard();
-      _updateCollectionSVGOverlay();
-
-      // Check if time is up
-      if (Date.now() >= bs._collectEndTime) {
-        _finishBeaconCollection();
-        return;
-      }
-
-      const nextIn = Math.min(POLL_MS, bs._collectEndTime - Date.now());
-      if (nextIn > 0) bs._collectTimer = setTimeout(loop, nextIn);
-    };
-
-    bs._collectTimer = setTimeout(loop, POLL_MS);
-  }
-
-  async function _finishBeaconCollection() {
-    let savedCount = 0;
-    for (const entry of bs._collectBeacons) {
-      entry.completed = true;
-      if (entry.discarded) continue;
-      const readingCount = Object.keys(entry.readings).length;
-      if (readingCount === 0) continue;
-
-      // Build calibration point (same format as Pin & Listen)
-      const mapObj = maps_list.find(m => m.id === entry.mapId);
-      const room = mapObj ? _detectRoom(entry.bk.x, entry.bk.y, mapObj) : "";
-      const point = {
-        map_id: entry.mapId,
-        x_frac: entry.bk.x,
-        y_frac: entry.bk.y,
-        room: room,
-        device_id: _resolveBeaconAddr(entry.bk.key, (ctx.state.live && ctx.state.live.snapshot) || null),
-        label: entry.bk.label || entry.bk.key || "",
-        readings: entry.readings,
-      };
-      try {
-        await ctx.actions.calibrationSavePoint(point);
-        savedCount++;
-      } catch (e) {
-        console.warn("[PadSpan] beacon collection save failed:", e);
-      }
-    }
-
-    bs._collecting = false;
-    if (bs._collectTimer) { clearTimeout(bs._collectTimer); bs._collectTimer = null; }
-    bs._collectEndTime = null;
-    bs._collectPollCount = 0;
-
-    _refreshCollectionCard();
-    _updateCollectionSVGOverlay();
-    // Re-enable save
-    saveBtn.disabled = false;
-    statusLbl.textContent = "";
-
-    ctx.toast(`Collection complete: ${savedCount} point${savedCount !== 1 ? "s" : ""} saved`);
-
-    // Clear collection state after a brief display
-    setTimeout(() => {
-      bs._collectBeacons = [];
-      collectionCard.style.display = "none";
-      // Remove SVG overlays
-      const svgNode = isoDiv.querySelector("svg");
-      if (svgNode) svgNode.querySelectorAll(".bk-collect-overlay").forEach(n => n.remove());
-    }, 3000);
-  }
-
-  function _stopAllCollection() {
-    for (const entry of bs._collectBeacons) {
-      if (!entry.completed) { entry.discarded = true; entry.completed = true; }
-    }
-    bs._collecting = false;
-    if (bs._collectTimer) { clearTimeout(bs._collectTimer); bs._collectTimer = null; }
-    bs._collectEndTime = null;
-    bs._collectPollCount = 0;
-    saveBtn.disabled = false;
-    statusLbl.textContent = "";
-    _refreshCollectionCard();
-    // Remove SVG overlays
-    const svgNode = isoDiv.querySelector("svg");
-    if (svgNode) svgNode.querySelectorAll(".bk-collect-overlay").forEach(n => n.remove());
-    ctx.toast("Collection stopped");
-  }
-
-  // If collection was already in progress (tab nav resilience), reconnect card
-  if (bs._collecting && bs._collectBeacons.length) {
-    _refreshCollectionCard();
-    _updateCollectionSVGOverlay();
-  }
-
   // ── Assemble ──────────────────────────────────────────────────────────────
   wrap.appendChild(ctrlRow);
   wrap.appendChild(isoWrap);
   wrap.appendChild(placeBanner);
-  wrap.appendChild(collectionCard);
   wrap.appendChild(infoCard);
   wrap.appendChild(availCard);
   wrap.appendChild(beaconListCard);
