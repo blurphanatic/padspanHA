@@ -6,6 +6,8 @@
 // Phone-based signal collection for precise indoor location modelling.
 //
 // Sub-tabs:
+//   Tune        — position scanner/receiver markers on 3D iso map
+//   Beacon Tune — mark beacon positions, auto-collect 60s RSSI fingerprints
 //   Setup       — pick your beacon device, collection settings
 //   Pin & Listen — tap map to place pin, collect RSSI for N seconds
 //   Roam        — guided coverage-maximising walk with live heatmap
@@ -23,7 +25,7 @@ export function render(ctx) {
 
   // Per-session UI state
   if (!ctx.state._calib) ctx.state._calib = {
-    tab:        "setup",
+    tab:        "tune",
     deviceId:   null,
     deviceLabel: null,
     mapId:      null,
@@ -55,7 +57,7 @@ export function render(ctx) {
   ]));
 
   // Tab bar
-  const TABS = [["setup","Setup"],["pin","Pin & Listen"],["roam","Roam"],["model","Model"],["tune","Tune"],["beacon","Beacon Tune"]];
+  const TABS = [["tune","Tune"],["beacon","Beacon Tune"],["setup","Setup"],["pin","Pin & Listen"],["roam","Roam"],["model","Model"]];
   const tabBar = el("div", { class: "tabs", style: "margin-bottom:14px;flex-wrap:wrap;gap:4px" });
   for (const [id, label] of TABS) {
     tabBar.appendChild(el("button", {
@@ -83,13 +85,14 @@ function _setup(ctx, el, cs, calData) {
   // How-it-works explainer
   wrap.appendChild(el("div", { class: "card", style: "border-color:#52b788" }, [
     el("div", { style: "font-weight:700;font-size:14px;margin-bottom:8px;color:#52b788" },
-      "How Calibration Works"),
+      "Phone-Based Calibration (Setup)"),
     el("div", { style: "font-size:13px;line-height:1.7;color:#b0c4b1" }, [
-      el("div", {}, "1. Your phone broadcasts BLE. The house scanners hear it."),
+      el("div", {}, "This tab configures phone-based calibration (Pin & Listen / Roam)."),
+      el("div", { style: "margin-top:4px" }, "1. Your phone broadcasts BLE. The house scanners hear it."),
       el("div", { style: "margin-top:4px" }, "2. You stand at a known spot on the map and tap it."),
       el("div", { style: "margin-top:4px" }, "3. PadSpan records the RSSI fingerprint — which scanners saw you and how strongly."),
       el("div", { style: "margin-top:4px" }, "4. Repeat at 10–20 locations spread across each floor."),
-      el("div", { style: "margin-top:4px" }, "5. The Model tab shows location accuracy after enough points are collected."),
+      el("div", { style: "margin-top:4px" }, "All calibration methods (Tune, Beacon Tune, Pin & Listen, Roam) feed the same model."),
     ]),
   ]));
 
@@ -898,7 +901,7 @@ function _modelTab(ctx, el, cs, calData) {
 
   if (!pts.length) {
     wrap.appendChild(el("div", { class: "card" }, [
-      el("div", { class: "muted" }, "No calibration points yet. Use Pin & Listen or Roam to collect data."),
+      el("div", { class: "muted" }, "No calibration points yet. Use Tune, Beacon Tune, Pin & Listen, or Roam to collect data."),
     ]));
     return wrap;
   }
