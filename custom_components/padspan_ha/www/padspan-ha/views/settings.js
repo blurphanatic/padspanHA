@@ -557,6 +557,38 @@ function _settingsPresence(ctx, el){
     ),
   ]));
 
+  // ── Signal Loss Linger ───────────────────────────────────────────────────
+  const currentLinger = (settings.signal_loss_linger_s != null ? Number(settings.signal_loss_linger_s) : 90);
+  const lingerPolls = Math.max(2, Math.round(currentLinger / 10));
+  const lingerInp = el("input", {
+    type: "number", min: "10", max: "300", step: "10", value: String(currentLinger), style: inpStyle,
+  });
+  const lingerSaveBtn = el("button", { class: "btn" }, "Save");
+  lingerSaveBtn.addEventListener("click", async () => {
+    const v = Math.max(10, Math.min(300, parseInt(lingerInp.value) || 90));
+    try {
+      await ctx.actions.settingsSet({ signal_loss_linger_s: v });
+      ctx.toast(`Signal loss linger set to ${v}s`);
+    } catch(e) { ctx.toast("Failed to save setting", true); }
+  });
+  wrap.appendChild(el("div", { class: "card" }, [
+    el("div", { class: "h2" }, "Signal Loss Linger"),
+    el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
+      "How long to hold a device at its last known room when it disappears from all scanners. " +
+      "Only applies to devices with confident presence (≥60%). " +
+      "Weak or transient devices still use the short 20s grace period."
+    ),
+    el("div", { style: rowStyle }, [
+      el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Linger time"),
+      lingerInp,
+      el("div", { class: "muted", style: "font-size:12px" }, "seconds"),
+      lingerSaveBtn,
+    ]),
+    el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
+      `Current: ${currentLinger}s (~${lingerPolls} polls). Default: 90s. Range: 10s – 300s.`
+    ),
+  ]));
+
   // ── BLE Advertisement Timeout ─────────────────────────────────────────────
   const currentBleAge = (settings.ble_max_age_s != null ? Number(settings.ble_max_age_s) : 300);
   const bleAgeInp = el("input", {

@@ -58,10 +58,20 @@ HOME/AWAY PERSISTENCE
 ─────────────────────
 Devices that disappear from the live snapshot are kept in the result dict with a
 synthetic age_s that grows each poll.  A 2-poll grace period (≈20 s) prevents a
-momentary signal gap from triggering an away event.  Entities read age_s and return
-"not_home" when it exceeds the configured away timeout (Settings → Presence → Away
-timeout; default 300 s / 5 min).  Entities never go "unavailable" — "not_home" is
-a permanently valid HA state.
+momentary signal gap from triggering an away event.  Devices with confident
+presence (room_confidence ≥ 0.6) get an extended grace period controlled by the
+signal_loss_linger_s setting (default 90 s / ~9 polls) so that brief BLE dropouts
+don't erase established presence.  Entities read age_s and return "not_home" when
+it exceeds the configured away timeout (Settings → Presence → Away timeout;
+default 300 s / 5 min).  Entities never go "unavailable" — "not_home" is a
+permanently valid HA state.
+
+When ALL scanners go silent simultaneously (total signal dropout), the Kalman
+filter decays toward -95 dBm instead of -100 dBm, preserving state ~3× longer
+(~200-250 s vs ~70-80 s).  When some scanners are still active (genuine movement),
+losing scanners still decay rapidly at -100 dBm for fast room switching.  The vote
+window also skips None candidates during total silence, preserving the last
+confirmed room assignment.
 
 CONFIDENCE SCORE
 ─────────────────
@@ -421,15 +431,27 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if _pinned:
             await self._inject_beacon_calibration(now, _pinned, result)
 
+        # ── Read signal-loss linger setting ───────────────────────────────────
+        try:
+            _st_ling = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            _linger_s = int((_st_ling.data if _st_ling else {}).get("signal_loss_linger_s", 90))
+            _linger_s = max(10, min(300, _linger_s))
+        except Exception:
+            _linger_s = 90
+        _linger_polls = max(2, round(_linger_s / _SCAN_INTERVAL.total_seconds()))
+
         # ── Carry forward stale objects (home/away persistence) ──────────────
         for key, last_obj in self._known_objs.items():
             if key in result:
                 continue
-            # Grace period: don't start aging until _AWAY_GRACE_POLLS consecutive misses.
-            # This prevents a single missed advertisement from triggering an away event.
+            # Grace period: don't start aging until enough consecutive misses.
+            # Devices with confident presence get a longer grace (signal_loss_linger_s)
+            # to ride out BLE dropouts without flickering to away.
             miss = self._away_miss.get(key, 0) + 1
             self._away_miss[key] = miss
-            if miss < _AWAY_GRACE_POLLS:
+            _last_conf = last_obj.get("room_confidence", 0.0)
+            _grace = _linger_polls if _last_conf >= 0.6 else _AWAY_GRACE_POLLS
+            if miss < _grace:
                 # Grace period — treat as still present (age_s = 0)
                 grace = dict(last_obj)
                 grace["age_s"] = 0.0
@@ -501,12 +523,18 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ema[src] = rssi   # first observation — seed without smoothing
                 kp[src] = _R      # start with maximum uncertainty
 
-        # Decay sources that did NOT report (drifts toward -100 dBm and pruned)
+        # Decay sources that did NOT report (drifts toward silence target and pruned).
+        # Total silence (no scanners reporting) uses a gentler -95 dBm phantom so
+        # Kalman state survives ~20-25 polls (~200-250s) instead of ~7-8 polls.
+        # Partial silence (some scanners still active = genuine movement) keeps
+        # the aggressive -100 dBm target for fast pruning of losing scanners.
+        _all_silent = len(live_srcs) == 0 and len(ema) > 0
+        _decay_target = -95.0 if _all_silent else _EMA_SILENCE_DBM
         for src in list(ema):
             if src not in live_srcs:
                 p = kp.get(src, _R)
                 K = p / (p + _R)
-                ema[src] = ema[src] + K * (_EMA_SILENCE_DBM - ema[src])
+                ema[src] = ema[src] + K * (_decay_target - ema[src])
                 kp[src] = (1.0 - K) * p + _Q
                 if ema[src] < _EMA_PRUNE_DBM:
                     del ema[src]
@@ -662,7 +690,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             prev = list(existing) if existing else []
             self._room_votes[key] = deque(prev[-vote_window:], maxlen=vote_window)
         votes = self._room_votes[key]
-        votes.append(candidate)
+        # Don't pollute the vote window with None when no data is available
+        # (preserves last known room during total signal dropout)
+        if candidate is not None:
+            votes.append(candidate)
 
         counts: dict[str, int] = {}
         for v in votes:
