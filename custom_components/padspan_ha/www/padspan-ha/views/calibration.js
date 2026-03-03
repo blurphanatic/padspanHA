@@ -1512,7 +1512,7 @@ function _tuneTab(ctx, el, cs, calData) {
   isoWrap.style.cssText = "position:relative;margin-top:6px";
 
   const isoDiv = document.createElement("div");
-  isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px";
+  isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px;touch-action:none";
   isoDiv.innerHTML = buildTuneSVG(_getFocusZ(ts.focusIdx));
 
   // Hover tooltip
@@ -1542,7 +1542,8 @@ function _tuneTab(ctx, el, cs, calData) {
   });
 
   // ── Drag interaction ────────────────────────────────────────────────────────
-  let _dragging = null; // {mapId, rxId, z, svgEl}
+  let _dragging = null; // {mapId, rxId, z}
+  let _didDrag = false;
 
   isoDiv.addEventListener("pointerdown", e => {
     const g = e.target.closest("[data-rx-id]");
@@ -1553,16 +1554,20 @@ function _tuneTab(ctx, el, cs, calData) {
     const z = Number(g.getAttribute("data-z") || 0);
     ts.selectedRx = { mapId, rxId };
     _dragging = { mapId, rxId, z };
+    _didDrag = false;
     isoDiv.setPointerCapture(e.pointerId);
     isoDiv.style.cursor = "grabbing";
-    // Update selection highlight
-    _refreshSVG();
+    // NOTE: do NOT call _refreshSVG() here — it rebuilds innerHTML which
+    // destroys the target element and causes pointercancel in many browsers,
+    // killing the drag before it starts. The selection highlight will appear
+    // on the first pointermove (which does call _refreshSVG).
     _refreshInfo();
   });
 
   isoDiv.addEventListener("pointermove", e => {
     if (!_dragging) return;
     e.preventDefault();
+    _didDrag = true;
     const svgNode = isoDiv.querySelector("svg");
     if (!svgNode) return;
 
@@ -1601,9 +1606,30 @@ function _tuneTab(ctx, el, cs, calData) {
 
   isoDiv.addEventListener("pointerup", e => {
     if (_dragging) {
+      // Update room assignment based on final drop position
+      const draft = ts.draftReceivers[_dragging.mapId];
+      if (draft && _didDrag) {
+        const rx = draft.find(r => r.id === _dragging.rxId);
+        const mapObj = maps_list.find(m => m.id === _dragging.mapId);
+        if (rx && mapObj) {
+          rx.room = _detectRoom(rx.x, rx.y, mapObj) || rx.room || "";
+        }
+      }
       _dragging = null;
       isoDiv.releasePointerCapture(e.pointerId);
       isoDiv.style.cursor = "";
+      _refreshSVG();
+      _refreshInfo();
+      _refreshDirtyLabel();
+    }
+  });
+
+  // Clean up drag state if browser cancels pointer capture
+  isoDiv.addEventListener("pointercancel", e => {
+    if (_dragging) {
+      _dragging = null;
+      isoDiv.style.cursor = "";
+      _refreshSVG();
       _refreshDirtyLabel();
     }
   });
@@ -1611,6 +1637,8 @@ function _tuneTab(ctx, el, cs, calData) {
   // Click to select (without drag)
   isoDiv.addEventListener("click", e => {
     if (_dragging) return;
+    // After a drag, skip the click so we don't rebuild SVG again
+    if (_didDrag) { _didDrag = false; return; }
     const g = e.target.closest("[data-rx-id]");
     if (g) {
       ts.selectedRx = { mapId: g.getAttribute("data-map-id"), rxId: g.getAttribute("data-rx-id") };
@@ -2602,7 +2630,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   isoWrap.style.cssText = "position:relative;margin-top:6px";
 
   const isoDiv = document.createElement("div");
-  isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px";
+  isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px;touch-action:none";
   isoDiv.innerHTML = buildBeaconSVG(_getFocusZ(bs.focusIdx));
 
   // Hover tooltip
@@ -2633,6 +2661,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
   // ── Drag interaction ────────────────────────────────────────────────────────
   let _dragging = null; // {mapId, bkId, z}
+  let _didDrag = false;
 
   isoDiv.addEventListener("pointerdown", e => {
     const g = e.target.closest("[data-bk-id]");
@@ -2643,15 +2672,18 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     const z = Number(g.getAttribute("data-z") || 0);
     bs.selectedBk = { mapId, bkId };
     _dragging = { mapId, bkId, z };
+    _didDrag = false;
     isoDiv.setPointerCapture(e.pointerId);
     isoDiv.style.cursor = "grabbing";
-    _refreshSVG();
+    // NOTE: do NOT call _refreshSVG() here — it rebuilds innerHTML which
+    // destroys the target element and causes pointercancel in many browsers.
     _refreshInfo();
   });
 
   isoDiv.addEventListener("pointermove", e => {
     if (!_dragging) return;
     e.preventDefault();
+    _didDrag = true;
     const svgNode = isoDiv.querySelector("svg");
     if (!svgNode) return;
 
@@ -2684,9 +2716,30 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
   isoDiv.addEventListener("pointerup", e => {
     if (_dragging) {
+      // Update room assignment based on final drop position
+      const draft = bs.draftBeacons[_dragging.mapId];
+      if (draft && _didDrag) {
+        const bk = draft.find(b => b.id === _dragging.bkId);
+        const mapObj = maps_list.find(m => m.id === _dragging.mapId);
+        if (bk && mapObj) {
+          bk.room = _detectRoom(bk.x, bk.y, mapObj) || bk.room || "";
+        }
+      }
       _dragging = null;
       isoDiv.releasePointerCapture(e.pointerId);
       isoDiv.style.cursor = "";
+      _refreshSVG();
+      _refreshInfo();
+      _refreshDirtyLabel();
+    }
+  });
+
+  // Clean up drag state if browser cancels pointer capture
+  isoDiv.addEventListener("pointercancel", e => {
+    if (_dragging) {
+      _dragging = null;
+      isoDiv.style.cursor = "";
+      _refreshSVG();
       _refreshDirtyLabel();
     }
   });
@@ -2694,6 +2747,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   // Click to select (without drag)
   isoDiv.addEventListener("click", e => {
     if (_dragging) return;
+    if (_didDrag) { _didDrag = false; return; }
     const g = e.target.closest("[data-bk-id]");
     if (g) {
       bs.selectedBk = { mapId: g.getAttribute("data-map-id"), bkId: g.getAttribute("data-bk-id") };
