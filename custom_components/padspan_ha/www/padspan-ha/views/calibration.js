@@ -2238,7 +2238,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     pendingPlace: null,  // {key, label, kind} — awaiting dblclick on map
     _mapsStamp: null,
     // ── Per-beacon live timers (independent 60s RSSI capture) ──
-    _liveTimers: {},  // bkId → { endTime, mapId, bk:{...}, readings:{}, timer, pollTimer }
+    _liveTimers: {},       // bkId → { endTime, mapId, bk:{...}, readings:{}, timer, pollTimer, warnings:[] }
+    _liveBeaconKeys: new Set(),  // beacon keys that completed calibration → show live position
   };
   const bs = ctx.state._calibBeacon;
 
@@ -2463,16 +2464,42 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           s += `</g>`;
         }
 
-        // Beacon markers (draggable teal diamonds)
+        // Beacon markers (draggable teal diamonds, or live-tracking green diamonds)
         const draft = bs.draftBeacons[m.id] || [];
+        const _snap = (ctx.state.live && ctx.state.live.snapshot) || null;
         for (const bk of draft) {
-          const [wx, wy] = xf.mapPt(bk.x || 0, bk.y || 0);
+          const isLive = bs._liveBeaconKeys.has(bk.key);
+          const isTimerActive = bs._liveTimers[bk.id] && bs._liveTimers[bk.id].endTime > Date.now();
+
+          // Live beacons: use snapshot estimated position if available
+          let useX = bk.x || 0, useY = bk.y || 0;
+          let liveObj = null;
+          if (isLive && !isTimerActive) {
+            liveObj = (_snap?.objects?.list || []).find(o => o.key === bk.key);
+            if (liveObj && typeof liveObj.x_frac === "number" && typeof liveObj.y_frac === "number") {
+              useX = liveObj.x_frac;
+              useY = liveObj.y_frac;
+            } else if (liveObj && liveObj.room) {
+              // Fallback: room centroid
+              const rc = _roomCentroid(liveObj.room, m);
+              if (rc) { useX = rc[0]; useY = rc[1]; }
+            }
+          }
+
+          const [wx, wy] = xf.mapPt(useX, useY);
           const [px, py] = iso(wx, wy, z);
           const isSel = bs.selectedBk && bs.selectedBk.mapId === m.id && bs.selectedBk.bkId === bk.id;
           const bx = Math.round(px), by = Math.round(py);
           const lbl = (bk.label || bk.key || "B").substring(0, 8);
-          const detectedRoom = _detectRoom(bk.x, bk.y, m);
-          const tip = `${bk.label || bk.key || "Beacon"}${detectedRoom ? " | Room: " + detectedRoom : ""} | x: ${(bk.x * 100).toFixed(1)}% y: ${(bk.y * 100).toFixed(1)}%`;
+          const detectedRoom = isLive && liveObj?.room ? liveObj.room : _detectRoom(useX, useY, m);
+          const fillColor = isLive && !isTimerActive ? "#52b788" : "#5eead4";
+          const confidence = liveObj?.knn_confidence;
+          const tipParts = [bk.label || bk.key || "Beacon"];
+          if (detectedRoom) tipParts.push("Room: " + detectedRoom);
+          tipParts.push(`x: ${(useX * 100).toFixed(1)}% y: ${(useY * 100).toFixed(1)}%`);
+          if (isLive && confidence != null) tipParts.push(`Confidence: ${(confidence * 100).toFixed(0)}%`);
+          if (isLive) tipParts.push("LIVE");
+          const tip = tipParts.join(" | ");
 
           s += `<g data-bk-id="${_esc(bk.id)}" data-map-id="${_esc(m.id)}" data-z="${z}" data-tip="${_esc(tip)}" style="cursor:grab">`;
           // Transparent hit area for easier clicking/dragging
@@ -2480,15 +2507,22 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           // Selection highlight
           if (isSel) s += `<circle cx="${bx}" cy="${by}" r="22" fill="none" stroke="#fbbf24" stroke-width="2" stroke-dasharray="4,3" opacity="0.9"/>`;
           // Pulse ring
-          s += `<circle cx="${bx}" cy="${by}" r="16" fill="#5eead4" opacity="0.2"/>`;
+          s += `<circle cx="${bx}" cy="${by}" r="16" fill="${fillColor}" opacity="0.2"/>`;
           // Diamond (rotated square)
-          s += `<rect x="${bx - 8}" y="${by - 8}" width="16" height="16" rx="2" transform="rotate(45 ${bx} ${by})" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="0.95"/>`;
+          s += `<rect x="${bx - 8}" y="${by - 8}" width="16" height="16" rx="2" transform="rotate(45 ${bx} ${by})" fill="${fillColor}" stroke="#071008" stroke-width="1.5" opacity="0.95"/>`;
           // Center dot
           s += `<circle cx="${bx}" cy="${by}" r="3" fill="#071008" opacity="0.7"/>`;
-          // Label below
-          const lblW = Math.min(lbl.length * 7 + 8, 70);
-          s += `<rect x="${bx - lblW / 2}" y="${by + 18}" width="${lblW}" height="13" rx="3" fill="#071008" opacity="0.8"/>`;
-          s += `<text x="${bx}" y="${by + 28}" text-anchor="middle" fill="#5eead4" font-size="9" font-weight="600">${_esc(lbl)}</text>`;
+          // Label + LIVE badge
+          if (isLive && !isTimerActive) {
+            const liveLbl = lbl + " LIVE";
+            const lblW = Math.min(liveLbl.length * 7 + 8, 90);
+            s += `<rect x="${bx - lblW / 2}" y="${by + 18}" width="${lblW}" height="13" rx="3" fill="#071008" opacity="0.8"/>`;
+            s += `<text x="${bx}" y="${by + 28}" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600">${_esc(liveLbl)}</text>`;
+          } else {
+            const lblW = Math.min(lbl.length * 7 + 8, 70);
+            s += `<rect x="${bx - lblW / 2}" y="${by + 18}" width="${lblW}" height="13" rx="3" fill="#071008" opacity="0.8"/>`;
+            s += `<text x="${bx}" y="${by + 28}" text-anchor="middle" fill="#5eead4" font-size="9" font-weight="600">${_esc(lbl)}</text>`;
+          }
           // Live timer overlay (amber dashed ring + countdown)
           const timerEntry = bs._liveTimers[bk.id];
           if (timerEntry && timerEntry.endTime > Date.now()) {
@@ -2599,15 +2633,28 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     for (const bkId of ids) {
       const t = bs._liveTimers[bkId];
       const rem = Math.max(0, Math.ceil((t.endTime - Date.now()) / 1000));
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap";
       const span = document.createElement("span");
       if (rem > 0) {
+        const sc = Object.keys(t.readings).length;
+        const sm = Object.values(t.readings).reduce((tot, r) => tot + r.samples.length, 0);
         span.style.cssText = "font-size:12px;color:#f59e0b;font-weight:600;white-space:nowrap";
         span.textContent = `${t.bk.label || t.bk.key} \u2014 live in ${rem}s`;
+        if (sm > 0) span.textContent += ` (${sc} scanners, ${sm} samples)`;
       } else {
         span.style.cssText = "font-size:12px;color:#52b788;font-weight:600;white-space:nowrap";
         span.textContent = `\u2713 ${t.bk.label || t.bk.key} live`;
       }
-      timerArea.appendChild(span);
+      row.appendChild(span);
+      // Inline warning
+      if (t.warning && rem > 0) {
+        const warn = document.createElement("span");
+        warn.style.cssText = "font-size:11px;color:#f87171;white-space:nowrap";
+        warn.textContent = t.warning;
+        row.appendChild(warn);
+      }
+      timerArea.appendChild(row);
     }
   }
   _refreshTimerRow();
@@ -2733,6 +2780,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       if (t.pollTimer) clearTimeout(t.pollTimer);
     }
     bs._liveTimers = {};
+    bs._liveBeaconKeys = new Set();
     bs.draftBeacons = {};
     for (const m of maps_list) {
       bs.draftBeacons[m.id] = (m.beacons || []).map(bk => ({
@@ -3031,11 +3079,15 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       if (old.pollTimer) clearTimeout(old.pollTimer);
       delete bs._liveTimers[bkId];
     }
+    // Remove from live tracking — back to calibrating
+    bs._liveBeaconKeys.delete(bk.key);
     const entry = {
       endTime: Date.now() + 60000,
+      startTime: Date.now(),
       mapId,
       bk: { ...bk },
       readings: {},
+      warning: "",  // inline warning text (updated on each poll)
     };
     bs._liveTimers[bkId] = entry;
     _refreshTimerRow();
@@ -3059,6 +3111,36 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           entry.readings[src].samples.push(info.rssi);
         }
       }
+      // Check for warning conditions
+      const elapsed = Date.now() - entry.startTime;
+      const scannerCount = Object.keys(entry.readings).length;
+      if (scannerCount === 0 && elapsed > 10000) {
+        entry.warning = "\u26a0 No signal \u2014 beacon invisible to all scanners";
+      } else if (scannerCount === 1 && elapsed > 15000) {
+        entry.warning = "\u26a0 Single scanner \u2014 only 1 scanner detecting this beacon";
+      } else if (scannerCount > 0) {
+        const allWeak = Object.values(entry.readings).every(r => {
+          if (!r.samples.length) return true;
+          const mean = r.samples.reduce((a, b) => a + b, 0) / r.samples.length;
+          return mean < -90;
+        });
+        if (allWeak && elapsed > 5000) {
+          entry.warning = "\u26a0 Weak signal \u2014 all scanners below -90 dBm";
+        } else {
+          // Check for wild variance on any scanner
+          let highVar = "";
+          for (const [src, rd] of Object.entries(entry.readings)) {
+            if (rd.samples.length < 5) continue;
+            const mean = rd.samples.reduce((a, b) => a + b, 0) / rd.samples.length;
+            const variance = rd.samples.reduce((a, v) => a + (v - mean) ** 2, 0) / rd.samples.length;
+            if (Math.sqrt(variance) > 15) { highVar = rd.name || src; break; }
+          }
+          entry.warning = highVar ? `\u26a0 High variance on ${highVar}` : "";
+        }
+      } else {
+        entry.warning = "";
+      }
+
       _refreshTimerRow();
       _refreshSVG();
       // Continue polling if time remains
@@ -3095,7 +3177,9 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           console.warn("[PadSpan] live timer save failed:", e);
         }
       }
-      // Show green "live" briefly, then remove
+      // Mark beacon as live — switches to estimated position rendering
+      bs._liveBeaconKeys.add(entry.bk.key);
+      // Show green "live" briefly, then remove timer entry
       entry.endTime = 0;
       _refreshTimerRow();
       _refreshSVG();
