@@ -1544,70 +1544,10 @@ function _tuneTab(ctx, el, cs, calData) {
   });
 
   // ── Drag interaction ────────────────────────────────────────────────────────
-  // Uses document-level listeners instead of setPointerCapture to avoid
-  // issues with innerHTML rebuilds destroying the pointer target.
-  let _dragging = null; // {mapId, rxId, z}
+  // Pointer capture is set on the <g> element itself. During drag we move the
+  // <g> via a transform attribute (no innerHTML rebuild) so the element stays
+  // alive and capture is preserved. Full SVG rebuild happens only on drop.
   let _didDrag = false;
-
-  function _onDragMove(e) {
-    if (!_dragging) return;
-    e.preventDefault();
-    _didDrag = true;
-    const svgNode = isoDiv.querySelector("svg");
-    if (!svgNode) return;
-
-    // Convert client coords → SVG coords using getScreenCTM
-    const ctm = svgNode.getScreenCTM();
-    if (!ctm) return;
-    const inv = ctm.inverse();
-    const sx = e.clientX * inv.a + e.clientY * inv.c + inv.e;
-    const sy = e.clientX * inv.b + e.clientY * inv.d + inv.f;
-
-    // SVG coords → world coords (at this floor's z-level)
-    const [wx, wy] = invIso(sx, sy, _dragging.z);
-
-    // World coords → normalized image coords for this map
-    const xf = mapXforms[_dragging.mapId];
-    if (!xf) return;
-    const [nx, ny] = xf.invMapPt(wx, wy);
-
-    // Clamp to [0, 1]
-    const cx = Math.max(0, Math.min(1, nx));
-    const cy = Math.max(0, Math.min(1, ny));
-
-    // Update draft
-    const draft = ts.draftReceivers[_dragging.mapId];
-    if (!draft) return;
-    const rx = draft.find(r => r.id === _dragging.rxId);
-    if (!rx) return;
-    rx.x = cx;
-    rx.y = cy;
-    ts.dirtyMaps[_dragging.mapId] = true;
-
-    // Re-render SVG for live feedback
-    _refreshSVG();
-    _refreshInfo();
-  }
-
-  function _onDragEnd(e) {
-    if (!_dragging) return;
-    // Update room assignment based on final drop position
-    const draft = ts.draftReceivers[_dragging.mapId];
-    if (draft && _didDrag) {
-      const rx = draft.find(r => r.id === _dragging.rxId);
-      const mapObj = maps_list.find(m => m.id === _dragging.mapId);
-      if (rx && mapObj) {
-        rx.room = _detectRoom(rx.x, rx.y, mapObj) || rx.room || "";
-      }
-    }
-    _dragging = null;
-    isoDiv.style.cursor = "";
-    document.removeEventListener("pointermove", _onDragMove, true);
-    document.removeEventListener("pointerup", _onDragEnd, true);
-    _refreshSVG();
-    _refreshInfo();
-    _refreshDirtyLabel();
-  }
 
   isoDiv.addEventListener("pointerdown", e => {
     const g = e.target.closest("[data-rx-id]");
@@ -1615,22 +1555,77 @@ function _tuneTab(ctx, el, cs, calData) {
     e.preventDefault();
     e.stopPropagation();
     const mapId = g.getAttribute("data-map-id");
-    const rxId = g.getAttribute("data-rx-id");
-    const z = Number(g.getAttribute("data-z") || 0);
+    const rxId  = g.getAttribute("data-rx-id");
+    const z     = Number(g.getAttribute("data-z") || 0);
     ts.selectedRx = { mapId, rxId };
-    _dragging = { mapId, rxId, z };
     _didDrag = false;
     isoDiv.style.cursor = "grabbing";
     _refreshInfo();
-    // Listen on document (capture phase) so events are received even if
-    // innerHTML rebuilds destroy the original target element.
-    document.addEventListener("pointermove", _onDragMove, true);
-    document.addEventListener("pointerup", _onDragEnd, true);
+
+    // Compute the original SVG pixel position of this receiver
+    const draft = ts.draftReceivers[mapId];
+    if (!draft) return;
+    const rxObj = draft.find(r => r.id === rxId);
+    if (!rxObj) return;
+    const xf = mapXforms[mapId];
+    if (!xf) return;
+    const [origWx, origWy] = xf.mapPt(rxObj.x, rxObj.y);
+    const [origPx, origPy] = iso(origWx, origWy, z);
+
+    // Capture pointer on the <g> element — it stays alive because we DON'T
+    // rebuild innerHTML during drag, only translate the element.
+    g.setPointerCapture(e.pointerId);
+
+    const onMove = (ev) => {
+      ev.preventDefault();
+      _didDrag = true;
+      const svgNode = isoDiv.querySelector("svg");
+      if (!svgNode) return;
+      const ctm = svgNode.getScreenCTM();
+      if (!ctm) return;
+      const inv = ctm.inverse();
+      const sx = ev.clientX * inv.a + ev.clientY * inv.c + inv.e;
+      const sy = ev.clientX * inv.b + ev.clientY * inv.d + inv.f;
+      const [wx, wy] = invIso(sx, sy, z);
+      const [nx, ny] = xf.invMapPt(wx, wy);
+      const cx = Math.max(0, Math.min(1, nx));
+      const cy = Math.max(0, Math.min(1, ny));
+
+      // Update draft position
+      rxObj.x = cx;
+      rxObj.y = cy;
+      ts.dirtyMaps[mapId] = true;
+
+      // Visually move the <g> by translating it (no innerHTML rebuild)
+      const [newWx, newWy] = xf.mapPt(cx, cy);
+      const [newPx, newPy] = iso(newWx, newWy, z);
+      g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
+    };
+
+    const onUp = (ev) => {
+      g.removeEventListener("pointermove", onMove);
+      g.removeEventListener("pointerup", onUp);
+      g.removeEventListener("pointercancel", onUp);
+      try { g.releasePointerCapture(ev.pointerId); } catch(_){}
+      isoDiv.style.cursor = "";
+      // Update room for final position
+      if (_didDrag) {
+        const mapObj = maps_list.find(m => m.id === mapId);
+        if (mapObj) rxObj.room = _detectRoom(rxObj.x, rxObj.y, mapObj) || rxObj.room || "";
+      }
+      // Full SVG rebuild to render at committed position
+      _refreshSVG();
+      _refreshInfo();
+      _refreshDirtyLabel();
+    };
+
+    g.addEventListener("pointermove", onMove);
+    g.addEventListener("pointerup", onUp);
+    g.addEventListener("pointercancel", onUp);
   });
 
   // Click to select (without drag)
   isoDiv.addEventListener("click", e => {
-    if (_dragging) return;
     // After a drag, skip the click so we don't rebuild SVG again
     if (_didDrag) { _didDrag = false; return; }
     const g = e.target.closest("[data-rx-id]");
@@ -1777,29 +1772,28 @@ function _tuneTab(ctx, el, cs, calData) {
     saveBtn.disabled = true;
     statusLbl.textContent = "Saving...";
     try {
+      // Use quiet save (no re-render per map) to avoid destroying DOM mid-loop
       for (const mapId of dirtyIds) {
         const origMap = maps_list.find(m => m.id === mapId);
         if (!origMap) continue;
-        await ctx.actions.mapsUpdate({
+        await ctx.actions.mapsUpdateQuiet({
           map_id: mapId,
           receivers: ts.draftReceivers[mapId],
           calibration: origMap.calibration || {},
           notes: origMap.notes || "",
         });
       }
+      // Clear dirty state BEFORE refresh so re-rendered view shows clean state
       ts.dirtyMaps = {};
-      // Update stamp so we don't re-sync over our own save
-      const freshMaps = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
-      ts._mapsStamp = freshMaps.map(m => `${m.id}:${m.updated||""}:${(m.receivers||[]).length}`).join("|");
-      statusLbl.textContent = "Saved ✓";
+      ts.selectedRx = null;
       ctx.toast("Receiver positions saved");
-      setTimeout(() => { statusLbl.textContent = ""; }, 2500);
-      _refreshDirtyLabel();
+      // mapsRefresh refreshes data + triggers re-render (which updates dirty label & stamp)
+      await ctx.actions.mapsRefresh();
     } catch (e) {
-      statusLbl.textContent = "Error saving";
       ctx.toast("Save failed: " + String(e), true);
+      statusLbl.textContent = "Error saving";
+      saveBtn.disabled = false;
     }
-    saveBtn.disabled = false;
   });
 
   // Reset button
@@ -2538,7 +2532,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       for (const mapId of dirtyIds) {
         const origMap = maps_list.find(m => m.id === mapId);
         if (!origMap) continue;
-        await ctx.actions.mapsUpdate({
+        await ctx.actions.mapsUpdateQuiet({
           map_id: mapId,
           beacons: bs.draftBeacons[mapId] || [],
           receivers: origMap.receivers || [],
@@ -2547,17 +2541,14 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         });
       }
       bs.dirtyMaps = {};
-      const freshMaps = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
-      bs._mapsStamp = freshMaps.map(m => `${m.id}:${m.updated||""}:${(m.beacons||[]).length}`).join("|");
-      statusLbl.textContent = "Saved \u2713";
+      bs.selectedBk = null;
       ctx.toast("Beacon positions saved");
-      setTimeout(() => { statusLbl.textContent = ""; }, 2500);
-      _refreshDirtyLabel();
+      await ctx.actions.mapsRefresh();
     } catch (e) {
-      statusLbl.textContent = "Error saving";
       ctx.toast("Save failed: " + String(e), true);
+      statusLbl.textContent = "Error saving";
+      saveBtn.disabled = false;
     }
-    saveBtn.disabled = false;
   });
 
   // Reset button
@@ -2656,61 +2647,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   });
 
   // ── Drag interaction ────────────────────────────────────────────────────────
-  let _dragging = null; // {mapId, bkId, z}
   let _didDrag = false;
-
-  function _onDragMove(e) {
-    if (!_dragging) return;
-    e.preventDefault();
-    _didDrag = true;
-    const svgNode = isoDiv.querySelector("svg");
-    if (!svgNode) return;
-
-    const ctm = svgNode.getScreenCTM();
-    if (!ctm) return;
-    const inv = ctm.inverse();
-    const sx = e.clientX * inv.a + e.clientY * inv.c + inv.e;
-    const sy = e.clientX * inv.b + e.clientY * inv.d + inv.f;
-
-    const [wx, wy] = invIso(sx, sy, _dragging.z);
-
-    const xf = mapXforms[_dragging.mapId];
-    if (!xf) return;
-    const [nx, ny] = xf.invMapPt(wx, wy);
-
-    const cx2 = Math.max(0, Math.min(1, nx));
-    const cy2 = Math.max(0, Math.min(1, ny));
-
-    const draft = bs.draftBeacons[_dragging.mapId];
-    if (!draft) return;
-    const bk = draft.find(b => b.id === _dragging.bkId);
-    if (!bk) return;
-    bk.x = cx2;
-    bk.y = cy2;
-    bs.dirtyMaps[_dragging.mapId] = true;
-
-    _refreshSVG();
-    _refreshInfo();
-  }
-
-  function _onDragEnd(e) {
-    if (!_dragging) return;
-    const draft = bs.draftBeacons[_dragging.mapId];
-    if (draft && _didDrag) {
-      const bk = draft.find(b => b.id === _dragging.bkId);
-      const mapObj = maps_list.find(m => m.id === _dragging.mapId);
-      if (bk && mapObj) {
-        bk.room = _detectRoom(bk.x, bk.y, mapObj) || bk.room || "";
-      }
-    }
-    _dragging = null;
-    isoDiv.style.cursor = "";
-    document.removeEventListener("pointermove", _onDragMove, true);
-    document.removeEventListener("pointerup", _onDragEnd, true);
-    _refreshSVG();
-    _refreshInfo();
-    _refreshDirtyLabel();
-  }
 
   isoDiv.addEventListener("pointerdown", e => {
     const g = e.target.closest("[data-bk-id]");
@@ -2718,20 +2655,68 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     e.preventDefault();
     e.stopPropagation();
     const mapId = g.getAttribute("data-map-id");
-    const bkId = g.getAttribute("data-bk-id");
-    const z = Number(g.getAttribute("data-z") || 0);
+    const bkId  = g.getAttribute("data-bk-id");
+    const z     = Number(g.getAttribute("data-z") || 0);
     bs.selectedBk = { mapId, bkId };
-    _dragging = { mapId, bkId, z };
     _didDrag = false;
     isoDiv.style.cursor = "grabbing";
     _refreshInfo();
-    document.addEventListener("pointermove", _onDragMove, true);
-    document.addEventListener("pointerup", _onDragEnd, true);
+
+    const draft = bs.draftBeacons[mapId];
+    if (!draft) return;
+    const bkObj = draft.find(b => b.id === bkId);
+    if (!bkObj) return;
+    const xf = mapXforms[mapId];
+    if (!xf) return;
+    const [origWx, origWy] = xf.mapPt(bkObj.x, bkObj.y);
+    const [origPx, origPy] = iso(origWx, origWy, z);
+
+    g.setPointerCapture(e.pointerId);
+
+    const onMove = (ev) => {
+      ev.preventDefault();
+      _didDrag = true;
+      const svgNode = isoDiv.querySelector("svg");
+      if (!svgNode) return;
+      const ctm = svgNode.getScreenCTM();
+      if (!ctm) return;
+      const inv = ctm.inverse();
+      const sx = ev.clientX * inv.a + ev.clientY * inv.c + inv.e;
+      const sy = ev.clientX * inv.b + ev.clientY * inv.d + inv.f;
+      const [wx, wy] = invIso(sx, sy, z);
+      const [nx, ny] = xf.invMapPt(wx, wy);
+      const cx2 = Math.max(0, Math.min(1, nx));
+      const cy2 = Math.max(0, Math.min(1, ny));
+      bkObj.x = cx2;
+      bkObj.y = cy2;
+      bs.dirtyMaps[mapId] = true;
+      const [newWx, newWy] = xf.mapPt(cx2, cy2);
+      const [newPx, newPy] = iso(newWx, newWy, z);
+      g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
+    };
+
+    const onUp = (ev) => {
+      g.removeEventListener("pointermove", onMove);
+      g.removeEventListener("pointerup", onUp);
+      g.removeEventListener("pointercancel", onUp);
+      try { g.releasePointerCapture(ev.pointerId); } catch(_){}
+      isoDiv.style.cursor = "";
+      if (_didDrag) {
+        const mapObj = maps_list.find(m => m.id === mapId);
+        if (mapObj) bkObj.room = _detectRoom(bkObj.x, bkObj.y, mapObj) || bkObj.room || "";
+      }
+      _refreshSVG();
+      _refreshInfo();
+      _refreshDirtyLabel();
+    };
+
+    g.addEventListener("pointermove", onMove);
+    g.addEventListener("pointerup", onUp);
+    g.addEventListener("pointercancel", onUp);
   });
 
   // Click to select (without drag)
   isoDiv.addEventListener("click", e => {
-    if (_dragging) return;
     if (_didDrag) { _didDrag = false; return; }
     const g = e.target.closest("[data-bk-id]");
     if (g) {

@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.14";
+const APP_VERSION = "0.6.15";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260303T043757Z";
+const BUILD_ID = "20260303T060137Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -836,6 +836,7 @@ class PadSpanHaApp extends HTMLElement {
         mapsDelete: async (id)=>{ await this._callWS({ type:"padspan_ha/maps_delete", map_id:id }); await this._getMapsList(); if(this.state.activeMapId===id) this.state.activeMapId=null; this._renderCurrentView(); },
         mapsUpload: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_upload"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         mapsUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
+        mapsUpdateQuiet: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); },
         mapsReplaceImage: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_replace_image"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         modelUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/model_update"}, payload)); await this._getModel(); this._renderCurrentView(); },
 
