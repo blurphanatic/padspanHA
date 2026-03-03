@@ -2226,15 +2226,14 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   };
   const bs = ctx.state._calibBeacon;
 
-  const _BLE_KINDS = new Set(["ble", "private_ble", "ibeacon"]);
+  const _isFollowed = (obj) => ctx.actions.followedHas(obj.address || obj.entity_id || "");
   function _autoPinTracked() {
     const pinnedKeys = new Set();
     for (const bks of Object.values(bs.draftBeacons)) {
       for (const bk of bks) if (bk.key) pinnedKeys.add(bk.key);
     }
     for (const obj of (snap?.objects?.list || [])) {
-      if (!(obj.user_label || obj.identified)) continue;
-      if (!_BLE_KINDS.has(obj.kind)) continue;
+      if (!(obj.user_label || obj.identified || _isFollowed(obj))) continue;
       if (!obj.room || pinnedKeys.has(obj.key)) continue;
       for (const m of maps_list) {
         const c = _roomCentroid(obj.room, m);
@@ -2505,7 +2504,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     for (const bk of bks) if (bk.key) allPinnedKeys.add(bk.key);
   }
   const availObjs = (snap?.objects?.list || [])
-    .filter(o => (o.user_label || o.identified) && !allPinnedKeys.has(o.key))
+    .filter(o => (o.user_label || o.identified || _isFollowed(o)) && !allPinnedKeys.has(o.key))
     .sort((a, b) => (a.user_label || a.name || "").localeCompare(b.user_label || b.name || ""));
 
   const pickerRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
@@ -2967,6 +2966,31 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   }
   _refreshPlaceBanner();
 
+  // ── Move beacon between maps ───────────────────────────────────────────
+  function _moveBeaconToMap(bk, fromMapId, toMapId) {
+    // Remove from source map
+    bs.draftBeacons[fromMapId] = (bs.draftBeacons[fromMapId] || []).filter(b => b.id !== bk.id);
+    bs.dirtyMaps[fromMapId] = true;
+    // Find room centroid on target map, else center
+    const toMap = maps_list.find(m => m.id === toMapId);
+    const srcObj = (snap?.objects?.list || []).find(o => o.key === bk.key);
+    const roomName = srcObj?.room || "";
+    const centroid = roomName && toMap ? _roomCentroid(roomName, toMap) : null;
+    const nx = centroid ? centroid[0] : 0.5;
+    const ny = centroid ? centroid[1] : 0.5;
+    // Add to target map
+    const moved = { ...bk, x: nx, y: ny };
+    if (!bs.draftBeacons[toMapId]) bs.draftBeacons[toMapId] = [];
+    bs.draftBeacons[toMapId].push(moved);
+    bs.dirtyMaps[toMapId] = true;
+    bs.selectedBk = { mapId: toMapId, bkId: moved.id };
+    _refreshSVG();
+    _refreshInfo();
+    _refreshDirtyLabel();
+    _refreshBeaconList();
+    _refreshAvailable();
+  }
+
   // ── Selected beacon info panel ──────────────────────────────────────────
   const infoCard = document.createElement("div");
   infoCard.style.cssText = "background:#0d1f14;border:1px solid #1b3526;border-radius:8px;padding:10px 14px;font-size:12px;color:#a7f3d0;min-height:24px";
@@ -2983,6 +3007,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     const obj = (snap?.objects?.list || []).find(o => o.key === bk.key);
     const lastRssi = obj?.rssi != null ? `${obj.rssi} dBm` : "\u2014";
     infoCard.innerHTML = "";
+    const infoLine = document.createElement("div");
     const lines = [
       `<b style="color:#5eead4">${_esc(bk.label || bk.key)}</b>`,
       `Map: ${_esc(mapObj?.name || bs.selectedBk.mapId)}`,
@@ -2991,12 +3016,43 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       `RSSI: ${lastRssi}`,
       `Kind: ${_esc(bk.kind || "ble")}`,
     ];
-    infoCard.innerHTML = lines.join(" &nbsp;\u00b7&nbsp; ");
+    infoLine.innerHTML = lines.join(" &nbsp;\u00b7&nbsp; ");
+    infoCard.appendChild(infoLine);
+    // Move-to-map control
+    const otherMaps = maps_list.filter(m => m.id !== bs.selectedBk.mapId);
+    if (otherMaps.length) {
+      const moveRow = document.createElement("div");
+      moveRow.style.cssText = "margin-top:8px;display:flex;align-items:center;gap:8px";
+      const moveLbl = document.createElement("span");
+      moveLbl.style.cssText = "font-size:11px;color:#94a3b8";
+      moveLbl.textContent = "Move to:";
+      moveRow.appendChild(moveLbl);
+      const moveSel = document.createElement("select");
+      moveSel.style.cssText = "font-size:11px;padding:2px 6px;border-radius:4px;background:#071008;color:#a7f3d0;border:1px solid #2d6a4f";
+      const defOpt = document.createElement("option");
+      defOpt.value = ""; defOpt.textContent = "\u2014 select map \u2014";
+      moveSel.appendChild(defOpt);
+      for (const m of otherMaps) {
+        const fl = ctx.state.model?.floors || [];
+        const floorObj = fl.find(f => f.level === (m.stack?.z_level ?? 0));
+        const floorName = floorObj ? (floorObj.name || `L${m.stack?.z_level ?? 0}`) : "";
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = `${m.name || m.id}${floorName ? ` (${floorName})` : ""}`;
+        moveSel.appendChild(opt);
+      }
+      moveSel.addEventListener("change", () => {
+        if (!moveSel.value) return;
+        _moveBeaconToMap(bk, bs.selectedBk.mapId, moveSel.value);
+      });
+      moveRow.appendChild(moveSel);
+      infoCard.appendChild(moveRow);
+    }
   }
   _refreshInfo();
 
   // ── Available beacons (tracked objects from snapshot) ──────────────────
-  const _trackedObjects = (snap?.objects?.list || []).filter(o => o.user_label || o.identified);
+  const _trackedObjects = (snap?.objects?.list || []).filter(o => o.user_label || o.identified || _isFollowed(o));
   const availCard = document.createElement("div");
   availCard.className = "card";
   function _refreshAvailable() {
@@ -3125,6 +3181,31 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         _refreshAvailable();
       });
       row.appendChild(rmBtn);
+      // Move-to-map dropdown (only if >1 map)
+      const otherMaps2 = maps_list.filter(m => m.id !== map.id);
+      if (otherMaps2.length) {
+        const moveSel2 = document.createElement("select");
+        moveSel2.style.cssText = "font-size:10px;padding:1px 4px;border-radius:4px;background:#071008;color:#60a5fa;border:1px solid #2d4a6f;cursor:pointer";
+        const def2 = document.createElement("option");
+        def2.value = ""; def2.textContent = "Move\u2026";
+        moveSel2.appendChild(def2);
+        for (const m2 of otherMaps2) {
+          const fl2 = ctx.state.model?.floors || [];
+          const flObj2 = fl2.find(f => f.level === (m2.stack?.z_level ?? 0));
+          const fName2 = flObj2 ? (flObj2.name || `L${m2.stack?.z_level ?? 0}`) : "";
+          const o2 = document.createElement("option");
+          o2.value = m2.id;
+          o2.textContent = `${m2.name || m2.id}${fName2 ? ` (${fName2})` : ""}`;
+          moveSel2.appendChild(o2);
+        }
+        moveSel2.addEventListener("click", (ev) => ev.stopPropagation());
+        moveSel2.addEventListener("change", (ev) => {
+          ev.stopPropagation();
+          if (!moveSel2.value) return;
+          _moveBeaconToMap(bk, map.id, moveSel2.value);
+        });
+        row.appendChild(moveSel2);
+      }
       row.addEventListener("click", () => {
         bs.selectedBk = { mapId: map.id, bkId: bk.id };
         _refreshSVG();
