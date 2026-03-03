@@ -142,6 +142,20 @@ class CalibrationStore:
         await self.store.async_save(self.data)
         return count
 
+    async def async_clear_map(self, map_id: str) -> int:
+        """Remove all calibration points collected on a specific map."""
+        points = self.data.get("points", [])
+        before = len(points)
+        self.data["points"] = [p for p in points if p.get("map_id") != map_id]
+        removed = before - len(self.data["points"])
+        if removed:
+            # Invalidate coverage cache for this map
+            cov = (self.data.get("model") or {}).get("coverage_by_map")
+            if isinstance(cov, dict):
+                cov.pop(map_id, None)
+            await self.store.async_save(self.data)
+        return removed
+
     async def async_prune_auto_points(self, max_per_beacon: int = 50) -> int:
         """Remove oldest [auto] calibration points when a beacon exceeds the cap."""
         points = self.data.get("points", [])

@@ -261,6 +261,51 @@ function _scannerMap(ctx, el, haFloors){
       ]));
     });
     mapCard.appendChild(legendDiv);
+
+    // Clear calibration data for this map
+    const pointCount = (calData.points || []).filter(p => p.map_id === mapId).length;
+    const clearRow = el("div",{style:"display:flex;align-items:center;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid #1b3526"});
+    const clearStatusEl = el("span",{class:"muted",style:"font-size:10px;min-width:60px"},"");
+    const clearBtnWrap = document.createElement("span");
+    clearBtnWrap.style.cssText = "display:inline-flex;gap:4px;align-items:center";
+    const makeClearBtn = () => {
+      clearBtnWrap.innerHTML = "";
+      const cb = el("button",{class:"btn inline",style:"font-size:10px;padding:2px 8px;color:#f87171;border-color:#f8717140",
+        title:`Remove all ${pointCount} calibration point(s) collected on this map`,
+        onclick: (ev) => {
+          ev.stopPropagation();
+          clearBtnWrap.innerHTML = "";
+          clearBtnWrap.appendChild(el("span",{style:"font-size:10px;color:#fca5a5"},`Clear ${pointCount} point(s)? `));
+          clearBtnWrap.appendChild(el("button",{class:"btn inline",style:"font-size:10px;padding:2px 8px;background:#7f1d1d;border-color:#dc2626;color:#fca5a5",
+            onclick: async (ev2) => {
+              ev2.stopPropagation();
+              clearBtnWrap.innerHTML = "";
+              clearBtnWrap.appendChild(el("span",{style:"font-size:10px;color:#94a3b8"},"Clearing…"));
+              try {
+                const res = await ctx.actions.calibrationClearMap(mapId);
+                const n = res?.deleted ?? 0;
+                ctx.toast(`Cleared ${n} calibration point(s) from ${mapData?.name || mapId}`);
+                ctx.state.calibration = null;
+                ctx.actions.renderRooms();
+              } catch(e) {
+                ctx.toast("Clear failed: " + String(e), true);
+                makeClearBtn();
+              }
+            }
+          },"Yes"));
+          clearBtnWrap.appendChild(el("button",{class:"btn inline",style:"font-size:10px;padding:2px 8px;color:#94a3b8;border-color:#94a3b840",
+            onclick: (ev2) => { ev2.stopPropagation(); makeClearBtn(); }
+          },"No"));
+        }
+      },`Clear (${pointCount})`);
+      clearBtnWrap.appendChild(cb);
+    };
+    makeClearBtn();
+    clearRow.appendChild(el("span",{class:"muted",style:"font-size:10px"},"Calibration:"));
+    clearRow.appendChild(clearBtnWrap);
+    clearRow.appendChild(clearStatusEl);
+    mapCard.appendChild(clearRow);
+
     wrap.appendChild(mapCard);
   }
 

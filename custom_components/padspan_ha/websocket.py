@@ -72,6 +72,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_calibration_save_point)
     websocket_api.async_register_command(hass, ws_calibration_delete_point)
     websocket_api.async_register_command(hass, ws_calibration_clear)
+    websocket_api.async_register_command(hass, ws_calibration_clear_map)
     websocket_api.async_register_command(hass, ws_calibration_compute_model)
     websocket_api.async_register_command(hass, ws_calibration_swap_radio)
     websocket_api.async_register_command(hass, ws_calibration_health_check)
@@ -1962,6 +1963,25 @@ async def ws_calibration_clear(hass: HomeAssistant, connection, msg) -> None:
     cal = await _get_cal_store(hass)
     count = await cal.async_clear_all()
     connection.send_result(msg["id"], {"ok": True, "deleted": count})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/calibration_clear_map",
+        "map_id": str,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_calibration_clear_map(hass: HomeAssistant, connection, msg) -> None:
+    """Delete all calibration points collected on a specific map."""
+    map_id = str(msg.get("map_id") or "").strip()
+    if not map_id:
+        connection.send_error(msg["id"], "invalid_map_id", "map_id is required")
+        return
+    cal = await _get_cal_store(hass)
+    count = await cal.async_clear_map(map_id)
+    connection.send_result(msg["id"], {"ok": True, "map_id": map_id, "deleted": count})
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/calibration_compute_model"})

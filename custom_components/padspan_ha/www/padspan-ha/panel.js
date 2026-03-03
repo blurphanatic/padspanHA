@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.22";
+const APP_VERSION = "0.6.23";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260303T184435Z";
+const BUILD_ID = "20260303T185917Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -859,6 +859,7 @@ class PadSpanHaApp extends HTMLElement {
         calibrationSavePoint: async (point) => await this._callWS({ type: "padspan_ha/calibration_save_point", point }),
         calibrationDeletePoint: async (point_id) => await this._callWS({ type: "padspan_ha/calibration_delete_point", point_id }),
         calibrationClear: async () => await this._callWS({ type: "padspan_ha/calibration_clear" }),
+        calibrationClearMap: async (map_id) => await this._callWS({ type: "padspan_ha/calibration_clear_map", map_id }),
         calibrationComputeModel: async () => await this._callWS({ type: "padspan_ha/calibration_compute_model" }),
         calibrationSwapRadio: async (old_source, new_source) => await this._callWS({ type: "padspan_ha/calibration_swap_radio", old_source, new_source }),
         calibrationHealthCheck: async () => await this._callWS({ type: "padspan_ha/calibration_health_check" }),
