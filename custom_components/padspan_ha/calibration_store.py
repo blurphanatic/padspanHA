@@ -120,6 +120,7 @@ class CalibrationStore:
             "device_id": str(point.get("device_id") or "")[:80],
             "collected_at": _now_iso(),
             "duration_s": max(5, min(120, int(point.get("duration_s") or 15))),
+            "weight": max(0.1, min(10.0, float(point.get("weight") or 1.0))),
             "scanner_readings": clean_readings,
         }
         self.data.setdefault("points", []).append(clean)
@@ -371,11 +372,12 @@ class CalibrationStore:
         scored.sort(key=lambda t: t[0])
         top_k = scored[: k]
 
-        # Weighted centroid — weight = 1/(dist+ε)
+        # Weighted centroid — weight = point_weight / (dist+ε)
         total_w = 0.0
         wx, wy = 0.0, 0.0
         for dist_sq, pt in top_k:
-            w = 1.0 / (math.sqrt(dist_sq) + 1e-3)
+            pw = float(pt.get("weight") or 1.0)
+            w = pw / (math.sqrt(dist_sq) + 1e-3)
             wx += w * pt["x_frac"]
             wy += w * pt["y_frac"]
             total_w += w

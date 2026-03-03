@@ -2238,8 +2238,9 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     pendingPlace: null,  // {key, label, kind} — awaiting dblclick on map
     _mapsStamp: null,
     // ── Per-beacon live timers (independent 60s RSSI capture) ──
-    _liveTimers: {},       // bkId → { endTime, mapId, bk:{...}, readings:{}, timer, pollTimer, warnings:[] }
+    _liveTimers: {},       // bkId → { endTime, mapId, bk:{...}, readings:{}, timer, pollTimer, warning }
     _liveBeaconKeys: new Set(),  // beacon keys that completed calibration → show live position
+    _calibRounds: {},      // bkKey → number of completed calibration rounds (weight increases)
   };
   const bs = ctx.state._calibBeacon;
 
@@ -2639,9 +2640,11 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       if (rem > 0) {
         const sc = Object.keys(t.readings).length;
         const sm = Object.values(t.readings).reduce((tot, r) => tot + r.samples.length, 0);
+        const rd = (bs._calibRounds[t.bk.key] || 0) + 1;
         span.style.cssText = "font-size:12px;color:#f59e0b;font-weight:600;white-space:nowrap";
         span.textContent = `${t.bk.label || t.bk.key} \u2014 live in ${rem}s`;
         if (sm > 0) span.textContent += ` (${sc} scanners, ${sm} samples)`;
+        if (rd > 1) span.textContent += ` [round ${rd}]`;
       } else {
         span.style.cssText = "font-size:12px;color:#52b788;font-weight:600;white-space:nowrap";
         span.textContent = `\u2713 ${t.bk.label || t.bk.key} live`;
@@ -2781,6 +2784,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     }
     bs._liveTimers = {};
     bs._liveBeaconKeys = new Set();
+    bs._calibRounds = {};
     bs.draftBeacons = {};
     for (const m of maps_list) {
       bs.draftBeacons[m.id] = (m.beacons || []).map(bk => ({
@@ -3155,9 +3159,13 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     entry.timer = setTimeout(async () => {
       if (!bs._liveTimers[bkId]) return;
       if (entry.pollTimer) clearTimeout(entry.pollTimer);
-      // Save calibration point
+      // Save calibration point — weight increases with each round
       const readingCount = Object.keys(entry.readings).length;
       if (readingCount > 0) {
+        const bkKey = entry.bk.key;
+        bs._calibRounds[bkKey] = (bs._calibRounds[bkKey] || 0) + 1;
+        const round = bs._calibRounds[bkKey];
+        const weight = Math.min(5.0, 1.0 + (round - 1) * 0.5);
         const mapObj = maps_list.find(m => m.id === entry.mapId);
         const room = mapObj ? _detectRoom(entry.bk.x, entry.bk.y, mapObj) : "";
         const snap3 = (ctx.state.live && ctx.state.live.snapshot) || null;
@@ -3169,10 +3177,12 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           device_id: _resolveBeaconAddr(entry.bk.key, snap3),
           label: entry.bk.label || entry.bk.key || "",
           readings: entry.readings,
+          weight: weight,
         };
         try {
           await ctx.actions.calibrationSavePoint(point);
-          ctx.toast(`\u2713 ${entry.bk.label || entry.bk.key} calibration saved`);
+          const weightLabel = round > 1 ? ` (round ${round}, weight ${weight.toFixed(1)}×)` : "";
+          ctx.toast(`\u2713 ${entry.bk.label || entry.bk.key} calibration saved${weightLabel}`);
         } catch (e) {
           console.warn("[PadSpan] live timer save failed:", e);
         }
