@@ -2189,7 +2189,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     wrap.appendChild(el("div", { class: "card" }, [
       el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px;color:#52b788" }, "No Maps Uploaded"),
       el("div", { style: "font-size:12px;color:#94a3b8" },
-        "Upload floor plan images in the Maps tab first, then return here to pin beacons on your floor plans."),
+        "Upload floor plan images in the Maps tab first, then return here to mark beacon reference positions."),
     ]));
     return wrap;
   }
@@ -2201,7 +2201,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       el("span", { style: "font-weight:700;font-size:14px;color:#f59e0b" }, "Beacon Tune"),
     ]),
     el("div", { style: "font-size:12px;color:#94a3b8;line-height:1.5" },
-      "Pin stationary beacons (AirTags, Tiles, key fobs) at their physical locations on the 3D floor stack. Drag teal diamonds to position. Green circles show scanner positions for reference."),
+      "Mark where beacons (AirTags, Tiles, key fobs) are right now on the 3D floor stack. After saving, the system collects radio data at each position for ~1 minute, then releases the beacon — its location is determined by live scanner data from that point on. Drag teal diamonds to adjust. Green circles show scanner positions for reference."),
   ]));
 
   // ── Constants & state ─────────────────────────────────────────────────────
@@ -2639,7 +2639,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   saveBtn.className = "btn inline";
   saveBtn.style.cssText = "padding:2px 10px;font-size:12px";
   saveBtn.textContent = "Save";
-  saveBtn.title = "Save updated beacon positions to all modified maps";
+  saveBtn.title = "Save reference positions — radio data collection begins after save";
   saveBtn.addEventListener("click", async () => {
     const dirtyIds = Object.keys(bs.dirtyMaps).filter(id => bs.dirtyMaps[id]);
     if (!dirtyIds.length) { statusLbl.textContent = "No changes"; setTimeout(() => { statusLbl.textContent = ""; }, 2000); return; }
@@ -2659,7 +2659,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       }
       bs.dirtyMaps = {};
       bs.selectedBk = null;
-      ctx.toast("Beacon positions saved");
+      ctx.toast("Reference positions saved \u2014 collecting radio data");
       await ctx.actions.mapsRefresh();
     } catch (e) {
       ctx.toast("Save failed: " + String(e), true);
@@ -2673,7 +2673,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   resetBtn.className = "btn inline";
   resetBtn.style.cssText = "padding:2px 10px;font-size:12px";
   resetBtn.textContent = "Reset";
-  resetBtn.title = "Discard unsaved changes and reload beacon positions";
+  resetBtn.title = "Discard changes and reload beacon reference positions";
   resetBtn.addEventListener("click", () => {
     bs.draftBeacons = {};
     for (const m of maps_list) {
@@ -2910,7 +2910,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     popup.style.top = Math.min(e.clientY - rect.top + 8, rect.height - 100) + "px";
     const title2 = document.createElement("div");
     title2.style.cssText = "font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:8px";
-    title2.textContent = "Place on which map?";
+    title2.textContent = "Which map is it on right now?";
     popup.appendChild(title2);
     for (const c of candidates) {
       const fl = ctx.state.model?.floors || [];
@@ -2952,7 +2952,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   function _refreshPlaceBanner() {
     if (bs.pendingPlace) {
       const nm = bs.pendingPlace.label || bs.pendingPlace.key || "beacon";
-      placeBanner.innerHTML = `<b style="color:#f59e0b">Double-click</b> on the 3D map to place <b style="color:#5eead4">${_esc(nm)}</b> &nbsp; <span style="color:#94a3b8;cursor:pointer;text-decoration:underline" id="_cancelBkPlace">Cancel</span>`;
+      placeBanner.innerHTML = `<b style="color:#f59e0b">Double-click</b> on the 3D map to mark the current location of <b style="color:#5eead4">${_esc(nm)}</b> &nbsp; <span style="color:#94a3b8;cursor:pointer;text-decoration:underline" id="_cancelBkPlace">Cancel</span>`;
       placeBanner.style.display = "block";
       const cancelEl = placeBanner.querySelector("#_cancelBkPlace");
       if (cancelEl) cancelEl.addEventListener("click", () => {
@@ -2996,7 +2996,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   infoCard.style.cssText = "background:#0d1f14;border:1px solid #1b3526;border-radius:8px;padding:10px 14px;font-size:12px;color:#a7f3d0;min-height:24px";
   function _refreshInfo() {
     if (!bs.selectedBk) {
-      infoCard.textContent = "Click a beacon diamond to select it, then drag to reposition.";
+      infoCard.textContent = "Click a teal diamond to select it, then drag to mark its current location.";
       return;
     }
     const draft = bs.draftBeacons[bs.selectedBk.mapId] || [];
@@ -3065,14 +3065,14 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     if (!_trackedObjects.length) {
       const msg = document.createElement("div");
       msg.style.cssText = "font-size:12px;color:#94a3b8";
-      msg.textContent = "No tracked objects detected. Ensure Bluetooth is active and objects are labeled in the Objects tab.";
+      msg.textContent = "No tracked objects detected. Label objects in the Objects tab or follow them in the Follow tab.";
       availCard.appendChild(msg);
       return;
     }
 
     const hint0 = document.createElement("div");
     hint0.style.cssText = "font-size:11px;color:#94a3b8;margin-bottom:8px";
-    hint0.textContent = "Click an object to select it for placement, then double-click on the 3D map to pin it.";
+    hint0.textContent = "Click an object, then double-click on the 3D map to mark its current location.";
     availCard.appendChild(hint0);
 
     // Build lookup: which objects are already pinned
@@ -3109,12 +3109,12 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       if (isPinned) {
         const tag = document.createElement("span");
         tag.style.cssText = "font-size:10px;color:#5eead4;background:#5eead418;padding:1px 6px;border-radius:4px;white-space:nowrap";
-        tag.textContent = "Pinned";
+        tag.textContent = "Placed";
         row.appendChild(tag);
       } else {
         const tag = document.createElement("span");
         tag.style.cssText = `font-size:10px;padding:1px 6px;border-radius:4px;white-space:nowrap;${isPending ? "color:#fbbf24;background:#fbbf2418;font-weight:600" : "color:#94a3b8;background:#94a3b818"}`;
-        tag.textContent = isPending ? "Double-click map\u2026" : "Not pinned";
+        tag.textContent = isPending ? "Double-click map\u2026" : "Not placed";
         row.appendChild(tag);
         row.addEventListener("click", () => {
           bs.pendingPlace = { key: obj.key, label: obj.user_label || obj.name || "", kind: obj.kind || "ble" };
@@ -3150,7 +3150,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     beaconListCard.style.display = "";
     const hdr = document.createElement("div");
     hdr.style.cssText = "font-weight:700;font-size:13px;margin-bottom:8px";
-    hdr.textContent = `Pinned Beacons (${totalCount})`;
+    hdr.textContent = `Placed Beacons (${totalCount})`;
     beaconListCard.appendChild(hdr);
 
     for (const { bk, map } of allEntries) {
