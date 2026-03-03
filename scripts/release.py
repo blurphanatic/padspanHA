@@ -132,6 +132,7 @@ def git_commit_tag_push(version, tag):
         "VERSION.txt",
         "LICENSE",
         "README.md",
+        "hacs.json",
         "dist/padspan_ha.zip",
         "scripts/release.py",
     ]
