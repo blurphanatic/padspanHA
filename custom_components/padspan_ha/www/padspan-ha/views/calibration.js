@@ -1544,10 +1544,11 @@ function _tuneTab(ctx, el, cs, calData) {
   });
 
   // ── Drag interaction ────────────────────────────────────────────────────────
-  // Pointer capture is set on the <g> element itself. During drag we move the
-  // <g> via a transform attribute (no innerHTML rebuild) so the element stays
-  // alive and capture is preserved. Full SVG rebuild happens only on drop.
+  // Pointer capture on isoDiv (HTML div — reliable across all browsers).
+  // During drag we translate the <g> visually (no innerHTML rebuild).
+  // ts._dragging prevents the 5s poll from destroying the DOM mid-drag.
   let _didDrag = false;
+  let _dragRx = null; // { g, mapId, rxObj, xf, z, origPx, origPy }
 
   isoDiv.addEventListener("pointerdown", e => {
     const g = e.target.closest("[data-rx-id]");
@@ -1562,7 +1563,6 @@ function _tuneTab(ctx, el, cs, calData) {
     isoDiv.style.cursor = "grabbing";
     _refreshInfo();
 
-    // Compute the original SVG pixel position of this receiver
     const draft = ts.draftReceivers[mapId];
     if (!draft) return;
     const rxObj = draft.find(r => r.id === rxId);
@@ -1572,57 +1572,52 @@ function _tuneTab(ctx, el, cs, calData) {
     const [origWx, origWy] = xf.mapPt(rxObj.x, rxObj.y);
     const [origPx, origPy] = iso(origWx, origWy, z);
 
-    // Capture pointer on the <g> element — it stays alive because we DON'T
-    // rebuild innerHTML during drag, only translate the element.
-    g.setPointerCapture(e.pointerId);
-
-    const onMove = (ev) => {
-      ev.preventDefault();
-      _didDrag = true;
-      const svgNode = isoDiv.querySelector("svg");
-      if (!svgNode) return;
-      const ctm = svgNode.getScreenCTM();
-      if (!ctm) return;
-      const inv = ctm.inverse();
-      const sx = ev.clientX * inv.a + ev.clientY * inv.c + inv.e;
-      const sy = ev.clientX * inv.b + ev.clientY * inv.d + inv.f;
-      const [wx, wy] = invIso(sx, sy, z);
-      const [nx, ny] = xf.invMapPt(wx, wy);
-      const cx = Math.max(0, Math.min(1, nx));
-      const cy = Math.max(0, Math.min(1, ny));
-
-      // Update draft position
-      rxObj.x = cx;
-      rxObj.y = cy;
-      ts.dirtyMaps[mapId] = true;
-
-      // Visually move the <g> by translating it (no innerHTML rebuild)
-      const [newWx, newWy] = xf.mapPt(cx, cy);
-      const [newPx, newPy] = iso(newWx, newWy, z);
-      g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
-    };
-
-    const onUp = (ev) => {
-      g.removeEventListener("pointermove", onMove);
-      g.removeEventListener("pointerup", onUp);
-      g.removeEventListener("pointercancel", onUp);
-      try { g.releasePointerCapture(ev.pointerId); } catch(_){}
-      isoDiv.style.cursor = "";
-      // Update room for final position
-      if (_didDrag) {
-        const mapObj = maps_list.find(m => m.id === mapId);
-        if (mapObj) rxObj.room = _detectRoom(rxObj.x, rxObj.y, mapObj) || rxObj.room || "";
-      }
-      // Full SVG rebuild to render at committed position
-      _refreshSVG();
-      _refreshInfo();
-      _refreshDirtyLabel();
-    };
-
-    g.addEventListener("pointermove", onMove);
-    g.addEventListener("pointerup", onUp);
-    g.addEventListener("pointercancel", onUp);
+    _dragRx = { g, mapId, rxObj, xf, z, origPx, origPy };
+    ts._dragging = true;
+    isoDiv.setPointerCapture(e.pointerId);
   });
+
+  isoDiv.addEventListener("pointermove", e => {
+    if (!_dragRx) return;
+    e.preventDefault();
+    _didDrag = true;
+    const { g, rxObj, xf, z, origPx, origPy, mapId } = _dragRx;
+    const svgNode = isoDiv.querySelector("svg");
+    if (!svgNode) return;
+    const ctm = svgNode.getScreenCTM();
+    if (!ctm) return;
+    const inv = ctm.inverse();
+    const sx = e.clientX * inv.a + e.clientY * inv.c + inv.e;
+    const sy = e.clientX * inv.b + e.clientY * inv.d + inv.f;
+    const [wx, wy] = invIso(sx, sy, z);
+    const [nx, ny] = xf.invMapPt(wx, wy);
+    const cx = Math.max(0, Math.min(1, nx));
+    const cy = Math.max(0, Math.min(1, ny));
+    rxObj.x = cx;
+    rxObj.y = cy;
+    ts.dirtyMaps[mapId] = true;
+    const [newWx, newWy] = xf.mapPt(cx, cy);
+    const [newPx, newPy] = iso(newWx, newWy, z);
+    g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
+  });
+
+  const _endRxDrag = (e) => {
+    if (!_dragRx) return;
+    const { rxObj, mapId } = _dragRx;
+    _dragRx = null;
+    ts._dragging = false;
+    try { isoDiv.releasePointerCapture(e.pointerId); } catch(_){}
+    isoDiv.style.cursor = "";
+    if (_didDrag) {
+      const mapObj = maps_list.find(m => m.id === mapId);
+      if (mapObj) rxObj.room = _detectRoom(rxObj.x, rxObj.y, mapObj) || rxObj.room || "";
+    }
+    _refreshSVG();
+    _refreshInfo();
+    _refreshDirtyLabel();
+  };
+  isoDiv.addEventListener("pointerup", _endRxDrag);
+  isoDiv.addEventListener("pointercancel", _endRxDrag);
 
   // Click to select (without drag)
   isoDiv.addEventListener("click", e => {
@@ -2673,7 +2668,10 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   });
 
   // ── Drag interaction ────────────────────────────────────────────────────────
+  // Pointer capture on isoDiv (HTML div — reliable). bs._dragging prevents
+  // the 5s poll from destroying the DOM mid-drag.
   let _didDrag = false;
+  let _dragBk = null; // { g, mapId, bkObj, xf, z, origPx, origPy }
 
   isoDiv.addEventListener("pointerdown", e => {
     const g = e.target.closest("[data-bk-id]");
@@ -2697,49 +2695,52 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     const [origWx, origWy] = xf.mapPt(bkObj.x, bkObj.y);
     const [origPx, origPy] = iso(origWx, origWy, z);
 
-    g.setPointerCapture(e.pointerId);
-
-    const onMove = (ev) => {
-      ev.preventDefault();
-      _didDrag = true;
-      const svgNode = isoDiv.querySelector("svg");
-      if (!svgNode) return;
-      const ctm = svgNode.getScreenCTM();
-      if (!ctm) return;
-      const inv = ctm.inverse();
-      const sx = ev.clientX * inv.a + ev.clientY * inv.c + inv.e;
-      const sy = ev.clientX * inv.b + ev.clientY * inv.d + inv.f;
-      const [wx, wy] = invIso(sx, sy, z);
-      const [nx, ny] = xf.invMapPt(wx, wy);
-      const cx2 = Math.max(0, Math.min(1, nx));
-      const cy2 = Math.max(0, Math.min(1, ny));
-      bkObj.x = cx2;
-      bkObj.y = cy2;
-      bs.dirtyMaps[mapId] = true;
-      const [newWx, newWy] = xf.mapPt(cx2, cy2);
-      const [newPx, newPy] = iso(newWx, newWy, z);
-      g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
-    };
-
-    const onUp = (ev) => {
-      g.removeEventListener("pointermove", onMove);
-      g.removeEventListener("pointerup", onUp);
-      g.removeEventListener("pointercancel", onUp);
-      try { g.releasePointerCapture(ev.pointerId); } catch(_){}
-      isoDiv.style.cursor = "";
-      if (_didDrag) {
-        const mapObj = maps_list.find(m => m.id === mapId);
-        if (mapObj) bkObj.room = _detectRoom(bkObj.x, bkObj.y, mapObj) || bkObj.room || "";
-      }
-      _refreshSVG();
-      _refreshInfo();
-      _refreshDirtyLabel();
-    };
-
-    g.addEventListener("pointermove", onMove);
-    g.addEventListener("pointerup", onUp);
-    g.addEventListener("pointercancel", onUp);
+    _dragBk = { g, mapId, bkObj, xf, z, origPx, origPy };
+    bs._dragging = true;
+    isoDiv.setPointerCapture(e.pointerId);
   });
+
+  isoDiv.addEventListener("pointermove", e => {
+    if (!_dragBk) return;
+    e.preventDefault();
+    _didDrag = true;
+    const { g, bkObj, xf, z, origPx, origPy, mapId } = _dragBk;
+    const svgNode = isoDiv.querySelector("svg");
+    if (!svgNode) return;
+    const ctm = svgNode.getScreenCTM();
+    if (!ctm) return;
+    const inv = ctm.inverse();
+    const sx = e.clientX * inv.a + e.clientY * inv.c + inv.e;
+    const sy = e.clientX * inv.b + e.clientY * inv.d + inv.f;
+    const [wx, wy] = invIso(sx, sy, z);
+    const [nx, ny] = xf.invMapPt(wx, wy);
+    const cx2 = Math.max(0, Math.min(1, nx));
+    const cy2 = Math.max(0, Math.min(1, ny));
+    bkObj.x = cx2;
+    bkObj.y = cy2;
+    bs.dirtyMaps[mapId] = true;
+    const [newWx, newWy] = xf.mapPt(cx2, cy2);
+    const [newPx, newPy] = iso(newWx, newWy, z);
+    g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
+  });
+
+  const _endBkDrag = (e) => {
+    if (!_dragBk) return;
+    const { bkObj, mapId } = _dragBk;
+    _dragBk = null;
+    bs._dragging = false;
+    try { isoDiv.releasePointerCapture(e.pointerId); } catch(_){}
+    isoDiv.style.cursor = "";
+    if (_didDrag) {
+      const mapObj = maps_list.find(m => m.id === mapId);
+      if (mapObj) bkObj.room = _detectRoom(bkObj.x, bkObj.y, mapObj) || bkObj.room || "";
+    }
+    _refreshSVG();
+    _refreshInfo();
+    _refreshDirtyLabel();
+  };
+  isoDiv.addEventListener("pointerup", _endBkDrag);
+  isoDiv.addEventListener("pointercancel", _endBkDrag);
 
   // Click to select (without drag)
   isoDiv.addEventListener("click", e => {

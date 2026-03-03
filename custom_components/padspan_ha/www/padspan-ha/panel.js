@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.16";
+const APP_VERSION = "0.6.17";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260303T061750Z";
+const BUILD_ID = "20260303T063708Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -1441,6 +1441,8 @@ class PadSpanHaApp extends HTMLElement {
   }
 
   _renderCurrentView(){
+    // Skip re-render during active drag to prevent DOM destruction mid-interaction
+    if(this.state._calibTune?._dragging || this.state._calibBeacon?._dragging) return;
     // Verify $content is a live node in the shadow DOM (not a stale detached reference)
     if(!this.$content || !this.$content.isConnected){
       this._ensureShadowDom();
