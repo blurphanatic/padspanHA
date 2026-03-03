@@ -1994,50 +1994,75 @@ function _tuneTab(ctx, el, cs, calData) {
         });
       }
 
-      // ── Reset button with two-step confirmation ──
-      const resetWrap = document.createElement("span");
-      resetWrap.style.cssText = "display:inline-flex;gap:4px;align-items:center;margin-left:4px;flex-shrink:0";
-      const makeResetBtn = () => {
-        resetWrap.innerHTML = "";
-        const rb = document.createElement("button");
-        rb.className = "btn inline";
-        rb.style.cssText = "font-size:10px;padding:2px 8px;color:#f87171;border-color:#f8717140";
-        rb.textContent = "Reset";
-        rb.title = "Clear all stored data for this radio (calibration, placement, offsets, fingerprints)";
-        rb.addEventListener("click", (ev) => {
+      // ── Action buttons wrap ──
+      const actWrap = document.createElement("span");
+      actWrap.style.cssText = "display:inline-flex;gap:4px;align-items:center;margin-left:4px;flex-shrink:0";
+
+      // Delete button — removes placement + all data, radio re-appears as unplaced
+      const makeDeleteBtn = () => {
+        const db = document.createElement("button");
+        db.className = "btn inline";
+        db.style.cssText = "font-size:10px;padding:2px 8px;color:#f87171;border-color:#f8717140";
+        db.textContent = "Delete";
+        db.title = "Remove this radio from all maps and clear all its stored data";
+        db.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          resetWrap.innerHTML = "";
+          actWrap.innerHTML = "";
+          const prompt = document.createElement("span");
+          prompt.style.cssText = "font-size:10px;color:#fca5a5";
+          prompt.textContent = "Delete all data? ";
           const yesBtn = document.createElement("button");
           yesBtn.className = "btn inline";
           yesBtn.style.cssText = "font-size:10px;padding:2px 8px;background:#7f1d1d;border-color:#dc2626;color:#fca5a5";
-          yesBtn.textContent = "Yes, reset";
+          yesBtn.textContent = "Yes";
           const noBtn = document.createElement("button");
           noBtn.className = "btn inline";
           noBtn.style.cssText = "font-size:10px;padding:2px 8px;color:#94a3b8;border-color:#94a3b840";
           noBtn.textContent = "No";
           yesBtn.addEventListener("click", async (ev2) => {
             ev2.stopPropagation();
-            resetWrap.innerHTML = "";
+            actWrap.innerHTML = "";
             const spin = document.createElement("span");
             spin.style.cssText = "font-size:10px;color:#94a3b8";
-            spin.textContent = "Resetting…";
-            resetWrap.appendChild(spin);
+            spin.textContent = "Deleting…";
+            actWrap.appendChild(spin);
             try {
+              // 1. Remove from local drafts (match by id, source, OR label)
+              let removedMaps = [];
+              for (const [mapId, recs] of Object.entries(ts.draftReceivers)) {
+                const before = recs.length;
+                ts.draftReceivers[mapId] = recs.filter(r =>
+                  (r.id || "") !== src && (r.source || "") !== src &&
+                  (r.id || "") !== nm && (r.label || "") !== nm
+                );
+                if (ts.draftReceivers[mapId].length < before) {
+                  ts.dirtyMaps[mapId] = true;
+                  removedMaps.push(mapId);
+                }
+              }
+              // 2. Save cleaned maps immediately so removal persists
+              for (const mapId of removedMaps) {
+                const origMap = maps_list.find(m => m.id === mapId);
+                if (!origMap) continue;
+                await ctx.actions.mapsUpdateQuiet({
+                  map_id: mapId,
+                  receivers: ts.draftReceivers[mapId],
+                  calibration: origMap.calibration || {},
+                  notes: origMap.notes || "",
+                });
+              }
+              ts.dirtyMaps = {};
+              // 3. Call radioReset to clear all server-side data
               const res = await ctx.actions.radioReset(src);
               const sm = res?.summary || {};
               const parts = [];
-              if (sm.maps?.receivers_removed) parts.push(`${sm.maps.receivers_removed} placement(s)`);
+              if (removedMaps.length) parts.push(`${removedMaps.length} map(s)`);
               if (sm.calibration?.readings_removed) parts.push(`${sm.calibration.readings_removed} cal reading(s)`);
-              if (sm.calibration?.points_pruned) parts.push(`${sm.calibration.points_pruned} point(s)`);
               if (sm.adaptive?.room_pairs_removed) parts.push(`${sm.adaptive.room_pairs_removed} fingerprint(s)`);
-              const detail = parts.length ? ": " + parts.join(", ") : "";
-              ctx.toast(`Radio reset${detail}`);
-              // Remove from local drafts too
-              for (const [mapId, recs] of Object.entries(ts.draftReceivers)) {
-                ts.draftReceivers[mapId] = recs.filter(r =>
-                  (r.id || "") !== src && (r.source || "") !== src
-                );
-              }
+              const detail = parts.length ? " — removed " + parts.join(", ") : "";
+              ctx.toast(`Radio deleted${detail}`);
+              // 4. Force draft re-sync from server on next render
+              ts._mapsStamp = null;
               ts.selectedRx = null;
               ts.pendingPlace = null;
               _refreshSVG();
@@ -2046,21 +2071,22 @@ function _tuneTab(ctx, el, cs, calData) {
               _refreshDirtyLabel();
               _refreshPlaceBanner();
             } catch (e) {
-              ctx.toast("Reset failed: " + String(e), true);
-              makeResetBtn();
+              ctx.toast("Delete failed: " + String(e), true);
+              _refreshRadiosList();
             }
           });
           noBtn.addEventListener("click", (ev2) => {
             ev2.stopPropagation();
-            makeResetBtn();
+            _refreshRadiosList();
           });
-          resetWrap.appendChild(yesBtn);
-          resetWrap.appendChild(noBtn);
+          actWrap.appendChild(prompt);
+          actWrap.appendChild(yesBtn);
+          actWrap.appendChild(noBtn);
         });
-        resetWrap.appendChild(rb);
+        return db;
       };
-      makeResetBtn();
-      row.appendChild(resetWrap);
+      actWrap.appendChild(makeDeleteBtn());
+      row.appendChild(actWrap);
 
       radiosCard.appendChild(row);
     }
