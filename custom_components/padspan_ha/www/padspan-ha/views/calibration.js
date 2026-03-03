@@ -1265,7 +1265,9 @@ function _tuneTab(ctx, el, cs, calData) {
   // Live radios from snapshot — used to filter stale receivers
   const _snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const _liveRadios = _snap?.ble?.radios || [];
-  const _isLiveRadio = (r) => _liveRadios.some(rd => rd.name === (r.label || "") || rd.source === (r.id || ""));
+  const _isLiveRadio = (r) => _liveRadios.some(rd =>
+    rd.name === (r.label || "") || rd.source === (r.id || "") || rd.source === (r.source || "") || rd.name === (r.id || "")
+  );
 
   if (!ctx.state._calibTune) ctx.state._calibTune = {
     fg: ctx.state.settings?.overview_iso_floor_gap ?? 150,
@@ -1653,7 +1655,7 @@ function _tuneTab(ctx, el, cs, calData) {
         if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
           const rd = ts.pendingPlace;
           const newRx = {
-            id: rd.source || rd.name || ("rx_" + Math.random().toString(16).slice(2, 10)),
+            id: "rx_" + Date.now().toString(16),
             label: rd.name || rd.source || "",
             x: Math.max(0, Math.min(1, nx)),
             y: Math.max(0, Math.min(1, ny)),
