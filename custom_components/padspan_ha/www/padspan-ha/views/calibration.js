@@ -2209,6 +2209,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     draftBeacons: {},    // mapId → [{id, label, key, kind, x, y}]
     dirtyMaps: {},       // mapId → true
     selectedBk: null,    // {mapId, bkId}
+    pendingPlace: null,  // {key, label, kind} — awaiting dblclick on map
     _mapsStamp: null,
   };
   const bs = ctx.state._calibBeacon;
@@ -2806,6 +2807,98 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     }
   });
 
+  // Helper: commit placement of a pending beacon onto a specific map at (nx, ny)
+  function _placeBeaconOnMap(m, nx, ny) {
+    const pd = bs.pendingPlace;
+    const newBk = {
+      id: "bk_" + Date.now().toString(16),
+      label: pd.label || pd.key || "",
+      key: pd.key || "",
+      kind: pd.kind || "ble",
+      x: Math.max(0, Math.min(1, nx)),
+      y: Math.max(0, Math.min(1, ny)),
+    };
+    if (!bs.draftBeacons[m.id]) bs.draftBeacons[m.id] = [];
+    bs.draftBeacons[m.id].push(newBk);
+    bs.dirtyMaps[m.id] = true;
+    bs.selectedBk = { mapId: m.id, bkId: newBk.id };
+    bs.pendingPlace = null;
+    bs._confirming = false;
+    _refreshSVG();
+    _refreshInfo();
+    _refreshDirtyLabel();
+    _refreshBeaconList();
+    _refreshAvailable();
+    _refreshPlaceBanner();
+  }
+
+  // Double-click to place a pending beacon
+  isoDiv.addEventListener("dblclick", e => {
+    if (!bs.pendingPlace) return;
+    const svgNode = isoDiv.querySelector("svg");
+    if (!svgNode) return;
+    const ctm = svgNode.getScreenCTM();
+    if (!ctm) return;
+    const inv2 = ctm.inverse();
+    const sx = e.clientX * inv2.a + e.clientY * inv2.c + inv2.e;
+    const sy = e.clientX * inv2.b + e.clientY * inv2.d + inv2.f;
+
+    const candidates = [];
+    for (let i = sortedIsoLevels.length - 1; i >= 0; i--) {
+      const z = sortedIsoLevels[i];
+      const [wx, wy] = invIso(sx, sy, z);
+      const group = byLevel.get(z) || [];
+      for (const m2 of group) {
+        const xf2 = mapXforms[m2.id];
+        if (!xf2) continue;
+        const [nx2, ny2] = xf2.invMapPt(wx, wy);
+        if (nx2 >= 0 && nx2 <= 1 && ny2 >= 0 && ny2 <= 1) {
+          candidates.push({ m: m2, nx: nx2, ny: ny2, z });
+        }
+      }
+    }
+    if (candidates.length === 0) return;
+    if (candidates.length === 1) {
+      _placeBeaconOnMap(candidates[0].m, candidates[0].nx, candidates[0].ny);
+      return;
+    }
+    // Disambiguation popup for overlapping maps
+    bs._confirming = true;
+    const popup = document.createElement("div");
+    popup.style.cssText = "position:absolute;z-index:10;background:#0d1f14;border:2px solid #f59e0b;border-radius:10px;padding:10px 14px;min-width:180px;box-shadow:0 4px 20px rgba(0,0,0,0.5)";
+    const rect = isoDiv.getBoundingClientRect();
+    popup.style.left = Math.min(e.clientX - rect.left + 8, rect.width - 200) + "px";
+    popup.style.top = Math.min(e.clientY - rect.top + 8, rect.height - 100) + "px";
+    const title2 = document.createElement("div");
+    title2.style.cssText = "font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:8px";
+    title2.textContent = "Place on which map?";
+    popup.appendChild(title2);
+    for (const c of candidates) {
+      const fl = ctx.state.model?.floors || [];
+      const floorObj = fl.find(f => f.level === c.z);
+      const floorName = floorObj ? (floorObj.name || `L${c.z}`) : `L${c.z}`;
+      const btn = document.createElement("button");
+      btn.className = "btn inline";
+      btn.style.cssText = "display:block;width:100%;text-align:left;padding:6px 10px;margin-bottom:4px;font-size:12px;color:#a7f3d0;border-color:#2d6a4f;cursor:pointer";
+      btn.textContent = `${c.m.name || c.m.id} (${floorName})`;
+      btn.addEventListener("click", () => {
+        if (isoWrap.contains(popup)) isoWrap.removeChild(popup);
+        _placeBeaconOnMap(c.m, c.nx, c.ny);
+      });
+      popup.appendChild(btn);
+    }
+    const cancelBtn2 = document.createElement("button");
+    cancelBtn2.className = "btn inline";
+    cancelBtn2.style.cssText = "display:block;width:100%;text-align:center;padding:4px 10px;font-size:11px;color:#94a3b8;border-color:#94a3b840;margin-top:4px;cursor:pointer";
+    cancelBtn2.textContent = "Cancel";
+    cancelBtn2.addEventListener("click", () => {
+      bs._confirming = false;
+      if (isoWrap.contains(popup)) isoWrap.removeChild(popup);
+    });
+    popup.appendChild(cancelBtn2);
+    isoWrap.appendChild(popup);
+  });
+
   // ── Helper: rebuild SVG without losing scroll ─────────────────────────────
   function _refreshSVG() {
     const scrollTop = isoDiv.scrollTop, scrollLeft = isoDiv.scrollLeft;
@@ -2813,6 +2906,26 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     isoDiv.scrollTop = scrollTop;
     isoDiv.scrollLeft = scrollLeft;
   }
+
+  // ── Placement banner ──────────────────────────────────────────────────────
+  const placeBanner = document.createElement("div");
+  placeBanner.style.cssText = "display:none;background:#1a200e;border:2px solid #f59e0b;border-radius:8px;padding:8px 14px;font-size:12px;color:#fef3c7;text-align:center";
+  function _refreshPlaceBanner() {
+    if (bs.pendingPlace) {
+      const nm = bs.pendingPlace.label || bs.pendingPlace.key || "beacon";
+      placeBanner.innerHTML = `<b style="color:#f59e0b">Double-click</b> on the 3D map to place <b style="color:#5eead4">${_esc(nm)}</b> &nbsp; <span style="color:#94a3b8;cursor:pointer;text-decoration:underline" id="_cancelBkPlace">Cancel</span>`;
+      placeBanner.style.display = "block";
+      const cancelEl = placeBanner.querySelector("#_cancelBkPlace");
+      if (cancelEl) cancelEl.addEventListener("click", () => {
+        bs.pendingPlace = null;
+        _refreshPlaceBanner();
+        _refreshAvailable();
+      });
+    } else {
+      placeBanner.style.display = "none";
+    }
+  }
+  _refreshPlaceBanner();
 
   // ── Selected beacon info panel ──────────────────────────────────────────
   const infoCard = document.createElement("div");
@@ -2841,6 +2954,83 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     infoCard.innerHTML = lines.join(" &nbsp;\u00b7&nbsp; ");
   }
   _refreshInfo();
+
+  // ── Available beacons (tracked objects from snapshot) ──────────────────
+  const _trackedObjects = (snap?.objects?.list || []).filter(o => o.identified);
+  const availCard = document.createElement("div");
+  availCard.className = "card";
+  function _refreshAvailable() {
+    availCard.innerHTML = "";
+    const hdr0 = document.createElement("div");
+    hdr0.style.cssText = "font-weight:700;font-size:13px;margin-bottom:4px;color:#f59e0b";
+    hdr0.textContent = `Tracked Objects (${_trackedObjects.length})`;
+    availCard.appendChild(hdr0);
+
+    if (!_trackedObjects.length) {
+      const msg = document.createElement("div");
+      msg.style.cssText = "font-size:12px;color:#94a3b8";
+      msg.textContent = "No tracked objects detected. Ensure Bluetooth is active and objects are labeled in the Objects tab.";
+      availCard.appendChild(msg);
+      return;
+    }
+
+    const hint0 = document.createElement("div");
+    hint0.style.cssText = "font-size:11px;color:#94a3b8;margin-bottom:8px";
+    hint0.textContent = "Click an object to select it for placement, then double-click on the 3D map to pin it.";
+    availCard.appendChild(hint0);
+
+    // Build lookup: which objects are already pinned
+    const pinnedKeys = new Set();
+    for (const recs of Object.values(bs.draftBeacons)) {
+      for (const bk of recs) { if (bk.key) pinnedKeys.add(bk.key); }
+    }
+
+    for (const obj of _trackedObjects) {
+      const isPinned = pinnedKeys.has(obj.key);
+      const isPending = bs.pendingPlace && bs.pendingPlace.key === obj.key;
+      const row = document.createElement("div");
+      row.style.cssText = `display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;transition:background 0.15s;${isPending ? "background:#1a200e;border:1px solid #f59e0b;" : ""}`;
+      row.addEventListener("mouseenter", () => { if (!isPending) row.style.background = "#0d2818"; });
+      row.addEventListener("mouseleave", () => { if (!isPending) row.style.background = ""; });
+
+      // Icon
+      const icon = document.createElement("div");
+      if (isPinned) {
+        icon.style.cssText = "width:12px;height:12px;background:#5eead4;transform:rotate(45deg);border-radius:2px;flex-shrink:0";
+      } else {
+        icon.style.cssText = "width:12px;height:12px;border:2px solid #94a3b8;transform:rotate(45deg);border-radius:2px;flex-shrink:0;background:transparent";
+      }
+      row.appendChild(icon);
+
+      // Label
+      const lbl = document.createElement("span");
+      lbl.style.cssText = `flex:1;font-size:12px;color:${isPinned ? "#d1d5db" : "#e2e8f0;font-weight:600"}`;
+      const displayName = obj.user_label || obj.name || obj.key;
+      const kindTag = obj.kind !== "ble" ? ` [${obj.kind}]` : "";
+      lbl.textContent = `${displayName}${kindTag}`;
+      row.appendChild(lbl);
+
+      if (isPinned) {
+        const tag = document.createElement("span");
+        tag.style.cssText = "font-size:10px;color:#5eead4;background:#5eead418;padding:1px 6px;border-radius:4px;white-space:nowrap";
+        tag.textContent = "Pinned";
+        row.appendChild(tag);
+      } else {
+        const tag = document.createElement("span");
+        tag.style.cssText = `font-size:10px;padding:1px 6px;border-radius:4px;white-space:nowrap;${isPending ? "color:#fbbf24;background:#fbbf2418;font-weight:600" : "color:#94a3b8;background:#94a3b818"}`;
+        tag.textContent = isPending ? "Double-click map\u2026" : "Not pinned";
+        row.appendChild(tag);
+        row.addEventListener("click", () => {
+          bs.pendingPlace = { key: obj.key, label: obj.user_label || obj.name || "", kind: obj.kind || "ble" };
+          _refreshAvailable();
+          _refreshPlaceBanner();
+        });
+      }
+
+      availCard.appendChild(row);
+    }
+  }
+  _refreshAvailable();
 
   // ── Pinned beacons list ───────────────────────────────────────────────
   const beaconListCard = document.createElement("div");
@@ -2892,6 +3082,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         _refreshInfo();
         _refreshDirtyLabel();
         _refreshBeaconList();
+        _refreshAvailable();
       });
       row.appendChild(rmBtn);
       row.addEventListener("click", () => {
@@ -2908,7 +3099,9 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   // ── Assemble ──────────────────────────────────────────────────────────────
   wrap.appendChild(ctrlRow);
   wrap.appendChild(isoWrap);
+  wrap.appendChild(placeBanner);
   wrap.appendChild(infoCard);
+  wrap.appendChild(availCard);
   wrap.appendChild(beaconListCard);
 
   return wrap;

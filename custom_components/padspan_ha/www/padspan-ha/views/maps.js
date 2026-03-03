@@ -2160,7 +2160,7 @@ function _stack(ctx, maps, helpBtn){
 
   // stageOuter: scrollable canvas with 60px buffer so dragged target remains visible near edges
   const stageOuter = el("div",{style:"margin-top:10px;overflow:auto;max-width:100%;border-radius:8px;background:#071008;padding:60px"});
-  const stageWrap = el("div",{style:`position:relative;overflow:visible;border-radius:6px;background:#071008;width:${Math.round((ctx.state.maps._stackViewScale||1.0)*100)}%;min-width:220px`});
+  const stageWrap = el("div",{style:`position:relative;overflow:visible;border-radius:6px;background:#071008;width:100%;min-width:220px;transform:scale(${ctx.state.maps._stackViewScale||1.0});transform-origin:50% 0`});
   stageOuter.appendChild(stageWrap);
   card.appendChild(stageOuter);
 
@@ -2203,7 +2203,7 @@ function _stack(ctx, maps, helpBtn){
     const ar = ih / iw;
     stageAr = ar;
 
-    stageWrap.style.paddingBottom = `${ar * (ctx.state.maps._stackViewScale||1.0) * 100}%`;
+    stageWrap.style.paddingBottom = `${ar * 100}%`;
     stageWrap.style.height = "0";
 
     // Reference layer: image (if any) + SVG room bounds on top
@@ -2407,22 +2407,19 @@ function _stack(ctx, maps, helpBtn){
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.rotation = Math.round((alignState.rotation||0) + 15); applyCurrentTransform(); }},"﹢15°"));
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.rotation = 0; applyCurrentTransform(); }},"0°"));
 
-  // View zoom controls (shrinks the stage canvas so both maps are visible)
+  // View zoom controls (scales stage content so both maps are visible — zooming out reveals overflowed target maps)
   ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"View:"));
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
-    ctx.state.maps._stackViewScale = Math.max(0.1, Math.round(((ctx.state.maps._stackViewScale||1.0)-0.1)*100)/100);
-    stageWrap.style.width = `${Math.round(ctx.state.maps._stackViewScale*100)}%`;
-    stageWrap.style.paddingBottom = `${Math.round(stageAr * ctx.state.maps._stackViewScale * 100)}%`;
+    ctx.state.maps._stackViewScale = Math.max(0.2, Math.round(((ctx.state.maps._stackViewScale||1.0)-0.1)*100)/100);
+    stageWrap.style.transform = `scale(${ctx.state.maps._stackViewScale})`;
   }},"Zoom −"));
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
     ctx.state.maps._stackViewScale = 1.0;
-    stageWrap.style.width = "100%";
-    stageWrap.style.paddingBottom = `${Math.round(stageAr * 100)}%`;
+    stageWrap.style.transform = "scale(1)";
   }},"100%"));
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
     ctx.state.maps._stackViewScale = Math.min(2.0, Math.round(((ctx.state.maps._stackViewScale||1.0)+0.1)*100)/100);
-    stageWrap.style.width = `${Math.round(ctx.state.maps._stackViewScale*100)}%`;
-    stageWrap.style.paddingBottom = `${Math.round(stageAr * ctx.state.maps._stackViewScale * 100)}%`;
+    stageWrap.style.transform = `scale(${ctx.state.maps._stackViewScale})`;
   }},"Zoom +"));
 
   // Opacity controls (how transparent the draggable target layer is)
