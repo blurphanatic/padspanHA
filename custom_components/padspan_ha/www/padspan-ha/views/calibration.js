@@ -1544,11 +1544,10 @@ function _tuneTab(ctx, el, cs, calData) {
   });
 
   // ── Drag interaction ────────────────────────────────────────────────────────
-  // Pointer capture on isoDiv (HTML div — reliable across all browsers).
-  // During drag we translate the <g> visually (no innerHTML rebuild).
+  // Document-level listeners (always fire regardless of pointer location).
   // ts._dragging prevents the 5s poll from destroying the DOM mid-drag.
+  // No setPointerCapture — document listeners are universally reliable.
   let _didDrag = false;
-  let _dragRx = null; // { g, mapId, rxObj, xf, z, origPx, origPy }
 
   isoDiv.addEventListener("pointerdown", e => {
     const g = e.target.closest("[data-rx-id]");
@@ -1564,60 +1563,59 @@ function _tuneTab(ctx, el, cs, calData) {
     _refreshInfo();
 
     const draft = ts.draftReceivers[mapId];
-    if (!draft) return;
-    const rxObj = draft.find(r => r.id === rxId);
-    if (!rxObj) return;
+    if (!draft) { console.warn("[PadSpan] drag: no draft for map", mapId, Object.keys(ts.draftReceivers)); isoDiv.style.cursor = ""; return; }
+    // Match by id first, then fallback to source or label
+    let rxObj = draft.find(r => r.id === rxId);
+    if (!rxObj) rxObj = draft.find(r => (r.source || "") === rxId || (r.label || "") === rxId);
+    if (!rxObj) { console.warn("[PadSpan] drag: no receiver", rxId, "in draft", draft.map(r => r.id)); isoDiv.style.cursor = ""; return; }
     const xf = mapXforms[mapId];
-    if (!xf) return;
+    if (!xf) { console.warn("[PadSpan] drag: no xform for map", mapId); isoDiv.style.cursor = ""; return; }
     const [origWx, origWy] = xf.mapPt(rxObj.x, rxObj.y);
     const [origPx, origPy] = iso(origWx, origWy, z);
 
-    _dragRx = { g, mapId, rxObj, xf, z, origPx, origPy };
     ts._dragging = true;
-    isoDiv.setPointerCapture(e.pointerId);
-  });
 
-  isoDiv.addEventListener("pointermove", e => {
-    if (!_dragRx) return;
-    e.preventDefault();
-    _didDrag = true;
-    const { g, rxObj, xf, z, origPx, origPy, mapId } = _dragRx;
-    const svgNode = isoDiv.querySelector("svg");
-    if (!svgNode) return;
-    const ctm = svgNode.getScreenCTM();
-    if (!ctm) return;
-    const inv = ctm.inverse();
-    const sx = e.clientX * inv.a + e.clientY * inv.c + inv.e;
-    const sy = e.clientX * inv.b + e.clientY * inv.d + inv.f;
-    const [wx, wy] = invIso(sx, sy, z);
-    const [nx, ny] = xf.invMapPt(wx, wy);
-    const cx = Math.max(0, Math.min(1, nx));
-    const cy = Math.max(0, Math.min(1, ny));
-    rxObj.x = cx;
-    rxObj.y = cy;
-    ts.dirtyMaps[mapId] = true;
-    const [newWx, newWy] = xf.mapPt(cx, cy);
-    const [newPx, newPy] = iso(newWx, newWy, z);
-    g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
-  });
+    const onMove = (ev) => {
+      ev.preventDefault();
+      _didDrag = true;
+      const svgNode = isoDiv.querySelector("svg");
+      if (!svgNode) return;
+      const ctm = svgNode.getScreenCTM();
+      if (!ctm) return;
+      const inv = ctm.inverse();
+      const sx = ev.clientX * inv.a + ev.clientY * inv.c + inv.e;
+      const sy = ev.clientX * inv.b + ev.clientY * inv.d + inv.f;
+      const [wx, wy] = invIso(sx, sy, z);
+      const [nx, ny] = xf.invMapPt(wx, wy);
+      const cx = Math.max(0, Math.min(1, nx));
+      const cy = Math.max(0, Math.min(1, ny));
+      rxObj.x = cx;
+      rxObj.y = cy;
+      ts.dirtyMaps[mapId] = true;
+      const [newWx, newWy] = xf.mapPt(cx, cy);
+      const [newPx, newPy] = iso(newWx, newWy, z);
+      g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
+    };
 
-  const _endRxDrag = (e) => {
-    if (!_dragRx) return;
-    const { rxObj, mapId } = _dragRx;
-    _dragRx = null;
-    ts._dragging = false;
-    try { isoDiv.releasePointerCapture(e.pointerId); } catch(_){}
-    isoDiv.style.cursor = "";
-    if (_didDrag) {
-      const mapObj = maps_list.find(m => m.id === mapId);
-      if (mapObj) rxObj.room = _detectRoom(rxObj.x, rxObj.y, mapObj) || rxObj.room || "";
-    }
-    _refreshSVG();
-    _refreshInfo();
-    _refreshDirtyLabel();
-  };
-  isoDiv.addEventListener("pointerup", _endRxDrag);
-  isoDiv.addEventListener("pointercancel", _endRxDrag);
+    const onUp = (ev) => {
+      document.removeEventListener("pointermove", onMove, true);
+      document.removeEventListener("pointerup", onUp, true);
+      document.removeEventListener("pointercancel", onUp, true);
+      ts._dragging = false;
+      isoDiv.style.cursor = "";
+      if (_didDrag) {
+        const mapObj = maps_list.find(m => m.id === mapId);
+        if (mapObj) rxObj.room = _detectRoom(rxObj.x, rxObj.y, mapObj) || rxObj.room || "";
+      }
+      _refreshSVG();
+      _refreshInfo();
+      _refreshDirtyLabel();
+    };
+
+    document.addEventListener("pointermove", onMove, true);
+    document.addEventListener("pointerup", onUp, true);
+    document.addEventListener("pointercancel", onUp, true);
+  });
 
   // Click to select (without drag)
   isoDiv.addEventListener("click", e => {
@@ -2668,10 +2666,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   });
 
   // ── Drag interaction ────────────────────────────────────────────────────────
-  // Pointer capture on isoDiv (HTML div — reliable). bs._dragging prevents
-  // the 5s poll from destroying the DOM mid-drag.
+  // Document-level listeners (always fire). bs._dragging prevents DOM destruction.
   let _didDrag = false;
-  let _dragBk = null; // { g, mapId, bkObj, xf, z, origPx, origPy }
 
   isoDiv.addEventListener("pointerdown", e => {
     const g = e.target.closest("[data-bk-id]");
@@ -2687,60 +2683,58 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     _refreshInfo();
 
     const draft = bs.draftBeacons[mapId];
-    if (!draft) return;
-    const bkObj = draft.find(b => b.id === bkId);
-    if (!bkObj) return;
+    if (!draft) { console.warn("[PadSpan] bk drag: no draft for map", mapId); isoDiv.style.cursor = ""; return; }
+    let bkObj = draft.find(b => b.id === bkId);
+    if (!bkObj) bkObj = draft.find(b => (b.key || "") === bkId || (b.label || "") === bkId);
+    if (!bkObj) { console.warn("[PadSpan] bk drag: no beacon", bkId, "in draft", draft.map(b => b.id)); isoDiv.style.cursor = ""; return; }
     const xf = mapXforms[mapId];
-    if (!xf) return;
+    if (!xf) { console.warn("[PadSpan] bk drag: no xform for map", mapId); isoDiv.style.cursor = ""; return; }
     const [origWx, origWy] = xf.mapPt(bkObj.x, bkObj.y);
     const [origPx, origPy] = iso(origWx, origWy, z);
 
-    _dragBk = { g, mapId, bkObj, xf, z, origPx, origPy };
     bs._dragging = true;
-    isoDiv.setPointerCapture(e.pointerId);
-  });
 
-  isoDiv.addEventListener("pointermove", e => {
-    if (!_dragBk) return;
-    e.preventDefault();
-    _didDrag = true;
-    const { g, bkObj, xf, z, origPx, origPy, mapId } = _dragBk;
-    const svgNode = isoDiv.querySelector("svg");
-    if (!svgNode) return;
-    const ctm = svgNode.getScreenCTM();
-    if (!ctm) return;
-    const inv = ctm.inverse();
-    const sx = e.clientX * inv.a + e.clientY * inv.c + inv.e;
-    const sy = e.clientX * inv.b + e.clientY * inv.d + inv.f;
-    const [wx, wy] = invIso(sx, sy, z);
-    const [nx, ny] = xf.invMapPt(wx, wy);
-    const cx2 = Math.max(0, Math.min(1, nx));
-    const cy2 = Math.max(0, Math.min(1, ny));
-    bkObj.x = cx2;
-    bkObj.y = cy2;
-    bs.dirtyMaps[mapId] = true;
-    const [newWx, newWy] = xf.mapPt(cx2, cy2);
-    const [newPx, newPy] = iso(newWx, newWy, z);
-    g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
-  });
+    const onMove = (ev) => {
+      ev.preventDefault();
+      _didDrag = true;
+      const svgNode = isoDiv.querySelector("svg");
+      if (!svgNode) return;
+      const ctm = svgNode.getScreenCTM();
+      if (!ctm) return;
+      const inv = ctm.inverse();
+      const sx = ev.clientX * inv.a + ev.clientY * inv.c + inv.e;
+      const sy = ev.clientX * inv.b + ev.clientY * inv.d + inv.f;
+      const [wx, wy] = invIso(sx, sy, z);
+      const [nx, ny] = xf.invMapPt(wx, wy);
+      const cx2 = Math.max(0, Math.min(1, nx));
+      const cy2 = Math.max(0, Math.min(1, ny));
+      bkObj.x = cx2;
+      bkObj.y = cy2;
+      bs.dirtyMaps[mapId] = true;
+      const [newWx, newWy] = xf.mapPt(cx2, cy2);
+      const [newPx, newPy] = iso(newWx, newWy, z);
+      g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
+    };
 
-  const _endBkDrag = (e) => {
-    if (!_dragBk) return;
-    const { bkObj, mapId } = _dragBk;
-    _dragBk = null;
-    bs._dragging = false;
-    try { isoDiv.releasePointerCapture(e.pointerId); } catch(_){}
-    isoDiv.style.cursor = "";
-    if (_didDrag) {
-      const mapObj = maps_list.find(m => m.id === mapId);
-      if (mapObj) bkObj.room = _detectRoom(bkObj.x, bkObj.y, mapObj) || bkObj.room || "";
-    }
-    _refreshSVG();
-    _refreshInfo();
-    _refreshDirtyLabel();
-  };
-  isoDiv.addEventListener("pointerup", _endBkDrag);
-  isoDiv.addEventListener("pointercancel", _endBkDrag);
+    const onUp = (ev) => {
+      document.removeEventListener("pointermove", onMove, true);
+      document.removeEventListener("pointerup", onUp, true);
+      document.removeEventListener("pointercancel", onUp, true);
+      bs._dragging = false;
+      isoDiv.style.cursor = "";
+      if (_didDrag) {
+        const mapObj = maps_list.find(m => m.id === mapId);
+        if (mapObj) bkObj.room = _detectRoom(bkObj.x, bkObj.y, mapObj) || bkObj.room || "";
+      }
+      _refreshSVG();
+      _refreshInfo();
+      _refreshDirtyLabel();
+    };
+
+    document.addEventListener("pointermove", onMove, true);
+    document.addEventListener("pointerup", onUp, true);
+    document.addEventListener("pointercancel", onUp, true);
+  });
 
   // Click to select (without drag)
   isoDiv.addEventListener("click", e => {
