@@ -1631,6 +1631,30 @@ function _tuneTab(ctx, el, cs, calData) {
     }
   });
 
+  // Helper: commit placement of a pending radio onto a specific map at (nx, ny)
+  function _placeRadioOnMap(m, nx, ny) {
+    const rd = ts.pendingPlace;
+    const newRx = {
+      id: "rx_" + Date.now().toString(16),
+      label: rd.name || rd.source || "",
+      x: Math.max(0, Math.min(1, nx)),
+      y: Math.max(0, Math.min(1, ny)),
+      room: _detectRoom(nx, ny, m) || rd.area_name || "",
+      source: rd.source || "",
+    };
+    if (!ts.draftReceivers[m.id]) ts.draftReceivers[m.id] = [];
+    ts.draftReceivers[m.id].push(newRx);
+    ts.dirtyMaps[m.id] = true;
+    ts.selectedRx = { mapId: m.id, rxId: newRx.id };
+    ts.pendingPlace = null;
+    ts._confirming = false;
+    _refreshSVG();
+    _refreshInfo();
+    _refreshDirtyLabel();
+    _refreshRadiosList();
+    _refreshPlaceBanner();
+  }
+
   // Double-click to place a pending (unplaced) radio at the clicked location
   isoDiv.addEventListener("dblclick", e => {
     if (!ts.pendingPlace) return;
@@ -1643,7 +1667,8 @@ function _tuneTab(ctx, el, cs, calData) {
     const sx = e.clientX * inv.a + e.clientY * inv.c + inv.e;
     const sy = e.clientX * inv.b + e.clientY * inv.d + inv.f;
 
-    // Try each floor from top to bottom — first map whose normalized bounds contain the click wins
+    // Collect all candidate maps that contain the click point
+    const candidates = [];
     for (let i = sortedIsoLevels.length - 1; i >= 0; i--) {
       const z = sortedIsoLevels[i];
       const [wx, wy] = invIso(sx, sy, z);
@@ -1653,29 +1678,59 @@ function _tuneTab(ctx, el, cs, calData) {
         if (!xf) continue;
         const [nx, ny] = xf.invMapPt(wx, wy);
         if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
-          const rd = ts.pendingPlace;
-          const newRx = {
-            id: "rx_" + Date.now().toString(16),
-            label: rd.name || rd.source || "",
-            x: Math.max(0, Math.min(1, nx)),
-            y: Math.max(0, Math.min(1, ny)),
-            room: _detectRoom(nx, ny, m) || rd.area_name || "",
-            source: rd.source || "",
-          };
-          if (!ts.draftReceivers[m.id]) ts.draftReceivers[m.id] = [];
-          ts.draftReceivers[m.id].push(newRx);
-          ts.dirtyMaps[m.id] = true;
-          ts.selectedRx = { mapId: m.id, rxId: newRx.id };
-          ts.pendingPlace = null;
-          _refreshSVG();
-          _refreshInfo();
-          _refreshDirtyLabel();
-          _refreshRadiosList();
-          _refreshPlaceBanner();
-          return;
+          candidates.push({ m, nx, ny, z });
         }
       }
     }
+
+    if (candidates.length === 0) return;
+
+    // Single match — place immediately
+    if (candidates.length === 1) {
+      _placeRadioOnMap(candidates[0].m, candidates[0].nx, candidates[0].ny);
+      return;
+    }
+
+    // Multiple overlapping maps — show disambiguation popup
+    ts._confirming = true;
+    const popup = document.createElement("div");
+    popup.style.cssText = "position:absolute;z-index:10;background:#0d1f14;border:2px solid #52b788;border-radius:10px;padding:10px 14px;min-width:180px;box-shadow:0 4px 20px rgba(0,0,0,0.5)";
+    // Position near the click
+    const rect = isoDiv.getBoundingClientRect();
+    popup.style.left = Math.min(e.clientX - rect.left + 8, rect.width - 200) + "px";
+    popup.style.top = Math.min(e.clientY - rect.top + 8, rect.height - 100) + "px";
+
+    const title = document.createElement("div");
+    title.style.cssText = "font-size:12px;font-weight:700;color:#52b788;margin-bottom:8px";
+    title.textContent = "Place on which map?";
+    popup.appendChild(title);
+
+    for (const c of candidates) {
+      const fl = ctx.state.model?.floors || [];
+      const floorObj = fl.find(f => f.level === c.z);
+      const floorName = floorObj ? (floorObj.name || `L${c.z}`) : `L${c.z}`;
+      const btn = document.createElement("button");
+      btn.className = "btn inline";
+      btn.style.cssText = "display:block;width:100%;text-align:left;padding:6px 10px;margin-bottom:4px;font-size:12px;color:#a7f3d0;border-color:#2d6a4f;cursor:pointer";
+      btn.textContent = `${c.m.name || c.m.id} (${floorName})`;
+      btn.addEventListener("click", () => {
+        if (isoWrap.contains(popup)) isoWrap.removeChild(popup);
+        _placeRadioOnMap(c.m, c.nx, c.ny);
+      });
+      popup.appendChild(btn);
+    }
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn inline";
+    cancelBtn.style.cssText = "display:block;width:100%;text-align:center;padding:4px 10px;font-size:11px;color:#94a3b8;border-color:#94a3b840;margin-top:4px;cursor:pointer";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", () => {
+      ts._confirming = false;
+      if (isoWrap.contains(popup)) isoWrap.removeChild(popup);
+    });
+    popup.appendChild(cancelBtn);
+
+    isoWrap.appendChild(popup);
   });
 
   // ── Helper: rebuild SVG without losing scroll ─────────────────────────────
