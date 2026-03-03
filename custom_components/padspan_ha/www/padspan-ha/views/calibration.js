@@ -2002,6 +2002,8 @@ function _tuneTab(ctx, el, cs, calData) {
         db.title = "Remove this radio from all maps and clear all its stored data";
         db.addEventListener("click", (ev) => {
           ev.stopPropagation();
+          // Block 5s poll from destroying the confirmation dialog
+          ts._confirming = true;
           actWrap.innerHTML = "";
           const prompt = document.createElement("span");
           prompt.style.cssText = "font-size:10px;color:#fca5a5";
@@ -2016,6 +2018,7 @@ function _tuneTab(ctx, el, cs, calData) {
           noBtn.textContent = "No";
           yesBtn.addEventListener("click", async (ev2) => {
             ev2.stopPropagation();
+            ts._confirming = false;
             actWrap.innerHTML = "";
             const spin = document.createElement("span");
             spin.style.cssText = "font-size:10px;color:#94a3b8";
@@ -2046,9 +2049,13 @@ function _tuneTab(ctx, el, cs, calData) {
                   notes: origMap.notes || "",
                 });
               }
+              // 3. Update state BEFORE any re-render so rebuilt UI is correct
               ts.dirtyMaps = {};
-              // 3. Call radioReset to clear all server-side data
-              const res = await ctx.actions.radioReset(src);
+              ts._mapsStamp = null;
+              ts.selectedRx = null;
+              ts.pendingPlace = null;
+              // 4. Call radioResetQuiet — WS only, no re-render
+              const res = await ctx.actions.radioResetQuiet(src);
               const sm = res?.summary || {};
               const parts = [];
               if (removedMaps.length) parts.push(`${removedMaps.length} map(s)`);
@@ -2056,22 +2063,17 @@ function _tuneTab(ctx, el, cs, calData) {
               if (sm.adaptive?.room_pairs_removed) parts.push(`${sm.adaptive.room_pairs_removed} fingerprint(s)`);
               const detail = parts.length ? " — removed " + parts.join(", ") : "";
               ctx.toast(`Radio deleted${detail}`);
-              // 4. Force draft re-sync from server on next render
-              ts._mapsStamp = null;
-              ts.selectedRx = null;
-              ts.pendingPlace = null;
-              _refreshSVG();
-              _refreshRadiosList();
-              _refreshInfo();
-              _refreshDirtyLabel();
-              _refreshPlaceBanner();
+              // 5. Refresh maps data + re-render once (rebuilds entire Tune tab cleanly)
+              await ctx.actions.mapsRefresh();
             } catch (e) {
+              ts._confirming = false;
               ctx.toast("Delete failed: " + String(e), true);
               _refreshRadiosList();
             }
           });
           noBtn.addEventListener("click", (ev2) => {
             ev2.stopPropagation();
+            ts._confirming = false;
             _refreshRadiosList();
           });
           actWrap.appendChild(prompt);
