@@ -571,6 +571,7 @@ function _haEntities(ctx, el){
   const settings = ctx.state.settings || {};
   wrap.appendChild(_haEntitiesIntro(el));
   wrap.appendChild(_haEntityControls(ctx, el, settings));
+  wrap.appendChild(_haEntityAudit(ctx, el));
   wrap.appendChild(_haEntityLibrary(ctx, el));
   wrap.appendChild(_haMqttSection(ctx, el, settings));
   return wrap;
@@ -619,6 +620,208 @@ function _haEntityControls(ctx, el, settings){
     ]));
     card.appendChild(row);
   }
+  return card;
+}
+
+function _haEntityAudit(ctx, el){
+  const card = el("div",{class:"card"});
+  const header = el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"});
+  header.appendChild(el("span",{style:"font-weight:700;font-size:14px"},"Live Entity Inventory"));
+  card.appendChild(header);
+  card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:12px"},
+    "All PadSpan entities registered in Home Assistant with current state, health, and automation usage."
+  ));
+
+  // Placeholder that gets filled async
+  const body = el("div",{});
+  const loading = el("div",{class:"muted",style:"font-size:12px;padding:12px 0"},"Loading entity data…");
+  body.appendChild(loading);
+  card.appendChild(body);
+
+  // Fire the WS call
+  ctx.actions.wsCall("padspan_ha/ha_entities_audit", {}).then(res => {
+    body.innerHTML = "";
+    if(!res || !res.entities || !res.entities.length){
+      body.appendChild(el("div",{class:"muted",style:"font-size:12px;padding:8px 0"},
+        "No PadSpan entities found. Label a BLE device in the Objects tab and switch to Live mode."
+      ));
+      return;
+    }
+    const entities = res.entities;
+
+    // ── Summary bar ──────────────────────────────────────────────────────
+    const summary = el("div",{style:"display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"});
+    const _pill = (label, count, color) => el("div",{style:`display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;border:1px solid ${color};font-size:11px`},[
+      el("span",{style:`color:${color};font-weight:700`},String(count)),
+      el("span",{style:"color:#94a3b8"},label),
+    ]);
+    const bh = res.by_health || {};
+    summary.appendChild(_pill("total", res.total, "#5eead4"));
+    if(bh.good)        summary.appendChild(_pill("healthy", bh.good, "#52b788"));
+    if(bh.stale)       summary.appendChild(_pill("stale", bh.stale, "#f59e0b"));
+    if(bh.unavailable) summary.appendChild(_pill("unavailable", bh.unavailable, "#f87171"));
+    if(bh.unknown)     summary.appendChild(_pill("unknown", bh.unknown, "#94a3b8"));
+    if(bh.disabled)    summary.appendChild(_pill("disabled", bh.disabled, "#64748b"));
+    summary.appendChild(_pill("used in automations", res.total_used_in_automations, "#8b5cf6"));
+    body.appendChild(summary);
+
+    // ── Type breakdown ──────────────────────────────────────────────────
+    const bt = res.by_type || {};
+    const typeBar = el("div",{style:"display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px"});
+    const _typeColors = {tracker:"#8b5cf6", area:"#10b981", distance:"#f59e0b", scanner_distance:"#06b6d4"};
+    const _typeLabels = {tracker:"device_tracker", area:"area sensor", distance:"distance sensor", scanner_distance:"scanner distance"};
+    for(const [t, c] of Object.entries(bt)){
+      typeBar.appendChild(el("div",{style:`font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid ${_typeColors[t]||"#64748b"};color:${_typeColors[t]||"#64748b"}`},
+        `${c} ${_typeLabels[t]||t}`
+      ));
+    }
+    body.appendChild(typeBar);
+
+    // ── Entity table ─────────────────────────────────────────────────────
+    const _healthIcon = (h) => {
+      if(h === "good")        return {dot:"#52b788", label:"Healthy"};
+      if(h === "stale")       return {dot:"#f59e0b", label:"Stale"};
+      if(h === "unavailable") return {dot:"#f87171", label:"Unavailable"};
+      if(h === "disabled")    return {dot:"#64748b", label:"Disabled"};
+      if(h === "unknown")     return {dot:"#94a3b8", label:"Unknown"};
+      return {dot:"#64748b", label:h};
+    };
+    const _ago = (iso) => {
+      if(!iso) return "—";
+      const d = new Date(iso);
+      const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+      if(sec < 0) return "just now";
+      if(sec < 60) return `${sec}s ago`;
+      if(sec < 3600) return `${Math.floor(sec/60)}m ago`;
+      if(sec < 86400) return `${Math.floor(sec/3600)}h ago`;
+      return `${Math.floor(sec/86400)}d ago`;
+    };
+
+    const thead = el("thead",{},el("tr",{},[
+      el("th",{style:"text-align:left"},"Health"),
+      el("th",{style:"text-align:left"},"Entity"),
+      el("th",{style:"text-align:left"},"Type"),
+      el("th",{style:"text-align:left"},"State"),
+      el("th",{style:"text-align:left"},"Last Changed"),
+      el("th",{style:"text-align:left"},"Used By"),
+      el("th",{style:"text-align:left"},"Hint"),
+    ]));
+    const tbody = el("tbody");
+
+    for(const ent of entities){
+      const hi = _healthIcon(ent.health);
+
+      // Health dot + label
+      const healthCell = el("td",{style:"white-space:nowrap"},[
+        el("span",{style:`display:inline-block;width:8px;height:8px;border-radius:50%;background:${hi.dot};margin-right:4px;vertical-align:middle`}),
+        el("span",{style:`font-size:10px;color:${hi.dot}`},hi.label),
+      ]);
+
+      // Entity ID (monospace) + device label
+      const idCell = el("td",{},[
+        el("div",{style:"font-family:monospace;font-size:11px;color:#5eead4;word-break:break-all"},ent.entity_id),
+        ent.device_label ? el("div",{style:"font-size:10px;color:#64748b"},ent.device_label) : null,
+      ].filter(Boolean));
+
+      // Type badge
+      const tc = _typeColors[ent.type] || "#64748b";
+      const typeCell = el("td",{},
+        el("span",{style:`font-size:10px;padding:1px 6px;border-radius:8px;border:1px solid ${tc};color:${tc};white-space:nowrap`},
+          _typeLabels[ent.type] || ent.type
+        )
+      );
+
+      // State
+      const stateStyle = ent.state === "not_home" ? "color:#f87171" :
+                         ent.state === "unavailable" ? "color:#64748b;font-style:italic" :
+                         ent.state === "unknown" ? "color:#94a3b8;font-style:italic" :
+                         "color:#e2e8f0";
+      const stateCell = el("td",{},[
+        el("div",{style:`font-size:12px;font-weight:600;${stateStyle};max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`},ent.state || "—"),
+        ent.room_confidence != null ? el("div",{style:"font-size:10px;color:#64748b"},`conf: ${Math.round(ent.room_confidence * 100)}%`) : null,
+      ].filter(Boolean));
+
+      // Last changed
+      const changedCell = el("td",{},[
+        el("div",{style:"font-size:11px;color:#94a3b8;white-space:nowrap"},_ago(ent.last_changed)),
+        ent.health === "stale" && ent.health_detail ? el("div",{style:"font-size:9px;color:#f59e0b"},ent.health_detail.replace(/— .*/,"")) : null,
+      ].filter(Boolean));
+
+      // Used by automations/scripts
+      const usedParts = [];
+      if(ent.automations.length){
+        usedParts.push(el("div",{style:"font-size:10px;color:#8b5cf6"},`${ent.automations.length} automation${ent.automations.length>1?"s":""}`));
+        for(const a of ent.automations.slice(0,2)){
+          usedParts.push(el("div",{style:"font-size:9px;color:#64748b;padding-left:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px"},a));
+        }
+        if(ent.automations.length > 2) usedParts.push(el("div",{style:"font-size:9px;color:#64748b;padding-left:6px"},`+${ent.automations.length-2} more`));
+      }
+      if(ent.scripts.length){
+        usedParts.push(el("div",{style:"font-size:10px;color:#06b6d4"},`${ent.scripts.length} script${ent.scripts.length>1?"s":""}`));
+      }
+      if(!usedParts.length){
+        usedParts.push(el("div",{style:"font-size:10px;color:#64748b;font-style:italic"},"unused"));
+      }
+      const usedCell = el("td",{},usedParts);
+
+      // Suggestion hint
+      const hintCell = el("td",{});
+      if(ent.suggestion){
+        hintCell.appendChild(el("div",{style:"font-size:10px;color:#fbbf24;max-width:180px;line-height:1.3"},ent.suggestion));
+      }
+
+      tbody.appendChild(el("tr",{style:ent.health === "disabled" ? "opacity:0.45" : ""},[
+        healthCell, idCell, typeCell, stateCell, changedCell, usedCell, hintCell,
+      ]));
+    }
+
+    const table = el("table",{class:"table",style:"font-size:12px"},[thead, tbody]);
+    const tableWrap = el("div",{style:"overflow-x:auto;max-height:500px;overflow-y:auto"});
+    tableWrap.appendChild(table);
+    body.appendChild(tableWrap);
+
+    // ── Health insights ──────────────────────────────────────────────────
+    const insights = [];
+    const unusedCount = entities.filter(e => e.used_count === 0 && e.health !== "disabled").length;
+    const staleCount = bh.stale || 0;
+    const unavailCount = bh.unavailable || 0;
+
+    if(unusedCount > 0 && unusedCount === entities.filter(e => e.health !== "disabled").length){
+      insights.push({color:"#fbbf24", text:`None of your ${unusedCount} entities are used in automations yet. Scroll down to the Entity Type Library for ready-to-paste examples.`});
+    } else if(unusedCount > 0){
+      insights.push({color:"#fbbf24", text:`${unusedCount} entit${unusedCount===1?"y is":"ies are"} not used in any automation or script. Check the hints column for ideas.`});
+    }
+    if(staleCount > 0){
+      insights.push({color:"#f59e0b", text:`${staleCount} entit${staleCount===1?"y hasn't":"ies haven't"} changed state in 24+ hours — likely away or out of scanner range.`});
+    }
+    if(unavailCount > 0){
+      insights.push({color:"#f87171", text:`${unavailCount} entit${unavailCount===1?"y is":"ies are"} unavailable. Try reloading the integration from the Data tab.`});
+    }
+    const areaCount = (bt.area || 0);
+    const trackerCount = (bt.tracker || 0);
+    if(areaCount > 0 && trackerCount === 0){
+      insights.push({color:"#8b5cf6", text:"You have area sensors but no device trackers. Enable device_tracker above to link devices to Person entities."});
+    }
+    if(res.total_used_in_automations > 0){
+      insights.push({color:"#52b788", text:`${res.total_used_in_automations} entit${res.total_used_in_automations===1?"y is":"ies are"} actively used in automations — nice!`});
+    }
+
+    if(insights.length){
+      const insightWrap = el("div",{style:"margin-top:10px;display:flex;flex-direction:column;gap:6px"});
+      insightWrap.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin-bottom:2px"},"Insights"));
+      for(const ins of insights){
+        insightWrap.appendChild(el("div",{style:`font-size:11px;color:${ins.color};padding:4px 8px;background:#0a150e;border:1px solid #1b3526;border-radius:6px;line-height:1.4`},ins.text));
+      }
+      body.appendChild(insightWrap);
+    }
+
+  }).catch(err => {
+    body.innerHTML = "";
+    body.appendChild(el("div",{style:"font-size:12px;color:#f87171;padding:8px 0"},
+      "Failed to load entity data: " + String(err?.message || err)
+    ));
+  });
+
   return card;
 }
 

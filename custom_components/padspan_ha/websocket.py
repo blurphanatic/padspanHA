@@ -87,6 +87,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_store_backup_restore)
     websocket_api.async_register_command(hass, ws_store_backup_delete)
     websocket_api.async_register_command(hass, ws_beacon_positions_get)
+    websocket_api.async_register_command(hass, ws_ha_entities_audit)
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -2568,6 +2569,162 @@ async def ws_beacon_positions_get(hass: HomeAssistant, connection, msg) -> None:
                 "kind": bk.get("kind", ""),
             })
     connection.send_result(msg["id"], {"positions": positions})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/ha_entities_audit"})
+@websocket_api.async_response
+async def ws_ha_entities_audit(hass: HomeAssistant, connection, msg) -> None:
+    """Return every PadSpan entity with live state, health, and automation usage."""
+    er = entity_registry.async_get(hass)
+    now = dt_util.utcnow()
+    entities: list[dict[str, Any]] = []
+
+    # Collect automation/script entity_id references via HA helpers (2023.1+)
+    _auto_users: dict[str, list[str]] = {}  # padspan_entity_id → [automation.xxx]
+    _script_users: dict[str, list[str]] = {}
+    _padspan_eids: list[str] = []
+    for entry in er.entities.values():
+        if entry.platform == DOMAIN:
+            _padspan_eids.append(entry.entity_id)
+
+    try:
+        from homeassistant.components.automation import automations_with_entity  # noqa: PLC0415
+        for eid in _padspan_eids:
+            refs = automations_with_entity(hass, eid)
+            if refs:
+                _auto_users[eid] = list(refs)
+    except Exception:
+        pass
+    try:
+        from homeassistant.components.script import scripts_with_entity  # noqa: PLC0415
+        for eid in _padspan_eids:
+            refs = scripts_with_entity(hass, eid)
+            if refs:
+                _script_users[eid] = list(refs)
+    except Exception:
+        pass
+
+    # Classify entity type from unique_id suffix
+    def _etype(uid: str) -> str:
+        if "__tracker" in uid:
+            return "tracker"
+        if "__dist__" in uid:
+            return "scanner_distance"
+        if "__distance" in uid:
+            return "distance"
+        if "__area" in uid:
+            return "area"
+        return "unknown"
+
+    # Suggestions per type for entities with no automation usage
+    _suggestions: dict[str, str] = {
+        "tracker": "Link to a Person entity (Settings → People) for zone-based presence.",
+        "area": "Add a confidence-gated automation — trigger on room change with room_confidence > 0.75.",
+        "distance": "Create a proximity trigger — e.g. wake a device when distance < 1.5 m.",
+        "scanner_distance": "Build micro-zones — trigger per-scanner when distance < 1.2 m for room-within-room control.",
+    }
+
+    for entry in er.entities.values():
+        if entry.platform != DOMAIN:
+            continue
+
+        eid = entry.entity_id
+        uid = entry.unique_id or ""
+        etype = _etype(uid)
+
+        # Live state from hass.states
+        state_obj: State | None = hass.states.get(eid)
+        state_val: str | None = None
+        last_changed: str | None = None
+        last_updated: str | None = None
+        attrs: dict[str, Any] = {}
+        if state_obj:
+            state_val = state_obj.state
+            last_changed = state_obj.last_changed.isoformat() if state_obj.last_changed else None
+            last_updated = state_obj.last_updated.isoformat() if state_obj.last_updated else None
+            attrs = dict(state_obj.attributes)
+
+        # Health classification
+        health = "good"
+        health_detail = ""
+        if entry.disabled_by is not None:
+            health = "disabled"
+            health_detail = f"Disabled by {entry.disabled_by}"
+        elif state_val == "unavailable":
+            health = "unavailable"
+            health_detail = "Entity is unavailable — integration may need reload."
+        elif state_val == "unknown":
+            health = "unknown"
+            health_detail = "State is unknown — device may not have reported yet."
+        elif state_obj and state_obj.last_changed:
+            age_h = (now - state_obj.last_changed).total_seconds() / 3600
+            if age_h > 24:
+                health = "stale"
+                health_detail = f"No state change in {int(age_h)}h — device may be away or out of range."
+
+        # Automation / script usage
+        autos = _auto_users.get(eid, [])
+        scripts = _script_users.get(eid, [])
+        used_count = len(autos) + len(scripts)
+
+        # Suggestion hint (only for unused entities)
+        suggestion = ""
+        if used_count == 0 and health not in ("disabled",):
+            suggestion = _suggestions.get(etype, "")
+
+        # Friendly label: try to extract from device name
+        dev_label = ""
+        if entry.device_id:
+            try:
+                dr = device_registry.async_get(hass)
+                dev = dr.async_get(entry.device_id)
+                if dev and dev.name:
+                    dev_label = dev.name
+            except Exception:
+                pass
+
+        entities.append({
+            "entity_id": eid,
+            "unique_id": uid,
+            "type": etype,
+            "device_label": dev_label,
+            "state": state_val,
+            "last_changed": last_changed,
+            "last_updated": last_updated,
+            "disabled_by": str(entry.disabled_by) if entry.disabled_by else None,
+            "health": health,
+            "health_detail": health_detail,
+            "automations": autos,
+            "scripts": scripts,
+            "used_count": used_count,
+            "suggestion": suggestion,
+            "room_confidence": attrs.get("room_confidence"),
+            "home": attrs.get("home"),
+        })
+
+    # Sort: active first, then by type, then entity_id
+    _type_order = {"tracker": 0, "area": 1, "distance": 2, "scanner_distance": 3, "unknown": 4}
+    entities.sort(key=lambda e: (
+        0 if e["health"] == "good" else (1 if e["health"] == "stale" else 2),
+        _type_order.get(e["type"], 9),
+        e["entity_id"],
+    ))
+
+    # Summary stats
+    by_health = {}
+    by_type = {}
+    for e in entities:
+        by_health[e["health"]] = by_health.get(e["health"], 0) + 1
+        by_type[e["type"]] = by_type.get(e["type"], 0) + 1
+    total_used = sum(1 for e in entities if e["used_count"] > 0)
+
+    connection.send_result(msg["id"], {
+        "entities": entities,
+        "total": len(entities),
+        "by_health": by_health,
+        "by_type": by_type,
+        "total_used_in_automations": total_used,
+    })
 
 
 def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
