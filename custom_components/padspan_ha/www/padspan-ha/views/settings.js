@@ -31,7 +31,7 @@ export function render(ctx){
   const setTab = (t) => { ctx.state._settingsTab = t; ctx.actions.renderRooms(); };
 
   const tabBar = el("div",{class:"tabs", style:"margin-bottom:14px;flex-wrap:wrap;gap:4px"});
-  for(const [id, label] of [["appearance","Appearance"],["scannermap","Scanner Map"],["presence","Presence"]]){
+  for(const [id, label] of [["appearance","Appearance"],["scannermap","Scanner Map"],["presence","Presence"],["ui","UI Structure"]]){
     tabBar.appendChild(el("button",{
       class:"tab" + (activeTab===id ? " active" : ""),
       onclick:()=>setTab(id),
@@ -43,6 +43,8 @@ export function render(ctx){
     root.appendChild(_settingsAppearance(ctx, el, helpBtn, draft, haFloors, haAreas, roomColor, false));
   } else if(activeTab === "presence"){
     root.appendChild(_settingsPresence(ctx, el));
+  } else if(activeTab === "ui"){
+    root.appendChild(_settingsUI(ctx, el));
   } else {
     root.appendChild(_scannerMap(ctx, el, haFloors));
   }
@@ -987,5 +989,49 @@ function _settingsPresence(ctx, el){
     resetAdaptiveBtn,
   ]));
 
+  return wrap;
+}
+
+// ── UI Structure tab ──────────────────────────────────────────────────────────
+const _DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox"];
+const _TAB_LABELS = {objects:"Objects",devices:"Devices",bluetooth:"Bluetooth",presence:"Presence",monitor:"Monitor",qa:"QA",sandbox:"Sandbox"};
+
+function _settingsUI(ctx, el){
+  const wrap = el("div",{});
+  const settings = ctx.state.settings || {};
+  const extras = settings.advanced_extra_tabs || [];
+
+  wrap.appendChild(el("h3",{style:"color:#52b788;margin-bottom:8px"},"UI Structure"));
+  wrap.appendChild(el("p",{style:"color:#94a3b8;font-size:13px;margin-bottom:16px"},
+    "Choose which tabs appear in Advanced mode. All tabs are always visible in Development mode."));
+
+  const card = el("div",{class:"card",style:"padding:16px"});
+  const checks = [];
+  for(const tabId of _DEV_ONLY_TABS){
+    const label = _TAB_LABELS[tabId] || tabId;
+    const checked = extras.includes(tabId);
+    const row = el("label",{style:"display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer"});
+    const cb = el("input",{type:"checkbox"});
+    cb.checked = checked;
+    cb.dataset.tab = tabId;
+    checks.push(cb);
+    row.appendChild(cb);
+    row.appendChild(el("span",{style:"color:#e2e8f0;font-size:14px"}, label));
+    card.appendChild(row);
+  }
+  wrap.appendChild(card);
+
+  const saveBtn = el("button",{class:"btn",style:"margin-top:12px"},"Save");
+  const status = el("span",{style:"margin-left:10px;color:#94a3b8;font-size:13px"});
+  saveBtn.addEventListener("click", async ()=>{
+    const selected = checks.filter(c => c.checked).map(c => c.dataset.tab);
+    await ctx.actions.settingsSet({ advanced_extra_tabs: selected });
+    status.textContent = "Saved!";
+    if(ctx.state.complexity === "advanced"){
+      ctx.actions.renderNav();
+    }
+    setTimeout(()=>{ status.textContent = ""; }, 2000);
+  });
+  wrap.appendChild(el("div",{style:"display:flex;align-items:center"}, [saveBtn, status]));
   return wrap;
 }

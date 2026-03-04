@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.41";
+const APP_VERSION = "0.6.42";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260304T041643Z";
+const BUILD_ID = "20260304T045025Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -76,7 +76,11 @@ const MENU = [
 ];
 
 // Tabs shown in Basic (simplified) mode
-const BASIC_TABS = new Set(["follow", "overview", "objects", "maps", "settings", "training"]);
+const BASIC_TABS = new Set(["follow", "overview", "maps", "settings", "training"]);
+// Tabs shown in Advanced mode by default (user can add more via Settings → UI Structure)
+const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration"]);
+// Tabs that only appear in Development mode unless opted into Advanced
+const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox"];
 
 const MENU_COLORS = {
   follow: "#5eead4",
@@ -166,7 +170,7 @@ class PadSpanHaApp extends HTMLElement {
       buildId: BUILD_ID,
       view: "overview",
       dataMode: "sample",          // sample | live
-      complexity: "advanced",      // advanced | basic
+      complexity: "advanced",      // basic | advanced | development
       status: {},
       roomTagMap: {},
       savedRoomTagMap: {},
@@ -295,15 +299,17 @@ class PadSpanHaApp extends HTMLElement {
     // Restore persisted complexity preference
     try {
       const saved = localStorage.getItem("padspan_complexity");
-      if (saved === "basic" || saved === "advanced") this.state.complexity = saved;
+      if (saved === "basic" || saved === "advanced" || saved === "development") this.state.complexity = saved;
     } catch(e) { /* ignore */ }
 
     this.$("#complexityToggle").addEventListener("click", ()=>{
-      this.state.complexity = (this.state.complexity === "basic") ? "advanced" : "basic";
+      const cur = this.state.complexity;
+      this.state.complexity = cur === "basic" ? "advanced" : cur === "advanced" ? "development" : "basic";
       try { localStorage.setItem("padspan_complexity", this.state.complexity); } catch(e) {}
-      // If switching to basic and current view isn't in basic tabs, go to Follow
-      if (this.state.complexity === "basic" && !BASIC_TABS.has(this.state.view)) {
-        this.state.view = "follow";
+      // If switching to basic/advanced and current view isn't visible, go to follow
+      if (this.state.complexity !== "development") {
+        const visible = this._getVisibleTabs();
+        if (!visible.has(this.state.view)) this.state.view = "follow";
       }
       this._updateBadges();
       this._renderNav();
@@ -723,21 +729,34 @@ class PadSpanHaApp extends HTMLElement {
     if(b) b.textContent = (this.state.dataMode === "live") ? "Live" : "Sample";
     const cb = this.$("#complexityToggle");
     if(cb){
-      const isBasic = this.state.complexity === "basic";
-      cb.textContent = isBasic ? "Basic" : "Advanced";
-      cb.style.outline = isBasic ? "2px solid rgba(94,234,212,.6)" : "";
+      const mode = this.state.complexity;
+      cb.textContent = mode === "basic" ? "Basic" : mode === "advanced" ? "Advanced" : "Dev";
+      cb.style.outline = mode === "basic" ? "2px solid rgba(94,234,212,.6)"
+                       : mode === "development" ? "2px solid rgba(239,83,80,.5)" : "";
     }
   }
 
   // ---------- Nav + rendering ----------
+  _getVisibleTabs(){
+    const mode = this.state.complexity;
+    if (mode === "development") return new Set(MENU.map(x => x[0]));
+    if (mode === "basic") return BASIC_TABS;
+    // Advanced: base + any user-opted extra tabs
+    const extras = this.state.settings?.advanced_extra_tabs || [];
+    const s = new Set(ADVANCED_DEFAULT);
+    for (const t of extras) s.add(t);
+    return s;
+  }
+
   _renderNav(){
     const isBasic = this.state.complexity === "basic";
+    const visible = this._getVisibleTabs();
     this.$nav.innerHTML = "";
     this.$nav.className = isBasic ? "nav basic-nav" : "nav";
     const navLabel = this.shadowRoot.querySelector("#navLabel");
-    if(navLabel) navLabel.textContent = isBasic ? "Basic Menu" : "Menu";
+    if(navLabel) navLabel.textContent = isBasic ? "Basic Menu" : this.state.complexity === "development" ? "Dev Menu" : "Menu";
 
-    const items = isBasic ? MENU.filter(x => BASIC_TABS.has(x[0])) : MENU;
+    const items = MENU.filter(x => visible.has(x[0]));
     for(const [id,label] of items.map(x=>[x[0],x[1]])) {
       const color = MENU_COLORS[id] || "#37588f";
       const btn = el("button",{
@@ -786,6 +805,7 @@ class PadSpanHaApp extends HTMLElement {
       actions: {
         // Simple actions used by views
         renderRooms: ()=>this._renderCurrentView(),
+        renderNav: ()=>this._renderNav(),
         // Objects view updates its tag list in-place to avoid full re-render loops.
         renderTags: (target=null)=>{
           const node = target || this.shadowRoot?.querySelector("#content #tags");
