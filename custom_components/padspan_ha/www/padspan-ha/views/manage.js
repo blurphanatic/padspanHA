@@ -692,32 +692,85 @@ function _buildNotifications(ctx, el){
   const haAreas = (ctx.state.model && Array.isArray(ctx.state.model.areas)) ? ctx.state.model.areas : [];
   const dataMode = ctx.state.dataMode || "sample";
   const disabled = dataMode !== "live";
+  const configs = ctx.state.followAlertConfig || {};
 
+  const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
+
+  // ── Saved Alerts summary table ──────────────────────────────────────────────
+  const savedEntries = Object.entries(configs).filter(([,c]) => c && c.email);
+  const savedCard = el("div",{class:"card"});
+  const activeCount = savedEntries.filter(([,c]) => c.on_room_change).length;
+  savedCard.appendChild(el("div",{class:"row",style:"margin-bottom:6px"},[
+    el("div",{style:"font-weight:700;font-size:14px"},"Saved Alerts"),
+    activeCount > 0
+      ? el("span",{class:"badge",style:"margin-left:8px;border-color:#52b788;color:#52b788"},`${activeCount} active`)
+      : el("span",{class:"badge",style:"margin-left:8px;border-color:#64748b;color:#64748b"},"none active"),
+  ]));
+  savedCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
+    "All saved email alert configurations. Alerts fire when a device changes rooms (via HA notify service)."
+  ));
+
+  if(!savedEntries.length){
+    savedCard.appendChild(el("div",{class:"muted",style:"font-size:12px;padding:8px 0"},
+      "No alerts configured yet. Tag a device in Objects, then set up alerts below or in the Follow tab."
+    ));
+  } else {
+    const thead = el("thead",{},el("tr",{},[
+      el("th",{},"Device"),
+      el("th",{},"Email"),
+      el("th",{},"Service"),
+      el("th",{},"Rooms"),
+      el("th",{},"Status"),
+    ]));
+    const tbody = el("tbody");
+    for(const [addr, cfg] of savedEntries){
+      // Try to find a friendly name from live objects
+      const obj = allObjects.find(o => (o.address||o.entity_id||"") === addr);
+      const label = (obj && (obj.user_label || obj.name)) || addr;
+      const svc = cfg.notify_service || "default";
+      const rooms = (cfg.watch_rooms && cfg.watch_rooms.length) ? cfg.watch_rooms.join(", ") : "all";
+      const active = cfg.on_room_change;
+
+      tbody.appendChild(el("tr",{},[
+        el("td",{style:"font-weight:600;font-size:12px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"},label),
+        el("td",{style:"font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace"},cfg.email),
+        el("td",{class:"muted",style:"font-size:11px"},svc),
+        el("td",{class:"muted",style:"font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"},rooms),
+        el("td",{},
+          active
+            ? el("span",{style:"color:#52b788;font-size:11px;font-weight:600"},"Active")
+            : el("span",{style:"color:#64748b;font-size:11px"},"Off")
+        ),
+      ]));
+    }
+    savedCard.appendChild(el("table",{class:"table"},[thead, tbody]));
+  }
+  wrap.appendChild(savedCard);
+
+  // ── Per-device alert editor ─────────────────────────────────────────────────
   // Tagged BLE/iBeacon objects that can receive alerts
   const trackable = allObjects.filter(o =>
     (o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon") && o.user_label
   );
 
-  const card = el("div",{class:"card"});
-  card.appendChild(el("div",{class:"row",style:"margin-bottom:4px"},[
-    el("div",{style:"font-weight:700;font-size:14px"},"Email Notifications"),
-  ]));
-  card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:14px"},
-    "Get email alerts when tracked devices change rooms. Emails are sent via Home Assistant's notify service. " +
-    "Tag a BLE device in the Objects tab first, then configure alerts here."
+  const editCard = el("div",{class:"card"});
+  editCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;margin-bottom:4px"},"Configure Alerts"));
+  editCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:14px"},
+    "Set up or edit email alerts for tagged devices. You can also configure per-device alerts in the Follow tab."
   ));
 
   if(disabled){
-    card.appendChild(el("div",{style:"font-size:12px;color:#fbbf24;margin-bottom:10px"},
+    editCard.appendChild(el("div",{style:"font-size:12px;color:#fbbf24;margin-bottom:10px"},
       "Switch to Live mode to configure and save alert settings."
     ));
   }
 
   if(!trackable.length){
-    card.appendChild(el("div",{class:"muted",style:"font-size:12px"},
+    editCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},
       "No tagged BLE devices found. Tag devices in the Objects tab to set up notifications."
     ));
-    return card;
+    wrap.appendChild(editCard);
+    return wrap;
   }
 
   // Load notify services once (cached in state)
@@ -729,39 +782,37 @@ function _buildNotifications(ctx, el){
   }
 
   const roomNames = haAreas.map(a => a.name).sort();
-  const configs = ctx.state.followAlertConfig || {};
-
-  const list = el("div",{style:"display:flex;flex-direction:column;gap:10px"});
+  const list = el("div",{style:"display:flex;flex-direction:column;gap:8px"});
 
   for(const obj of trackable){
     const addr = obj.address || obj.entity_id || "";
     if(!addr) continue;
     const name = obj.user_label || obj.name || addr;
     const cfg = configs[addr] || {};
+    const isActive = !!(cfg.on_room_change && cfg.email);
 
-    const row = el("div",{style:"padding:12px;border:1px solid #1b3526;border-radius:8px;background:#0a150e"});
+    const row = el("div",{style:"padding:10px 12px;border:1px solid " + (isActive ? "#1b4a2e" : "#1b3526") + ";border-radius:8px;background:#0a150e"});
 
-    // Header with device name
-    row.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
+    // Header row: name + status
+    row.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:8px"},[
       el("span",{style:"font-weight:600;font-size:13px;color:#5eead4"},name),
       el("span",{class:"muted",style:"font-size:10px;font-family:monospace"},addr),
-      cfg.on_room_change && cfg.email
-        ? el("span",{class:"badge",style:"margin-left:auto;border-color:#52b788;color:#52b788"},"Active")
-        : el("span",{class:"badge",style:"margin-left:auto;border-color:#64748b;color:#64748b"},"Off"),
+      isActive
+        ? el("span",{class:"badge",style:"margin-left:auto;border-color:#52b788;color:#52b788;font-size:10px"},"Active")
+        : el("span",{class:"badge",style:"margin-left:auto;border-color:#64748b;color:#64748b;font-size:10px"},"Off"),
     ]));
 
-    // Email input
+    // Email + service row
     const emailInput = el("input",{
       class:"input", type:"email", placeholder:"email@example.com",
-      value: cfg.email || "", style:"width:100%;max-width:280px;box-sizing:border-box",
+      value: cfg.email || "", style:"max-width:240px",
     });
     emailInput.addEventListener("input", e => {
       cfg.email = e.target.value;
       ctx.state.followAlertConfig[addr] = cfg;
     });
 
-    // Notify service selector
-    const serviceSelect = el("select",{class:"input",style:"max-width:200px"});
+    const serviceSelect = el("select",{class:"input",style:"max-width:180px"});
     serviceSelect.appendChild(el("option",{value:""},"Default"));
     for(const svc of (ctx.state._notifyServices || [])){
       const opt = el("option",{value:svc},svc);
@@ -773,6 +824,17 @@ function _buildNotifications(ctx, el){
       ctx.state.followAlertConfig[addr] = cfg;
     });
 
+    row.appendChild(el("div",{style:"display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:8px"},[
+      el("div",{style:"display:flex;flex-direction:column;gap:2px"},[
+        el("div",{class:"muted",style:"font-size:10px"},"Email"),
+        emailInput,
+      ]),
+      el("div",{style:"display:flex;flex-direction:column;gap:2px"},[
+        el("div",{class:"muted",style:"font-size:10px"},"Service"),
+        serviceSelect,
+      ]),
+    ]));
+
     // On-change toggle
     const chkChange = el("input",{type:"checkbox"});
     if(cfg.on_room_change) chkChange.checked = true;
@@ -781,78 +843,59 @@ function _buildNotifications(ctx, el){
       ctx.state.followAlertConfig[addr] = cfg;
     });
 
-    // Watch-rooms checkboxes
-    const watchRooms = cfg.watch_rooms || [];
-    const roomCheckboxes = roomNames.map(room => {
-      const chk = el("input",{type:"checkbox"});
-      if(watchRooms.includes(room)) chk.checked = true;
-      chk.addEventListener("change", () => {
-        const wr = ctx.state.followAlertConfig[addr]?.watch_rooms || [];
-        if(chk.checked){ if(!wr.includes(room)) wr.push(room); }
-        else { const i = wr.indexOf(room); if(i >= 0) wr.splice(i, 1); }
-        cfg.watch_rooms = wr;
-        ctx.state.followAlertConfig[addr] = cfg;
-      });
-      return el("label",{style:"display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px"},[chk, el("span",{},room)]);
-    });
+    row.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;margin-bottom:8px"},[
+      el("label",{style:"display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"},[
+        chkChange, el("span",{},"Alert on room change"),
+      ]),
+    ]));
 
-    // Save button + status
+    // Watch-rooms
+    if(roomNames.length){
+      const watchRooms = cfg.watch_rooms || [];
+      const roomChecks = roomNames.map(room => {
+        const chk = el("input",{type:"checkbox"});
+        if(watchRooms.includes(room)) chk.checked = true;
+        chk.addEventListener("change", () => {
+          const wr = ctx.state.followAlertConfig[addr]?.watch_rooms || [];
+          if(chk.checked){ if(!wr.includes(room)) wr.push(room); }
+          else { const i = wr.indexOf(room); if(i >= 0) wr.splice(i, 1); }
+          cfg.watch_rooms = wr;
+          ctx.state.followAlertConfig[addr] = cfg;
+        });
+        return el("label",{style:"display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11px"},[chk, el("span",{},room)]);
+      });
+      row.appendChild(el("div",{style:"margin-bottom:8px"},[
+        el("div",{class:"muted",style:"font-size:10px;margin-bottom:3px"},"Only these rooms (unchecked = all):"),
+        el("div",{style:"display:flex;flex-wrap:wrap;gap:6px"},roomChecks),
+      ]));
+    }
+
+    // Save
     const saveStatus = el("span",{class:"muted",style:"font-size:11px"});
     const saveBtn = el("button",{class:"btn tiny"+(disabled?" disabled":"")}, "Save");
     if(disabled) saveBtn.disabled = true;
     saveBtn.addEventListener("click", async () => {
-      if(disabled){ saveStatus.textContent = "Switch to Live mode first."; return; }
+      if(disabled){ saveStatus.textContent = "Live mode required."; return; }
       if(cfg.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cfg.email)){
         saveStatus.textContent = "Invalid email."; return;
       }
       saveStatus.textContent = "Saving…";
       try {
         await ctx.actions.followAlertSave({ addr, config: cfg });
-        saveStatus.textContent = "Saved";
-        saveStatus.style.color = "#52b788";
+        saveStatus.textContent = "Saved"; saveStatus.style.color = "#52b788";
         ctx.actions.renderRooms();
       } catch(e){
-        saveStatus.textContent = "Save failed";
-        saveStatus.style.color = "#f87171";
+        saveStatus.textContent = "Failed"; saveStatus.style.color = "#f87171";
       }
     });
 
-    // Layout
-    row.appendChild(el("div",{style:"display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:8px"},[
-      el("div",{style:"display:flex;flex-direction:column;gap:3px"},[
-        el("div",{class:"muted",style:"font-size:11px"},"Email"),
-        emailInput,
-      ]),
-      el("div",{style:"display:flex;flex-direction:column;gap:3px"},[
-        el("div",{class:"muted",style:"font-size:11px"},"Notify service"),
-        serviceSelect,
-      ]),
-    ]));
-
-    row.appendChild(el("div",{style:"display:flex;align-items:center;gap:12px;margin-bottom:8px"},[
-      el("label",{style:"display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"},[
-        chkChange,
-        el("span",{},"Alert on room change"),
-      ]),
-    ]));
-
-    if(roomCheckboxes.length){
-      row.appendChild(el("div",{style:"margin-bottom:8px"},[
-        el("div",{class:"muted",style:"font-size:11px;margin-bottom:4px"},"Only alert for these rooms (leave unchecked = all rooms):"),
-        el("div",{style:"display:flex;flex-wrap:wrap;gap:8px"},roomCheckboxes),
-      ]));
-    }
-
-    row.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px"},[
-      saveBtn,
-      saveStatus,
-    ]));
-
+    row.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px"},[saveBtn, saveStatus]));
     list.appendChild(row);
   }
 
-  card.appendChild(list);
-  return card;
+  editCard.appendChild(list);
+  wrap.appendChild(editCard);
+  return wrap;
 }
 
 // ── Health sub-tab ────────────────────────────────────────────────────────────

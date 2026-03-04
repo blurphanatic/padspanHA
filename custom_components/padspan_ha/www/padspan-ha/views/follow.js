@@ -83,7 +83,10 @@ export function render(ctx) {
   // ── Movement log (advanced only) ─────────────────────────────────────────────
   const logCard = isBasic ? null : _buildLog(el, ctx.state.followHistory[addr] || []);
 
-  return el("div", { id: "follow" }, [header, selectorCard, statusCard, mapCard, logCard].filter(Boolean));
+  // ── Alert config ─────────────────────────────────────────────────────────────
+  const alertCard = _buildAlerts(ctx, el, helpBtn, addr, chosen, haAreas, dataMode, isBasic);
+
+  return el("div", { id: "follow" }, [header, selectorCard, statusCard, mapCard, logCard, alertCard].filter(Boolean));
 }
 
 // ── Tag selector card ──────────────────────────────────────────────────────────
@@ -362,6 +365,135 @@ function _buildLog(el, history) {
     })),
   ]);
   card.appendChild(table);
+  return card;
+}
+
+// ── Alert configuration (per-device, inline in Follow) ────────────────────────
+function _buildAlerts(ctx, el, helpBtn, addr, chosen, haAreas, dataMode, isBasic) {
+  const cfg = ctx.state.followAlertConfig[addr] || {};
+  const name = chosen.user_label || chosen.name || addr || "tag";
+  const saved = !!(cfg.email && cfg.on_room_change);
+
+  const card = el("div", { class: "card" });
+  card.appendChild(el("div", { class: "card-head" }, [
+    el("div", { class: "h2" }, "Movement Alerts"),
+    saved ? el("span",{class:"badge",style:"border-color:#52b788;color:#52b788;font-size:10px;margin-left:8px"},"Active") : null,
+    helpBtn("follow_alerts"),
+  ].filter(Boolean)));
+
+  card.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:12px" },
+    "Email notifications when this tag moves rooms. Sent via HA's notify service."
+  ));
+
+  // Email input
+  const emailInput = el("input", {
+    class: "input", type: "email", placeholder: "email@example.com",
+    value: cfg.email || "", style: "max-width:260px",
+  });
+  emailInput.addEventListener("input", e => {
+    cfg.email = e.target.value;
+    ctx.state.followAlertConfig[addr] = cfg;
+  });
+
+  // Notify service selector (loads once, cached in state)
+  const serviceSelect = el("select", { class: "input", style: "max-width:200px" });
+  serviceSelect.appendChild(el("option", { value: "" }, "Default"));
+  if(!ctx.state._notifyServices){
+    ctx.state._notifyServices = [];
+    ctx.actions.wsCall("padspan_ha/notify_services_list", {}).then(r => {
+      ctx.state._notifyServices = (r && r.services) || [];
+      for(const svc of ctx.state._notifyServices){
+        const opt = document.createElement("option");
+        opt.value = svc; opt.textContent = svc;
+        if(cfg.notify_service === svc) opt.selected = true;
+        serviceSelect.appendChild(opt);
+      }
+    }).catch(() => {});
+  } else {
+    for(const svc of ctx.state._notifyServices){
+      const opt = el("option", { value: svc }, svc);
+      if(cfg.notify_service === svc) opt.selected = true;
+      serviceSelect.appendChild(opt);
+    }
+  }
+  serviceSelect.addEventListener("change", () => {
+    cfg.notify_service = serviceSelect.value || undefined;
+    ctx.state.followAlertConfig[addr] = cfg;
+  });
+
+  // On-change toggle
+  const chkChange = el("input", { type: "checkbox" });
+  if (cfg.on_room_change) chkChange.checked = true;
+  chkChange.addEventListener("change", () => {
+    cfg.on_room_change = chkChange.checked;
+    ctx.state.followAlertConfig[addr] = cfg;
+  });
+
+  const saveStatus = el("span", { class: "muted", style: "font-size:11px" });
+  const saveBtn = el("button", { class: "btn", style: "margin-top:10px" }, "Save");
+  saveBtn.addEventListener("click", async () => {
+    if (dataMode !== "live") { saveStatus.textContent = "Switch to Live mode first."; return; }
+    if (cfg.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cfg.email)) { saveStatus.textContent = "Invalid email."; return; }
+    saveStatus.textContent = "Saving…";
+    try {
+      await ctx.actions.followAlertSave({ addr, config: cfg });
+      saveStatus.textContent = "Saved";
+      saveStatus.style.color = "#52b788";
+    } catch (e) {
+      saveStatus.textContent = "Save failed";
+      saveStatus.style.color = "#f87171";
+    }
+  });
+
+  if (isBasic) {
+    card.appendChild(el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
+      el("div", {}, [
+        el("div", { class: "muted", style: "font-size:11px;margin-bottom:3px" }, "Email address"),
+        emailInput,
+      ]),
+      el("label", { style: "display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px" }, [
+        chkChange, el("span", {}, `Email me when ${name} moves`),
+      ]),
+    ]));
+  } else {
+    const watchRooms = cfg.watch_rooms || [];
+    const roomNames = haAreas.map(a => a.name).sort();
+    const checkboxes = roomNames.map(room => {
+      const chk = el("input", { type: "checkbox" });
+      if (watchRooms.includes(room)) chk.checked = true;
+      chk.addEventListener("change", () => {
+        const wr = ctx.state.followAlertConfig[addr]?.watch_rooms || [];
+        if (chk.checked) { if (!wr.includes(room)) wr.push(room); }
+        else { const i = wr.indexOf(room); if (i >= 0) wr.splice(i, 1); }
+        cfg.watch_rooms = wr;
+        ctx.state.followAlertConfig[addr] = cfg;
+      });
+      return el("label", { style: "display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px" }, [chk, el("span", {}, room)]);
+    });
+
+    card.appendChild(el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
+      el("div",{style:"display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end"}, [
+        el("div", {}, [
+          el("div", { class: "muted", style: "font-size:11px;margin-bottom:3px" }, "Email address"),
+          emailInput,
+        ]),
+        el("div", {}, [
+          el("div", { class: "muted", style: "font-size:11px;margin-bottom:3px" }, "Notify service"),
+          serviceSelect,
+        ]),
+      ]),
+      el("label", { style: "display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px" }, [
+        chkChange,
+        el("span", {}, `Alert on every room change for "${name}"`),
+      ]),
+      checkboxes.length ? el("div", {}, [
+        el("div", { class: "muted", style: "font-size:11px;margin-bottom:4px" }, "Only alert for these rooms (unchecked = all):"),
+        el("div", { style: "display:flex;flex-wrap:wrap;gap:8px" }, checkboxes),
+      ]) : null,
+    ].filter(Boolean)));
+  }
+
+  card.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-top:10px"},[saveBtn, saveStatus]));
   return card;
 }
 
