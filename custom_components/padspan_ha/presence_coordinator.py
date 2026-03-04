@@ -888,12 +888,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 label = obj.get("user_label") or obj.get("name") or key
 
                 # Find a notify service — prefer user-configured, fall back to first available
+                # Supports both legacy notify.{name} and new HA 2024+ entity-based notify
                 services = self.hass.services.async_services().get("notify", {})
-                if not services:
+                has_send_message = "send_message" in services
+                entity_ids = [s.entity_id for s in self.hass.states.async_all("notify")]
+                legacy = [k for k in services if k != "send_message"]
+
+                if not services and not entity_ids:
                     _LOGGER.warning("Alert: no notify services available in HA")
                     continue
-                preferred = cfg.get("notify_service")
-                service_name = preferred if preferred and preferred in services else next(iter(services))
+
+                preferred = cfg.get("notify_service") or ""
 
                 message = (
                     f"{label} moved from {old_room or 'unknown'} to {new_room}"
@@ -902,20 +907,55 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "title": f"PadSpan: {label} moved",
                     "message": message,
                 }
-                try:
-                    await self.hass.services.async_call(
-                        "notify", service_name, {**alert_data, "target": email},
+                sent = False
+                # Try entity-based send_message first if applicable
+                if preferred.startswith("notify.") and has_send_message:
+                    try:
+                        payload = {**alert_data, "entity_id": preferred}
+                        if email:
+                            payload["target"] = email
+                        await self.hass.services.async_call("notify", "send_message", payload)
+                        sent = True
+                    except Exception:
+                        # Fall through to legacy
+                        pass
+                if not sent and preferred and preferred in services:
+                    try:
+                        await self.hass.services.async_call(
+                            "notify", preferred, {**alert_data, "target": email} if email else alert_data,
+                        )
+                        sent = True
+                    except Exception:
+                        try:
+                            await self.hass.services.async_call("notify", preferred, alert_data)
+                            sent = True
+                        except Exception:
+                            pass
+                if not sent:
+                    # Auto-pick: prefer entity with mail/smtp, then legacy, then first available
+                    auto_targets: list[tuple[str, str, dict[str, Any]]] = []
+                    for eid in entity_ids:
+                        if has_send_message:
+                            auto_targets.append(("send_message", eid, {**alert_data, "entity_id": eid}))
+                    for svc in legacy:
+                        auto_targets.append((svc, svc, alert_data))
+                    # Sort: prefer mail/smtp
+                    auto_targets.sort(key=lambda t: (0 if "mail" in t[1].lower() or "smtp" in t[1].lower() else 1))
+                    for svc_name, _label, payload in auto_targets:
+                        try:
+                            await self.hass.services.async_call("notify", svc_name, payload)
+                            sent = True
+                            break
+                        except Exception:
+                            continue
+                if sent:
+                    self._alert_last_sent[key] = now
+                    _LOGGER.info(
+                        "Follow alert sent for %s: %s → %s (to %s via %s)",
+                        label, old_room, new_room, email, preferred or "auto",
                     )
-                except vol.Invalid:
-                    # Entity-based notify services reject 'target'
-                    await self.hass.services.async_call(
-                        "notify", service_name, alert_data,
-                    )
-                self._alert_last_sent[key] = now
-                _LOGGER.info(
-                    "Follow alert sent for %s: %s → %s (to %s via notify.%s)",
-                    label, old_room, new_room, email, service_name,
-                )
+                else:
+                    _LOGGER.warning("Follow alert: all send attempts failed for %s", label)
             except Exception as err:
                 _LOGGER.warning("Follow alert failed for %s: %s", key, err)
 

@@ -2162,10 +2162,30 @@ async def ws_movement_history_get(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/notify_services_list"})
 @websocket_api.async_response
 async def ws_notify_services_list(hass: HomeAssistant, connection, msg) -> None:
-    """Return all available HA notify service names."""
+    """Return all available HA notify service/entity names.
+
+    Supports both the legacy notify.{name} services and the newer HA 2024+
+    entity-based notify platform (notify.send_message + entity_id targeting).
+    """
     services = hass.services.async_services().get("notify", {})
-    result = sorted(services.keys())
-    connection.send_result(msg["id"], {"services": result})
+    # Legacy services (exclude 'send_message' — that's the new generic dispatcher)
+    legacy = [k for k in services if k != "send_message"]
+
+    # New entity-based notify: find all notify.* entities in the state machine
+    entity_ids = [
+        s.entity_id for s in hass.states.async_all("notify")
+    ]
+
+    # Combine: entity IDs first (preferred), then legacy service names
+    # Deduplicate: if a legacy service matches an entity slug, skip the legacy one
+    entity_slugs = {eid.split(".", 1)[1] for eid in entity_ids if "." in eid}
+    legacy_unique = [s for s in legacy if s not in entity_slugs]
+    result = sorted(entity_ids) + sorted(legacy_unique)
+    has_send_message = "send_message" in services
+    connection.send_result(msg["id"], {
+        "services": result,
+        "has_send_message": has_send_message,
+    })
 
 
 @websocket_api.websocket_command(
@@ -2179,14 +2199,18 @@ async def ws_notify_services_list(hass: HomeAssistant, connection, msg) -> None:
 async def ws_notify_test(hass: HomeAssistant, connection, msg) -> None:
     """Send a test notification via HA notify to verify the pipeline works.
 
-    This is a TEST — it only requires a working notify service. The email
-    field is optional (used as target when provided, ignored if the service
-    rejects it).
+    Supports both legacy notify.{name} services and the newer HA 2024+
+    entity-based notify platform (notify.send_message + entity_id).
     """
     email = str(msg.get("email") or "").strip()
-    service_name = str(msg.get("service") or "").strip()
+    chosen = str(msg.get("service") or "").strip()
     services = hass.services.async_services().get("notify", {})
-    if not services:
+    has_send_message = "send_message" in services
+    # Gather all notify entities (new platform)
+    entity_ids = [s.entity_id for s in hass.states.async_all("notify")]
+    legacy = [k for k in services if k != "send_message"]
+
+    if not services and not entity_ids:
         connection.send_error(
             msg["id"], "no_notify",
             "No notify services found in HA. You need to set up a notification "
@@ -2194,46 +2218,95 @@ async def ws_notify_test(hass: HomeAssistant, connection, msg) -> None:
             "Go to HA Settings → Devices & Services → Add Integration → search for your notification provider."
         )
         return
-    available = list(services.keys())
-    if not service_name or service_name not in services:
-        # Auto-pick: prefer 'email' or 'smtp' services, else first available
-        for candidate in available:
-            if "mail" in candidate.lower() or "smtp" in candidate.lower():
-                service_name = candidate
-                break
-        else:
-            service_name = available[0]
+
     base_data: dict[str, Any] = {
         "title": "PadSpan HA — Test Notification",
         "message": "This is a test from PadSpan HA. If you see this, your notification pipeline is working correctly.",
     }
-    # Strategy: try up to 3 variations — with target, without target, with data.target
-    attempts = []
-    if email:
-        attempts.append(("with target", {**base_data, "target": email}))
-        attempts.append(("with data.target", {**base_data, "data": {"target": email}}))
-    attempts.append(("without target", base_data))
+
+    # Determine if the chosen value is an entity_id (e.g. "notify.smtp")
+    is_entity = chosen.startswith("notify.")
+    attempts: list[tuple[str, str, dict[str, Any]]] = []  # (description, svc_name, payload)
+
+    if is_entity and has_send_message:
+        # New HA platform: use notify.send_message with entity_id targeting
+        payload_eid = {**base_data, "entity_id": chosen}
+        if email:
+            attempts.append(("send_message+entity+target", "send_message", {**payload_eid, "target": email}))
+            attempts.append(("send_message+entity+data.target", "send_message", {**payload_eid, "data": {"target": email}}))
+        attempts.append(("send_message+entity", "send_message", payload_eid))
+        # Also try legacy call with the slug (e.g. notify.smtp → service "smtp")
+        slug = chosen.split(".", 1)[1] if "." in chosen else chosen
+        if slug in services:
+            if email:
+                attempts.append(("legacy+target", slug, {**base_data, "target": email}))
+            attempts.append(("legacy", slug, base_data))
+    elif chosen and chosen in services:
+        # Legacy service chosen directly
+        if email:
+            attempts.append(("legacy+target", chosen, {**base_data, "target": email}))
+            attempts.append(("legacy+data.target", chosen, {**base_data, "data": {"target": email}}))
+        attempts.append(("legacy", chosen, base_data))
+    else:
+        # Nothing chosen or invalid — auto-pick
+        # Prefer entity_ids with mail/smtp, then legacy with mail/smtp, then first available
+        pick_entity = None
+        pick_legacy = None
+        for eid in entity_ids:
+            if "mail" in eid.lower() or "smtp" in eid.lower():
+                pick_entity = eid
+                break
+        for svc in legacy:
+            if "mail" in svc.lower() or "smtp" in svc.lower():
+                pick_legacy = svc
+                break
+        if pick_entity and has_send_message:
+            payload_eid = {**base_data, "entity_id": pick_entity}
+            if email:
+                attempts.append(("auto-entity+target", "send_message", {**payload_eid, "target": email}))
+            attempts.append(("auto-entity", "send_message", payload_eid))
+        if pick_legacy:
+            if email:
+                attempts.append(("auto-legacy+target", pick_legacy, {**base_data, "target": email}))
+            attempts.append(("auto-legacy", pick_legacy, base_data))
+        # Last resort: first entity or first legacy
+        if not attempts:
+            if entity_ids and has_send_message:
+                eid = entity_ids[0]
+                attempts.append(("fallback-entity", "send_message", {**base_data, "entity_id": eid}))
+            elif legacy:
+                attempts.append(("fallback-legacy", legacy[0], base_data))
+
+    if not attempts:
+        connection.send_error(
+            msg["id"], "no_notify",
+            "Could not find a usable notify service or entity. "
+            "Go to HA Settings → Devices & Services → Add Integration → add a notification provider."
+        )
+        return
 
     last_err = None
-    for desc, payload in attempts:
+    for desc, svc_name, payload in attempts:
         try:
-            await hass.services.async_call("notify", service_name, payload)
-            _LOGGER.info("PadSpan test notification sent via notify.%s (%s)", service_name, desc)
+            await hass.services.async_call("notify", svc_name, payload)
+            used = svc_name if svc_name != "send_message" else payload.get("entity_id", svc_name)
+            _LOGGER.info("PadSpan test notification sent via notify.%s (%s)", used, desc)
             connection.send_result(msg["id"], {
-                "ok": True, "service": service_name,
-                "available_services": available,
+                "ok": True, "service": used,
+                "available_services": sorted(set(entity_ids + legacy)),
             })
             return
         except Exception as err:
             last_err = err
-            _LOGGER.debug("PadSpan test notify.%s (%s) failed: %s", service_name, desc, err)
+            _LOGGER.debug("PadSpan test notify (%s) failed: %s", desc, err)
             continue
 
     detail = str(last_err) if last_err else "Unknown error"
+    all_avail = sorted(set(entity_ids + legacy))
     connection.send_error(
         msg["id"], "send_failed",
-        f"All send attempts failed via notify.{service_name}: {detail}. "
-        f"Available services: {', '.join(available)}. "
+        f"All send attempts failed: {detail}. "
+        f"Available: {', '.join(all_avail) or 'none'}. "
         "Check HA Settings → Devices & Services for your notification provider's configuration."
     )
 
