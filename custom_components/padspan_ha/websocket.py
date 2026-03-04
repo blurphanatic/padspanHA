@@ -64,6 +64,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_radio_reset)
     websocket_api.async_register_command(hass, ws_follow_alert_get)
     websocket_api.async_register_command(hass, ws_follow_alert_save)
+    websocket_api.async_register_command(hass, ws_follow_alert_delete)
     websocket_api.async_register_command(hass, ws_area_delete)
     websocket_api.async_register_command(hass, ws_entity_delete)
     websocket_api.async_register_command(hass, ws_room_tag_purge_missing)
@@ -1860,6 +1861,33 @@ async def ws_follow_alert_save(hass: HomeAssistant, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        "type": "padspan_ha/follow_alert_delete",
+        vol.Required("addr"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_follow_alert_delete(hass: HomeAssistant, connection, msg) -> None:
+    """Delete a follow-alert configuration for a tracked object."""
+    addr = str(msg.get("addr") or "").strip()
+    if not addr:
+        connection.send_error(msg["id"], "missing_addr", "addr is required")
+        return
+    from .const import DATA_ALERTS
+    alert_store = hass.data.get(DOMAIN, {}).get(DATA_ALERTS)
+    deleted = False
+    if alert_store:
+        deleted = await alert_store.async_delete_config(addr)
+    else:
+        alerts = hass.data.get(DOMAIN, {}).get("follow_alerts", {})
+        if addr in alerts:
+            del alerts[addr]
+            deleted = True
+    _LOGGER.debug("PadSpan HA follow_alert_delete: addr=%s deleted=%s", addr, deleted)
+    connection.send_result(msg["id"], {"ok": True, "addr": addr, "deleted": deleted})
+
+
+@websocket_api.websocket_command(
+    {
         "type": "padspan_ha/area_delete",
         "area_id": str,
     }
@@ -2143,47 +2171,71 @@ async def ws_notify_services_list(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command(
     {
         "type": "padspan_ha/notify_test",
-        "email": str,
+        vol.Optional("email"): str,
         vol.Optional("service"): str,
     }
 )
 @websocket_api.async_response
 async def ws_notify_test(hass: HomeAssistant, connection, msg) -> None:
-    """Send a test email via HA notify to verify the notification pipeline works."""
+    """Send a test notification via HA notify to verify the pipeline works.
+
+    This is a TEST — it only requires a working notify service. The email
+    field is optional (used as target when provided, ignored if the service
+    rejects it).
+    """
     email = str(msg.get("email") or "").strip()
-    if not email:
-        connection.send_error(msg["id"], "missing_email", "Email address is required")
-        return
     service_name = str(msg.get("service") or "").strip()
     services = hass.services.async_services().get("notify", {})
     if not services:
-        connection.send_error(msg["id"], "no_notify", "No notify services available in HA")
+        connection.send_error(
+            msg["id"], "no_notify",
+            "No notify services found in HA. You need to set up a notification "
+            "integration first (e.g. SMTP email, Mobile App, Pushover). "
+            "Go to HA Settings → Devices & Services → Add Integration → search for your notification provider."
+        )
         return
+    available = list(services.keys())
     if not service_name or service_name not in services:
-        service_name = next(iter(services))
+        # Auto-pick: prefer 'email' or 'smtp' services, else first available
+        for candidate in available:
+            if "mail" in candidate.lower() or "smtp" in candidate.lower():
+                service_name = candidate
+                break
+        else:
+            service_name = available[0]
     base_data: dict[str, Any] = {
         "title": "PadSpan HA — Test Notification",
-        "message": "This is a test email from PadSpan HA. If you received this, your notification pipeline is working.",
+        "message": "This is a test from PadSpan HA. If you see this, your notification pipeline is working correctly.",
     }
-    try:
-        # Try with target first (legacy notify platforms)
-        await hass.services.async_call(
-            "notify", service_name, {**base_data, "target": email},
-        )
-        _LOGGER.info("PadSpan test notification sent to %s via notify.%s", email, service_name)
-        connection.send_result(msg["id"], {"ok": True, "service": service_name})
-    except vol.Invalid:
-        # Entity-based notify services reject 'target'; retry without it
+    # Strategy: try up to 3 variations — with target, without target, with data.target
+    attempts = []
+    if email:
+        attempts.append(("with target", {**base_data, "target": email}))
+        attempts.append(("with data.target", {**base_data, "data": {"target": email}}))
+    attempts.append(("without target", base_data))
+
+    last_err = None
+    for desc, payload in attempts:
         try:
-            await hass.services.async_call("notify", service_name, base_data)
-            _LOGGER.info("PadSpan test notification sent via notify.%s (no target)", service_name)
-            connection.send_result(msg["id"], {"ok": True, "service": service_name})
-        except Exception as err2:
-            _LOGGER.warning("PadSpan test notification failed: %s", err2)
-            connection.send_error(msg["id"], "send_failed", str(err2))
-    except Exception as err:
-        _LOGGER.warning("PadSpan test notification failed: %s", err)
-        connection.send_error(msg["id"], "send_failed", str(err))
+            await hass.services.async_call("notify", service_name, payload)
+            _LOGGER.info("PadSpan test notification sent via notify.%s (%s)", service_name, desc)
+            connection.send_result(msg["id"], {
+                "ok": True, "service": service_name,
+                "available_services": available,
+            })
+            return
+        except Exception as err:
+            last_err = err
+            _LOGGER.debug("PadSpan test notify.%s (%s) failed: %s", service_name, desc, err)
+            continue
+
+    detail = str(last_err) if last_err else "Unknown error"
+    connection.send_error(
+        msg["id"], "send_failed",
+        f"All send attempts failed via notify.{service_name}: {detail}. "
+        f"Available services: {', '.join(available)}. "
+        "Check HA Settings → Devices & Services for your notification provider's configuration."
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

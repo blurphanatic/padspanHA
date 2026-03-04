@@ -3,7 +3,7 @@
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 // PadSpan HA – Manage view
-// Standalone sidebar tab: Data management + History + Events + Health + Diagnostics + Debug
+// Standalone sidebar tab: Data management + History + Events + HA Entities
 
 export function render(ctx){
   const { el } = ctx.helpers;
@@ -19,9 +19,6 @@ export function render(ctx){
     ["ha_entities","HA Entities"],
     ["history","History"],
     ["events","Events"],
-    ["health","Health"],
-    ["diagnostics","Diagnostics"],
-    ["debug","Debug"],
   ];
 
   const tabBar = el("div",{class:"tabs",style:"margin-bottom:12px;flex-wrap:wrap;gap:4px"});
@@ -33,10 +30,6 @@ export function render(ctx){
   if(mTab === "ha_entities") { root.appendChild(_haEntities(ctx, el));  return root; }
   if(mTab === "history")     { root.appendChild(_history(ctx, el));     return root; }
   if(mTab === "events")      { root.appendChild(_events(ctx, el));      return root; }
-  if(mTab === "health")      { root.appendChild(_health(ctx, el));      return root; }
-  if(mTab === "diagnostics") { root.appendChild(_diagnostics(ctx, el)); return root; }
-  if(mTab === "debug")       { root.appendChild(_debug(ctx, el));       return root; }
-
   // ── Data tab ─────────────────────────────────────────────────────────────────
   const snap     = (ctx.state.live && ctx.state.live.snapshot) || null;
   const haAreas  = (ctx.state.model && Array.isArray(ctx.state.model.areas))  ? ctx.state.model.areas  : [];
@@ -1401,6 +1394,7 @@ function _buildNotifications(ctx, el){
       el("th",{},"Service"),
       el("th",{},"Rooms"),
       el("th",{},"Status"),
+      el("th",{style:"width:50px"},""),
     ]));
     const tbody = el("tbody");
     for(const [addr, cfg] of savedEntries){
@@ -1410,6 +1404,20 @@ function _buildNotifications(ctx, el){
       const svc = cfg.notify_service || "default";
       const rooms = (cfg.watch_rooms && cfg.watch_rooms.length) ? cfg.watch_rooms.join(", ") : "all";
       const active = cfg.on_room_change;
+
+      const delBtn = el("button",{class:"btn tiny",style:"color:#ef5350;border-color:#7f1d1d;padding:2px 8px;font-size:11px"}, "Delete");
+      delBtn.addEventListener("click", async ()=>{
+        if(!confirm(`Delete alert for "${label}"?`)) return;
+        delBtn.disabled = true; delBtn.textContent = "...";
+        try {
+          await ctx.actions.followAlertDelete(addr);
+          ctx.toast(`Alert for ${label} deleted.`);
+          ctx.actions.renderRooms();
+        } catch(e){
+          delBtn.disabled = false; delBtn.textContent = "Delete";
+          ctx.toast("Delete failed: " + (e?.message || String(e)), true);
+        }
+      });
 
       tbody.appendChild(el("tr",{},[
         el("td",{style:"font-weight:600;font-size:12px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"},label),
@@ -1421,6 +1429,7 @@ function _buildNotifications(ctx, el){
             ? el("span",{style:"color:#52b788;font-size:11px;font-weight:600"},"Active")
             : el("span",{style:"color:#64748b;font-size:11px"},"Off")
         ),
+        el("td",{},[delBtn]),
       ]));
     }
     savedCard.appendChild(el("table",{class:"table"},[thead, tbody]));
@@ -1458,7 +1467,27 @@ function _buildNotifications(ctx, el){
     ctx.state._notifyServices = [];
     ctx.actions.wsCall("padspan_ha/notify_services_list", {}).then(r => {
       ctx.state._notifyServices = (r && r.services) || [];
+      if(!r || !r.services || !r.services.length){
+        // Re-render to show the warning
+        ctx.actions.renderRooms();
+      }
     }).catch(() => {});
+  }
+
+  // Show warning if no notify services are available
+  if(ctx.state._notifyServices && ctx.state._notifyServices.length === 0){
+    editCard.appendChild(el("div",{style:"background:#1a0a0a;border:1px solid #7f1d1d;border-radius:8px;padding:12px 14px;margin-bottom:12px"},[
+      el("div",{style:"font-weight:700;font-size:13px;color:#fca5a5;margin-bottom:4px"},"No notification services found"),
+      el("div",{style:"font-size:12px;color:#fca5a5;line-height:1.5"},
+        "PadSpan sends alerts via Home Assistant's notify integration. You need to set up a notification provider first:"
+      ),
+      el("div",{style:"font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.6;padding-left:10px"},
+        "1. Go to HA Settings \u2192 Devices & Services \u2192 Add Integration\n" +
+        "2. Search for your notification provider (e.g. SMTP, Mobile App, Pushover, Telegram)\n" +
+        "3. Configure it with your email/credentials\n" +
+        "4. Come back here \u2014 the service will appear automatically"
+      ),
+    ]));
   }
 
   const roomNames = haAreas.map(a => a.name).sort();
@@ -1468,7 +1497,8 @@ function _buildNotifications(ctx, el){
     const addr = obj.address || obj.entity_id || "";
     if(!addr) continue;
     const name = obj.user_label || obj.name || addr;
-    const cfg = configs[addr] || {};
+    const cfg = configs[addr] || {on_room_change: true};
+    if(!configs[addr]) configs[addr] = cfg;
     const isActive = !!(cfg.on_room_change && cfg.email);
 
     const row = el("div",{style:"padding:10px 12px;border:1px solid " + (isActive ? "#1b4a2e" : "#1b3526") + ";border-radius:8px;background:#0a150e"});
@@ -1551,45 +1581,45 @@ function _buildNotifications(ctx, el){
     }
 
     // Save + Test
-    const saveStatus = el("span",{class:"muted",style:"font-size:11px"});
-    const saveBtn = el("button",{class:"btn tiny"+(disabled?" disabled":"")}, "Save");
+    const saveStatus = el("span",{class:"muted",style:"font-size:11px;max-width:300px;line-height:1.3"});
+    const saveBtn = el("button",{class:"btn"+(disabled?" disabled":""),style:"background:#1b4a2e;border-color:#52b788;font-weight:700"}, "Save Alert");
     if(disabled) saveBtn.disabled = true;
     saveBtn.addEventListener("click", async () => {
-      if(disabled){ saveStatus.textContent = "Live mode required."; return; }
+      if(disabled){ saveStatus.textContent = "Live mode required."; saveStatus.style.color = "#fbbf24"; return; }
       if(cfg.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cfg.email)){
-        saveStatus.textContent = "Invalid email."; return;
+        saveStatus.textContent = "Invalid email format."; saveStatus.style.color = "#f87171"; return;
       }
-      saveStatus.textContent = "Saving…";
+      saveStatus.textContent = "Saving…"; saveStatus.style.color = "";
       try {
         await ctx.actions.followAlertSave({ addr, config: cfg });
-        saveStatus.textContent = "Saved"; saveStatus.style.color = "#52b788";
+        saveStatus.textContent = "Saved!"; saveStatus.style.color = "#52b788";
         ctx.actions.renderRooms();
       } catch(e){
-        saveStatus.textContent = "Failed"; saveStatus.style.color = "#f87171";
+        saveStatus.textContent = "Save failed: " + (e?.message || String(e)); saveStatus.style.color = "#f87171";
       }
     });
 
-    const testBtn = el("button",{class:"btn tiny"+(disabled?" disabled":"")}, "Test Email");
+    const testBtn = el("button",{class:"btn tiny"+(disabled?" disabled":"")}, "Test Notification");
     if(disabled) testBtn.disabled = true;
     testBtn.addEventListener("click", async () => {
+      if(disabled){ saveStatus.textContent = "Live mode required."; saveStatus.style.color = "#fbbf24"; return; }
       const testEmail = (emailInput.value || "").trim();
-      if(!testEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(testEmail)){
-        saveStatus.textContent = "Enter a valid email first."; saveStatus.style.color = "#f87171"; return;
-      }
-      if(disabled){ saveStatus.textContent = "Live mode required."; return; }
       saveStatus.textContent = "Sending test…"; saveStatus.style.color = "";
       testBtn.disabled = true;
       try {
         const svc = serviceSelect ? serviceSelect.value : "";
-        await ctx.actions.wsCall("padspan_ha/notify_test", { email: testEmail, service: svc || undefined });
-        saveStatus.textContent = "Test sent — check inbox."; saveStatus.style.color = "#52b788";
+        const payload = { service: svc || undefined };
+        if(testEmail) payload.email = testEmail;
+        await ctx.actions.wsCall("padspan_ha/notify_test", payload);
+        saveStatus.textContent = "Test sent — check your notification app/inbox."; saveStatus.style.color = "#52b788";
       } catch(e){
-        saveStatus.textContent = "Test failed: " + (e?.message || String(e)).slice(0, 50);
+        const msg = (e?.message || String(e));
+        saveStatus.textContent = msg.length > 120 ? msg.slice(0, 120) + "…" : msg;
         saveStatus.style.color = "#f87171";
       } finally { if(!disabled) testBtn.disabled = false; }
     });
 
-    row.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap"},[saveBtn, testBtn, saveStatus]));
+    row.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px"},[saveBtn, testBtn, saveStatus]));
     list.appendChild(row);
   }
 
@@ -1598,102 +1628,3 @@ function _buildNotifications(ctx, el){
   return wrap;
 }
 
-// ── Health sub-tab ────────────────────────────────────────────────────────────
-function _health(ctx, el){
-  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
-  const rooms  = (snap?.rooms_discovered?.length) ?? Object.keys(ctx.state.roomTagMap||{}).length;
-  const tags   = (snap?.tags?.length) ?? Object.values(ctx.state.roomTagMap||{}).reduce((a,b)=>a+(b?.length||0),0);
-  const radios = snap?.ble?.radios?.length ?? 0;
-
-  const wrap = el("div",{class:"grid"});
-  wrap.appendChild(el("div",{class:"card"},[
-    el("div",{style:"font-weight:700"},"System"),
-    el("div",{class:"mono"},`UI v${ctx.state.version} • build ${ctx.state.buildId}`),
-    el("div",{class:"mono"},`Data mode: ${(ctx.state.dataMode||"").toUpperCase()}`),
-    el("div",{class:"mono"},`Refresh: ${ctx.state.timing?.lastRefreshMs??"—"}ms`),
-  ]));
-  wrap.appendChild(el("div",{class:"card"},[
-    el("div",{style:"font-weight:700"},"Discovery (best-effort)"),
-    el("div",{class:"mono"},`Rooms: ${rooms}`),
-    el("div",{class:"mono"},`Radios: ${radios}`),
-    el("div",{class:"mono"},`Objects tracked: ${(snap?.objects?.list||[]).length}`),
-    el("div",{class:"mono"},`Tags: ${tags}`),
-    el("div",{class:"muted",style:"margin-top:8px"},"For deeper validation, open the Diagnostics tab and paste the JSON into chat."),
-  ]));
-  if(snap?.ble){
-    wrap.appendChild(el("div",{class:"card"},[
-      el("div",{style:"font-weight:700"},"Bluetooth"),
-      el("div",{class:"mono"},`Scanners: ${(snap.ble.radios||[]).length}`),
-      el("div",{class:"mono"},`Advertisements: ${(snap.ble.advertisements||[]).length}`),
-    ]));
-  }
-  return wrap;
-}
-
-// ── Diagnostics sub-tab ───────────────────────────────────────────────────────
-function _diagnostics(ctx, el){
-  const payload = {
-    ui: { version:ctx.state.version, buildId:ctx.state.buildId, view:ctx.state.view, dataMode:ctx.state.dataMode, timing:ctx.state.timing, wsCounts:ctx.state.wsCounts },
-    backend: { versionInfo:ctx.state.versionInfo, status:ctx.state.status, roomTagMap:ctx.state.roomTagMap, liveSnapshot:ctx.state.live?.snapshot, liveSources:ctx.state.live?.sources, maps:ctx.state.maps?.list },
-    autoDiagnostics: ctx.state.diag,
-  };
-  const text = JSON.stringify(payload,null,2);
-
-  const ta = document.createElement("textarea");
-  ta.className = "mono";
-  ta.setAttribute("style","width:100%;height:420px;resize:vertical;white-space:pre;overflow:auto;");
-  ta.readOnly = true;
-  ta.value = text;
-
-  const selectAll = ()=>{ ta.focus(); ta.select(); };
-  const btnSelect = el("button",{class:"btn"},"Select All");
-  btnSelect.addEventListener("click",()=>{ selectAll(); ctx.toast("Selected. Press Ctrl/Cmd+C to copy."); });
-
-  const btnCopy = el("button",{class:"btn"},"Copy");
-  btnCopy.addEventListener("click", async()=>{
-    try { await navigator.clipboard.writeText(text); ctx.toast("Copied diagnostics."); return; } catch(e){}
-    try {
-      const tmp = document.createElement("textarea");
-      tmp.value=text; tmp.setAttribute("readonly",""); tmp.style.position="fixed"; tmp.style.left="-9999px"; tmp.style.top="0";
-      document.body.appendChild(tmp); tmp.focus(); tmp.select();
-      const ok = document.execCommand && document.execCommand("copy");
-      document.body.removeChild(tmp);
-      if(ok){ ctx.toast("Copied diagnostics."); return; }
-    } catch(e2){}
-    selectAll(); ctx.toast("Copy blocked by browser. Press Ctrl/Cmd+C.", true);
-  });
-
-  const wrap = el("div",{class:"grid"});
-  const diagCard = el("div",{class:"card"});
-  diagCard.appendChild(el("div",{style:"display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"},[
-    el("div",{},[
-      el("div",{style:"font-weight:700"},"Diagnostics"),
-      el("div",{class:"muted"},"Paste this back into chat when something breaks."),
-    ]),
-    el("div",{style:"display:flex;gap:8px;align-items:center"},[btnSelect,btnCopy]),
-  ]));
-  diagCard.appendChild(ta);
-  wrap.appendChild(diagCard);
-  wrap.appendChild(el("div",{class:"card"},[
-    el("div",{style:"font-weight:700"},"Install Verification"),
-    el("div",{class:"muted"},"If UI/Backend versions differ, HA is serving an older install or cached JS."),
-    el("div",{class:"mono"},`UI: v${ctx.state.version} • build ${ctx.state.buildId}`),
-    el("div",{class:"mono"},`Backend: ${ctx.state.versionInfo?JSON.stringify(ctx.state.versionInfo):"unknown"}`),
-    el("div",{class:"muted",style:"margin-top:8px"},"If backend version differs from UI, you likely have multiple installs. Remove duplicates and restart HA."),
-  ]));
-  return wrap;
-}
-
-// ── Debug sub-tab ─────────────────────────────────────────────────────────────
-function _debug(ctx, el){
-  const pre = document.createElement("pre");
-  pre.className = "mono";
-  pre.setAttribute("style","max-height:520px;overflow:auto");
-  pre.textContent = JSON.stringify(ctx.state,(k,v)=>{ if(v instanceof Set) return Array.from(v); return v; },2);
-  const card = el("div",{class:"card"},[
-    el("div",{style:"font-weight:700"},"Debug (panel state)"),
-    el("div",{class:"muted"},"Useful for UI-side issues (dead buttons, missing views)."),
-  ]);
-  card.appendChild(pre);
-  return el("div",{},[card]);
-}

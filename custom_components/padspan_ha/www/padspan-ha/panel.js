@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.46";
+const APP_VERSION = "0.6.47";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260304T173639Z";
+const BUILD_ID = "20260304T175533Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -352,11 +352,32 @@ class PadSpanHaApp extends HTMLElement {
 
 
   disconnectedCallback(){
-    // Stop data poll only. Keep activity/watchdog/visibility alive for reconnect.
-    // HA may reconnect the element shortly after disconnect; preserving these
-    // handlers ensures the panel recovers immediately.
+    // Full cleanup: clear ALL timers to prevent zombie timers if HA creates a
+    // new element instance. connectedCallback will recreate them fresh.
     this._stopDataPoll();
-    this._pollInFlight = false; // ensure next reconnect isn't blocked
+    this._pollInFlight = false;
+    if(this._activityTimer){ clearInterval(this._activityTimer); this._activityTimer = null; }
+    if(this._watchdogTimer){ clearInterval(this._watchdogTimer); this._watchdogTimer = null; }
+    if(this._visibilityHandler){
+      document.removeEventListener("visibilitychange", this._visibilityHandler);
+      this._visibilityHandler = null;
+    }
+    if(this._focusHandler){
+      window.removeEventListener("focus", this._focusHandler);
+      this._focusHandler = null;
+    }
+    if(this._pageshowHandler){
+      window.removeEventListener("pageshow", this._pageshowHandler);
+      this._pageshowHandler = null;
+    }
+    if(this._haLocationHandler){
+      window.removeEventListener("location-changed", this._haLocationHandler);
+      this._haLocationHandler = null;
+    }
+    if(this._interactionHandler){
+      this.removeEventListener("pointerdown", this._interactionHandler);
+      this._interactionHandler = null;
+    }
     if(this._modalEsc){
       window.removeEventListener("keydown", this._modalEsc);
       this._modalEsc = null;
@@ -391,45 +412,55 @@ class PadSpanHaApp extends HTMLElement {
   }
 
   _startKeepAlive(){
-    // Activity ping: dispatch on both document and window every 30s.
-    // HA's idle timer checks for user interaction; we simulate it.
-    // 30s is well inside the default 5-minute HA idle threshold.
+    // ── Activity ping (30s) ─────────────────────────────────────────────────
+    // Synthetic pointer events keep HA's idle overlay away. Dispatches on
+    // document, window, AND the HA root element with both trusted event types.
     if(!this._activityTimer){
       const ping = ()=>{
         try {
-          const ev = new PointerEvent("pointermove", {bubbles:true, composed:true});
-          document.dispatchEvent(ev);
-          window.dispatchEvent(ev);
-          // Also poke the HA root if available (some HA versions listen there)
+          for(const EvType of [PointerEvent, MouseEvent]){
+            for(const name of ["pointermove","mousemove"]){
+              try {
+                const ev = new EvType(name, {bubbles:true, composed:true, cancelable:true});
+                document.dispatchEvent(ev);
+                window.dispatchEvent(ev);
+              } catch(e){}
+            }
+          }
           const haRoot = document.querySelector("home-assistant");
-          if(haRoot) haRoot.dispatchEvent(ev);
+          if(haRoot) haRoot.dispatchEvent(new Event("mousemove", {bubbles:true}));
         } catch(e){}
       };
-      ping(); // immediate first ping
-      this._activityTimer = setInterval(ping, 30_000);
+      ping();
+      this._activityTimer = setInterval(ping, 25_000);
     }
 
-    // Watchdog: every 10s, verify DOM integrity and re-render if needed.
+    // ── Watchdog (8s) ───────────────────────────────────────────────────────
+    // Checks DOM integrity, content visibility, stuck polls, and poll liveness.
     if(!this._watchdogTimer){
       this._watchdogTimer = setInterval(()=>{
         try {
           if(!this.isConnected) return;
 
-          // 1. Check for stale $content references (shadow DOM rebuilt externally)
+          // 1. Stale shadow DOM references
           const rebuilt = this._ensureShadowDom();
-          if(rebuilt){
-            this._renderCurrentView();
-            return;
+          if(rebuilt){ this._renderCurrentView(); return; }
+
+          // 2. Content area empty OR visually zero-height (has children but invisible)
+          if(this.$content){
+            const empty = !this.$content.children.length;
+            let zeroHeight = false;
+            try { zeroHeight = this.$content.getBoundingClientRect().height < 2; } catch(e){}
+            if(empty || zeroHeight){
+              console.warn("PadSpan watchdog: content blank — re-rendering");
+              this._renderCurrentView();
+              if(!this.$content.children.length) this._refreshAll(false);
+            }
           }
 
-          // 2. Check if content area is empty
-          if(this.$content && !this.$content.children.length){
-            this._renderCurrentView();
-          }
-
-          // 3. Unstick deadlocked poll (WS call hung > 30s)
+          // 3. Unstick deadlocked poll (hung > 20s)
           if(this._pollInFlight && this._pollStartedAt){
-            if(performance.now() - this._pollStartedAt > 30_000){
+            if(performance.now() - this._pollStartedAt > 20_000){
               this._pollInFlight = false;
               this._renderCurrentView();
             }
@@ -440,34 +471,79 @@ class PadSpanHaApp extends HTMLElement {
             this._startDataPoll();
           }
 
-          // 5. Escalation: if no successful render in 60s, full rebuild.
-          // This catches cases where _renderCurrentView keeps failing silently
-          // (e.g. stale WS connection, view module error, detached DOM).
+          // 5. Escalation: no successful render in 30s → full rebuild
           const sinceGoodRender = this._lastGoodRender ? performance.now() - this._lastGoodRender : 0;
-          if(sinceGoodRender > 60_000 && (this._renderFailCount || 0) >= 3){
-            console.warn("PadSpan watchdog: no successful render in 60s, rebuilding panel");
+          if(sinceGoodRender > 30_000 && (this._renderFailCount || 0) >= 2){
+            console.warn("PadSpan watchdog: no successful render in 30s, rebuilding panel");
             this._renderFailCount = 0;
-            this._lastGoodRender = performance.now(); // prevent rebuild loop
+            this._lastGoodRender = performance.now();
             this._pollInFlight = false;
             this.connectedCallback();
           }
         } catch(e){}
-      }, 10_000);
+      }, 8_000);
     }
 
-    // Visibility handler: immediate wake-up when tab becomes visible again.
+    // ── Visibility change (browser tab show/hide) ───────────────────────────
     if(!this._visibilityHandler){
       this._visibilityHandler = ()=>{
-        if(document.visibilityState === "visible" && this._hass && this.isConnected){
-          this._pollInFlight = false; // clear any stuck poll from background throttling
-          this._ensureShadowDom();
-          this._renderCurrentView();
-          this._refreshAll(false);
-          if(this.state.dataMode === "live" && !this._pollTimer) this._startDataPoll();
-        }
+        if(document.visibilityState === "visible") this._wakeUp("visibilitychange");
       };
       document.addEventListener("visibilitychange", this._visibilityHandler);
     }
+
+    // ── Window focus (browser window regains focus) ─────────────────────────
+    // Fires on Alt-Tab back, clicking the browser from taskbar, etc.
+    // visibilitychange does NOT fire for these on all browsers.
+    if(!this._focusHandler){
+      this._focusHandler = ()=> this._wakeUp("focus");
+      window.addEventListener("focus", this._focusHandler);
+    }
+
+    // ── Page show (bfcache restore, navigation) ─────────────────────────────
+    if(!this._pageshowHandler){
+      this._pageshowHandler = (ev)=>{
+        if(ev.persisted) this._wakeUp("pageshow");
+      };
+      window.addEventListener("pageshow", this._pageshowHandler);
+    }
+
+    // ── HA location-changed (sidebar navigation within HA) ──────────────────
+    // HA fires this custom event on every route change. When the user clicks
+    // PadSpan in the sidebar after visiting another panel, this wakes us up
+    // even though visibilitychange won't fire (page was never hidden).
+    if(!this._haLocationHandler){
+      this._haLocationHandler = ()=>{
+        // Only wake if we're actually connected (HA re-attached our element)
+        if(this.isConnected) this._wakeUp("ha-location");
+      };
+      window.addEventListener("location-changed", this._haLocationHandler);
+    }
+
+    // ── Interaction recovery (user clicks on panel) ─────────────────────────
+    // If the panel looks blank and the user clicks anywhere inside it,
+    // immediately check health and rebuild if needed.
+    if(!this._interactionHandler){
+      this._interactionHandler = ()=>{
+        if(!this.$content) return;
+        if(!this.$content.children.length){
+          console.warn("PadSpan: user click on blank panel — recovering");
+          this._renderCurrentView();
+          this._refreshAll(false);
+        }
+      };
+      this.addEventListener("pointerdown", this._interactionHandler);
+    }
+  }
+
+  // Unified wake-up handler — called by all recovery triggers
+  _wakeUp(source){
+    if(!this._hass || !this.isConnected) return;
+    this._pollInFlight = false;
+    this._ensureShadowDom();
+    this._renderCurrentView();
+    this._refreshAll(false);
+    if(this.state.dataMode === "live" && !this._pollTimer) this._startDataPoll();
   }
 
   _startDataPoll(){
@@ -489,8 +565,8 @@ class PadSpanHaApp extends HTMLElement {
 
   _stopPolling(){
     this._stopDataPoll();
-    // Activity timer + watchdog + visibility handler intentionally NOT stopped.
-    // They are lightweight and keep the panel alive across disconnects.
+    // Keep-alive timers + event handlers are NOT stopped here.
+    // They protect against blank screens regardless of data mode.
   }
 
   async _pollTick(){
@@ -842,6 +918,10 @@ class PadSpanHaApp extends HTMLElement {
         refreshSnapshotQuiet: async ()=>{ await this._getLiveSnapshot(); },
         clearSessionEvents: ()=>{ this.state._sessionEvents.length = 0; this._renderCurrentView(); },
         followAlertSave: async (payload)=>await this._callWS({ type:"padspan_ha/follow_alert_save", ...payload }),
+        followAlertDelete: async (addr)=>{
+          await this._callWS({ type:"padspan_ha/follow_alert_delete", addr });
+          delete this.state.followAlertConfig[addr];
+        },
         followAlertGet: async ()=>{
           try {
             const res = await this._callWS({ type:"padspan_ha/follow_alert_get" });

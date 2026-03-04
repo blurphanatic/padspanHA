@@ -47,6 +47,14 @@ class AlertStore:
         self.data[addr] = config
         await self.store.async_save(self.data)
 
+    async def async_delete_config(self, addr: str) -> bool:
+        """Delete alert config for a device. Returns True if it existed."""
+        if addr in self.data:
+            del self.data[addr]
+            await self.store.async_save(self.data)
+            return True
+        return False
+
     def get_config(self, addr: str) -> dict[str, Any] | None:
         """Get alert config for a device, or None."""
         return self.data.get(addr)

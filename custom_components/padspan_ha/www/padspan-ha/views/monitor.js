@@ -19,7 +19,7 @@ export function render(ctx){
   const activeTab = ctx.state._monitorTab;
   const setTab = (t) => { ctx.state._monitorTab = t; ctx.actions.renderRooms(); };
 
-  const TABS = [["diagnostics","Diagnostics"],["zones","Zones"],["insights","Insights"]];
+  const TABS = [["diagnostics","Diagnostics"],["zones","Zones"],["insights","Insights"],["health","Health"],["diag_export","Diag Export"],["debug","Debug"]];
   const tabBar = el("div",{class:"tabs",style:"margin-bottom:14px;flex-wrap:wrap;gap:4px"});
   for(const [id,label] of TABS){
     tabBar.appendChild(el("button",{
@@ -31,6 +31,9 @@ export function render(ctx){
 
   if(activeTab === "zones"){ root.appendChild(_zones(ctx, el)); return root; }
   if(activeTab === "insights"){ root.appendChild(_insights(ctx, el, _sid)); return root; }
+  if(activeTab === "health"){ root.appendChild(_health(ctx, el)); return root; }
+  if(activeTab === "diag_export"){ root.appendChild(_diagExport(ctx, el)); return root; }
+  if(activeTab === "debug"){ root.appendChild(_debug(ctx, el)); return root; }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // DIAGNOSTICS TAB (default)
@@ -589,4 +592,113 @@ function _insights(ctx, el, _sid){
 
   wrap.appendChild(grid);
   return wrap;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HEALTH TAB
+// ═══════════════════════════════════════════════════════════════════════════
+function _health(ctx, el){
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const rooms  = (snap?.rooms_discovered?.length) ?? Object.keys(ctx.state.roomTagMap||{}).length;
+  const tags   = (snap?.tags?.length) ?? Object.values(ctx.state.roomTagMap||{}).reduce((a,b)=>a+(b?.length||0),0);
+  const radios = snap?.ble?.radios?.length ?? 0;
+
+  const wrap = el("div",{class:"grid"});
+  wrap.appendChild(el("div",{class:"card"},[
+    el("div",{style:"font-weight:700"},"System"),
+    el("div",{class:"mono"},`UI v${ctx.state.version} • build ${ctx.state.buildId}`),
+    el("div",{class:"mono"},`Data mode: ${(ctx.state.dataMode||"").toUpperCase()}`),
+    el("div",{class:"mono"},`Refresh: ${ctx.state.timing?.lastRefreshMs??"—"}ms`),
+  ]));
+  wrap.appendChild(el("div",{class:"card"},[
+    el("div",{style:"font-weight:700"},"Discovery (best-effort)"),
+    el("div",{class:"mono"},`Rooms: ${rooms}`),
+    el("div",{class:"mono"},`Radios: ${radios}`),
+    el("div",{class:"mono"},`Objects tracked: ${(snap?.objects?.list||[]).length}`),
+    el("div",{class:"mono"},`Tags: ${tags}`),
+    el("div",{class:"muted",style:"margin-top:8px"},"For deeper validation, open the Diag Export tab and paste the JSON into chat."),
+  ]));
+  if(snap?.ble){
+    wrap.appendChild(el("div",{class:"card"},[
+      el("div",{style:"font-weight:700"},"Bluetooth"),
+      el("div",{class:"mono"},`Scanners: ${(snap.ble.radios||[]).length}`),
+      el("div",{class:"mono"},`Advertisements: ${(snap.ble.advertisements||[]).length}`),
+    ]));
+  }
+  return wrap;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DIAG EXPORT TAB (was "Diagnostics" in Manage)
+// ═══════════════════════════════════════════════════════════════════════════
+function _diagExport(ctx, el){
+  const payload = {
+    ui: { version:ctx.state.version, buildId:ctx.state.buildId, view:ctx.state.view, dataMode:ctx.state.dataMode, timing:ctx.state.timing, wsCounts:ctx.state.wsCounts },
+    backend: { versionInfo:ctx.state.versionInfo, status:ctx.state.status, roomTagMap:ctx.state.roomTagMap, liveSnapshot:ctx.state.live?.snapshot, liveSources:ctx.state.live?.sources, maps:ctx.state.maps?.list },
+    autoDiagnostics: ctx.state.diag,
+  };
+  const text = JSON.stringify(payload,null,2);
+
+  const ta = document.createElement("textarea");
+  ta.className = "mono";
+  ta.setAttribute("style","width:100%;height:420px;resize:vertical;white-space:pre;overflow:auto;");
+  ta.readOnly = true;
+  ta.value = text;
+
+  const selectAll = ()=>{ ta.focus(); ta.select(); };
+  const btnSelect = el("button",{class:"btn"},"Select All");
+  btnSelect.addEventListener("click",()=>{ selectAll(); ctx.toast("Selected. Press Ctrl/Cmd+C to copy."); });
+
+  const btnCopy = el("button",{class:"btn"},"Copy");
+  btnCopy.addEventListener("click", async()=>{
+    try { await navigator.clipboard.writeText(text); ctx.toast("Copied diagnostics."); return; } catch(e){}
+    try {
+      const tmp = document.createElement("textarea");
+      tmp.value=text; tmp.setAttribute("readonly",""); tmp.style.position="fixed"; tmp.style.left="-9999px"; tmp.style.top="0";
+      document.body.appendChild(tmp); tmp.focus(); tmp.select();
+      const ok = document.execCommand && document.execCommand("copy");
+      document.body.removeChild(tmp);
+      if(ok){ ctx.toast("Copied diagnostics."); return; }
+    } catch(e2){}
+    selectAll(); ctx.toast("Copy blocked by browser. Press Ctrl/Cmd+C.", true);
+  });
+
+  const wrap = el("div",{class:"grid"});
+  const diagCard = el("div",{class:"card"});
+  diagCard.appendChild(el("div",{style:"display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"},[
+    el("div",{},[
+      el("div",{style:"font-weight:700"},"Diagnostics Export"),
+      el("div",{class:"muted"},"Paste this back into chat when something breaks."),
+    ]),
+    el("div",{style:"display:flex;gap:8px;align-items:center"},[btnSelect,btnCopy]),
+  ]));
+  diagCard.appendChild(ta);
+  wrap.appendChild(diagCard);
+  wrap.appendChild(el("div",{class:"card"},[
+    el("div",{style:"font-weight:700"},"Install Verification"),
+    el("div",{class:"muted"},"If UI/Backend versions differ, HA is serving an older install or cached JS."),
+    el("div",{class:"mono"},`UI: v${ctx.state.version} • build ${ctx.state.buildId}`),
+    el("div",{class:"mono"},`Backend: ${ctx.state.versionInfo?JSON.stringify(ctx.state.versionInfo):"unknown"}`),
+    el("div",{class:"muted",style:"margin-top:8px"},"If backend version differs from UI, you likely have multiple installs. Remove duplicates and restart HA."),
+  ]));
+  return wrap;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DEBUG TAB
+// ═══════════════════════════════════════════════════════════════════════════
+function _debug(ctx, el){
+  const pre = document.createElement("pre");
+  pre.className = "mono";
+  pre.setAttribute("style","max-height:520px;overflow:auto");
+  pre.textContent = JSON.stringify(ctx.state,(k,v)=>{ if(v instanceof Set) return Array.from(v); return v; },2);
+  const card = el("div",{class:"card"},[
+    el("div",{style:"font-weight:700"},"Debug (panel state)"),
+    el("div",{class:"muted"},"Useful for UI-side issues (dead buttons, missing views)."),
+  ]);
+  card.appendChild(pre);
+  return el("div",{},[card]);
 }
