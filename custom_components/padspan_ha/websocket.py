@@ -2117,18 +2117,26 @@ async def ws_notify_test(hass: HomeAssistant, connection, msg) -> None:
         return
     if not service_name or service_name not in services:
         service_name = next(iter(services))
+    base_data: dict[str, Any] = {
+        "title": "PadSpan HA — Test Notification",
+        "message": "This is a test email from PadSpan HA. If you received this, your notification pipeline is working.",
+    }
     try:
+        # Try with target first (legacy notify platforms)
         await hass.services.async_call(
-            "notify",
-            service_name,
-            {
-                "title": "PadSpan HA — Test Notification",
-                "message": "This is a test email from PadSpan HA. If you received this, your notification pipeline is working.",
-                "target": email,
-            },
+            "notify", service_name, {**base_data, "target": email},
         )
         _LOGGER.info("PadSpan test notification sent to %s via notify.%s", email, service_name)
         connection.send_result(msg["id"], {"ok": True, "service": service_name})
+    except vol.Invalid:
+        # Entity-based notify services reject 'target'; retry without it
+        try:
+            await hass.services.async_call("notify", service_name, base_data)
+            _LOGGER.info("PadSpan test notification sent via notify.%s (no target)", service_name)
+            connection.send_result(msg["id"], {"ok": True, "service": service_name})
+        except Exception as err2:
+            _LOGGER.warning("PadSpan test notification failed: %s", err2)
+            connection.send_error(msg["id"], "send_failed", str(err2))
     except Exception as err:
         _LOGGER.warning("PadSpan test notification failed: %s", err)
         connection.send_error(msg["id"], "send_failed", str(err))

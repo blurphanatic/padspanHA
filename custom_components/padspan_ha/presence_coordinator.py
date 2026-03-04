@@ -90,6 +90,7 @@ from collections import deque
 from datetime import timedelta
 from typing import Any
 
+import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -860,15 +861,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 message = (
                     f"{label} moved from {old_room or 'unknown'} to {new_room}"
                 )
-                await self.hass.services.async_call(
-                    "notify",
-                    service_name,
-                    {
-                        "title": f"PadSpan: {label} moved",
-                        "message": message,
-                        "target": email,
-                    },
-                )
+                alert_data: dict[str, Any] = {
+                    "title": f"PadSpan: {label} moved",
+                    "message": message,
+                }
+                try:
+                    await self.hass.services.async_call(
+                        "notify", service_name, {**alert_data, "target": email},
+                    )
+                except vol.Invalid:
+                    # Entity-based notify services reject 'target'
+                    await self.hass.services.async_call(
+                        "notify", service_name, alert_data,
+                    )
                 self._alert_last_sent[key] = now
                 _LOGGER.info(
                     "Follow alert sent for %s: %s → %s (to %s via notify.%s)",
