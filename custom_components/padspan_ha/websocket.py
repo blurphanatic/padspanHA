@@ -1137,6 +1137,11 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("adaptive_floor_detection"): bool,
         vol.Optional("signal_loss_linger_s"): vol.Coerce(int),
         vol.Optional("advanced_extra_tabs"): list,
+        vol.Optional("ha_entity_tracker_enabled"): bool,
+        vol.Optional("ha_entity_area_enabled"): bool,
+        vol.Optional("ha_entity_distance_enabled"): bool,
+        vol.Optional("ha_entity_scanner_distance_enabled"): bool,
+        vol.Optional("mqtt_publish_enabled"): bool,
     }
 )
 @websocket_api.async_response
@@ -1206,7 +1211,45 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         if "advanced_extra_tabs" in msg:
             valid = {"objects","devices","bluetooth","presence","monitor","qa","sandbox"}
             payload["advanced_extra_tabs"] = [t for t in msg["advanced_extra_tabs"] if t in valid]
+        for key in ("ha_entity_tracker_enabled", "ha_entity_area_enabled",
+                    "ha_entity_distance_enabled", "ha_entity_scanner_distance_enabled",
+                    "mqtt_publish_enabled"):
+            if key in msg:
+                payload[key] = bool(msg[key])
         await st.async_set(**payload)
+        # ── Toggle existing PadSpan entities in HA registry ──────────────────
+        _entity_keys = {
+            "ha_entity_tracker_enabled": "__tracker",
+            "ha_entity_area_enabled": "__area",
+            "ha_entity_distance_enabled": "__distance",
+            "ha_entity_scanner_distance_enabled": "__dist__",
+        }
+        _toggled_any = False
+        for _skey, _suffix in _entity_keys.items():
+            if _skey not in msg:
+                continue
+            _enabled = bool(msg[_skey])
+            try:
+                _er = entity_registry.async_get(hass)
+                _disabler = entity_registry.RegistryEntryDisabler.INTEGRATION
+                for _entry in list(_er.entities.values()):
+                    if _entry.platform != DOMAIN:
+                        continue
+                    _uid = _entry.unique_id or ""
+                    # __dist__ matches scanner-distance; __distance matches global distance
+                    # Make sure __distance doesn't match __dist__ entries
+                    if _suffix == "__distance" and "__dist__" in _uid:
+                        continue
+                    if _suffix not in _uid:
+                        continue
+                    if _enabled and _entry.disabled_by == _disabler:
+                        _er.async_update_entity(_entry.entity_id, disabled_by=None)
+                        _toggled_any = True
+                    elif not _enabled and _entry.disabled_by is None:
+                        _er.async_update_entity(_entry.entity_id, disabled_by=_disabler)
+                        _toggled_any = True
+            except Exception:
+                _LOGGER.debug("Failed to toggle entities for %s", _skey, exc_info=True)
     connection.send_result(msg["id"], {"settings": _get_settings(hass)})
 
 

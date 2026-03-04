@@ -87,20 +87,28 @@ async def async_setup_entry(
     def _check_new() -> None:
         if not coordinator.data:
             return
+        st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+        _sd = (st.data or {}) if st else {}
+        _area_on = _sd.get("ha_entity_area_enabled", True)
+        _dist_on = _sd.get("ha_entity_distance_enabled", True)
+        _scan_on = _sd.get("ha_entity_scanner_distance_enabled", True)
         new: list[SensorEntity] = []
         for key, obj in coordinator.data.items():
             if not _should_track(obj):
                 continue
             if key not in created:
-                new.append(PadSpanAreaSensor(coordinator, key))
-                new.append(PadSpanDistanceSensor(coordinator, key))
+                if _area_on:
+                    new.append(PadSpanAreaSensor(coordinator, key))
+                if _dist_on:
+                    new.append(PadSpanDistanceSensor(coordinator, key))
                 created.add(key)
             # Per-scanner distance sensors — one per device × scanner pair
-            for source in (obj.get("_source_rssi") or {}).keys():
-                pair = (key, source)
-                if pair not in created_scanner:
-                    new.append(PadSpanScannerDistanceSensor(coordinator, key, source))
-                    created_scanner.add(pair)
+            if _scan_on:
+                for source in (obj.get("_source_rssi") or {}).keys():
+                    pair = (key, source)
+                    if pair not in created_scanner:
+                        new.append(PadSpanScannerDistanceSensor(coordinator, key, source))
+                        created_scanner.add(pair)
         if new:
             _LOGGER.debug("Adding %d new PadSpan sensor(s)", len(new))
             async_add_entities(new)

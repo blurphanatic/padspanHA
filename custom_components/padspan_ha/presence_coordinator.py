@@ -473,7 +473,44 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._process_room_alerts(now, result)
             await self._record_movement(result)
 
+        # ── Experimental MQTT publishing ─────────────────────────────────────
+        await self._async_mqtt_publish(result)
+
         return result
+
+    # ── MQTT publishing (experimental) ───────────────────────────────────────
+
+    async def _async_mqtt_publish(self, result: dict[str, Any]) -> None:
+        """Publish device state to MQTT if enabled. Errors never break the pipeline."""
+        try:
+            st = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if not st or not (st.data or {}).get("mqtt_publish_enabled", False):
+                return
+            from homeassistant.components.mqtt import async_publish  # noqa: PLC0415
+            import json as _json  # noqa: PLC0415
+            for key, obj in result.items():
+                label = obj.get("user_label")
+                if not label:
+                    continue
+                slug = label.lower().replace(" ", "_")
+                topic_base = f"padspan/devices/{slug}"
+                # State JSON
+                payload = {
+                    "room": obj.get("room"),
+                    "rssi": obj.get("rssi"),
+                    "age_s": obj.get("age_s"),
+                    "home": not (isinstance(obj.get("age_s"), (int, float)) and obj["age_s"] > 300),
+                    "room_confidence": obj.get("room_confidence"),
+                }
+                await async_publish(self.hass, f"{topic_base}/state", _json.dumps(payload), retain=True)
+                await async_publish(self.hass, f"{topic_base}/area", obj.get("room") or "unknown", retain=True)
+                dist = obj.get("distance")
+                if dist is not None:
+                    await async_publish(self.hass, f"{topic_base}/distance", str(dist), retain=True)
+        except ImportError:
+            _LOGGER.debug("MQTT component not available — skipping MQTT publish")
+        except Exception:
+            _LOGGER.debug("MQTT publish error", exc_info=True)
 
     # ── smoothing helpers ─────────────────────────────────────────────────────
 

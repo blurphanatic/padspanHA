@@ -67,6 +67,10 @@ async def async_setup_entry(
     def _check_new() -> None:
         if not coordinator.data:
             return
+        st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+        _tracker_on = ((st.data or {}) if st else {}).get("ha_entity_tracker_enabled", True)
+        if not _tracker_on:
+            return
         new: list[PadSpanDeviceTracker] = []
         for key, obj in coordinator.data.items():
             if key in created:

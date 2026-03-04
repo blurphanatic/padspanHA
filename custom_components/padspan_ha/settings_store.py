@@ -46,6 +46,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "overview_iso_floor_gap": 150,
     "overview_iso_horiz_gap": 0,
     "overview_iso_focus":     None,
+    # HA entity publishing controls
+    "ha_entity_tracker_enabled":          True,
+    "ha_entity_area_enabled":             True,
+    "ha_entity_distance_enabled":         True,
+    "ha_entity_scanner_distance_enabled": True,
+    # MQTT (experimental, off by default)
+    "mqtt_publish_enabled": False,
 }
 
 
