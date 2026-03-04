@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.37";
+const APP_VERSION = "0.6.38";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260303T231104Z";
+const BUILD_ID = "20260304T011056Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -202,6 +202,9 @@ class PadSpanHaApp extends HTMLElement {
     // Anti-blank: activity simulation + watchdog (independent of polling)
     this._activityTimer = null;
     this._watchdogTimer = null;
+    // Render health tracking — used by watchdog to detect persistent blank screens
+    this._lastGoodRender = performance.now();
+    this._renderFailCount = 0;
   }
 
   set hass(hass){
@@ -429,6 +432,18 @@ class PadSpanHaApp extends HTMLElement {
           // 4. Ensure data poll is alive in live mode
           if(this.state.dataMode === "live" && !this._pollTimer){
             this._startDataPoll();
+          }
+
+          // 5. Escalation: if no successful render in 60s, full rebuild.
+          // This catches cases where _renderCurrentView keeps failing silently
+          // (e.g. stale WS connection, view module error, detached DOM).
+          const sinceGoodRender = this._lastGoodRender ? performance.now() - this._lastGoodRender : 0;
+          if(sinceGoodRender > 60_000 && (this._renderFailCount || 0) >= 3){
+            console.warn("PadSpan watchdog: no successful render in 60s, rebuilding panel");
+            this._renderFailCount = 0;
+            this._lastGoodRender = performance.now(); // prevent rebuild loop
+            this._pollInFlight = false;
+            this.connectedCallback();
           }
         } catch(e){}
       }, 10_000);
@@ -1465,7 +1480,9 @@ class PadSpanHaApp extends HTMLElement {
       }
     } catch(e) { /* ignore */ }
 
-    this.$content.innerHTML = "";
+    // ── Build new content into a fragment BEFORE clearing ──────────────────
+    // This prevents blank-screen: if render throws, old content stays visible.
+    const frag = document.createDocumentFragment();
 
     // BLE health banner — show once per session when Bluetooth feed is unhealthy
     if(!this.state._bleBannerDismissed){
@@ -1486,7 +1503,7 @@ class PadSpanHaApp extends HTMLElement {
         dismissBtn.addEventListener("click", ()=>{ this.state._bleBannerDismissed = true; banner.remove(); });
         banner.appendChild(msg);
         banner.appendChild(dismissBtn);
-        this.$content.appendChild(banner);
+        frag.appendChild(banner);
       }
     }
 
@@ -1507,7 +1524,7 @@ class PadSpanHaApp extends HTMLElement {
         el("div",{}, [el("span",{style:"color:#5eead4;font-weight:700;margin-right:6px"},"2."), "Place your scanners on the map in ", el("span",{style:"color:#5eead4"},"Maps \u2192 3D Stack")]),
         el("div",{}, [el("span",{style:"color:#5eead4;font-weight:700;margin-right:6px"},"3."), "Tag your devices in the ", el("span",{style:"color:#5eead4"},"Objects"), " tab, then track them here"]),
       ]));
-      this.$content.appendChild(welcome);
+      frag.appendChild(welcome);
     }
 
     if(!mod || typeof mod.render !== "function") {
@@ -1520,12 +1537,23 @@ class PadSpanHaApp extends HTMLElement {
         card.appendChild(el("div",{style:"height:10px;width:55%;background:rgba(255,255,255,0.04);border-radius:3px"}));
         skel.appendChild(card);
       }
-      this.$content.appendChild(skel);
+      frag.appendChild(skel);
+      // Swap only after new content is ready
+      this.$content.innerHTML = "";
+      this.$content.appendChild(frag);
+      this._lastGoodRender = performance.now();
+      this._renderFailCount = 0;
       return;
     }
     try {
       const node = mod.render(this._ctx());
-      this.$content.appendChild(node);
+      frag.appendChild(node);
+
+      // ── Swap: clear old content and append new content atomically ────────
+      this.$content.innerHTML = "";
+      this.$content.appendChild(frag);
+      this._lastGoodRender = performance.now();
+      this._renderFailCount = 0;
 
       // Restore scroll after DOM paint
       requestAnimationFrame(()=> {
@@ -1538,20 +1566,32 @@ class PadSpanHaApp extends HTMLElement {
         } catch(e) { /* ignore */ }
       });
     } catch (e) {
+      // Render failed — OLD content is still visible (not cleared).
+      // Only show error UI if content is actually empty (e.g. first render).
       console.error("PadSpan render error:", e);
-      const errDiv = document.createElement("div");
-      errDiv.style.cssText = "background:#1a0a0a;border:1px solid #7f1d1d;border-radius:8px;padding:16px;margin:16px 0;color:#fca5a5";
-      const h = document.createElement("div");
-      h.style.cssText = "font-weight:700;font-size:15px;margin-bottom:8px";
-      h.textContent = "UI render error — view: " + this.state.view;
-      const sub = document.createElement("div");
-      sub.style.cssText = "font-size:12px;margin-bottom:8px;color:#fca5a5";
-      sub.textContent = "A JavaScript error prevented this view from rendering. Open browser console (F12) for details.";
-      const pre = document.createElement("pre");
-      pre.style.cssText = "font-size:11px;white-space:pre-wrap;word-break:break-all;background:#0a0000;padding:10px;border-radius:4px;overflow:auto;max-height:300px;color:#f87171";
-      pre.textContent = String(e?.stack || e);
-      errDiv.appendChild(h); errDiv.appendChild(sub); errDiv.appendChild(pre);
-      this.$content.appendChild(errDiv);
+      this._renderFailCount = (this._renderFailCount || 0) + 1;
+      if(!this.$content.children.length){
+        this.$content.innerHTML = "";
+        this.$content.appendChild(frag); // banners at least
+        const errDiv = document.createElement("div");
+        errDiv.style.cssText = "background:#1a0a0a;border:1px solid #7f1d1d;border-radius:8px;padding:16px;margin:16px 0;color:#fca5a5";
+        const h = document.createElement("div");
+        h.style.cssText = "font-weight:700;font-size:15px;margin-bottom:8px";
+        h.textContent = "UI render error — view: " + this.state.view;
+        const sub = document.createElement("div");
+        sub.style.cssText = "font-size:12px;margin-bottom:8px;color:#fca5a5";
+        sub.textContent = "A JavaScript error prevented this view from rendering. Open browser console (F12) for details.";
+        const pre = document.createElement("pre");
+        pre.style.cssText = "font-size:11px;white-space:pre-wrap;word-break:break-all;background:#0a0000;padding:10px;border-radius:4px;overflow:auto;max-height:300px;color:#f87171";
+        pre.textContent = String(e?.stack || e);
+        const retryBtn = document.createElement("button");
+        retryBtn.className = "btn";
+        retryBtn.style.cssText = "margin-top:10px";
+        retryBtn.textContent = "Retry";
+        retryBtn.addEventListener("click", ()=>{ this._renderFailCount = 0; this._refreshAll(true); });
+        errDiv.appendChild(h); errDiv.appendChild(sub); errDiv.appendChild(pre); errDiv.appendChild(retryBtn);
+        this.$content.appendChild(errDiv);
+      }
     }
   }
 
