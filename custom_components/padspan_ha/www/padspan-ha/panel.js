@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.42";
+const APP_VERSION = "0.6.43";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260304T045025Z";
+const BUILD_ID = "20260304T051728Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -271,7 +271,7 @@ class PadSpanHaApp extends HTMLElement {
             <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
               <span class="muted" style="font-size:12px">Data</span>
               <button class="btn inline" id="dataModeToggle" title="Toggle sample vs live data">Sample</button>
-              <button class="btn inline" id="complexityToggle" title="Switch between Basic (simplified) and Advanced layout">Advanced</button>
+              <button class="btn inline" id="complexityToggle" title="Cycle between Basic, Advanced, and Development modes">Advanced</button>
             </span>
           </div>
           <div id="toast" class="toast hidden"></div>

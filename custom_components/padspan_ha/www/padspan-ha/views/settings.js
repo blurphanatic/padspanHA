@@ -25,7 +25,7 @@ export function render(ctx){
     return root;
   }
 
-  // Advanced mode: tabbed — Appearance | Scanner Map
+  // Advanced / Development mode: tabbed — Appearance | Scanner Map | Presence | UI Structure
   if(!ctx.state._settingsTab) ctx.state._settingsTab = "appearance";
   const activeTab = ctx.state._settingsTab;
   const setTab = (t) => { ctx.state._settingsTab = t; ctx.actions.renderRooms(); };

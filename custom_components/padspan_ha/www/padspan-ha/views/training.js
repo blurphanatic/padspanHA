@@ -1026,7 +1026,7 @@ const WALKTHROUGHS = [
     icon: "🎯",
     summary: "Walk around your home collecting signal fingerprints to build a calibration model for precise room detection.",
     steps: [
-      { title: "Choose a Device and Floor Plan",           text: "Open the Calibration tab (sidebar, Advanced mode) or use the standalone Calibration panel on your phone. Pick the BLE device you'll carry — usually your phone — and select which floor plan to calibrate. The standalone panel is optimised for one-handed phone use while walking around.", svg: _svgCalibSetup },
+      { title: "Choose a Device and Floor Plan",           text: "Open the Calibration tab (visible in Advanced and Development modes) or use the standalone Calibration panel on your phone. Pick the BLE device you'll carry — usually your phone — and select which floor plan to calibrate. The standalone panel is optimised for one-handed phone use while walking around.", svg: _svgCalibSetup },
       { title: "Pin & Listen — Collect Fingerprints",      text: "In the Pin & Listen tab, tap the floor plan where you're physically standing. Stand still for about 10 seconds while PadSpan records the RSSI signal strength from every scanner that can see your device. Each tap-and-wait creates one calibration point. Collect 15–30 points spread around your home for a good model.", svg: _svgCalibPin },
       { title: "Roam — Check Coverage",                    text: "Switch to the Roam tab to see a coverage heatmap. Green cells have good fingerprint data, yellow have some, red need more. Walk to the red areas and collect more points there. The guided 'walk here next' target helps you fill gaps efficiently.", svg: _svgCalibHeatmap },
       { title: "Compute Model & Validate",                 text: "Switch to the Model tab and click Compute Model. PadSpan fits a k-NN fingerprint model and per-scanner OLS path-loss model from your collected data. Leave-one-out cross-validation scores the accuracy. 80%+ is good, 90%+ is excellent. You can always collect more points and recompute to improve the score.", svg: _svgCalibModel },
@@ -1038,7 +1038,7 @@ const WALKTHROUGHS = [
     icon: "⚙️",
     summary: "Clean up tags, delete HA areas, remove orphaned map data, and keep your system tidy.",
     steps: [
-      { title: "The Manage Tab (Advanced Mode)",         text: "The Manage tab gives you full control over your PadSpan data. Switch to Advanced mode (⚡ toggle in the top bar) then click Manage in the sidebar. You'll find tabs for BLE Tags, Rooms (HA Areas), Maps, and Data.", svg: _svgManageOverview },
+      { title: "The Manage Tab",                         text: "The Manage tab gives you full control over your PadSpan data. It's visible in Advanced and Development modes (cycle the mode toggle in the top bar). Click Manage in the sidebar to find tabs for BLE Tags, Rooms (HA Areas), Maps, and Data.", svg: _svgManageOverview },
       { title: "Untag or Remove BLE Devices",           text: "Under BLE Tags, every named BLE device is listed with its last-seen time. Click Delete to remove the name — the device reverts to showing its hardware address. A two-click confirm prevents accidental deletes.", svg: _svgUntagDevice },
       { title: "Clean Up Orphan Polygons",              text: "The Data tab's Orphan Room Polygons scanner finds room boundaries in your maps that no longer match a real HA area — commonly leftover from sample mode or rooms that were deleted. Delete them individually or all at once.", svg: _svgOrphanClean },
     ],
@@ -1220,8 +1220,8 @@ const MANUAL_SECTIONS = [
     icon: "🔧",
     paragraphs: [
       "PadSpan has two 'Manage' areas, each for different tasks:",
-      "Settings → Manage tab (Advanced mode only) — quick access for everyday cleanup: untag BLE devices and delete HA areas. Only visible in Advanced mode (⚡ toggle in top bar).",
-      "Sidebar Manage tab (Advanced mode only) — deeper data management: BLE tag operations, HA entity deletion, map and integration controls, orphan room polygon cleanup.",
+      "Settings → Manage tab (Advanced / Development mode) — quick access for everyday cleanup: untag BLE devices and delete HA areas.",
+      "Sidebar Manage tab (Advanced / Development mode) — deeper data management: BLE tag operations, HA entity deletion, map and integration controls, orphan room polygon cleanup.",
       "Untag a BLE device — go to Settings → Manage → BLE Tags. Find the device and click Untag (two-click confirm). The device reverts to its hardware address but is still tracked.",
       "Delete an HA Area — go to Settings → Manage → Rooms. Click Delete next to an area. This removes it from Home Assistant entirely and cannot be undone from within PadSpan. Re-add in HA Settings → Areas & Zones if needed.",
       "Orphan Room Polygons — found in Manage sidebar → Data. These are room boundaries in your maps that no longer match a real HA area — usually leftover from sample mode or deleted rooms. Delete individually or all at once.",
@@ -1269,7 +1269,7 @@ export function render(ctx) {
 
   // ── Tab bar ────────────────────────────────────────────────────────────────
   const tabBar = el("div", { style: "display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid #1b3526;padding-bottom:10px;flex-wrap:wrap" });
-  for (const [id, label, icon] of [["walkthroughs","Walkthroughs","📡"],["manual","Manual","📖"]]) {
+  for (const [id, label, icon] of [["walkthroughs","Walkthroughs","📡"],["quickstart","Quick Start","🗒️"],["manual","Full Manual","📖"]]) {
     const active = ts.tab === id;
     const btn = el("button", {
       class: "btn" + (active ? "" : " inline"),
@@ -1283,6 +1283,8 @@ export function render(ctx) {
   // ── Content ────────────────────────────────────────────────────────────────
   if (ts.tab === "walkthroughs") {
     root.appendChild(_renderWalkthroughs(ctx, el, ts));
+  } else if (ts.tab === "quickstart") {
+    root.appendChild(_renderQuickStart(ctx, el, ts, HELP));
   } else {
     root.appendChild(_renderManual(ctx, el, ts, HELP));
   }
@@ -1378,6 +1380,161 @@ function _renderWalkthroughs(ctx, el, ts) {
 
   card.appendChild(navRow);
   wrap.appendChild(card);
+  return wrap;
+}
+
+// ─── Quick Start (simplified manual — default Advanced tabs only) ─────────────
+
+const QUICKSTART_SECTIONS = [
+  {
+    id: "qs_intro",
+    title: "What is PadSpan™ HA?",
+    icon: "🏠",
+    paragraphs: [
+      "PadSpan™ HA is a custom Home Assistant integration that adds whole-home Bluetooth Low Energy (BLE) presence tracking. It turns your existing Bluetooth scanners into a real-time room-level tracking system.",
+      "Unlike basic presence detection that only knows home or away, PadSpan tells you which room a person or device is in — updated every 5 seconds, displayed on a live map, all running locally inside Home Assistant.",
+    ],
+  },
+  {
+    id: "qs_getting_started",
+    title: "Getting Started",
+    icon: "🚀",
+    paragraphs: [
+      "1. Install PadSpan HA via HACS (custom repository) and restart Home Assistant completely.",
+      "2. Open PadSpan HA from the sidebar. Use Sample mode first to explore the interface with demo data.",
+      "3. Switch to Live mode to see your real Bluetooth scanners and devices.",
+      "4. Create rooms in HA Settings → Areas & Zones — PadSpan reads your areas directly.",
+      "5. Tag your key devices in the Objects tab (visible in Development mode or if added via Settings → UI Structure).",
+    ],
+  },
+  {
+    id: "qs_follow",
+    title: "Follow",
+    icon: "🎯",
+    helpKeys: ["follow", "follow_selector", "follow_map", "follow_alerts"],
+  },
+  {
+    id: "qs_overview",
+    title: "Overview",
+    icon: "📋",
+    helpKeys: ["overview", "overview_grid"],
+  },
+  {
+    id: "qs_maps",
+    title: "Maps",
+    icon: "🗺️",
+    helpKeys: ["maps", "maps_library", "maps_upload", "maps_stack"],
+  },
+  {
+    id: "qs_settings",
+    title: "Settings",
+    icon: "⚙️",
+    paragraphs: [
+      "Appearance — assign rooms to floors, pick room colours for the Follow map and Overview grid.",
+      "Scanner Map — view and manage calibration points per map. Clear calibration for a specific map if you need to start fresh.",
+      "Presence — adjust Room Change Delay (how long before PadSpan confirms a room switch) and Home/Away Timeout (how long before a missing device is marked away).",
+      "UI Structure — choose which extra tabs appear in Advanced mode. All tabs are always visible in Development mode.",
+    ],
+  },
+  {
+    id: "qs_manage",
+    title: "Manage",
+    icon: "🔧",
+    paragraphs: [
+      "Data — BLE tag operations (untag devices), HA entity deletion, orphan room polygon cleanup, and map/integration controls.",
+      "History — historical data browser with export and cleanup options.",
+      "Events — event log viewer for tracking system activity.",
+      "Health — system health metrics, scanner status, and BLE diagnostics.",
+      "Diagnostics — detailed error logs, performance stats, and build stamp verification.",
+      "Debug — low-level state inspection for troubleshooting.",
+    ],
+  },
+  {
+    id: "qs_calibration",
+    title: "Calibration",
+    icon: "📐",
+    paragraphs: [
+      "Calibration improves room detection accuracy by collecting real signal fingerprints from your home. The default Advanced view exposes two calibration tools:",
+      "Tune — a 3D isometric view of your floor plans with draggable scanner markers. Drag each marker to match the scanner's real-world position so PadSpan's distance calculations start from the right place.",
+      "Beacon Tune — mark a beacon's physical position on the map, then let PadSpan auto-collect a 60-second RSSI fingerprint from every scanner. Repeat at several locations for best coverage.",
+      "Additional calibration tools (Setup, Pin & Listen, Roam, Model) are available in Development mode for advanced fingerprint collection and model analysis.",
+    ],
+  },
+  {
+    id: "qs_training",
+    title: "Training Hub",
+    icon: "🎓",
+    paragraphs: [
+      "You're here! The Training Hub has animated step-by-step walkthroughs for major features (like BLE signal propagation and room detection). The Full Manual tab contains the complete reference for every PadSpan tab and feature.",
+    ],
+  },
+  {
+    id: "qs_modes",
+    title: "Basic / Advanced / Development",
+    icon: "⚡",
+    paragraphs: [
+      "PadSpan has three UI modes, cycled by the toggle button in the top-right corner:",
+      "Basic — 5 tabs (Follow, Overview, Maps, Settings, Training). Best for everyday use after initial setup.",
+      "Advanced — 7 tabs by default (adds Manage and Calibration). You can opt extra tabs into Advanced via Settings → UI Structure.",
+      "Development — all 14 tabs visible. Includes Objects, Devices, Bluetooth, Presence, Monitor, QA, and Sandbox for debugging and development.",
+    ],
+  },
+];
+
+function _renderQuickStart(ctx, el, ts, HELP) {
+  const wrap = el("div", {});
+
+  wrap.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:16px;line-height:1.6" },
+    "A simplified guide covering the tabs visible in Advanced mode. For the complete reference, switch to the Full Manual tab."));
+
+  for (const section of QUICKSTART_SECTIONS) {
+    const isOpen = ts.manualOpen["qs_" + section.id] !== false;
+    const sectionEl = el("div", { style: "margin-bottom:10px" });
+
+    const headerBtn = el("button", {
+      style: [
+        "display:flex;align-items:center;gap:10px;width:100%;background:#0a150e",
+        "border:1px solid #1b3526;border-radius:8px;padding:12px 14px;cursor:pointer",
+        "text-align:left;transition:border-color 0.15s",
+        isOpen ? "border-bottom-left-radius:0;border-bottom-right-radius:0;border-color:#253e2e" : "",
+      ].join(";"),
+      onclick: () => {
+        ts.manualOpen["qs_" + section.id] = !isOpen;
+        ctx.actions.renderRooms();
+      },
+    });
+    headerBtn.appendChild(el("span", { style: "font-size:16px" }, section.icon));
+    headerBtn.appendChild(el("span", { style: "font-size:13px;font-weight:600;color:#cbd5e1;flex:1" }, section.title));
+    headerBtn.appendChild(el("span", { style: "font-size:12px;color:#4a6052" }, isOpen ? "▲" : "▼"));
+    sectionEl.appendChild(headerBtn);
+
+    if (isOpen) {
+      const body = el("div", { style: "background:#071008;border:1px solid #253e2e;border-top:none;border-radius:0 0 8px 8px;padding:14px 16px" });
+
+      if (section.helpKeys && section.helpKeys.length) {
+        for (const key of section.helpKeys) {
+          const h = HELP[key];
+          if (!h) continue;
+          body.appendChild(el("div", { style: "font-size:12px;font-weight:700;color:#52b788;margin-bottom:6px;margin-top:12px" }, h.title));
+          const paras = Array.isArray(h.body) ? h.body : [h.body];
+          for (const p of paras) {
+            body.appendChild(el("div", { style: "font-size:13px;line-height:1.75;color:#94a3b8;margin-bottom:8px" }, p));
+          }
+        }
+      }
+
+      if (section.paragraphs && section.paragraphs.length) {
+        for (const p of section.paragraphs) {
+          body.appendChild(el("div", { style: "font-size:13px;line-height:1.75;color:#94a3b8;margin-bottom:8px" }, p));
+        }
+      }
+
+      sectionEl.appendChild(body);
+    }
+
+    wrap.appendChild(sectionEl);
+  }
+
   return wrap;
 }
 

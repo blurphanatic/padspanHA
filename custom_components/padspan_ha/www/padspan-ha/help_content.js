@@ -4,7 +4,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 // PadSpan HA — User-facing help content
 // Each entry: { title, body: string[] }
-// Opened by the ? help buttons in Basic (and Advanced) mode.
+// Opened by the ? help buttons in Basic, Advanced, and Development modes.
 
 export const HELP = {
 
@@ -52,7 +52,7 @@ export const HELP = {
       "Overview shows a live diagram of all your rooms with your Bluetooth scanners and tracked objects displayed inside them.",
       "Think of it as your home's control tower — a quick snapshot of where everything is right now.",
       "Each box is a room from your Home Assistant Areas & Zones. Green antenna icons are your Bluetooth radios. Coloured dots are tracked people or objects.",
-      "In Advanced mode, click any KPI number (Rooms, Objects, Radios) to see a full list. Click any row in that list for detailed info on that item.",
+      "In Advanced or Development mode, click any KPI number (Rooms, Objects, Radios) to see a full list. Click any row in that list for detailed info on that item.",
     ],
   },
   overview_grid: {
@@ -129,11 +129,11 @@ export const HELP = {
   settings: {
     title: "Settings — Customise PadSpan™",
     body: [
-      "In Advanced mode, Settings has four tabs: Appearance, Scanner Map, Presence, and Manage.",
+      "In Advanced or Development mode, Settings has tabs: Appearance, Scanner Map, Presence, and UI Structure.",
       "Appearance — change room colours. Your floors and rooms are read from HA; add or rename them in HA Settings → Areas & Zones.",
       "Scanner Map — see estimated scanner positions on your floor plans, derived from calibration fingerprint data.",
       "Presence — tune room-switching speed and set the Home/Away timeout.",
-      "Manage — untag BLE devices and delete HA areas directly from PadSpan.",
+      "UI Structure — choose which extra tabs appear in Advanced mode. All tabs are always visible in Development mode.",
       "In Basic mode only the Appearance tab is shown.",
     ],
   },
@@ -159,7 +159,7 @@ export const HELP = {
     body: [
       "BLE Tags — every named BLE device is listed with its address, kind, and last-seen time. Click Untag to remove the friendly name (two-click confirm prevents accidents). The device reverts to its hardware address but continues to be tracked.",
       "Rooms (HA Areas) — lists every area from Home Assistant. Click Delete to remove an area from HA entirely. This also unassigns any scanners in that room. Cannot be undone from within PadSpan — re-add in HA Settings → Areas & Zones if needed.",
-      "This tab is only visible in Advanced mode. For deeper data management (orphan cleanup, entity deletion, integration controls) use the Manage sidebar tab.",
+      "This tab is visible in Advanced and Development modes. For deeper data management (orphan cleanup, entity deletion, integration controls) use the Manage sidebar tab.",
     ],
   },
 
