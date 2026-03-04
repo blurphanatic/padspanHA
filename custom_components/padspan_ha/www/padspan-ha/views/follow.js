@@ -445,6 +445,25 @@ function _buildAlerts(ctx, el, helpBtn, addr, chosen, haAreas, dataMode, isBasic
     }
   });
 
+  const testBtn = el("button", { class: "btn", style: "margin-top:10px" }, "Send Test Email");
+  testBtn.addEventListener("click", async () => {
+    const email = (emailInput.value || "").trim();
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      saveStatus.textContent = "Enter a valid email first."; saveStatus.style.color = "#f87171"; return;
+    }
+    if (dataMode !== "live") { saveStatus.textContent = "Switch to Live mode first."; return; }
+    saveStatus.textContent = "Sending test…"; saveStatus.style.color = "";
+    testBtn.disabled = true;
+    try {
+      const svc = serviceSelect ? serviceSelect.value : "";
+      await ctx.actions.wsCall("padspan_ha/notify_test", { email, service: svc || undefined });
+      saveStatus.textContent = "Test sent — check your inbox."; saveStatus.style.color = "#52b788";
+    } catch (e) {
+      saveStatus.textContent = "Test failed: " + (e?.message || String(e)).slice(0, 60);
+      saveStatus.style.color = "#f87171";
+    } finally { testBtn.disabled = false; }
+  });
+
   if (isBasic) {
     card.appendChild(el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
       el("div", {}, [
@@ -493,7 +512,7 @@ function _buildAlerts(ctx, el, helpBtn, addr, chosen, haAreas, dataMode, isBasic
     ].filter(Boolean)));
   }
 
-  card.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-top:10px"},[saveBtn, saveStatus]));
+  card.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px"},[saveBtn, testBtn, saveStatus]));
   return card;
 }
 

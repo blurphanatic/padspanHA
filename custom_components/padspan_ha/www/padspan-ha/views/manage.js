@@ -870,7 +870,7 @@ function _buildNotifications(ctx, el){
       ]));
     }
 
-    // Save
+    // Save + Test
     const saveStatus = el("span",{class:"muted",style:"font-size:11px"});
     const saveBtn = el("button",{class:"btn tiny"+(disabled?" disabled":"")}, "Save");
     if(disabled) saveBtn.disabled = true;
@@ -889,7 +889,27 @@ function _buildNotifications(ctx, el){
       }
     });
 
-    row.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px"},[saveBtn, saveStatus]));
+    const testBtn = el("button",{class:"btn tiny"+(disabled?" disabled":"")}, "Test Email");
+    if(disabled) testBtn.disabled = true;
+    testBtn.addEventListener("click", async () => {
+      const testEmail = (emailInput.value || "").trim();
+      if(!testEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(testEmail)){
+        saveStatus.textContent = "Enter a valid email first."; saveStatus.style.color = "#f87171"; return;
+      }
+      if(disabled){ saveStatus.textContent = "Live mode required."; return; }
+      saveStatus.textContent = "Sending test…"; saveStatus.style.color = "";
+      testBtn.disabled = true;
+      try {
+        const svc = serviceSelect ? serviceSelect.value : "";
+        await ctx.actions.wsCall("padspan_ha/notify_test", { email: testEmail, service: svc || undefined });
+        saveStatus.textContent = "Test sent — check inbox."; saveStatus.style.color = "#52b788";
+      } catch(e){
+        saveStatus.textContent = "Test failed: " + (e?.message || String(e)).slice(0, 50);
+        saveStatus.style.color = "#f87171";
+      } finally { if(!disabled) testBtn.disabled = false; }
+    });
+
+    row.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap"},[saveBtn, testBtn, saveStatus]));
     list.appendChild(row);
   }
 

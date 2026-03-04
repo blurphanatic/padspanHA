@@ -78,6 +78,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_calibration_health_check)
     websocket_api.async_register_command(hass, ws_movement_history_get)
     websocket_api.async_register_command(hass, ws_notify_services_list)
+    websocket_api.async_register_command(hass, ws_notify_test)
     websocket_api.async_register_command(hass, ws_adaptive_status_get)
     websocket_api.async_register_command(hass, ws_adaptive_reset)
     websocket_api.async_register_command(hass, ws_propagation_health)
@@ -2089,6 +2090,44 @@ async def ws_notify_services_list(hass: HomeAssistant, connection, msg) -> None:
     services = hass.services.async_services().get("notify", {})
     result = sorted(services.keys())
     connection.send_result(msg["id"], {"services": result})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/notify_test",
+        "email": str,
+        vol.Optional("service"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_notify_test(hass: HomeAssistant, connection, msg) -> None:
+    """Send a test email via HA notify to verify the notification pipeline works."""
+    email = str(msg.get("email") or "").strip()
+    if not email:
+        connection.send_error(msg["id"], "missing_email", "Email address is required")
+        return
+    service_name = str(msg.get("service") or "").strip()
+    services = hass.services.async_services().get("notify", {})
+    if not services:
+        connection.send_error(msg["id"], "no_notify", "No notify services available in HA")
+        return
+    if not service_name or service_name not in services:
+        service_name = next(iter(services))
+    try:
+        await hass.services.async_call(
+            "notify",
+            service_name,
+            {
+                "title": "PadSpan HA — Test Notification",
+                "message": "This is a test email from PadSpan HA. If you received this, your notification pipeline is working.",
+                "target": email,
+            },
+        )
+        _LOGGER.info("PadSpan test notification sent to %s via notify.%s", email, service_name)
+        connection.send_result(msg["id"], {"ok": True, "service": service_name})
+    except Exception as err:
+        _LOGGER.warning("PadSpan test notification failed: %s", err)
+        connection.send_error(msg["id"], "send_failed", str(err))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
