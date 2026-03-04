@@ -1361,7 +1361,50 @@ function _events(ctx, el){
 // ── Email Notification Configuration ──────────────────────────────────────────
 function _buildNotifications(ctx, el){
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
-  const allObjects = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
+  const snapObjects = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
+
+  // Merge all sources of tagged devices so list is complete:
+  // 1. Live snapshot objects
+  // 2. Saved alert configs (devices that had alerts configured previously)
+  // 3. Followed addresses
+  const configs = ctx.state.followAlertConfig || {};
+  const seen = new Set();
+  const allObjects = [];
+  for(const o of snapObjects){
+    const addr = o.address || o.entity_id || "";
+    if(addr){ seen.add(addr); allObjects.push(o); }
+  }
+  // Add devices from saved alert configs that aren't in the snapshot
+  for(const [addr, cfg] of Object.entries(configs)){
+    if(!addr || seen.has(addr)) continue;
+    seen.add(addr);
+    allObjects.push({ address: addr, user_label: cfg._label || addr, kind: "ble", _fromConfig: true });
+  }
+  // Add followed devices that aren't in the snapshot
+  for(const addr of (ctx.state.followedAddrs || [])){
+    if(!addr || seen.has(addr)) continue;
+    seen.add(addr);
+    allObjects.push({ address: addr, user_label: addr, kind: "ble", _fromFollowed: true });
+  }
+  // Load labels from object store if available (async, will re-render)
+  if(!ctx.state._objectLabelsLoaded){
+    ctx.state._objectLabelsLoaded = true;
+    ctx.actions.objectLabelList().then(r => {
+      if(r && r.labels && Object.keys(r.labels).length){
+        ctx.state._objectLabels = r.labels;
+        ctx.actions.renderRooms();
+      }
+    }).catch(()=>{});
+  }
+  // Merge stored labels into allObjects
+  const storedLabels = ctx.state._objectLabels || {};
+  for(const [addr, info] of Object.entries(storedLabels)){
+    if(!addr || seen.has(addr)) continue;
+    seen.add(addr);
+    const label = (typeof info === "string") ? info : (info && info.label) || addr;
+    allObjects.push({ address: addr, user_label: label, kind: "ble", _fromStore: true });
+  }
+
   const haAreas = (ctx.state.model && Array.isArray(ctx.state.model.areas)) ? ctx.state.model.areas : [];
   const dataMode = ctx.state.dataMode || "sample";
   const disabled = dataMode !== "live";
@@ -1473,10 +1516,19 @@ function _buildNotifications(ctx, el){
     }
   }).catch(() => {});
 
-  // Show warning if no notify services are available
-  if(ctx.state._notifyServices && ctx.state._notifyServices.length === 0){
+  // Service discovery info + refresh
+  const _svcList = ctx.state._notifyServices || [];
+  const refreshBtn = el("button",{class:"btn tiny",style:"margin-left:8px"}, "Refresh Services");
+  refreshBtn.addEventListener("click", () => {
+    ctx.state._notifyServices = null;
+    ctx.actions.renderRooms();
+  });
+  if(_svcList.length === 0){
     editCard.appendChild(el("div",{style:"background:#1a0a0a;border:1px solid #7f1d1d;border-radius:8px;padding:12px 14px;margin-bottom:12px"},[
-      el("div",{style:"font-weight:700;font-size:13px;color:#fca5a5;margin-bottom:4px"},"No notification services found"),
+      el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
+        el("div",{style:"font-weight:700;font-size:13px;color:#fca5a5"},"No notification services found"),
+        refreshBtn,
+      ]),
       el("div",{style:"font-size:12px;color:#fca5a5;line-height:1.5"},
         "PadSpan sends alerts via Home Assistant's notify integration. You need to set up a notification provider first:"
       ),
@@ -1484,8 +1536,14 @@ function _buildNotifications(ctx, el){
         "1. Go to HA Settings \u2192 Devices & Services \u2192 Add Integration\n" +
         "2. Search for your notification provider (e.g. SMTP, Mobile App, Pushover, Telegram)\n" +
         "3. Configure it with your email/credentials\n" +
-        "4. Come back here \u2014 the service will appear automatically"
+        "4. Restart HA, then click Refresh Services above"
       ),
+    ]));
+  } else {
+    editCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap"},[
+      el("span",{class:"badge",style:"border-color:#52b788;color:#52b788"},`${_svcList.length} service${_svcList.length>1?"s":""} found`),
+      el("span",{class:"muted",style:"font-size:10px"}, _svcList.join(", ")),
+      refreshBtn,
     ]));
   }
 

@@ -2201,6 +2201,29 @@ async def ws_notify_services_list(hass: HomeAssistant, connection, msg) -> None:
     except Exception:
         pass
 
+    # Method 4: check config entries for known notification integrations
+    # and see if they registered any services we missed
+    try:
+        for entry in hass.config_entries.async_entries():
+            if entry.domain in ("smtp", "email", "pushover", "telegram_bot",
+                                "slack", "discord", "mobile_app"):
+                # Check if there's a corresponding notify service or entity
+                slug = entry.title.lower().replace(" ", "_") if entry.title else entry.domain
+                possible_eid = f"notify.{slug}"
+                if possible_eid not in entity_ids:
+                    # Check if entity actually exists in state
+                    state = hass.states.get(possible_eid)
+                    if state:
+                        entity_ids.append(possible_eid)
+                # Also check domain-based entity
+                possible_eid2 = f"notify.{entry.domain}"
+                if possible_eid2 not in entity_ids:
+                    state = hass.states.get(possible_eid2)
+                    if state:
+                        entity_ids.append(possible_eid2)
+    except Exception:
+        pass
+
     # Combine: entity IDs first (preferred), then legacy service names
     # Deduplicate: if a legacy service matches an entity slug, skip the legacy one
     entity_slugs = {eid.split(".", 1)[1] for eid in entity_ids if "." in eid}
