@@ -1462,17 +1462,16 @@ function _buildNotifications(ctx, el){
     return wrap;
   }
 
-  // Load notify services once (cached in state)
-  if(!ctx.state._notifyServices){
-    ctx.state._notifyServices = [];
-    ctx.actions.wsCall("padspan_ha/notify_services_list", {}).then(r => {
-      ctx.state._notifyServices = (r && r.services) || [];
-      if(!r || !r.services || !r.services.length){
-        // Re-render to show the warning
-        ctx.actions.renderRooms();
-      }
-    }).catch(() => {});
-  }
+  // Always refresh notify services (user may add SMTP mid-session)
+  const _prevServices = JSON.stringify(ctx.state._notifyServices || []);
+  if(!ctx.state._notifyServices) ctx.state._notifyServices = [];
+  ctx.actions.wsCall("padspan_ha/notify_services_list", {}).then(r => {
+    ctx.state._notifyServices = (r && r.services) || [];
+    // Re-render if list changed (new service added, or still empty on first load)
+    if(JSON.stringify(ctx.state._notifyServices) !== _prevServices){
+      ctx.actions.renderRooms();
+    }
+  }).catch(() => {});
 
   // Show warning if no notify services are available
   if(ctx.state._notifyServices && ctx.state._notifyServices.length === 0){

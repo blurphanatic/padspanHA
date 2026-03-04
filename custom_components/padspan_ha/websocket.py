@@ -2166,22 +2166,51 @@ async def ws_notify_services_list(hass: HomeAssistant, connection, msg) -> None:
 
     Supports both the legacy notify.{name} services and the newer HA 2024+
     entity-based notify platform (notify.send_message + entity_id targeting).
+    Uses three discovery methods to be as thorough as possible.
     """
     services = hass.services.async_services().get("notify", {})
     # Legacy services (exclude 'send_message' — that's the new generic dispatcher)
     legacy = [k for k in services if k != "send_message"]
 
-    # New entity-based notify: find all notify.* entities in the state machine
-    entity_ids = [
-        s.entity_id for s in hass.states.async_all("notify")
-    ]
+    # Method 1: notify entities from state machine
+    entity_ids: list[str] = []
+    try:
+        entity_ids = [s.entity_id for s in hass.states.async_all("notify")]
+    except Exception:
+        pass
+
+    # Method 2: entity registry — catches entities that might not have a state yet
+    try:
+        from homeassistant.helpers import entity_registry as er
+        ent_reg = er.async_get(hass)
+        for entry in ent_reg.entities.values():
+            if entry.domain == "notify" and entry.entity_id not in entity_ids:
+                if not entry.disabled_by:
+                    entity_ids.append(entry.entity_id)
+    except Exception:
+        pass
+
+    # Method 3: also scan for any integration platforms that expose notify
+    # (catches SMTP etc. that register via the legacy platform adapter)
+    try:
+        from homeassistant.helpers import entity_platform
+        for platform in entity_platform.async_get_platforms(hass, "notify"):
+            for entity in platform.entities.values():
+                if hasattr(entity, "entity_id") and entity.entity_id not in entity_ids:
+                    entity_ids.append(entity.entity_id)
+    except Exception:
+        pass
 
     # Combine: entity IDs first (preferred), then legacy service names
     # Deduplicate: if a legacy service matches an entity slug, skip the legacy one
     entity_slugs = {eid.split(".", 1)[1] for eid in entity_ids if "." in eid}
     legacy_unique = [s for s in legacy if s not in entity_slugs]
-    result = sorted(entity_ids) + sorted(legacy_unique)
+    result = sorted(set(entity_ids)) + sorted(legacy_unique)
     has_send_message = "send_message" in services
+    _LOGGER.debug(
+        "notify_services_list: entities=%s legacy=%s has_send_message=%s",
+        entity_ids, legacy_unique, has_send_message,
+    )
     connection.send_result(msg["id"], {
         "services": result,
         "has_send_message": has_send_message,
