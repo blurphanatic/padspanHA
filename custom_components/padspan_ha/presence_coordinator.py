@@ -820,6 +820,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             try:
                 cfg = alert_store.get_config(key)
                 if not cfg:
+                    # UI saves alert config under address (e.g. "AA:BB:CC:DD:EE:FF")
+                    # but key is prefixed (e.g. "ble:AA:BB:CC:DD:EE:FF"). Try address.
+                    _obj = result.get(key) or self._known_objs.get(key) or {}
+                    _addr = _obj.get("address") or ""
+                    if _addr:
+                        cfg = alert_store.get_config(_addr)
+                if not cfg:
                     continue
                 email = (cfg.get("email") or "").strip()
                 if not email:
