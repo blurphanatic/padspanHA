@@ -1408,7 +1408,6 @@ function _buildNotifications(ctx, el){
   const haAreas = (ctx.state.model && Array.isArray(ctx.state.model.areas)) ? ctx.state.model.areas : [];
   const dataMode = ctx.state.dataMode || "sample";
   const disabled = dataMode !== "live";
-  const configs = ctx.state.followAlertConfig || {};
 
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
 
