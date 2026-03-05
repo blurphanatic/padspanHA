@@ -90,7 +90,7 @@ export function render(ctx) {
         ])
       : null;
 
-  const tabs = el("div", { class: "tabs" }, [tabButton("visualization", "Visualization"), tabButton("monitor", "Advertisement monitor"), tabButton("scanners", "Scanners")]);
+  const tabs = el("div", { class: "tabs" }, [tabButton("visualization", "Visualization"), tabButton("monitor", "Advertisement monitor"), tabButton("scanners", "Scanners"), tabButton("esphome_configs", "ESPHome Configs")]);
 
   const controls = el("div", { class: "bt-controls", style: "display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px" }, [
     el("div", { class: "field", style: "flex:2;min-width:160px" }, [
@@ -140,11 +140,14 @@ export function render(ctx) {
     body = renderScanners(ctx, radios, sources);
   } else if (ctx.state.btTab === "monitor") {
     body = renderMonitor(ctx, ads, radios, objIndex);
+  } else if (ctx.state.btTab === "esphome_configs") {
+    body = renderEsphomeConfigs(ctx);
   } else {
     body = renderVisualization(ctx, radios, ads, objIndex);
   }
 
-  const out = el("div", { id: "bluetooth" }, [header, diagCard, tabs, controls, body]);
+  const showControls = ctx.state.btTab !== "esphome_configs";
+  const out = el("div", { id: "bluetooth" }, [header, diagCard, tabs, showControls ? controls : null, body].filter(Boolean));
   return out;
 }
 
@@ -549,6 +552,478 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     svgWrap,
     el("div", { class: "muted", style: "margin-top:10px" }, "Tip: use Source + Search filters above to narrow the graph."),
   ]);
+}
+
+// ── ESPHome Config Library ─────────────────────────────────────────────────────
+
+const ESPHOME_CONFIGS = [
+  {
+    id: "c3_wifi",
+    chip: "ESP32-C3",
+    connection: "WiFi",
+    badge: "Single-core",
+    badgeColor: "#f59e0b",
+    description: "Single-core RISC-V. BLE and WiFi share the radio, so scan duty must be kept low. Uses API-connection gating to pause scanning during WiFi traffic bursts.",
+    notes: [
+      "Scan duty ~31% (100 ms window / 320 ms interval)",
+      "Single-core — BLE scanning blocks WiFi, so keep window short",
+      "API-gated: scanning pauses during heavy API traffic to prevent watchdog resets",
+    ],
+    yaml: `# PadSpan — ESP32-C3 WiFi Scanner (optimised)
+# Scan duty ~31%. Single-core workaround: gate scanning on API connection.
+
+esphome:
+  name: padspan-c3-wifi
+  friendly_name: "PadSpan C3 WiFi"
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: LIGHT          # balances power vs responsiveness
+  output_power: 20dB
+  fast_connect: true              # skip full scan on reconnect
+
+api:
+  encryption:
+    key: !secret api_key
+  on_client_connected:
+    - esp32_ble_tracker.start_scan:
+        continuous: true
+  on_client_disconnected:
+    - esp32_ble_tracker.stop_scan:
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms               # must be multiple of 0.625 ms
+    window: 100ms                 # ~31% duty — safe for single-core WiFi
+    active: false                 # passive only — less RF contention
+
+bluetooth_proxy:
+  active: false
+
+# ── Diagnostic sensors (PadSpan reads these automatically) ──────────
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 30s
+  - platform: internal_temperature
+    name: "CPU Temperature"
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "WiFi SSID"
+    bssid:
+      name: "WiFi BSSID"
+    mac_address:
+      name: "MAC Address"`,
+  },
+  {
+    id: "c6_wifi",
+    chip: "ESP32-C6",
+    connection: "WiFi 6",
+    badge: "BLE 5.3 + Wi-Fi 6",
+    badgeColor: "#8b5cf6",
+    description: "Single-core RISC-V with BLE 5.3 and Wi-Fi 6 (802.11ax). Better coexistence than C3 but still single-core — same scan duty limits apply.",
+    notes: [
+      "Scan duty ~31% (100 ms window / 320 ms interval)",
+      "Wi-Fi 6 improves coexistence vs C3, but single-core still limits duty",
+      "BLE 5.3 hardware — ESPHome does not yet expose Coded PHY scanning",
+    ],
+    yaml: `# PadSpan — ESP32-C6 WiFi 6 Scanner (optimised)
+# Scan duty ~31%. Wi-Fi 6 + BLE 5.3 hardware, single-core RISC-V.
+
+esphome:
+  name: padspan-c6-wifi
+  friendly_name: "PadSpan C6 WiFi"
+
+esp32:
+  board: esp32-c6-devkitc-1
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: LIGHT
+  output_power: 20dB
+  fast_connect: true
+
+api:
+  encryption:
+    key: !secret api_key
+  on_client_connected:
+    - esp32_ble_tracker.start_scan:
+        continuous: true
+  on_client_disconnected:
+    - esp32_ble_tracker.stop_scan:
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 100ms                 # ~31% duty — single-core safe
+    active: false
+
+bluetooth_proxy:
+  active: false
+
+# ── Diagnostic sensors ──────────────────────────────────────────────
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 30s
+  - platform: internal_temperature
+    name: "CPU Temperature"
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "WiFi SSID"
+    bssid:
+      name: "WiFi BSSID"
+    mac_address:
+      name: "MAC Address"`,
+  },
+  {
+    id: "s3_wifi",
+    chip: "ESP32-S3",
+    connection: "WiFi",
+    badge: "Dual-core — best WiFi",
+    badgeColor: "#10b981",
+    description: "Dual-core Xtensa with PSRAM. BLE runs on core 1 while WiFi runs on core 0, so continuous scanning is safe. Best general-purpose WiFi scanner.",
+    notes: [
+      "Scan duty ~31% (100 ms window / 320 ms interval) — WiFi still needs airtime",
+      "Dual-core: BLE and WiFi run on separate cores — no watchdog risk",
+      "continuous: true is safe on S3 (not on C3/C6)",
+      "PSRAM available — handles large advertisement caches",
+    ],
+    yaml: `# PadSpan — ESP32-S3 WiFi Scanner (optimised)
+# Dual-core: BLE on core 1, WiFi on core 0. Best WiFi scanner.
+
+esphome:
+  name: padspan-s3-wifi
+  friendly_name: "PadSpan S3 WiFi"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: LIGHT
+  output_power: 20dB
+  fast_connect: true
+
+api:
+  encryption:
+    key: !secret api_key
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 100ms                 # ~31% — WiFi still needs airtime
+    active: false
+    continuous: true              # safe on dual-core S3
+
+bluetooth_proxy:
+  active: false
+
+# ── Diagnostic sensors ──────────────────────────────────────────────
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 30s
+  - platform: internal_temperature
+    name: "CPU Temperature"
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "WiFi SSID"
+    bssid:
+      name: "WiFi BSSID"
+    mac_address:
+      name: "MAC Address"`,
+  },
+  {
+    id: "s3_ethernet",
+    chip: "ESP32-S3",
+    connection: "Ethernet",
+    badge: "Maximum performance",
+    badgeColor: "#06b6d4",
+    description: "Dual-core S3 with wired Ethernet. No WiFi means the radio is 100% available for BLE. Highest possible scan duty at 93.75%. Best for dedicated scanner deployments.",
+    notes: [
+      "Scan duty 93.75% (300 ms window / 320 ms interval) — the maximum",
+      "No WiFi contention — the BLE radio has the full RF budget",
+      "Ethernet: rock-solid connection, no WiFi dropouts",
+      "Adjust the ethernet: section for your board (W5500, LAN8720, etc.)",
+    ],
+    yaml: `# PadSpan — ESP32-S3 Ethernet Scanner (maximum performance)
+# Scan duty 93.75%. No WiFi = BLE radio has full RF budget.
+# Adjust ethernet platform/pins for your board (W5500 SPI shown below).
+
+esphome:
+  name: padspan-s3-eth
+  friendly_name: "PadSpan S3 Ethernet"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+# ── Ethernet (W5500 SPI example — adjust pins for your board) ──────
+ethernet:
+  type: W5500
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+  miso_pin: GPIO13
+  cs_pin: GPIO10
+  interrupt_pin: GPIO14
+  reset_pin: GPIO15
+
+api:
+  encryption:
+    key: !secret api_key
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 300ms                 # 93.75% duty — maximum scan coverage
+    active: false
+    continuous: true
+
+bluetooth_proxy:
+  active: false
+
+# ── Diagnostic sensors ──────────────────────────────────────────────
+sensor:
+  - platform: internal_temperature
+    name: "CPU Temperature"
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+text_sensor:
+  - platform: ethernet_info
+    ip_address:
+      name: "IP Address"`,
+  },
+  {
+    id: "passive_minimal",
+    chip: "Any ESP32",
+    connection: "WiFi",
+    badge: "Minimal / passive",
+    badgeColor: "#94a3b8",
+    description: "A stripped-down passive-only scanner that works on any ESP32 variant. Good starting point if you are unsure which board you have.",
+    notes: [
+      "Works on C3, C6, S3, and original ESP32",
+      "Passive scanning only — less accurate name resolution but lower power",
+      "Conservative 31% duty cycle — safe for any chip",
+    ],
+    yaml: `# PadSpan — Minimal Passive Scanner (any ESP32)
+# Conservative settings that work on every ESP32 variant.
+
+esphome:
+  name: padspan-scanner
+  friendly_name: "PadSpan Scanner"
+
+esp32:
+  board: esp32dev                 # change to your board
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: LIGHT
+  fast_connect: true
+
+api:
+  encryption:
+    key: !secret api_key
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 100ms
+    active: false
+    continuous: true
+
+bluetooth_proxy:
+  active: false
+
+# ── Diagnostic sensors ──────────────────────────────────────────────
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 30s
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "WiFi SSID"`,
+  },
+];
+
+function renderEsphomeConfigs(ctx) {
+  const { el } = ctx.helpers;
+
+  // Intro card
+  const intro = el("div", { class: "card", style: "border:1px solid #2d5a3d" }, [
+    el("div", { style: "font-weight:700;font-size:15px;margin-bottom:6px" }, "ESPHome Config Library"),
+    el("div", { class: "muted", style: "line-height:1.6" },
+      "Optimised ESPHome YAML for every ESP32 variant PadSpan supports. " +
+      "Each config includes the diagnostic sensors PadSpan reads automatically (IP address, WiFi signal, SSID, temperature, uptime). " +
+      "Copy the YAML into your ESPHome device configuration, adjust wifi/api secrets, and flash."
+    ),
+    el("div", { style: "margin-top:10px;display:flex;gap:12px;flex-wrap:wrap" }, [
+      el("div", { style: "flex:1;min-width:200px;background:#0a150e;border-radius:8px;padding:10px 14px" }, [
+        el("div", { style: "font-weight:600;font-size:12px;color:#52b788;margin-bottom:4px" }, "Scan Parameters Rule"),
+        el("div", { class: "muted", style: "font-size:11px;line-height:1.5" },
+          "interval and window must be multiples of 0.625 ms (one BLE time slot). " +
+          "320 ms interval is the standard. WiFi scanners: window = 100 ms (31% duty). " +
+          "Ethernet scanners: window = 300 ms (93.75% duty)."
+        ),
+      ]),
+      el("div", { style: "flex:1;min-width:200px;background:#0a150e;border-radius:8px;padding:10px 14px" }, [
+        el("div", { style: "font-weight:600;font-size:12px;color:#52b788;margin-bottom:4px" }, "Why Passive Scanning?"),
+        el("div", { class: "muted", style: "font-size:11px;line-height:1.5" },
+          "active: false means the scanner only listens — it never sends scan requests. " +
+          "This reduces RF contention, saves power, and is all PadSpan needs for RSSI-based presence. " +
+          "Active scanning is only needed if you want to connect to BLE devices."
+        ),
+      ]),
+    ]),
+  ]);
+
+  // Chip comparison table
+  const chipTable = el("div", { class: "card" }, [
+    el("div", { style: "font-weight:700;margin-bottom:8px" }, "Chip Comparison"),
+    (() => {
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "overflow-x:auto";
+      wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="border-bottom:1px solid #2d5a3d;text-align:left">
+          <th style="padding:6px 8px">Chip</th>
+          <th style="padding:6px 8px">Cores</th>
+          <th style="padding:6px 8px">BLE</th>
+          <th style="padding:6px 8px">WiFi</th>
+          <th style="padding:6px 8px">Max Scan Duty</th>
+          <th style="padding:6px 8px">Best For</th>
+        </tr></thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #1a2e22"><td style="padding:6px 8px;font-weight:600">ESP32-C3</td><td style="padding:6px 8px">1 (RISC-V)</td><td style="padding:6px 8px">5.0</td><td style="padding:6px 8px">4 (b/g/n)</td><td style="padding:6px 8px;color:#f59e0b">~31%</td><td style="padding:6px 8px">Budget scanners</td></tr>
+          <tr style="border-bottom:1px solid #1a2e22"><td style="padding:6px 8px;font-weight:600">ESP32-C6</td><td style="padding:6px 8px">1 (RISC-V)</td><td style="padding:6px 8px;color:#8b5cf6">5.3</td><td style="padding:6px 8px;color:#8b5cf6">6 (ax)</td><td style="padding:6px 8px;color:#f59e0b">~31%</td><td style="padding:6px 8px">Future-proof, Wi-Fi 6</td></tr>
+          <tr style="border-bottom:1px solid #1a2e22"><td style="padding:6px 8px;font-weight:600">ESP32-S3</td><td style="padding:6px 8px;color:#10b981">2 (Xtensa)</td><td style="padding:6px 8px">5.0</td><td style="padding:6px 8px">4 (b/g/n)</td><td style="padding:6px 8px;color:#10b981">~31% WiFi / 93.75% Eth</td><td style="padding:6px 8px;color:#10b981;font-weight:600">Best overall</td></tr>
+          <tr><td style="padding:6px 8px;font-weight:600">ESP32 (original)</td><td style="padding:6px 8px">2 (Xtensa)</td><td style="padding:6px 8px">4.2</td><td style="padding:6px 8px">4 (b/g/n)</td><td style="padding:6px 8px;color:#f59e0b">~31%</td><td style="padding:6px 8px">Legacy installs</td></tr>
+        </tbody>
+      </table>`;
+      return wrap;
+    })(),
+  ]);
+
+  // Config cards
+  const configCards = ESPHOME_CONFIGS.map(cfg => {
+    const expanded = ctx.state[`_cfgExpand_${cfg.id}`] || false;
+
+    const toggleBtn = el("button", { class: "btn tiny", style: "font-size:11px" }, expanded ? "Hide YAML" : "Show YAML");
+    const copyBtn = el("button", { class: "btn tiny", style: "font-size:11px" }, "Copy YAML");
+
+    const headerRow = el("div", { style: "display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap" }, [
+      el("div", {}, [
+        el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px" }, [
+          el("span", { style: "font-weight:700;font-size:14px" }, `${cfg.chip} — ${cfg.connection}`),
+          el("span", { class: "badge", style: `font-size:10px;background:${cfg.badgeColor}22;color:${cfg.badgeColor}` }, cfg.badge),
+        ]),
+        el("div", { class: "muted", style: "font-size:12px;line-height:1.5;max-width:600px" }, cfg.description),
+      ]),
+      el("div", { style: "display:flex;gap:6px;flex-shrink:0" }, [toggleBtn, copyBtn]),
+    ]);
+
+    const notesList = el("div", { style: "margin-top:8px;display:flex;flex-direction:column;gap:3px" },
+      cfg.notes.map(n => el("div", { style: "font-size:11px;color:#94a3b8;padding-left:12px;position:relative" }, [
+        el("span", { style: "position:absolute;left:0;color:#52b788" }, "•"),
+        document.createTextNode(n),
+      ]))
+    );
+
+    const yamlPre = document.createElement("pre");
+    yamlPre.className = "pre";
+    yamlPre.style.cssText = "margin-top:10px;font-size:11px;max-height:500px;overflow:auto;white-space:pre;tab-size:2;display:" + (expanded ? "block" : "none");
+    yamlPre.textContent = cfg.yaml;
+
+    toggleBtn.addEventListener("click", () => {
+      ctx.state[`_cfgExpand_${cfg.id}`] = !ctx.state[`_cfgExpand_${cfg.id}`];
+      const show = ctx.state[`_cfgExpand_${cfg.id}`];
+      yamlPre.style.display = show ? "block" : "none";
+      toggleBtn.textContent = show ? "Hide YAML" : "Show YAML";
+    });
+
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(cfg.yaml).then(() => {
+        copyBtn.textContent = "Copied!";
+        setTimeout(() => { copyBtn.textContent = "Copy YAML"; }, 1500);
+      }).catch(() => {
+        // Fallback: select text in pre
+        const range = document.createRange();
+        range.selectNodeContents(yamlPre);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        yamlPre.style.display = "block";
+        copyBtn.textContent = "Select failed — copy manually";
+        setTimeout(() => { copyBtn.textContent = "Copy YAML"; }, 2000);
+      });
+    });
+
+    return el("div", { class: "card", style: "border:1px solid #1a2e22" }, [headerRow, notesList, yamlPre]);
+  });
+
+  // Tips card at the bottom
+  const tips = el("div", { class: "card", style: "border:1px solid #2d5a3d33" }, [
+    el("div", { style: "font-weight:700;margin-bottom:6px" }, "Tips for Best Results"),
+    el("div", { style: "display:flex;flex-direction:column;gap:6px;font-size:12px;color:#94a3b8;line-height:1.5" }, [
+      el("div", {}, "1. Use Ethernet S3 boards for dedicated rooms — 3x the scan coverage of WiFi scanners."),
+      el("div", {}, "2. Place scanners at chest height (1.2 m) for best RSSI consistency with carried devices."),
+      el("div", {}, "3. After flashing, check Bluetooth → Scanners tab — PadSpan shows IP, WiFi signal, and SSID automatically from these configs."),
+      el("div", {}, "4. The diagnostic sensors (IP, signal, temp) appear in HA as entities and PadSpan reads them with zero extra setup."),
+      el("div", {}, "5. For Ethernet boards: adjust the ethernet: section pins to match your specific board (W5500, LAN8720, etc)."),
+      el("div", {}, "6. All configs use active: false (passive scanning). PadSpan only needs RSSI — active scanning adds no benefit and wastes airtime."),
+    ]),
+  ]);
+
+  return el("div", {}, [intro, chipTable, ...configCards, tips]);
 }
 
 function _escSvg(s) {
