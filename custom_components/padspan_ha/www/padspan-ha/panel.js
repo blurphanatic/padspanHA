@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.85";
+const APP_VERSION = "0.6.86";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260305T215557Z";
+const BUILD_ID = "20260305T215747Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1127,7 +1127,7 @@ class PadSpanHaApp extends HTMLElement {
 
 
   _tagObjectPrompt(addr, currentLabel){
-    const input = el("input",{type:"text", placeholder:"Enter a label…"});
+    const input = el("input",{type:"text", placeholder:"Enter a label…", maxLength:48});
     input.value = currentLabel || "";
     input.style.minWidth = "min(240px, 100%)";
 

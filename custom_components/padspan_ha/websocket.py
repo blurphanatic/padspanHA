@@ -1759,7 +1759,7 @@ async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
     # Only uppercase plain MAC addresses; leave ibeacon/irk keys as-is
     if len(addr) == 17 and addr.count(":") == 5:
         addr = addr.upper()
-    label = str(msg.get("label") or "").strip()
+    label = str(msg.get("label") or "").strip()[:48]
     if not addr:
         connection.send_error(msg["id"], "invalid_address", "Address is required")
         return
