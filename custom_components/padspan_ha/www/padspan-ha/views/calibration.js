@@ -99,7 +99,7 @@ function _setup(ctx, el, cs, calData) {
 
   // Device selector — merge objects.list + raw advertisements so the user can pick ANY BLE device
   const bleObjs = (snap?.objects?.list || [])
-    .filter(o => o.kind === "ble" || o.kind === "entity")
+    .filter(o => o.kind === "ble" || o.kind === "entity" || o.kind === "private_ble")
     .sort((a, b) => (b.rssi || -100) - (a.rssi || -100));
 
   // Build unique-address map from raw advertisements (one entry per MAC)
@@ -113,8 +113,12 @@ function _setup(ctx, el, cs, calData) {
       adAddrMap[addr].rssi = ad.rssi;
     }
   }
-  // Only show addresses not already covered by bleObjs
-  const knownAddrs = new Set(bleObjs.map(o => (o.address || "").toUpperCase()));
+  // Only show addresses not already covered by bleObjs (include all_addresses for rotating-MAC devices)
+  const knownAddrs = new Set();
+  for (const o of bleObjs) {
+    if (o.address) knownAddrs.add(o.address.toUpperCase());
+    for (const a of (o.all_addresses || [])) { if (a) knownAddrs.add(String(a).toUpperCase()); }
+  }
   const adOnlyDevices = Object.values(adAddrMap).filter(d => !knownAddrs.has(d.address));
   adOnlyDevices.sort((a, b) => (b.rssi || -200) - (a.rssi || -200));
 
@@ -1143,14 +1147,34 @@ function _findBeaconAds(snap, deviceId) {
   const rawId = String(deviceId).trim();
   const upperId = rawId.toUpperCase();
 
-  // If it looks like a MAC address, use it directly; otherwise resolve via objects.list
-  let targetAddr = upperId.match(/^[0-9A-F:]{17}$/) ? upperId : "";
-  if (!targetAddr) {
+  // Resolve device — collect ALL addresses (handles rotating-MAC private_ble devices)
+  let targetAddr = "";
+  const targetAddrs = new Set();
+
+  if (upperId.match(/^[0-9A-F:]{17}$/)) {
+    // Direct MAC address
+    targetAddr = upperId;
+    targetAddrs.add(upperId);
+    // Still look up the object to grab all_addresses (e.g. rotated MACs)
+    const obj = (snap?.objects?.list || []).find(o =>
+      (o.address || "").toUpperCase() === upperId ||
+      (o.all_addresses || []).some(a => String(a).toUpperCase() === upperId)
+    );
+    if (obj) {
+      if (obj.address) targetAddrs.add(obj.address.toUpperCase());
+      for (const a of (obj.all_addresses || [])) { if (a) targetAddrs.add(String(a).toUpperCase()); }
+    }
+  } else {
+    // entity_id — resolve via objects.list
     const entity = (snap?.objects?.list || []).find(o =>
       (o.entity_id || "") === rawId ||
       (o.entity_id || "").toUpperCase() === upperId
     );
-    targetAddr = (entity?.address || "").toUpperCase();
+    if (entity) {
+      targetAddr = (entity.address || "").toUpperCase();
+      if (entity.address) targetAddrs.add(entity.address.toUpperCase());
+      for (const a of (entity.all_addresses || [])) { if (a) targetAddrs.add(String(a).toUpperCase()); }
+    }
   }
 
   // Build source → display name from snap.ble.radios (prefer area/room over adapter name)
@@ -1159,10 +1183,11 @@ function _findBeaconAds(snap, deviceId) {
     if (r.source) radioNameMap[r.source] = r.area_name || r.area || r.name || r.source;
   }
 
-  // Filter raw advertisements by address
-  const myAds = (snap?.ble?.advertisements || []).filter(ad =>
-    (ad.address || "").toUpperCase() === (targetAddr || upperId)
-  );
+  // Filter raw advertisements by ANY known address for this device
+  const myAds = (snap?.ble?.advertisements || []).filter(ad => {
+    const adAddr = (ad.address || "").toUpperCase();
+    return targetAddrs.size > 0 ? targetAddrs.has(adAddr) : adAddr === upperId;
+  });
 
   // Build per-radio map — keep strongest/most recent reading per radio
   const perRadio = {};
