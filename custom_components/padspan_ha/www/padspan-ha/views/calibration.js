@@ -101,7 +101,7 @@ function _setup(ctx, el, cs, calData) {
 
   // Device selector — merge objects.list + raw advertisements so the user can pick ANY BLE device
   const bleObjs = (snap?.objects?.list || [])
-    .filter(o => o.kind === "ble" || o.kind === "entity" || o.kind === "private_ble")
+    .filter(o => o.kind === "ble" || o.kind === "entity" || o.kind === "private_ble" || o.kind === "ibeacon")
     .sort((a, b) => (b.rssi || -100) - (a.rssi || -100));
 
   // Build unique-address map from raw advertisements (one entry per MAC)
@@ -1143,39 +1143,61 @@ function _modelTab(ctx, el, cs, calData) {
 
 // ── Find all BLE advertisements for the given device ID ───────────────────────
 // Returns { myAds, perRadio, targetAddr } where perRadio is {source→{name,rssi,age_s}}.
-// Handles both MAC addresses and entity_id values.
+// Handles MAC addresses, entity_id values, canonical_id (private_ble), and iBeacon keys.
 function _findBeaconAds(snap, deviceId) {
   if (!snap || !deviceId) return { myAds: [], perRadio: {}, targetAddr: "" };
   const rawId = String(deviceId).trim();
   const upperId = rawId.toUpperCase();
+  const objects = snap?.objects?.list || [];
 
   // Resolve device — collect ALL addresses (handles rotating-MAC private_ble devices)
   let targetAddr = "";
   const targetAddrs = new Set();
 
+  // Helper: extract all addresses from an object
+  const _collectAddrs = (obj) => {
+    if (obj.address) targetAddrs.add(obj.address.toUpperCase());
+    for (const a of (obj.all_addresses || [])) { if (a) targetAddrs.add(String(a).toUpperCase()); }
+  };
+
   if (upperId.match(/^[0-9A-F:]{17}$/)) {
     // Direct MAC address
     targetAddr = upperId;
     targetAddrs.add(upperId);
-    // Still look up the object to grab all_addresses (e.g. rotated MACs)
-    const obj = (snap?.objects?.list || []).find(o =>
+    const obj = objects.find(o =>
       (o.address || "").toUpperCase() === upperId ||
       (o.all_addresses || []).some(a => String(a).toUpperCase() === upperId)
     );
-    if (obj) {
-      if (obj.address) targetAddrs.add(obj.address.toUpperCase());
-      for (const a of (obj.all_addresses || [])) { if (a) targetAddrs.add(String(a).toUpperCase()); }
-    }
+    if (obj) _collectAddrs(obj);
   } else {
-    // entity_id — resolve via objects.list
-    const entity = (snap?.objects?.list || []).find(o =>
-      (o.entity_id || "") === rawId ||
-      (o.entity_id || "").toUpperCase() === upperId
+    // Try multiple resolution strategies:
+    // 1) entity_id match
+    let obj = objects.find(o =>
+      (o.entity_id || "") === rawId || (o.entity_id || "").toUpperCase() === upperId
     );
-    if (entity) {
-      targetAddr = (entity.address || "").toUpperCase();
-      if (entity.address) targetAddrs.add(entity.address.toUpperCase());
-      for (const a of (entity.all_addresses || [])) { if (a) targetAddrs.add(String(a).toUpperCase()); }
+    // 2) canonical_id match (private_ble phones)
+    if (!obj) obj = objects.find(o => (o.canonical_id || "") === rawId);
+    // 3) key match (ibeacon:uuid:major:minor)
+    if (!obj) obj = objects.find(o => (o.key || "") === rawId);
+    // 4) address match (iBeacon address field = uuid key)
+    if (!obj) obj = objects.find(o => (o.address || "") === rawId);
+
+    if (obj) {
+      targetAddr = (obj.address || "").toUpperCase();
+      _collectAddrs(obj);
+    }
+
+    // 5) If entity_id selected but no BLE address found, try matching via linked_entities.
+    //    Bermuda tracker entities don't have a BLE MAC themselves, but may reference
+    //    the same HA device as a BLE object that does have advertisements.
+    if (!targetAddrs.size && rawId.includes(".")) {
+      for (const o of objects) {
+        if ((o.linked_entities || []).includes(rawId)) {
+          _collectAddrs(o);
+          if (!targetAddr && o.address) targetAddr = o.address.toUpperCase();
+          break;
+        }
+      }
     }
   }
 

@@ -883,6 +883,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         for t in (snapshot.get("tags") or []):
             eid = t.get("entity_id") or ""
             addr = ""
+            all_addrs: list[str] = []
+            canonical_id = ""
             try:
                 ent = er2.async_get(eid)
                 if ent and ent.device_id:
@@ -892,11 +894,28 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                             if str(ctype) == "bluetooth" and isinstance(cid, str):
                                 addr = cid.upper()
                                 break
+                        # If no static BLE MAC, look for private_ble canonical identity.
+                        # Bermuda tracker entities for phones/watches link to devices that
+                        # have rotating MACs — match them to private_ble objects by device_id.
+                        if not addr:
+                            for _cid, pg in _private_groups.items():
+                                _pg_dev = pg.get("device")
+                                if _pg_dev and _pg_dev.get("id") == ent.device_id:
+                                    canonical_id = _cid
+                                    addr = pg["best_addr"].upper() if pg.get("best_addr") else ""
+                                    all_addrs = sorted(pg.get("addrs") or [])
+                                    break
+                            # Also check regular BLE objects by device_id
+                            if not addr and ent.device_id:
+                                for _ba, _bd in addr_to_device.items():
+                                    if isinstance(_bd, dict) and _bd.get("id") == ent.device_id:
+                                        addr = _ba.upper()
+                                        break
             except Exception:
                 addr = ""
 
             prefix = ":".join(addr.split(":")[:3]) if addr else ""
-            objects.append({
+            _ent_obj: dict[str, Any] = {
                 "key": f"entity:{eid}",
                 "kind": "entity",
                 "entity_id": eid,
@@ -908,7 +927,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "prefix": prefix or None,
                 "prefix_count": prefix_counts.get(prefix, 0) if prefix else 0,
                 "identified": True,
-            })
+            }
+            if canonical_id:
+                _ent_obj["canonical_id"] = canonical_id
+            if all_addrs:
+                _ent_obj["all_addresses"] = all_addrs
+            objects.append(_ent_obj)
 
         # (B) BLE advertisement objects (what HA Bluetooth "Advertisement monitor" shows)
         # Group private_ble addresses by canonical_id so rotating MACs merge
