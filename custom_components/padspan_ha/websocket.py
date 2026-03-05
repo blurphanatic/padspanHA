@@ -1755,7 +1755,10 @@ async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
     if not obj_store:
         connection.send_error(msg["id"], "no_object_store", "Object store not initialized")
         return
-    addr = str(msg.get("address") or "").strip().upper()
+    addr = str(msg.get("address") or "").strip()
+    # Only uppercase plain MAC addresses; leave ibeacon/irk keys as-is
+    if len(addr) == 17 and addr.count(":") == 5:
+        addr = addr.upper()
     label = str(msg.get("label") or "").strip()
     if not addr:
         connection.send_error(msg["id"], "invalid_address", "Address is required")
@@ -1780,7 +1783,10 @@ async def ws_object_label_delete(hass: HomeAssistant, connection, msg) -> None:
     if not obj_store:
         connection.send_error(msg["id"], "no_object_store", "Object store not initialized")
         return
-    addr = str(msg.get("address") or "").strip().upper()
+    addr = str(msg.get("address") or "").strip()
+    # Only uppercase plain MAC addresses; leave ibeacon/irk keys as-is
+    if len(addr) == 17 and addr.count(":") == 5:
+        addr = addr.upper()
     if addr:
         await obj_store.async_delete(addr)
     connection.send_result(msg["id"], {"ok": True, "address": addr})

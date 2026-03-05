@@ -30,7 +30,12 @@ export function render(ctx) {
   const addr   = ctx.state.followAddr || "";
   const chosen = addr ? (allObjects.find(o => {
     const id = o.address||o.entity_id||"";
-    return id === addr || id.toUpperCase() === addr.toUpperCase();
+    if (id === addr || id.toUpperCase() === addr.toUpperCase()) return true;
+    // Also match by key or canonical_id (ibeacon/private_ble use stable keys)
+    if (o.key === addr || o.canonical_id === addr) return true;
+    // Match rotating MACs
+    if (o.all_addresses && o.all_addresses.some(a => String(a).toUpperCase() === addr.toUpperCase())) return true;
+    return false;
   }) || null) : null;
 
   // Track movement (ring-buffer per tag)
@@ -145,18 +150,34 @@ function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode
   const _rsid = ctx.helpers.radioShortId || (() => "");
   const _sid = (source) => _rsid(source || "");
   const obj    = chosen;
-  const name   = obj.user_label || obj.name || obj.entity_id || obj.address || "Unknown";
+  const userLabel = obj.user_label || "";
+  const name   = userLabel || obj.name || obj.entity_id || obj.address || "Unknown";
   const room   = obj.room || "—";
   const addr   = obj.address || "";
+  // Resolve canonical address for tag/rename (same logic as _showObjectDetail)
+  const kind = obj.kind || "";
+  const tagAddr = kind === "private_ble" ? (obj.canonical_id || addr)
+                : kind === "ibeacon"     ? (obj.key || obj.address || "")
+                : addr;
+  const canRename = (kind==="ble"||kind==="private_ble"||kind==="ibeacon") && !!tagAddr;
 
   // Floor from HA area
   const haArea  = haAreas.find(a => a.name === room);
   const haFloor = haFloors.find(f => f.id === (haArea?.floor_id || ""));
   const floor   = haFloor ? haFloor.name : "—";
 
-  // Radios seeing this tag (from advertisements)
+  // Radios seeing this tag (from advertisements) — match by address, all_addresses, or _xref
+  const allAddr = new Set();
+  if (addr) allAddr.add(addr.toUpperCase());
+  for (const a of (obj.all_addresses || [])) allAddr.add(String(a).toUpperCase());
   const seenBy = ads
-    .filter(a => a.address && a.address.toUpperCase() === addr.toUpperCase())
+    .filter(a => {
+      if (!a.address) return false;
+      if (allAddr.has(a.address.toUpperCase())) return true;
+      const xr = a._xref;
+      if (xr && xr.canonical_id && xr.canonical_id === obj.canonical_id) return true;
+      return false;
+    })
     .sort((a, b) => (b.rssi || -999) - (a.rssi || -999));
 
   const rssiClass = v => {
@@ -182,6 +203,11 @@ function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode
         `Calibrated ${Math.round(obj.knn_confidence * 100)}%`)
     : null;
 
+  // Rename button (inline — uses same tagObjectPrompt as Details modal)
+  const renameBtn = canRename ? el("button", {class:"btn inline", style:"font-size:11px;padding:2px 8px",
+    onclick:()=> ctx.actions.tagObjectPrompt(tagAddr, userLabel)
+  }, userLabel ? "Rename" : "Name this tag") : null;
+
   if (isBasic) {
     // Basic mode: large room name + floor, simple last-seen
     const detailsBtnBasic = el("button", {class:"btn inline", style:"margin-left:auto",
@@ -190,6 +216,7 @@ function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode
     return el("div", { class: "card", style: "margin-bottom:10px" }, [
       el("div", { class: "card-head" }, [
         el("div", { class: "h2" }, name),
+        renameBtn,
         knnBadge,
         helpBtn("follow_map"),
         detailsBtnBasic,
@@ -214,6 +241,7 @@ function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode
   return el("div", { class: "card", style: "margin-bottom:10px" }, [
     el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px" }, [
       el("div", { style: "font-size:18px;font-weight:800;color:#e2e8f0" }, name),
+      renameBtn,
       statusBadge,
       knnBadge,
       el("button", {class:"btn inline", style:"margin-left:auto",
