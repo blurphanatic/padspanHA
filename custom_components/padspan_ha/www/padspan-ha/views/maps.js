@@ -112,6 +112,7 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
   // Masters first, then by name
   const sortedMaps = [...maps].sort((a,b) => (b.stack?.is_master?1:0) - (a.stack?.is_master?1:0));
   const list = el("div",{style:"margin-top:10px;display:flex;flex-direction:column;gap:8px"});
+  const wizardContainer = el("div",{});
   for(const m of sortedMaps){
     const row = el("div",{class:"maprow" + (m.id===activeId ? " active" : "")});
 
@@ -151,8 +152,17 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
       }}, "Set Master");
     }
 
+    let changeMasterBtn = null;
+    if(isMaster && maps.length > 1){
+      changeMasterBtn = el("button",{class:"btn inline",style:"font-size:11px;color:#f59e0b;border-color:#d97706", onclick:()=>{
+        wizardContainer.innerHTML = "";
+        wizardContainer.appendChild(_changeMasterWizard(ctx, maps, m));
+      }}, "Change Master\u2026");
+    }
+
     const actions = el("div",{style:"display:flex;gap:8px;align-items:center;flex-shrink:0;flex-wrap:wrap"});
     if(masterBtn) actions.appendChild(masterBtn);
+    if(changeMasterBtn) actions.appendChild(changeMasterBtn);
     actions.appendChild(el("button",{class:"btn inline", onclick:()=>{ ctx.actions.mapsSetActive(m.id); ctx.actions.setMapsTab('edit'); }}, "Open"));
     actions.appendChild(el("button",{class:"btn inline danger", onclick:async ()=>{ if(confirm(`Delete map "${m.name||m.id}"?`)){ await ctx.actions.mapsDelete(m.id); } }}, "Delete"));
 
@@ -162,6 +172,7 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
     list.appendChild(row);
   }
   wrap.appendChild(list);
+  wrap.appendChild(wizardContainer);
   return wrap;
 }
 
@@ -1408,6 +1419,210 @@ function _isMasterEligible(m) {
       && Math.abs(s.rotation||0)          < 2.0
       && Math.abs((s.scale_x_adj||1.0) - 1.0) < 0.05
       && !s.ref_map_id;
+}
+
+// ── Change Master — transform helpers + wizard ───────────────────────────────
+
+function _invertTransform(bx, by, bs, br_deg) {
+  const br = (br_deg || 0) * Math.PI / 180;
+  const invS = 1.0 / (bs || 1.0);
+  return {
+    x: Math.round(invS * (-(bx||0) * Math.cos(br) - (by||0) * Math.sin(br)) * 10000) / 10000,
+    y: Math.round(invS * ( (bx||0) * Math.sin(br) - (by||0) * Math.cos(br)) * 10000) / 10000,
+    scale: Math.round(invS * 10000) / 10000,
+    rotation: Math.round(-(br_deg || 0) * 100) / 100,
+  };
+}
+
+function _composeTransforms(outer, inner) {
+  const or_rad = (outer.rotation || 0) * Math.PI / 180;
+  const cos_r = Math.cos(or_rad);
+  const sin_r = Math.sin(or_rad);
+  const ix = inner.x || 0, iy = inner.y || 0;
+  return {
+    x: Math.round(((outer.x || 0) + (outer.scale || 1) * (ix * cos_r - iy * sin_r)) * 10000) / 10000,
+    y: Math.round(((outer.y || 0) + (outer.scale || 1) * (ix * sin_r + iy * cos_r)) * 10000) / 10000,
+    scale: Math.round((outer.scale || 1) * (inner.scale || 1) * 10000) / 10000,
+    rotation: Math.round(((outer.rotation || 0) + (inner.rotation || 0)) * 100) / 100,
+  };
+}
+
+async function _executeChangeMaster(ctx, oldMaster, newMaster, allMaps) {
+  const ns = newMaster.stack || {};
+  const bx = ns.x_offset || 0, by = ns.y_offset || 0;
+  const bs = ns.scale || 1.0, br = ns.rotation || 0;
+  const bsx = ns.scale_x_adj || 1.0;
+  const inv = _invertTransform(bx, by, bs, br);
+
+  // 1. New master → pristine origin
+  await ctx.actions.mapsUpdate({
+    map_id: newMaster.id, receivers: newMaster.receivers||[],
+    calibration: newMaster.calibration||{}, notes: newMaster.notes||"",
+    floor_id: newMaster.floor_id||"", room_bounds: newMaster.room_bounds||{},
+    stack: Object.assign({}, ns, {
+      is_master: true, x_offset: 0, y_offset: 0, scale: 1.0,
+      rotation: 0, scale_x_adj: 1.0, ref_map_id: null, tie_ins: [],
+    }),
+  });
+
+  // 2. Old master → inverse transform, referenced to new master
+  const os = oldMaster.stack || {};
+  await ctx.actions.mapsUpdate({
+    map_id: oldMaster.id, receivers: oldMaster.receivers||[],
+    calibration: oldMaster.calibration||{}, notes: oldMaster.notes||"",
+    floor_id: oldMaster.floor_id||"", room_bounds: oldMaster.room_bounds||{},
+    stack: Object.assign({}, os, {
+      is_master: false, x_offset: inv.x, y_offset: inv.y,
+      scale: inv.scale, rotation: inv.rotation,
+      scale_x_adj: bsx ? (Math.round((1.0 / bsx) * 10000) / 10000) : 1.0,
+      ref_map_id: newMaster.id, tie_ins: [],
+    }),
+  });
+
+  // 3. Relink maps that directly referenced old master
+  let relinked = 0;
+  for (const m of allMaps) {
+    if (m.id === oldMaster.id || m.id === newMaster.id) continue;
+    const ms = m.stack || {};
+    if (ms.ref_map_id !== oldMaster.id) continue;
+    const comp = _composeTransforms(
+      { x: inv.x, y: inv.y, scale: inv.scale, rotation: inv.rotation },
+      { x: ms.x_offset||0, y: ms.y_offset||0, scale: ms.scale||1.0, rotation: ms.rotation||0 }
+    );
+    await ctx.actions.mapsUpdate({
+      map_id: m.id, receivers: m.receivers||[], calibration: m.calibration||{},
+      notes: m.notes||"", floor_id: m.floor_id||"", room_bounds: m.room_bounds||{},
+      stack: Object.assign({}, ms, {
+        x_offset: comp.x, y_offset: comp.y,
+        scale: comp.scale, rotation: comp.rotation,
+        ref_map_id: newMaster.id,
+      }),
+    });
+    relinked++;
+  }
+  return relinked;
+}
+
+function _changeMasterWizard(ctx, allMaps, currentMaster) {
+  const { el } = ctx.helpers;
+  const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const container = el("div",{});
+  let _newId = null;
+
+  function _step(n, result) {
+    container.innerHTML = "";
+    if (n < 1) return;
+    const card = el("div",{});
+
+    if (n === 1) {
+      // ── Warning ──
+      card.style.cssText = "padding:16px;border-radius:10px;background:#1a0a00;border:2px solid #dc2626;margin-top:12px";
+      card.appendChild(el("div",{style:"font-weight:700;font-size:15px;color:#fca5a5;margin-bottom:10px"}, "\u26A0 Change Master Map"));
+      card.appendChild(el("div",{style:"font-size:13px;color:#fbbf24;font-weight:600;margin-bottom:8px;padding:8px 10px;background:#2a1500;border-radius:6px;border:1px solid #d97706"},
+        "It is strongly recommended that you do not do this. There are no guarantees."));
+      card.appendChild(el("div",{style:"font-size:12px;color:#e2e8f0;line-height:1.7;margin-bottom:10px"},
+        "Changing the master map after other maps have been aligned to it is a destructive operation. " +
+        "PadSpan will attempt to recompute alignment transforms, but floating-point rounding, rotation artifacts, " +
+        "and cascading offsets mean the result may not match your current layout. You may need to manually re-align every map afterward."));
+      const riskList = el("div",{style:"margin:8px 0 12px;padding:10px;background:#0f0000;border-radius:6px;font-size:12px;color:#fca5a5;line-height:1.8"});
+      riskList.innerHTML = [
+        "\u2022 <b>All alignments may break</b> \u2014 maps positioned relative to the old master are recomputed with best-effort math",
+        "\u2022 <b>Calibration data drifts</b> \u2014 k-NN fingerprint positions are stored in the old master\u2019s coordinate system",
+        "\u2022 <b>Room boundary authority shifts</b> \u2014 the master\u2019s room polygons take precedence for presence detection",
+        "\u2022 <b>3D stack rearranges</b> \u2014 the isometric view anchors to the master as its base layer",
+        "\u2022 <b>Tie-in history is lost</b> \u2014 tie-in constraints are cleared on both old and new master",
+      ].join("<br>");
+      card.appendChild(riskList);
+      const btnRow = el("div",{style:"display:flex;gap:10px;flex-wrap:wrap"});
+      btnRow.appendChild(el("button",{class:"btn inline danger",style:"font-weight:600", onclick:()=> _step(2)}, "I understand the risks \u2014 continue"));
+      btnRow.appendChild(el("button",{class:"btn inline",style:"color:#94a3b8", onclick:()=> _step(0)}, "Cancel"));
+      card.appendChild(btnRow);
+    }
+
+    else if (n === 2) {
+      // ── Select + verify alignment ──
+      card.style.cssText = "padding:16px;border-radius:10px;background:#1a0a00;border:2px solid #d97706;margin-top:12px";
+      card.appendChild(el("div",{style:"font-weight:700;font-size:15px;color:#fbbf24;margin-bottom:10px"}, "\u26A0 Step 2 \u2014 Select & Verify Alignment"));
+      const others = allMaps.filter(m => m.id !== currentMaster.id);
+      if (!others.length) {
+        card.appendChild(el("div",{class:"muted"}, "No other maps available."));
+        card.appendChild(el("button",{class:"btn inline",style:"margin-top:8px;color:#94a3b8", onclick:()=> _step(0)}, "Cancel"));
+        container.appendChild(card); return;
+      }
+
+      if (!_newId) _newId = others[0].id;
+      const sel = document.createElement("select"); sel.className = "select"; sel.style.maxWidth = "300px";
+      for (const om of others) {
+        const o = document.createElement("option"); o.value = om.id; o.textContent = om.name || om.id;
+        if (om.id === _newId) o.selected = true;
+        sel.appendChild(o);
+      }
+      sel.addEventListener("change", () => { _newId = sel.value; _step(2); });
+      card.appendChild(el("div",{style:"margin-bottom:10px"},[ el("div",{style:"font-size:12px;color:#94a3b8;margin-bottom:4px"}, "New master:"), sel ]));
+
+      const newM = allMaps.find(m => m.id === _newId);
+      const ns = newM?.stack || {};
+      const hasAlign = newM && ns.ref_map_id === currentMaster.id;
+
+      const alignBox = el("div",{style:"margin:10px 0;padding:10px;border-radius:6px;font-size:12px;line-height:1.6"});
+      if (hasAlign) {
+        alignBox.style.cssText += ";background:#0a2a1a;border:1px solid #52b788;color:#86efac";
+        alignBox.innerHTML = "\u2713 <b>" + esc(newM.name||newM.id) + "</b> is aligned to the current master.<br>" +
+          '<span style="font-family:monospace;font-size:11px;color:#94a3b8">' +
+          "Offset: (" + (ns.x_offset||0).toFixed(3) + ", " + (ns.y_offset||0).toFixed(3) + ")  Scale: " + (ns.scale||1).toFixed(3) + "  Rot: " + (ns.rotation||0).toFixed(1) + "\u00B0</span><br><br>" +
+          "<b>Make sure this alignment is as accurate as possible before proceeding.</b> " +
+          "If the two maps are not perfectly aligned, every other map\u2019s position will drift after the swap.";
+      } else {
+        alignBox.style.cssText += ";background:#1a0a00;border:1px solid #d97706;color:#fbbf24";
+        alignBox.innerHTML = "\u26A0 <b>" + esc(newM?.name||newM?.id||"?") + "</b> is <b>not aligned</b> to the current master.<br><br>" +
+          "You <b>must</b> align these two maps first. Go to the <b>Alignment</b> tab: set the current master (\u2B50) as Reference " +
+          "and this map as Target. Drag, scale, and rotate until structural features (walls, stairwells) match perfectly. " +
+          "Save the alignment, then return here.";
+      }
+      card.appendChild(alignBox);
+
+      const btnRow = el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;margin-top:10px"});
+      if (!hasAlign) {
+        btnRow.appendChild(el("button",{class:"btn inline",style:"background:#1e3a5f;border-color:#3b82f6;color:#93c5fd", onclick:()=>{
+          _step(0); ctx.actions.setMapsTab("alignment");
+        }}, "Go to Alignment tab"));
+      }
+      if (hasAlign) {
+        btnRow.appendChild(el("button",{class:"btn inline danger",style:"font-weight:600", onclick: async ()=>{
+          btnRow.innerHTML = '<span style="color:#94a3b8;font-size:12px">Executing swap\u2026</span>';
+          try {
+            const relinked = await _executeChangeMaster(ctx, currentMaster, newM, allMaps);
+            await ctx.actions.mapsRefresh();
+            _step(3, { ok: true, relinked });
+          } catch(e) { ctx.toast("Master swap failed: " + String(e), true); _step(3, { ok: false, err: String(e) }); }
+        }}, "Execute Master Swap"));
+      }
+      btnRow.appendChild(el("button",{class:"btn inline",style:"color:#94a3b8", onclick:()=> _step(0)}, "Cancel"));
+      card.appendChild(btnRow);
+    }
+
+    else if (n === 3) {
+      // ── Result ──
+      const ok = result?.ok;
+      card.style.cssText = "padding:16px;border-radius:10px;margin-top:12px;background:" + (ok ? "#0a1a0a" : "#1a0a00") + ";border:2px solid " + (ok ? "#52b788" : "#dc2626");
+      card.appendChild(el("div",{style:"font-weight:700;font-size:15px;color:" + (ok ? "#86efac" : "#fca5a5")}, ok ? "\u2713 Master Map Changed" : "\u26A0 Swap Failed"));
+      if (ok) {
+        card.appendChild(el("div",{style:"font-size:12px;color:#e2e8f0;line-height:1.7;margin-top:8px"},
+          "The master has been transferred. The old master received an inverse transform. " +
+          (result.relinked > 0 ? result.relinked + " other map(s) were recomputed to reference the new master. " : "") +
+          "Please verify all map alignments in the 3D Stack and Alignment tabs. " +
+          "If anything looks wrong, re-align the affected maps manually."));
+      } else {
+        card.appendChild(el("div",{style:"font-size:12px;color:#fca5a5;margin-top:8px"}, result?.err || "Unknown error"));
+      }
+      card.appendChild(el("button",{class:"btn inline",style:"margin-top:10px", onclick:()=> _step(0)}, "Close"));
+    }
+
+    container.appendChild(card);
+  }
+
+  _step(1);
+  return container;
 }
 
 // ── Emergency tie-in recovery ─────────────────────────────────────────────────
