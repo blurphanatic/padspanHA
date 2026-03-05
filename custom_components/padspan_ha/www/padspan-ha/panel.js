@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.75";
+const APP_VERSION = "0.6.76";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260305T162615Z";
+const BUILD_ID = "20260305T164716Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -1735,40 +1735,7 @@ class PadSpanHaApp extends HTMLElement {
     }
     try {
       const node = mod.render(this._ctx());
-
-      // ── Skip DOM swap if the view returned the same cached node ────────
-      // Views like ESPHome Configs cache their DOM and return the same
-      // reference on re-render. Detaching and re-attaching resets scroll
-      // positions on all internal scrollable elements (pre, tables, etc.).
-      // If the node is already the live child of $content, skip the swap.
-      const existingChild = this.$content.firstElementChild;
-      // Account for banners: the view node might not be the first child.
-      // Check if node is already anywhere in $content.
-      if(node && node.parentNode === this.$content){
-        this._lastGoodRender = performance.now();
-        this._renderFailCount = 0;
-        return;
-      }
-
       frag.appendChild(node);
-
-      // ── Preserve scroll positions on ALL scrollable elements ───────────
-      // Capture scrollTop on every element that has been scrolled, so the
-      // DOM swap doesn't reset the user's reading position.
-      const scrollMap = new Map();
-      try {
-        const allScrollable = this.$content.querySelectorAll("*");
-        allScrollable.forEach(el => {
-          if(el.scrollTop > 0 || el.scrollLeft > 0){
-            // Build a path to re-find this element after swap
-            const tag = el.tagName;
-            const cls = el.className || "";
-            const key = `${tag}.${cls}`;
-            if(!scrollMap.has(key)) scrollMap.set(key, []);
-            scrollMap.get(key).push({ top: el.scrollTop, left: el.scrollLeft });
-          }
-        });
-      } catch(e) { /* ignore */ }
 
       // ── Swap: clear old content and append new content atomically ────────
       this.$content.innerHTML = "";
@@ -1779,24 +1746,10 @@ class PadSpanHaApp extends HTMLElement {
       // Restore scroll after DOM paint
       requestAnimationFrame(()=> {
         try {
-          // Legacy selector-based restore
           for(const s of scrollState){
             const nodes = this.$content.querySelectorAll(s.sel);
             const n = nodes && nodes[s.i];
             if(n) n.scrollTop = s.top;
-          }
-          // Generic scrollable restore
-          for(const [key, positions] of scrollMap){
-            const [tag, cls] = key.split(".", 2);
-            const candidates = Array.from(this.$content.querySelectorAll(tag)).filter(
-              el => (el.className || "") === cls
-            );
-            positions.forEach((pos, i) => {
-              if(candidates[i]){
-                candidates[i].scrollTop = pos.top;
-                candidates[i].scrollLeft = pos.left;
-              }
-            });
           }
         } catch(e) { /* ignore */ }
       });
