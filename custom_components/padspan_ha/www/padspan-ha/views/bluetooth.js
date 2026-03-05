@@ -673,6 +673,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // Build SVG as an HTML string — avoids the HTML-namespace issue that makes
   // document.createElement("circle") / ("line") render as invisible elements.
   let s = `<svg class="bt-viz" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
+  s += `<style>.bt-viz-click:hover text{fill:#5eead4!important}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}</style>`;
 
   // Lines first (back layer) — connect between the node circles only
   for (const d of deviceNodes) {
@@ -686,17 +687,21 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const MAX_LABEL = 38;
   const trunc = (s) => s.length > MAX_LABEL ? s.slice(0, MAX_LABEL - 1) + "…" : s;
 
-  // Scanner nodes + labels (left-aligned, growing rightward toward node)
+  // Scanner nodes + labels (left-aligned, growing rightward toward node) — clickable
   for (const sn of scannerNodes) {
+    s += `<g class="bt-viz-click" data-type="scanner" data-id="${_escSvg(sn.id)}" style="cursor:pointer">`;
     s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner"/>`;
     s += `<text x="${scannerLabelX}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(sn.label))}</text>`;
+    s += `</g>`;
   }
 
-  // Device nodes + labels (left-aligned, growing rightward from node)
+  // Device nodes + labels (left-aligned, growing rightward from node) — clickable
   for (const d of deviceNodes) {
     const rc = rssiClass(d.rssi);
+    s += `<g class="bt-viz-click" data-type="device" data-id="${_escSvg(d.id)}" style="cursor:pointer">`;
     s += `<circle cx="${d.x}" cy="${d.y}" r="5" class="bt-viz-node device ${rc}"/>`;
     s += `<text x="${d.x + 10}" y="${d.y}" class="bt-viz-label" font-size="11" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(d.label))}</text>`;
+    s += `</g>`;
   }
 
   // Titles on top
@@ -708,11 +713,43 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const svgWrap = document.createElement("div");
   svgWrap.innerHTML = s;
 
+  // Click handler — drill into scanner or device detail
+  svgWrap.addEventListener("click", (e) => {
+    const g = e.target.closest(".bt-viz-click");
+    if (!g) return;
+    const type = g.getAttribute("data-type");
+    const id = g.getAttribute("data-id");
+    if (!id) return;
+    if (type === "scanner") {
+      const radio = radios.find(r => String(r.source || "") === id);
+      if (radio) ctx.actions.showScannerDetail(radio);
+    } else if (type === "device") {
+      // Try to find a full object from the snapshot for a rich detail modal
+      const obj = objIndex.get(id.toUpperCase());
+      if (obj) {
+        ctx.actions.showObjectDetail(obj);
+      } else {
+        // Build a minimal object from the advertisement
+        const ad = ads.find(a => String(a.address || "") === id || String(a.name || "") === id);
+        if (ad) {
+          ctx.actions.showObjectDetail({
+            address: ad.address || id,
+            name: ad.name || ad.address || id,
+            kind: "ble",
+            room: ad.area_name || "",
+            rssi: ad.rssi,
+            source: ad.source || "",
+          });
+        }
+      }
+    }
+  });
+
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),
     el("div", { class: "muted", style: "margin-bottom:10px" }, "A simple scanner→device graph, grouped by the scanner source that reported the advertisement."),
     svgWrap,
-    el("div", { class: "muted", style: "margin-top:10px" }, "Tip: use Source + Search filters above to narrow the graph."),
+    el("div", { class: "muted", style: "margin-top:10px" }, "Tip: use Source + Search filters above to narrow the graph. Click any scanner or device for details."),
   ]);
 }
 
