@@ -569,7 +569,8 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // Dynamic height: 16px per device row, minimum 460, plus room for titles
   const DEV_ROW_H = 16;
   const totalDevCount = Object.values(bySrc).reduce((sum, arr) => sum + Math.min(arr.length, 24), 0);
-  const h = Math.max(460, totalDevCount * DEV_ROW_H + pad * 3 + 30);
+  const scannerMinH = srcs.length * 20 + pad * 2 + 40;
+  const h = Math.max(460, totalDevCount * DEV_ROW_H + pad * 3 + 30, scannerMinH);
 
   // Place scanners evenly along the left (initial pass, repositioned after devices)
   const scannerNodes = srcs.map((src, i) => {
@@ -619,15 +620,28 @@ function renderVisualization(ctx, radios, ads, objIndex) {
       sn.y = (minY + maxY) / 2;
     }
   }
-  // Resolve scanner overlaps too (minimum 30px apart)
+  // Resolve scanner overlaps (minimum 20px apart — matches label font size)
+  const SCAN_GAP = 20;
   scannerNodes.sort((a, b) => a.y - b.y);
   for (let i = 1; i < scannerNodes.length; i++) {
-    if (scannerNodes[i].y - scannerNodes[i - 1].y < 30) {
-      scannerNodes[i].y = scannerNodes[i - 1].y + 30;
+    if (scannerNodes[i].y - scannerNodes[i - 1].y < SCAN_GAP) {
+      scannerNodes[i].y = scannerNodes[i - 1].y + SCAN_GAP;
     }
   }
-  for (const sn of scannerNodes) {
-    sn.y = Math.max(pad + 20, Math.min(h - pad - 10, sn.y));
+  // If scanners overflow the bottom, shift them all up as a block
+  if (scannerNodes.length) {
+    const lastY = scannerNodes[scannerNodes.length - 1].y;
+    const maxY = h - pad - 10;
+    if (lastY > maxY) {
+      const shift = lastY - maxY;
+      for (const sn of scannerNodes) sn.y -= shift;
+    }
+    // Clamp top edge
+    const topMin = pad + 20;
+    if (scannerNodes[0].y < topMin) {
+      const shift = topMin - scannerNodes[0].y;
+      for (const sn of scannerNodes) sn.y += shift;
+    }
   }
 
   const rssiClass = rssi => {
