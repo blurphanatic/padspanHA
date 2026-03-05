@@ -1013,17 +1013,24 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             objects.append(obj_pb)
 
         # (C) iBeacon objects — one per UUID/major/minor key, merged from all rotating MACs
+        _obj_store_c = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
         for uuid_key, g in ibeacon_groups.items():
             all_linked: list[str] = sorted({
                 e for a in g["addrs"] for e in addr_to_entities.get(a, [])
             })
             identified_ib = any(a in addr_to_device for a in g["addrs"]) or bool(all_linked)
+            # Use persisted user label as display name if available (prevents flickering)
+            _ib_label = None
+            if _obj_store_c:
+                _ib_entry = _obj_store_c.get(uuid_key)
+                if _ib_entry:
+                    _ib_label = _ib_entry.get("label") or None
             obj_ib: dict[str, Any] = {
                 "key": uuid_key,
                 "kind": "ibeacon",
                 "address": uuid_key,           # stable key — used by label store & tagging
                 "all_addresses": g["addrs"],   # rotating MACs this beacon was seen from
-                "name": f"iBeacon {g['uuid'][:8]}",
+                "name": _ib_label or f"iBeacon {g['uuid'][:8]}",
                 "rssi": g.get("rssi"),
                 "age_s": g.get("age_s"),
                 "sources": g.get("sources") or [],
