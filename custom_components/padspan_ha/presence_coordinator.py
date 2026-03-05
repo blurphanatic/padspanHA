@@ -478,6 +478,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._pending_room_changes:
             await self._process_room_alerts(now, result)
             await self._record_movement(result)
+            self._pending_room_changes.clear()
 
         # ── Experimental MQTT publishing ─────────────────────────────────────
         await self._async_mqtt_publish(result)
