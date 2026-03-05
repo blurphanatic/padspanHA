@@ -38,8 +38,11 @@ export function render(ctx){
   const dataMode = ctx.state.dataMode || "sample";
   const liveSnap = ctx.state.live?.snapshot || null;
 
+  // When live mode is active but snapshot hasn't arrived yet, show placeholder
+  const liveLoading = dataMode === "live" && !liveSnap;
+
   // Fallback counts based on roomTagMap (works in sample mode too).
-  const roomTagMap = ctx.state.roomTagMap || {};
+  const roomTagMap = liveLoading ? {} : (ctx.state.roomTagMap || {});
   const roomsCount = Object.keys(roomTagMap).length;
   const tagsCount = (() => {
     const s = new Set();
@@ -1370,15 +1373,15 @@ export function render(ctx){
   if(isBasic){
     const summary = el("div",{class:"basic-summary"},[
       el("div",{style:"text-align:center"},[
-        el("div",{class:"basic-summary-num"}, String(roomsCount)),
+        el("div",{class:"basic-summary-num"}, liveLoading ? "--" : String(roomsCount)),
         el("div",{class:"basic-summary-lbl"}, "Rooms"),
       ]),
       el("div",{style:"text-align:center"},[
-        el("div",{class:"basic-summary-num"}, String(objectsTotal)),
+        el("div",{class:"basic-summary-num"}, liveLoading ? "--" : String(objectsTotal)),
         el("div",{class:"basic-summary-lbl"}, "Objects"),
       ]),
       el("div",{style:"text-align:center"},[
-        el("div",{class:"basic-summary-num"}, String(radiosCount)),
+        el("div",{class:"basic-summary-num"}, liveLoading ? "--" : String(radiosCount)),
         el("div",{class:"basic-summary-lbl"}, "Scanners"),
       ]),
     ]);
@@ -1409,7 +1412,7 @@ export function render(ctx){
     el("div",{class:"card"},[
       el("div",{class:"kpi"},[
         el("div",{class:"k"}, "Rooms"),
-        el("div",{class:"v"}, String(roomsCount)),
+        el("div",{class:"v"}, liveLoading ? "--" : String(roomsCount)),
       ]),
       el("div",{class:"row"},[
         el("button",{class:"btn", onclick: openRoomsList}, "View rooms list"),
@@ -1418,17 +1421,17 @@ export function render(ctx){
     el("div",{class:"card"},[
       el("div",{class:"kpi"},[
         el("div",{class:"k"}, "Objects"),
-        el("div",{class:"v"}, String(objectsTotal)),
+        el("div",{class:"v"}, liveLoading ? "--" : String(objectsTotal)),
       ]),
       el("div",{class:"row"},[
         el("button",{class:"btn", onclick: ()=>openObjectsList("all")}, "All objects"),
-        el("button",{class:"btn", onclick: ()=>openObjectsList("unidentified")}, `Unidentified (${unidentifiedCount})`),
+        el("button",{class:"btn", onclick: ()=>openObjectsList("unidentified")}, `Unidentified (${liveLoading ? "--" : unidentifiedCount})`),
       ])
     ]),
     el("div",{class:"card"},[
       el("div",{class:"kpi"},[
         el("div",{class:"k"}, "Bluetooth radios"),
-        el("div",{class:"v"}, String(radiosCount)),
+        el("div",{class:"v"}, liveLoading ? "--" : String(radiosCount)),
       ]),
       el("div",{class:"row"},[
         el("button",{class:"btn", onclick: openRadiosList}, "View radios list"),
