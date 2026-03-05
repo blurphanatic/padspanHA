@@ -80,6 +80,8 @@ export function render(ctx) {
 
 // ── Setup tab ─────────────────────────────────────────────────────────────────
 function _setup(ctx, el, cs, calData) {
+  const { radioShortId, scannerStatus } = ctx.helpers;
+  const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
   const wrap = el("div", { style: "display:flex;flex-direction:column;gap:14px" });
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
 
