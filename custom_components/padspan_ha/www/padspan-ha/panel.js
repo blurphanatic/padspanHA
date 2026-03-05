@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.73";
+const APP_VERSION = "0.6.74";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260305T160114Z";
+const BUILD_ID = "20260305T161352Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -480,51 +480,73 @@ class PadSpanHaApp extends HTMLElement {
 
     // ── Watchdog (8s) ───────────────────────────────────────────────────────
     // Checks DOM integrity, content visibility, stuck polls, and poll liveness.
+    // This is the last line of defense against blank screens.
     if(!this._watchdogTimer){
       this._watchdogTimer = setInterval(()=>{
         try {
           if(!this.isConnected) return;
 
-          // 1. Stale shadow DOM references
+          // 1. Stale shadow DOM references — fix before anything else
           const rebuilt = this._ensureShadowDom();
           if(rebuilt){ this._renderCurrentView(); return; }
 
-          // 2. Content area empty OR visually zero-height (has children but invisible)
-          if(this.$content){
-            const empty = !this.$content.children.length;
-            let zeroHeight = false;
-            try { zeroHeight = this.$content.getBoundingClientRect().height < 2; } catch(e){}
-            if(empty || zeroHeight){
-              console.warn("PadSpan watchdog: content blank — re-rendering");
-              this._renderCurrentView();
-              if(!this.$content.children.length) this._refreshAll(false);
+          // 2. Verify $content exists and is live
+          if(!this.$content || !this.$content.isConnected){
+            console.warn("PadSpan watchdog: $content missing/disconnected — full rebuild");
+            this.connectedCallback();
+            return;
+          }
+
+          // 3. Content area empty OR visually zero-height
+          const empty = !this.$content.children.length;
+          let zeroHeight = false;
+          try { zeroHeight = this.$content.getBoundingClientRect().height < 2; } catch(e){}
+          if(empty || zeroHeight){
+            console.warn("PadSpan watchdog: content blank (empty=%s, zeroH=%s) — forcing render", empty, zeroHeight);
+            // Force render: bypass all guards by not passing fromPoll
+            this._renderCurrentView();
+            // If still empty after sync render, escalate to full refresh
+            if(!this.$content.children.length){
+              this._pollInFlight = false;
+              this._refreshAll(false);
             }
           }
 
-          // 3. Unstick deadlocked poll (hung > 20s)
+          // 4. Unstick deadlocked poll (hung > 20s)
           if(this._pollInFlight && this._pollStartedAt){
             if(performance.now() - this._pollStartedAt > 20_000){
+              console.warn("PadSpan watchdog: poll stuck for >20s — unsticking");
               this._pollInFlight = false;
               this._renderCurrentView();
             }
           }
 
-          // 4. Ensure data poll is alive in live mode
+          // 5. Ensure data poll is alive in live mode
           if(this.state.dataMode === "live" && !this._pollTimer){
             this._startDataPoll();
           }
 
-          // 5. Escalation: no successful render in 30s → full rebuild
+          // 6. Escalation: no successful render in 20s → full rebuild
           const sinceGoodRender = this._lastGoodRender ? performance.now() - this._lastGoodRender : 0;
-          if(sinceGoodRender > 30_000 && (this._renderFailCount || 0) >= 2){
-            console.warn("PadSpan watchdog: no successful render in 30s, rebuilding panel");
-            this._renderFailCount = 0;
-            this._lastGoodRender = performance.now();
-            this._pollInFlight = false;
-            this.connectedCallback();
+          if(sinceGoodRender > 20_000){
+            if((this._renderFailCount || 0) >= 2){
+              console.warn("PadSpan watchdog: no successful render in 20s + %d failures — full rebuild", this._renderFailCount);
+              this._renderFailCount = 0;
+              this._lastGoodRender = performance.now();
+              this._pollInFlight = false;
+              this.connectedCallback();
+            } else {
+              // Try a non-poll render first before escalating
+              console.warn("PadSpan watchdog: no successful render in 20s — forcing render");
+              this._renderCurrentView();
+            }
           }
-        } catch(e){}
-      }, 8_000);
+        } catch(e){
+          // Even the watchdog crashed — nuclear recovery
+          console.error("PadSpan watchdog error — rebuilding:", e);
+          try { this.connectedCallback(); } catch(e2){}
+        }
+      }, 5_000);
     }
 
     // ── Visibility change (browser tab show/hide) ───────────────────────────
@@ -637,10 +659,13 @@ class PadSpanHaApp extends HTMLElement {
 
       // Re-render views that show live data.
       const liveViews = new Set(["overview","follow","objects","devices","bluetooth","presence","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage","calibration"]);
-      if(liveViews.has(this.state.view)) this._renderCurrentView(true);
+      // Render with poll guard (skips if user is interacting).
+      // But if no successful render in 10s, force it regardless.
+      const stale = this._lastGoodRender && (performance.now() - this._lastGoodRender > 10_000);
+      if(liveViews.has(this.state.view)) this._renderCurrentView(stale ? false : true);
     } catch(e){
       // Non-fatal — still re-render with whatever data we have to prevent blank screen
-      try { this._renderCurrentView(true); } catch(e2){}
+      try { this._renderCurrentView(); } catch(e2){}
     } finally {
       this._pollInFlight = false;
       this._pollStartedAt = null;
