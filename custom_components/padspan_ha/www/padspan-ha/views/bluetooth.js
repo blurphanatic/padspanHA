@@ -558,59 +558,57 @@ function renderVisualization(ctx, radios, ads, objIndex) {
 
 const ESPHOME_CONFIGS = [
   {
-    id: "c3_wifi",
-    chip: "ESP32-C3",
-    connection: "WiFi",
-    badge: "Single-core",
-    badgeColor: "#f59e0b",
-    description: "Single-core RISC-V. BLE and WiFi share the radio, so scan duty must be kept low. Uses API-connection gating to pause scanning during WiFi traffic bursts.",
+    id: "s3_ethernet",
+    chip: "ESP32-S3",
+    connection: "Ethernet",
+    badge: "Maximum performance",
+    badgeColor: "#06b6d4",
+    description: "Dual-core S3 with wired Ethernet. No WiFi means the radio is 100% available for BLE. Highest possible scan duty at 93.75%. Best for dedicated scanner deployments.",
     notes: [
-      "Scan duty ~31% (100 ms window / 320 ms interval)",
-      "Single-core — BLE scanning blocks WiFi, so keep window short",
-      "API-gated: scanning pauses during heavy API traffic to prevent watchdog resets",
+      "Scan duty 93.75% (300 ms window / 320 ms interval) — the maximum",
+      "No WiFi contention — the BLE radio has the full RF budget",
+      "Ethernet: rock-solid connection, no WiFi dropouts",
+      "Adjust the ethernet: section for your board (W5500, LAN8720, etc.)",
     ],
-    yaml: `# PadSpan — ESP32-C3 WiFi Scanner (optimised)
-# Scan duty ~31%. Single-core workaround: gate scanning on API connection.
+    yaml: `# PadSpan — ESP32-S3 Ethernet Scanner (maximum performance)
+# Scan duty 93.75%. No WiFi = BLE radio has full RF budget.
+# Adjust ethernet platform/pins for your board (W5500 SPI shown below).
 
 esphome:
-  name: padspan-c3-wifi
-  friendly_name: "PadSpan C3 WiFi"
+  name: padspan-s3-eth
+  friendly_name: "PadSpan S3 Ethernet"
 
 esp32:
-  board: esp32-c3-devkitm-1
+  board: esp32-s3-devkitc-1
   framework:
     type: esp-idf
 
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
-  power_save_mode: LIGHT          # balances power vs responsiveness
-  output_power: 20dB
-  fast_connect: true              # skip full scan on reconnect
+# ── Ethernet (W5500 SPI example — adjust pins for your board) ──────
+ethernet:
+  type: W5500
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+  miso_pin: GPIO13
+  cs_pin: GPIO10
+  interrupt_pin: GPIO14
+  reset_pin: GPIO15
 
 api:
   encryption:
     key: !secret api_key
-  on_client_connected:
-    - esp32_ble_tracker.start_scan:
-        continuous: true
-  on_client_disconnected:
-    - esp32_ble_tracker.stop_scan:
 
 esp32_ble_tracker:
   scan_parameters:
-    interval: 320ms               # must be multiple of 0.625 ms
-    window: 100ms                 # ~31% duty — safe for single-core WiFi
-    active: false                 # passive only — less RF contention
+    interval: 320ms
+    window: 300ms                 # 93.75% duty — maximum scan coverage
+    active: false
+    continuous: true
 
 bluetooth_proxy:
   active: false
 
-# ── Diagnostic sensors (PadSpan reads these automatically) ──────────
+# ── Diagnostic sensors ──────────────────────────────────────────────
 sensor:
-  - platform: wifi_signal
-    name: "WiFi Signal"
-    update_interval: 30s
   - platform: internal_temperature
     name: "CPU Temperature"
     update_interval: 60s
@@ -619,15 +617,9 @@ sensor:
     update_interval: 60s
 
 text_sensor:
-  - platform: wifi_info
+  - platform: ethernet_info
     ip_address:
-      name: "IP Address"
-    ssid:
-      name: "WiFi SSID"
-    bssid:
-      name: "WiFi BSSID"
-    mac_address:
-      name: "MAC Address"`,
+      name: "IP Address"`,
   },
   {
     id: "c6_wifi",
@@ -771,70 +763,6 @@ text_sensor:
       name: "MAC Address"`,
   },
   {
-    id: "s3_ethernet",
-    chip: "ESP32-S3",
-    connection: "Ethernet",
-    badge: "Maximum performance",
-    badgeColor: "#06b6d4",
-    description: "Dual-core S3 with wired Ethernet. No WiFi means the radio is 100% available for BLE. Highest possible scan duty at 93.75%. Best for dedicated scanner deployments.",
-    notes: [
-      "Scan duty 93.75% (300 ms window / 320 ms interval) — the maximum",
-      "No WiFi contention — the BLE radio has the full RF budget",
-      "Ethernet: rock-solid connection, no WiFi dropouts",
-      "Adjust the ethernet: section for your board (W5500, LAN8720, etc.)",
-    ],
-    yaml: `# PadSpan — ESP32-S3 Ethernet Scanner (maximum performance)
-# Scan duty 93.75%. No WiFi = BLE radio has full RF budget.
-# Adjust ethernet platform/pins for your board (W5500 SPI shown below).
-
-esphome:
-  name: padspan-s3-eth
-  friendly_name: "PadSpan S3 Ethernet"
-
-esp32:
-  board: esp32-s3-devkitc-1
-  framework:
-    type: esp-idf
-
-# ── Ethernet (W5500 SPI example — adjust pins for your board) ──────
-ethernet:
-  type: W5500
-  clk_pin: GPIO12
-  mosi_pin: GPIO11
-  miso_pin: GPIO13
-  cs_pin: GPIO10
-  interrupt_pin: GPIO14
-  reset_pin: GPIO15
-
-api:
-  encryption:
-    key: !secret api_key
-
-esp32_ble_tracker:
-  scan_parameters:
-    interval: 320ms
-    window: 300ms                 # 93.75% duty — maximum scan coverage
-    active: false
-    continuous: true
-
-bluetooth_proxy:
-  active: false
-
-# ── Diagnostic sensors ──────────────────────────────────────────────
-sensor:
-  - platform: internal_temperature
-    name: "CPU Temperature"
-    update_interval: 60s
-  - platform: uptime
-    name: "Uptime"
-    update_interval: 60s
-
-text_sensor:
-  - platform: ethernet_info
-    ip_address:
-      name: "IP Address"`,
-  },
-  {
     id: "passive_minimal",
     chip: "Any ESP32",
     connection: "WiFi",
@@ -894,6 +822,81 @@ text_sensor:
     ssid:
       name: "WiFi SSID"`,
   },
+  {
+    id: "c3_wifi",
+    chip: "ESP32-C3",
+    connection: "WiFi",
+    badge: "Not recommended",
+    badgeColor: "#ef4444",
+    description: "Single-core RISC-V. BLE and WiFi share the same core and radio — scan duty is low and real-world performance is worse than specs suggest. Use this config if you already own C3 boards, but buy S3 or C6 for new scanners.",
+    notes: [
+      "Scan duty ~31% nominal, but WiFi interruptions drop real duty to ~20-25%",
+      "Single-core — BLE scanning blocks WiFi, causing missed advertisements",
+      "Watchdog reset risk under heavy WiFi traffic — requires API-gated workaround",
+      "Put C3 boards in low-priority rooms (hallways, garage) where missed readings matter less",
+    ],
+    yaml: `# PadSpan — ESP32-C3 WiFi Scanner
+# NOT RECOMMENDED for new purchases. Use S3 or C6 instead.
+# Single-core: BLE and WiFi compete for the same core and radio.
+# This config gates scanning on API connection to prevent watchdog resets.
+
+esphome:
+  name: padspan-c3-wifi
+  friendly_name: "PadSpan C3 WiFi"
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: LIGHT
+  output_power: 20dB
+  fast_connect: true
+
+api:
+  encryption:
+    key: !secret api_key
+  on_client_connected:
+    - esp32_ble_tracker.start_scan:
+        continuous: true
+  on_client_disconnected:
+    - esp32_ble_tracker.stop_scan:
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 100ms                 # ~31% duty — safe for single-core WiFi
+    active: false
+
+bluetooth_proxy:
+  active: false
+
+# ── Diagnostic sensors (PadSpan reads these automatically) ──────────
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 30s
+  - platform: internal_temperature
+    name: "CPU Temperature"
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "WiFi SSID"
+    bssid:
+      name: "WiFi BSSID"
+    mac_address:
+      name: "MAC Address"`,
+  },
 ];
 
 function renderEsphomeConfigs(ctx) {
@@ -943,10 +946,10 @@ function renderEsphomeConfigs(ctx) {
           <th style="padding:6px 8px">Best For</th>
         </tr></thead>
         <tbody>
-          <tr style="border-bottom:1px solid #1a2e22"><td style="padding:6px 8px;font-weight:600">ESP32-C3</td><td style="padding:6px 8px">1 (RISC-V)</td><td style="padding:6px 8px">5.0</td><td style="padding:6px 8px">4 (b/g/n)</td><td style="padding:6px 8px;color:#f59e0b">~31%</td><td style="padding:6px 8px">Budget scanners</td></tr>
+          <tr style="border-bottom:1px solid #1a2e22"><td style="padding:6px 8px;font-weight:600;color:#10b981">ESP32-S3</td><td style="padding:6px 8px;color:#10b981">2 (Xtensa)</td><td style="padding:6px 8px">5.0</td><td style="padding:6px 8px">4 (b/g/n)</td><td style="padding:6px 8px;color:#10b981">~31% WiFi / 93.75% Eth</td><td style="padding:6px 8px;color:#10b981;font-weight:600">Best overall</td></tr>
           <tr style="border-bottom:1px solid #1a2e22"><td style="padding:6px 8px;font-weight:600">ESP32-C6</td><td style="padding:6px 8px">1 (RISC-V)</td><td style="padding:6px 8px;color:#8b5cf6">5.3</td><td style="padding:6px 8px;color:#8b5cf6">6 (ax)</td><td style="padding:6px 8px;color:#f59e0b">~31%</td><td style="padding:6px 8px">Future-proof, Wi-Fi 6</td></tr>
-          <tr style="border-bottom:1px solid #1a2e22"><td style="padding:6px 8px;font-weight:600">ESP32-S3</td><td style="padding:6px 8px;color:#10b981">2 (Xtensa)</td><td style="padding:6px 8px">5.0</td><td style="padding:6px 8px">4 (b/g/n)</td><td style="padding:6px 8px;color:#10b981">~31% WiFi / 93.75% Eth</td><td style="padding:6px 8px;color:#10b981;font-weight:600">Best overall</td></tr>
-          <tr><td style="padding:6px 8px;font-weight:600">ESP32 (original)</td><td style="padding:6px 8px">2 (Xtensa)</td><td style="padding:6px 8px">4.2</td><td style="padding:6px 8px">4 (b/g/n)</td><td style="padding:6px 8px;color:#f59e0b">~31%</td><td style="padding:6px 8px">Legacy installs</td></tr>
+          <tr style="border-bottom:1px solid #1a2e22"><td style="padding:6px 8px;font-weight:600">ESP32 (original)</td><td style="padding:6px 8px">2 (Xtensa)</td><td style="padding:6px 8px">4.2</td><td style="padding:6px 8px">4 (b/g/n)</td><td style="padding:6px 8px;color:#f59e0b">~31%</td><td style="padding:6px 8px">Legacy installs</td></tr>
+          <tr><td style="padding:6px 8px;font-weight:600;color:#ef4444">ESP32-C3</td><td style="padding:6px 8px">1 (RISC-V)</td><td style="padding:6px 8px">5.0</td><td style="padding:6px 8px">4 (b/g/n)</td><td style="padding:6px 8px;color:#ef4444">~20-25%</td><td style="padding:6px 8px;color:#ef4444">Not recommended — use existing only</td></tr>
         </tbody>
       </table>`;
       return wrap;
