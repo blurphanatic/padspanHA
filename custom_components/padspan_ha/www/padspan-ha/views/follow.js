@@ -142,6 +142,8 @@ function _buildSelector(ctx, el, helpBtn, allObjects, currentAddr, isBasic) {
 
 // ── Current status card ────────────────────────────────────────────────────────
 function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode, isBasic) {
+  const _rsid = ctx.helpers.radioShortId || (() => "");
+  const _sid = (source) => _rsid(source || "");
   const obj    = chosen;
   const name   = obj.user_label || obj.name || obj.entity_id || obj.address || "Unknown";
   const room   = obj.room || "—";
