@@ -1584,7 +1584,7 @@ import time as _time
 # Delay first prune until 10 minutes after module load (HA boot). This gives
 # ESPHome scanners time to reconnect — without this grace period, the prune
 # runs before all radios have reported in and deletes legitimate receivers.
-_last_receiver_prune: float = _time.monotonic() + 300  # first prune eligible after boot + 10 min
+_last_receiver_prune: float = _time.monotonic() + 900  # first prune eligible after boot + 15 min
 
 @websocket_api.websocket_command({"type": "padspan_ha/maps_list"})
 @websocket_api.async_response
@@ -1605,19 +1605,29 @@ async def ws_maps_list(hass: HomeAssistant, connection, msg) -> None:
                     radios = snap.get("radios") or []
                     known_sources = {str(r.get("source") or "") for r in radios if r.get("source")}
                     known_names = {str(r.get("name") or "") for r in radios if r.get("name")}
-                    # Count total placed receivers across all maps
-                    total_placed = sum(len(m.get("receivers") or []) for m in ms.list_maps())
-                    # Only prune if we have at least as many known radios as placed receivers,
-                    # or if there are no placed receivers at all (nothing to prune anyway)
-                    if total_placed == 0 or len(known_sources | known_names) >= total_placed:
+                    # Collect unique placed receiver identifiers across all maps
+                    placed_ids: set[str] = set()
+                    for _m in ms.list_maps():
+                        for _r in _m.get("receivers") or []:
+                            _pid = _r.get("source") or _r.get("id") or ""
+                            if _pid:
+                                placed_ids.add(_pid)
+                            _plbl = _r.get("label") or ""
+                            if _plbl:
+                                placed_ids.add(_plbl)
+                    # Only prune if EVERY placed receiver can be matched to a known radio.
+                    # This prevents mass-deletion when some scanners haven't reconnected.
+                    all_known = known_sources | known_names
+                    if not placed_ids or placed_ids.issubset(all_known):
                         removed = await ms.async_prune_stale_receivers(known_sources, known_names)
                         if removed:
                             _LOGGER.info("Pruned %d stale receiver(s) from maps", removed)
                     else:
+                        missing = placed_ids - all_known
                         _LOGGER.debug(
-                            "Skipping receiver prune: only %d/%d radios known (%s sources, %s names) — "
+                            "Skipping receiver prune: %d placed identifier(s) not yet seen: %s — "
                             "waiting for all scanners to report in",
-                            len(known_sources), total_placed, known_sources, known_names,
+                            len(missing), missing,
                         )
             except Exception:
                 pass

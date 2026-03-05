@@ -1361,11 +1361,10 @@ function _tuneTab(ctx, el, cs, calData) {
   const hasDirty = Object.values(ts.dirtyMaps).some(Boolean);
 
   // Re-sync draft receivers when maps data changes externally (and no unsaved edits)
-  // Filter out stale receivers that no longer match a live radio
+  // Keep ALL stored receivers — do not filter by live status (radios may not have reconnected yet)
   if (!Object.keys(ts.draftReceivers).length || (mapsStamp !== ts._mapsStamp && !hasDirty)) {
     for (const m of maps_list) {
       ts.draftReceivers[m.id] = (m.receivers || [])
-        .filter(r => _isLiveRadio(r))
         .map(r => ({
           id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
         }));
@@ -1931,7 +1930,6 @@ function _tuneTab(ctx, el, cs, calData) {
     ts.draftReceivers = {};
     for (const m of maps_list) {
       ts.draftReceivers[m.id] = (m.receivers || [])
-        .filter(r => _isLiveRadio(r))
         .map(r => ({
           id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
         }));
