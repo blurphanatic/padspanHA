@@ -620,6 +620,32 @@ text_sensor:
   - platform: ethernet_info
     ip_address:
       name: "IP Address"`,
+    minimal: `# ── Add to your existing ESP32-S3 Ethernet ESPHome config ──────────
+# Paste these sections into your YAML. If you already have sensor:
+# or text_sensor: sections, merge the entries under the existing key.
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 300ms                 # 93.75% — max duty (no WiFi contention)
+    active: false
+    continuous: true
+
+bluetooth_proxy:
+  active: false
+
+sensor:
+  - platform: internal_temperature
+    name: "CPU Temperature"
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+text_sensor:
+  - platform: ethernet_info
+    ip_address:
+      name: "IP Address"`,
   },
   {
     id: "c6_wifi",
@@ -671,6 +697,48 @@ bluetooth_proxy:
   active: false
 
 # ── Diagnostic sensors ──────────────────────────────────────────────
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 30s
+  - platform: internal_temperature
+    name: "CPU Temperature"
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "WiFi SSID"
+    bssid:
+      name: "WiFi BSSID"
+    mac_address:
+      name: "MAC Address"`,
+    minimal: `# ── Add to your existing ESP32-C6 ESPHome config ──────────────────
+# Paste these sections. Single-core: add the on_client_connected
+# block under your existing api: key to gate BLE on API connection.
+# If you already have sensor:/text_sensor: sections, merge entries.
+
+# Add under your existing api: section:
+#  on_client_connected:
+#    - esp32_ble_tracker.start_scan:
+#        continuous: true
+#  on_client_disconnected:
+#    - esp32_ble_tracker.stop_scan:
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 100ms                 # ~31% duty — single-core safe
+    active: false
+
+bluetooth_proxy:
+  active: false
+
 sensor:
   - platform: wifi_signal
     name: "WiFi Signal"
@@ -761,6 +829,41 @@ text_sensor:
       name: "WiFi BSSID"
     mac_address:
       name: "MAC Address"`,
+    minimal: `# ── Add to your existing ESP32-S3 WiFi ESPHome config ─────────────
+# Paste these sections into your YAML. If you already have sensor:
+# or text_sensor: sections, merge the entries under the existing key.
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 100ms                 # ~31% — WiFi still needs airtime
+    active: false
+    continuous: true              # safe on dual-core S3
+
+bluetooth_proxy:
+  active: false
+
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 30s
+  - platform: internal_temperature
+    name: "CPU Temperature"
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "WiFi SSID"
+    bssid:
+      name: "WiFi BSSID"
+    mac_address:
+      name: "MAC Address"`,
   },
   {
     id: "passive_minimal",
@@ -807,6 +910,34 @@ bluetooth_proxy:
   active: false
 
 # ── Diagnostic sensors ──────────────────────────────────────────────
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 30s
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "WiFi SSID"`,
+    minimal: `# ── Add to any existing ESP32 ESPHome config ─────────────────────
+# Paste these sections into your YAML. Works on any ESP32 variant.
+# If you already have sensor:/text_sensor: sections, merge entries.
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 100ms
+    active: false
+    continuous: true
+
+bluetooth_proxy:
+  active: false
+
 sensor:
   - platform: wifi_signal
     name: "WiFi Signal"
@@ -896,6 +1027,48 @@ text_sensor:
       name: "WiFi BSSID"
     mac_address:
       name: "MAC Address"`,
+    minimal: `# ── Add to your existing ESP32-C3 ESPHome config ─────────────────
+# Paste these sections. Single-core: add the on_client_connected
+# block under your existing api: key to gate BLE on API connection.
+# If you already have sensor:/text_sensor: sections, merge entries.
+
+# Add under your existing api: section:
+#  on_client_connected:
+#    - esp32_ble_tracker.start_scan:
+#        continuous: true
+#  on_client_disconnected:
+#    - esp32_ble_tracker.stop_scan:
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 100ms                 # ~31% duty — single-core safe
+    active: false
+
+bluetooth_proxy:
+  active: false
+
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 30s
+  - platform: internal_temperature
+    name: "CPU Temperature"
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "WiFi SSID"
+    bssid:
+      name: "WiFi BSSID"
+    mac_address:
+      name: "MAC Address"`,
   },
 ];
 
@@ -962,10 +1135,14 @@ function renderEsphomeConfigs(ctx) {
 
   // Config cards
   const configCards = ESPHOME_CONFIGS.map(cfg => {
-    const expanded = ctx.state[`_cfgExpand_${cfg.id}`] || false;
+    const expandedFull = ctx.state[`_cfgExpand_${cfg.id}`] || false;
+    const expandedMin  = ctx.state[`_cfgMinimal_${cfg.id}`] || false;
 
-    const toggleBtn = el("button", { class: "btn tiny", style: "font-size:11px" }, expanded ? "Hide YAML" : "Show YAML");
-    const copyBtn = el("button", { class: "btn tiny", style: "font-size:11px" }, "Copy YAML");
+    const toggleBtn = el("button", { class: "btn tiny", style: "font-size:11px" }, expandedFull ? "Hide YAML" : "Full YAML");
+    const minimalBtn = cfg.minimal
+      ? el("button", { class: "btn tiny", style: "font-size:11px;border-color:#52b78840;color:#52b788" }, expandedMin ? "Hide Minimal" : "Add to Existing")
+      : null;
+    const copyBtn = el("button", { class: "btn tiny", style: "font-size:11px" }, "Copy");
 
     const headerRow = el("div", { style: "display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap" }, [
       el("div", {}, [
@@ -975,7 +1152,7 @@ function renderEsphomeConfigs(ctx) {
         ]),
         el("div", { class: "muted", style: "font-size:12px;line-height:1.5;max-width:600px" }, cfg.description),
       ]),
-      el("div", { style: "display:flex;gap:6px;flex-shrink:0" }, [toggleBtn, copyBtn]),
+      el("div", { style: "display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap" }, [minimalBtn, toggleBtn, copyBtn].filter(Boolean)),
     ]);
 
     const notesList = el("div", { style: "margin-top:8px;display:flex;flex-direction:column;gap:3px" },
@@ -987,34 +1164,59 @@ function renderEsphomeConfigs(ctx) {
 
     const yamlPre = document.createElement("pre");
     yamlPre.className = "pre";
-    yamlPre.style.cssText = "margin-top:10px;font-size:11px;max-height:500px;overflow:auto;white-space:pre;tab-size:2;display:" + (expanded ? "block" : "none");
+    yamlPre.style.cssText = "margin-top:10px;font-size:11px;max-height:500px;overflow:auto;white-space:pre;tab-size:2;display:" + (expandedFull ? "block" : "none");
     yamlPre.textContent = cfg.yaml;
 
+    const minPre = document.createElement("pre");
+    if (cfg.minimal) {
+      minPre.className = "pre";
+      minPre.style.cssText = "margin-top:10px;font-size:11px;max-height:500px;overflow:auto;white-space:pre;tab-size:2;border:1px solid #52b78830;display:" + (expandedMin ? "block" : "none");
+      minPre.textContent = cfg.minimal;
+    }
+
+    // Only one can be open at a time
     toggleBtn.addEventListener("click", () => {
-      ctx.state[`_cfgExpand_${cfg.id}`] = !ctx.state[`_cfgExpand_${cfg.id}`];
-      const show = ctx.state[`_cfgExpand_${cfg.id}`];
+      const show = !ctx.state[`_cfgExpand_${cfg.id}`];
+      ctx.state[`_cfgExpand_${cfg.id}`] = show;
+      ctx.state[`_cfgMinimal_${cfg.id}`] = false;
       yamlPre.style.display = show ? "block" : "none";
-      toggleBtn.textContent = show ? "Hide YAML" : "Show YAML";
+      minPre.style.display = "none";
+      toggleBtn.textContent = show ? "Hide YAML" : "Full YAML";
+      if (minimalBtn) minimalBtn.textContent = "Add to Existing";
     });
 
+    if (minimalBtn) {
+      minimalBtn.addEventListener("click", () => {
+        const show = !ctx.state[`_cfgMinimal_${cfg.id}`];
+        ctx.state[`_cfgMinimal_${cfg.id}`] = show;
+        ctx.state[`_cfgExpand_${cfg.id}`] = false;
+        minPre.style.display = show ? "block" : "none";
+        yamlPre.style.display = "none";
+        minimalBtn.textContent = show ? "Hide Minimal" : "Add to Existing";
+        toggleBtn.textContent = "Full YAML";
+      });
+    }
+
+    // Copy whichever is currently visible
     copyBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(cfg.yaml).then(() => {
+      const text = ctx.state[`_cfgMinimal_${cfg.id}`] ? cfg.minimal : cfg.yaml;
+      navigator.clipboard.writeText(text).then(() => {
         copyBtn.textContent = "Copied!";
-        setTimeout(() => { copyBtn.textContent = "Copy YAML"; }, 1500);
+        setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
       }).catch(() => {
-        // Fallback: select text in pre
+        const target = ctx.state[`_cfgMinimal_${cfg.id}`] ? minPre : yamlPre;
+        target.style.display = "block";
         const range = document.createRange();
-        range.selectNodeContents(yamlPre);
+        range.selectNodeContents(target);
         const sel = window.getSelection();
         sel.removeAllRanges();
         sel.addRange(range);
-        yamlPre.style.display = "block";
         copyBtn.textContent = "Select failed — copy manually";
-        setTimeout(() => { copyBtn.textContent = "Copy YAML"; }, 2000);
+        setTimeout(() => { copyBtn.textContent = "Copy"; }, 2000);
       });
     });
 
-    return el("div", { class: "card", style: "border:1px solid #1a2e22" }, [headerRow, notesList, yamlPre]);
+    return el("div", { class: "card", style: "border:1px solid #1a2e22" }, [headerRow, notesList, minPre, yamlPre]);
   });
 
   // Tips card at the bottom
