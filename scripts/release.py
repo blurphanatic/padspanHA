@@ -3,10 +3,11 @@
 PadSpan HA release script.
 
 Usage:
-    python scripts/release.py <version>
+    python scripts/release.py <version> [--stable]
 
-Example:
-    python scripts/release.py 0.4.22
+Examples:
+    python scripts/release.py 0.4.22            # beta (pre-release on GitHub)
+    python scripts/release.py 0.4.22 --stable   # stable (Latest on GitHub)
 
 What it does:
     1. Validates hacs.json + repo structure (catches HACS-breaking mistakes)
@@ -194,8 +195,8 @@ def preflight_checks():
 
 # ───────────────────────── Version bumping ───────────────────────────
 
-def update_version_files(version, build_id):
-    """Bump version + build ID in all source files."""
+def update_version_files(version, build_id, channel):
+    """Bump version + build ID + channel in all source files."""
 
     old_build_id = re.search(
         r'BUILD_ID = "(\w+)"',
@@ -224,8 +225,9 @@ def update_version_files(version, build_id):
     content = p.read_text(encoding="utf-8")
     content = re.sub(r'BUILD_VERSION = "[^"]+"', f'BUILD_VERSION = "{version}"', content)
     content = re.sub(r'BUILD_ID = "[^"]+"',      f'BUILD_ID = "{build_id}"',      content)
+    content = re.sub(r'CHANNEL = "[^"]+"',        f'CHANNEL = "{channel}"',        content)
     p.write_text(content, encoding="utf-8")
-    print(f"  build_info.py        -> {version} / {build_id}")
+    print(f"  build_info.py        -> {version} / {build_id} / {channel}")
 
     # VERSION.txt
     (ROOT / "VERSION.txt").write_text(
@@ -233,13 +235,14 @@ def update_version_files(version, build_id):
     )
     print(f"  VERSION.txt          -> {version}")
 
-    # panel.js — version, build id, and all import cache-busters
+    # panel.js — version, build id, channel, and all import cache-busters
     content = PANEL_JS.read_text(encoding="utf-8")
     content = re.sub(r'const APP_VERSION = "[^"]+"', f'const APP_VERSION = "{version}"', content)
     content = re.sub(r'const BUILD_ID = "[^"]+"',    f'const BUILD_ID = "{build_id}"',    content)
+    content = re.sub(r'const CHANNEL = "[^"]+"',     f'const CHANNEL = "{channel}"',      content)
     content = re.sub(r'\?b=\w+', f'?b={build_id}', content)
     PANEL_JS.write_text(content, encoding="utf-8")
-    print(f"  panel.js             -> {version} / {build_id}")
+    print(f"  panel.js             -> {version} / {build_id} / {channel}")
 
     # lights_panel.js
     lights_js = INTEGRATION / "www" / "padspan-ha" / "lights_panel.js"
@@ -349,7 +352,7 @@ def git_commit_tag_push(version, tag):
 
 # ───────────────────────── GitHub release ────────────────────────────
 
-def create_github_release(tag):
+def create_github_release(tag, channel):
     """
     Create a GitHub release and upload the zip asset.
 
@@ -358,8 +361,10 @@ def create_github_release(tag):
       1. gh api  repos/.../releases  (create the release object)
       2. gh release upload            (attach the zip asset)
     """
+    is_prerelease = channel != "stable"
+    channel_label = "BETA" if is_prerelease else "STABLE"
     notes = (
-        f"## PadSpan HA {tag}\n\n"
+        f"## PadSpan HA {tag} ({channel_label})\n\n"
         "### Install / Update\n"
         "Install or update via HACS using this repository as a custom repository."
     )
@@ -369,12 +374,13 @@ def create_github_release(tag):
         f.write(notes)
         notes_file = f.name
 
+    prerelease_flag = " --prerelease" if is_prerelease else ""
     try:
         result = run(
             f'gh release create {tag} "{ZIP_PATH}" '
             f'--title "{tag}" '
             f'--notes-file "{notes_file}" '
-            f'--repo {REPO}',
+            f'--repo {REPO}{prerelease_flag}',
             check=False,
         )
         if result.returncode == 0:
@@ -384,10 +390,11 @@ def create_github_release(tag):
         os.unlink(notes_file)
 
     # ── Attempt 2: gh api + gh release upload (two-step fallback) ──
+    prerelease_api = " -F prerelease=true" if is_prerelease else ""
     for attempt in range(3):
         result = run(
             f'gh api repos/{REPO}/releases '
-            f'-f tag_name={tag} -f name={tag} -f body="{tag}"',
+            f'-f tag_name={tag} -f name={tag} -f body="{tag}"{prerelease_api}',
             check=False,
         )
         if result.returncode == 0:
@@ -420,21 +427,25 @@ def create_github_release(tag):
 # ───────────────────────── Main ──────────────────────────────────────
 
 def main():
-    if len(sys.argv) != 2:
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = [a for a in sys.argv[1:] if a.startswith("--")]
+
+    if len(args) != 1:
         print(__doc__)
         sys.exit(1)
 
-    version = sys.argv[1].lstrip("v")
+    version = args[0].lstrip("v")
     tag = f"v{version}"
+    channel = "stable" if "--stable" in flags else "beta"
     build_id = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
 
-    print(f"\n=== PadSpan HA Release: {tag}  build: {build_id} ===\n")
+    print(f"\n=== PadSpan HA Release: {tag}  build: {build_id}  channel: {channel} ===\n")
 
     print("Pre-flight checks...")
     preflight_checks()
 
     print("\nUpdating source files...")
-    update_version_files(version, build_id)
+    update_version_files(version, build_id, channel)
 
     print("\nBuilding zip...")
     build_zip()
@@ -446,9 +457,9 @@ def main():
     git_commit_tag_push(version, tag)
 
     print("\nCreating GitHub release...")
-    create_github_release(tag)
+    create_github_release(tag, channel)
 
-    print(f"\n=== Done! {tag} is live on GitHub. ===\n")
+    print(f"\n=== Done! {tag} ({channel}) is live on GitHub. ===\n")
 
 
 if __name__ == "__main__":

@@ -17,9 +17,10 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.76";
+const APP_VERSION = "0.6.77";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260305T164716Z";
+const BUILD_ID = "20260305T170327Z";
+const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -283,7 +284,7 @@ class PadSpanHaApp extends HTMLElement {
             <img src="/padspan_ha_static/padspan-ha/assets/padspan-mark.svg?b=${BUILD_ID}" alt="PadSpan" onerror="this.style.display='none'">
             <div>
               <div class="label">PadSpan™ HA</div>
-              <div class="muted" style="margin-top:2px">v${APP_VERSION} • build ${BUILD_ID}</div>
+              <div class="muted" style="margin-top:2px">v${APP_VERSION} <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:${CHANNEL==='stable'?'#2e7d32':'#e65100'};color:#fff;vertical-align:middle">${CHANNEL}</span></div>
             </div>
           </div>
 
@@ -333,6 +334,7 @@ class PadSpanHaApp extends HTMLElement {
     this.$content.addEventListener("change", _markInteraction, true);
     this.$content.addEventListener("click", _markInteraction, true);
     this.$content.addEventListener("focusin", _markInteraction, true);
+    this.$content.addEventListener("scroll", _markInteraction, true);
 
     this.$("#dataModeToggle").addEventListener("click", async ()=>{
       const next = (this.state.dataMode === "sample") ? "live" : "sample";
@@ -1735,6 +1737,16 @@ class PadSpanHaApp extends HTMLElement {
     }
     try {
       const node = mod.render(this._ctx());
+
+      // If the view returned a cached DOM node already displayed in $content,
+      // skip the destructive swap on poll renders to preserve scroll positions
+      // (e.g. ESPHome Configs YAML blocks). User-initiated renders always swap.
+      if(fromPoll && node && node.parentNode === this.$content){
+        this._lastGoodRender = performance.now();
+        this._renderFailCount = 0;
+        return;
+      }
+
       frag.appendChild(node);
 
       // ── Swap: clear old content and append new content atomically ────────
