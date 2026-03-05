@@ -3,8 +3,8 @@
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 // PadSpan HA – Devices view
-// Purpose: make the live tag/device information readable and actionable.
-// We treat device_tracker state as "room" (common for Bermuda-style presence).
+// Shows ALL tracked devices: HA entity trackers + BLE objects (tagged & unidentified).
+// Each row is clickable for details and has a delete/untag action.
 
 export function render(ctx) {
   const { el, esc, radioShortId } = ctx.helpers;
@@ -20,201 +20,217 @@ export function render(ctx) {
     ]);
   }
 
-  const tagsRaw = (snap && Array.isArray(snap.tags) ? snap.tags : []).map(t => ({
-    entity_id: t.entity_id || "",
+  // ── Gather all devices from multiple sources ──────────────────────────────
+
+  // 1) Entity-based trackers from snap.tags
+  const tagsRaw = (Array.isArray(snap.tags) ? snap.tags : []).map(t => ({
+    id: t.entity_id || "",
+    type: "entity",
     name: t.name || t.entity_id || "Unknown",
     room: normalizeRoom(t.state),
+    stateRaw: t.state || "",
     missing: !!t.missing,
-    last_changed: t.last_changed || t.last_updated || "",
-    state_raw: t.state || "",
+    lastChanged: t.last_changed || t.last_updated || "",
+    extra: t,
   }));
 
-  // View state
+  // 2) BLE objects from objects.list (tagged, ibeacon, private_ble)
+  const objList = (snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
+  const bleDevices = objList
+    .filter(o => o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon")
+    .map(o => {
+      const stableId = o.kind === "private_ble" ? (o.canonical_id || o.address || "")
+                      : o.kind === "ibeacon"     ? (o.key || o.address || "")
+                      : (o.address || "");
+      return {
+        id: stableId,
+        type: o.kind,
+        name: o.user_label || o.name || o.address || "Unknown",
+        room: o.room || "",
+        stateRaw: o.room || (o.age_s != null ? `seen ${Math.round(o.age_s)}s ago` : ""),
+        missing: false,
+        lastChanged: o.last_seen || "",
+        tagged: !!(o.user_label || o.identified),
+        rssi: o.rssi,
+        age_s: o.age_s,
+        sources: o.sources,
+        obj: o,
+      };
+    });
+
+  // Merge: entity trackers + BLE objects, dedup by id
+  const seen = new Set();
+  const allDevices = [];
+  for (const t of tagsRaw) {
+    if (t.id && !seen.has(t.id)) { seen.add(t.id); allDevices.push(t); }
+  }
+  for (const b of bleDevices) {
+    if (b.id && !seen.has(b.id)) { seen.add(b.id); allDevices.push(b); }
+  }
+
+  // ── View state ────────────────────────────────────────────────────────────
   if (!ctx.state.devSearch) ctx.state.devSearch = "";
-  if (!ctx.state.devRoom) ctx.state.devRoom = "All";
+  if (!ctx.state.devFilter) ctx.state.devFilter = "all"; // all | tagged | untagged | entity | missing
 
   const search = String(ctx.state.devSearch || "").trim().toLowerCase();
+  const filter = ctx.state.devFilter;
 
-  // Rooms list
-  const roomCounts = new Map();
-  for (const t of tagsRaw) {
-    roomCounts.set(t.room, (roomCounts.get(t.room) || 0) + 1);
-  }
-  const rooms = ["All", ...Array.from(roomCounts.keys()).sort((a, b) => a.localeCompare(b))];
-
-  // Filtered tags
-  const tags = tagsRaw.filter(t => {
-    if (ctx.state.devRoom && ctx.state.devRoom !== "All" && t.room !== ctx.state.devRoom) return false;
-    if (!search) return true;
-    const hay = `${t.name} ${t.entity_id} ${t.room} ${t.state_raw}`.toLowerCase();
-    return hay.includes(search);
+  // ── Filter ────────────────────────────────────────────────────────────────
+  const filtered = allDevices.filter(d => {
+    // Type filter
+    if (filter === "tagged" && !(d.tagged || d.type === "entity")) return false;
+    if (filter === "untagged" && (d.tagged || d.type === "entity")) return false;
+    if (filter === "entity" && d.type !== "entity") return false;
+    if (filter === "missing" && !d.missing) return false;
+    // Search
+    if (search) {
+      const hay = `${d.name} ${d.id} ${d.room} ${d.stateRaw} ${d.type}`.toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
   });
 
-  const roomRow = r => {
-    const count = r === "All" ? tagsRaw.length : (roomCounts.get(r) || 0);
-    return el(
-      "button",
-      {
-        class: "dev-room" + (ctx.state.devRoom === r ? " active" : ""),
-        onclick: () => {
-          ctx.state.devRoom = r;
-          ctx.actions.renderRooms();
-        },
-      },
-      [
-        el("span", { class: "dev-room-name" }, r),
-        el("span", { class: "badge" }, String(count)),
-      ]
-    );
-  };
+  // Sort: tagged/entities first, then by name
+  filtered.sort((a, b) => {
+    const aRank = (a.tagged || a.type === "entity") ? 0 : 1;
+    const bRank = (b.tagged || b.type === "entity") ? 0 : 1;
+    if (aRank !== bRank) return aRank - bRank;
+    return (a.name || "").localeCompare(b.name || "");
+  });
 
-  const tagRow = t => {
-    const age = timeAgo(t.last_changed);
-    return el("div", { class: "dev-tag" }, [
+  // ── Counts ────────────────────────────────────────────────────────────────
+  const entityCount = allDevices.filter(d => d.type === "entity").length;
+  const taggedCount = allDevices.filter(d => d.tagged && d.type !== "entity").length;
+  const untaggedCount = allDevices.filter(d => !d.tagged && d.type !== "entity").length;
+  const missingCount = allDevices.filter(d => d.missing).length;
+
+  // ── Header ────────────────────────────────────────────────────────────────
+  const header = el("div", { class: "row", style: "margin-bottom:14px" }, [
+    el("div", { class: "grow" }, [
+      el("div", { class: "h1" }, "Devices & Trackers"),
+      el("div", { class: "muted" }, "All tracked devices: HA entities, tagged BLE objects, and unidentified BLE devices."),
+    ]),
+    el("div", { class: "bt-kpis" }, [
+      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(allDevices.length)), el("div", { class: "kpi-lbl" }, "Total")]),
+      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(entityCount)), el("div", { class: "kpi-lbl" }, "Entities")]),
+      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(taggedCount)), el("div", { class: "kpi-lbl" }, "Tagged")]),
+      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(untaggedCount)), el("div", { class: "kpi-lbl" }, "Untagged")]),
+    ]),
+  ]);
+
+  // ── Controls ──────────────────────────────────────────────────────────────
+  const filterBtn = (value, label, count) => el("button", {
+    class: "btn" + (filter === value ? "" : " inline"),
+    style: "font-size:11px;padding:3px 10px",
+    onclick: () => { ctx.state.devFilter = value; ctx.actions.renderRooms(); },
+  }, `${label} (${count})`);
+
+  const controls = el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px" }, [
+    el("input", {
+      class: "input", style: "flex:1;min-width:180px;max-width:300px",
+      placeholder: "Search name, address, room…",
+      value: ctx.state.devSearch,
+      oninput: e => { ctx.state.devSearch = e.target.value; ctx.actions.renderRooms(); },
+    }),
+    filterBtn("all", "All", allDevices.length),
+    filterBtn("tagged", "Named", entityCount + taggedCount),
+    filterBtn("untagged", "Untagged", untaggedCount),
+    missingCount > 0 ? filterBtn("missing", "Missing", missingCount) : null,
+  ].filter(Boolean));
+
+  // ── Device rows ───────────────────────────────────────────────────────────
+  const rows = filtered.slice(0, 300).map(d => {
+    const kindBadge = d.type === "entity"      ? el("span", { class: "badge", style: "font-size:9px" }, "Entity")
+                    : d.type === "private_ble"  ? el("span", { class: "badge", style: "font-size:9px;background:#1a2a3a;color:#7dd3fc;border-color:#1e4976" }, "Private BLE")
+                    : d.type === "ibeacon"      ? el("span", { class: "badge", style: "font-size:9px;background:#2a1a3a;color:#c4b5fd;border-color:#5b21b6" }, "iBeacon")
+                    : d.tagged                  ? el("span", { class: "badge", style: "font-size:9px" }, "Tagged")
+                    : el("span", { class: "badge warn", style: "font-size:9px" }, "Untagged");
+
+    const statusBadge = d.missing
+      ? el("span", { class: "pill bad" }, "MISSING")
+      : d.room
+        ? el("span", { class: "pill good" }, d.room)
+        : el("span", { class: "pill", style: "color:#94a3b8" }, "No room");
+
+    const sub = [d.id];
+    if (d.rssi != null) sub.push(`RSSI ${d.rssi}`);
+    if (d.age_s != null) sub.push(`${Math.round(d.age_s)}s ago`);
+    if (d.sources && d.sources.length) sub.push(`${d.sources.length} radio${d.sources.length > 1 ? "s" : ""}`);
+    if (d.type === "entity" && d.stateRaw) sub.push(`state: ${d.stateRaw}`);
+
+    // Buttons
+    const btns = [];
+
+    // Details button
+    btns.push(el("button", { class: "btn tiny", style: "font-size:10px;padding:2px 6px", onclick: () => {
+      if (d.obj) {
+        ctx.actions.showObjectDetail(d.obj);
+      } else if (d.extra) {
+        // Build a minimal object for the detail modal
+        ctx.actions.showObjectDetail({
+          address: d.id,
+          entity_id: d.type === "entity" ? d.id : undefined,
+          name: d.name,
+          kind: d.type === "entity" ? "entity" : d.type,
+          room: d.room,
+          ...d.extra,
+        });
+      }
+    }}, "Details"));
+
+    // Tag/Rename button (BLE objects only)
+    if (d.type === "ble" || d.type === "private_ble" || d.type === "ibeacon") {
+      const label = d.obj?.user_label || "";
+      btns.push(el("button", { class: "btn tiny", style: "font-size:10px;padding:2px 6px", onclick: () => {
+        ctx.actions.tagObjectPrompt(d.id, label);
+      }}, label ? "Rename" : "Tag"));
+    }
+
+    // Delete/Untag button
+    if (d.tagged && d.type !== "entity") {
+      btns.push(el("button", { class: "btn tiny", style: "font-size:10px;padding:2px 6px;color:#f87171;border-color:#7f1d1d", onclick: async () => {
+        if (!confirm(`Remove tag "${d.name}" (${d.id})?`)) return;
+        try {
+          await ctx.actions.objectLabelDelete(d.id);
+          ctx.toast("Tag removed.");
+          await ctx.actions.refreshSnapshot();
+        } catch(e) { ctx.toast("Failed to remove tag.", true); }
+      }}, "Untag"));
+    }
+
+    return el("div", { class: "dev-tag", style: "cursor:pointer", onclick: (e) => {
+      // Don't trigger if a button was clicked
+      if (e.target.closest("button")) return;
+      if (d.obj) ctx.actions.showObjectDetail(d.obj);
+    }}, [
       el("div", { class: "dev-tag-main" }, [
-        el("div", { class: "dev-tag-name" }, t.name),
-        el("div", { class: "dev-tag-sub" }, `${t.entity_id}${t.room ? " • " + t.room : ""}`),
+        el("div", { class: "dev-tag-name" }, d.name),
+        el("div", { class: "dev-tag-sub" }, sub.join(" · ")),
       ]),
-      el("div", { class: "dev-tag-right" }, [
-        t.missing ? el("span", { class: "pill bad" }, "MISSING") : el("span", { class: "pill good" }, "OK"),
-        el("span", { class: "muted" }, age),
-      ]),
-    ]);
-  };
-
-  const stats = (() => {
-    const missing = tagsRaw.filter(t => t.missing).length;
-    const ok = tagsRaw.length - missing;
-    return el("div", { class: "row" }, [
-      el("div", { class: "grow" }, [
-        el("div", { class: "h1" }, "Devices"),
-        el("div", { class: "muted" }, "Organized by the current room/state of each tracker."),
-      ]),
-      el("div", { class: "bt-kpis" }, [
-        el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(tagsRaw.length)), el("div", { class: "kpi-lbl" }, "Trackers")]),
-        el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(ok)), el("div", { class: "kpi-lbl" }, "OK")]),
-        el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(missing)), el("div", { class: "kpi-lbl" }, "Missing")]),
+      el("div", { class: "dev-tag-right", style: "display:flex;align-items:center;gap:6px;flex-wrap:wrap" }, [
+        kindBadge,
+        statusBadge,
+        ...btns,
       ]),
     ]);
-  })();
+  });
 
-  const controls = el("div", { class: "bt-controls" }, [
-    el("div", { class: "field", style: "min-width:260px" }, [
-      el("div", { class: "label" }, "Search"),
-      el("input", {
-        class: "input",
-        placeholder: "Search name, entity_id, room…",
-        value: ctx.state.devSearch,
-        oninput: e => {
-          ctx.state.devSearch = e.target.value;
-          ctx.actions.renderRooms();
-        },
-      }),
+  const listCard = el("div", { class: "card" }, [
+    el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [
+      el("div", { class: "h2", style: "flex:1" }, `Showing ${filtered.length} of ${allDevices.length}`),
     ]),
-    el("div", { class: "field" }, [
-      el("div", { class: "label" }, "Selected room"),
-      el("div", { class: "pill" }, ctx.state.devRoom || "All"),
-    ]),
+    filtered.length === 0
+      ? el("div", { class: "muted", style: "padding:12px 0" }, "No devices match the current filters.")
+      : el("div", { class: "dev-tag-list list-scroll" }, rows),
   ]);
 
-  const left = el("div", { class: "card" }, [
-    el("div", { class: "h2" }, "Rooms"),
-    el("div", { class: "muted" }, "Click a room to filter trackers."),
-    el("div", { class: "dev-room-list list-scroll" }, rooms.map(roomRow)),
-  ]);
-
-  const right = el("div", { class: "card" }, [
-    el("div", { class: "h2" }, "Trackers"),
-    el("div", { class: "muted" }, tags.length ? "Sorted by most recently changed." : "No trackers match the current filters."),
-    el("div", { class: "dev-tag-list list-scroll" }, tags.sort((a, b) => (a.last_changed || "").localeCompare(b.last_changed || "")).reverse().map(tagRow)),
-  ]);
-
-  const footer = el("details", { class: "card" }, [
-    el("summary", { style: "cursor:pointer;font-weight:700" }, "Raw snapshot (for debugging)"),
-    el("pre", { class: "pre" }, esc(JSON.stringify({ tags: tagsRaw.slice(0, 100) }, null, 2))),
-  ]);
-
-  // BLE Objects from scanner
-  const objList = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
-  const taggedBle = objList.filter(o => o.kind === "ble" && (o.user_label || o.identified));
-  const unidentifiedBle = objList.filter(o => o.kind === "ble" && !o.identified && !o.user_label);
-
-  const unidentifiedSection = el("div", { class: "card" }, [
-    el("div", { class: "row" }, [
-      el("div", { class: "h2", style: "flex:1" }, "Unidentified BLE Objects"),
-      el("span", { class: "badge warn" }, `${unidentifiedBle.length} untagged`),
-    ]),
-    el("div", { class: "muted", style: "margin-bottom:8px" }, "BLE devices seen by your scanners that have no Home Assistant entity and no user label. Use Tag to identify them."),
-    unidentifiedBle.length === 0
-      ? el("div", { class: "muted" }, "None — all detected BLE devices are identified or tagged.")
-      : el("div", { class: "dev-tag-list list-scroll" }, unidentifiedBle.slice(0, 200).map(o => {
-          const addr = o.address || "";
-          const sources = Array.isArray(o.sources) ? o.sources.map(s => { const id = _sid(s); return id ? id+" "+s : s; }).join(", ") : "";
-          const rssi = o.rssi != null ? `RSSI ${o.rssi}` : "";
-          const age = o.age_s != null ? `${Math.round(Number(o.age_s))}s ago` : "";
-
-          const tagBtn = el("button", { class: "btn tiny" }, "Tag This");
-          tagBtn.addEventListener("click", () => ctx.actions.tagObjectPrompt(addr, ""));
-
-          return el("div", { class: "dev-tag" }, [
-            el("div", { class: "dev-tag-main" }, [
-              el("div", { class: "dev-tag-name" }, addr || "Unknown"),
-              el("div", { class: "dev-tag-sub" }, [sources, rssi, age].filter(Boolean).join(" • ")),
-            ]),
-            el("div", { class: "dev-tag-right" }, [tagBtn]),
-          ]);
-        })),
-  ]);
-
-  const taggedBleSection = taggedBle.length === 0 ? null : el("div", { class: "card" }, [
-    el("div", { class: "row" }, [
-      el("div", { class: "h2", style: "flex:1" }, "Tagged BLE Objects"),
-      el("span", { class: "badge" }, `${taggedBle.length} tagged`),
-    ]),
-    el("div", { class: "muted", style: "margin-bottom:8px" }, "BLE devices you have labeled — these are tracked by your scanners."),
-    el("div", { class: "dev-tag-list list-scroll" }, taggedBle.slice(0, 200).map(o => {
-      const label = o.user_label || o.name || o.address || "Unknown";
-      const addr = o.address || "";
-      const sources = Array.isArray(o.sources) ? o.sources.map(s => { const id = _sid(s); return id ? id+" "+s : s; }).join(", ") : "";
-      const rssi = o.rssi != null ? `RSSI ${o.rssi}` : "";
-      const age = o.age_s != null ? `${Math.round(Number(o.age_s))}s ago` : "";
-      const relabelBtn = el("button", { class: "btn tiny" }, "Relabel");
-      relabelBtn.addEventListener("click", () => ctx.actions.tagObjectPrompt(addr, o.user_label || ""));
-      return el("div", { class: "dev-tag" }, [
-        el("div", { class: "dev-tag-main" }, [
-          el("div", { class: "dev-tag-name" }, label),
-          el("div", { class: "dev-tag-sub" }, [addr, sources, rssi, age].filter(Boolean).join(" • ")),
-        ]),
-        el("div", { class: "dev-tag-right" }, [
-          el("span", { class: "pill good" }, "Tagged"),
-          relabelBtn,
-        ]),
-      ]);
-    })),
-  ]);
-
-  return el("div", {}, [stats, controls, el("div", { class: "grid-2" }, [left, right]), taggedBleSection, unidentifiedSection, footer].filter(Boolean));
+  return el("div", {}, [header, controls, listCard]);
 }
 
 function normalizeRoom(state) {
   const s = String(state || "").trim();
-  if (!s || s === "unknown" || s === "unavailable") return "Unknown";
+  if (!s || s === "unknown" || s === "unavailable") return "";
   if (s === "not_home") return "Away";
+  if (s === "home") return "Home";
   return s;
-}
-
-function timeAgo(iso) {
-  if (!iso) return "—";
-  const t = Date.parse(iso);
-  if (!isFinite(t)) return "—";
-  const d = Date.now() - t;
-  const s = Math.max(0, Math.floor(d / 1000));
-  if (s < 5) return "just now";
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const days = Math.floor(h / 24);
-  return `${days}d ago`;
 }
