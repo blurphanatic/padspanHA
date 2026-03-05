@@ -1033,5 +1033,29 @@ function _settingsUI(ctx, el){
     setTimeout(()=>{ status.textContent = ""; }, 2000);
   });
   wrap.appendChild(el("div",{style:"display:flex;align-items:center"}, [saveBtn, status]));
+
+  // ── Mapped Light Control Goodie ──
+  const lightsCard = el("div",{class:"card",style:"padding:16px;margin-top:20px"});
+  lightsCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#fbbf24;margin-bottom:6px"},"\uD83D\uDCA1 Mapped Light Control Goodie"));
+  lightsCard.appendChild(el("div",{style:"font-size:12px;color:#94a3b8;margin-bottom:10px;line-height:1.5"},
+    "Adds a separate Lights panel to the HA sidebar for map-based light control. Requires a Home Assistant restart after changing this setting."));
+  const lightsRow = el("label",{style:"display:flex;align-items:center;gap:8px;cursor:pointer"});
+  const lightsCb = el("input",{type:"checkbox"});
+  lightsCb.checked = !!(settings.lights_panel_enabled);
+  lightsRow.appendChild(lightsCb);
+  lightsRow.appendChild(el("span",{style:"color:#e2e8f0;font-size:14px"}, "Enable Mapped Light Control in sidebar"));
+  lightsCard.appendChild(lightsRow);
+  const lightsSaveBtn = el("button",{class:"btn",style:"margin-top:10px"},"Save");
+  const lightsStatus = el("span",{style:"margin-left:10px;color:#94a3b8;font-size:13px"});
+  lightsSaveBtn.addEventListener("click", async ()=>{
+    await ctx.actions.settingsSet({ lights_panel_enabled: lightsCb.checked });
+    lightsStatus.textContent = lightsCb.checked
+      ? "Saved \u2014 restart Home Assistant to see the Lights panel in the sidebar."
+      : "Saved \u2014 restart Home Assistant to remove the Lights panel from the sidebar.";
+    lightsStatus.style.color = "#fbbf24";
+  });
+  lightsCard.appendChild(el("div",{style:"display:flex;align-items:center;flex-wrap:wrap"}, [lightsSaveBtn, lightsStatus]));
+  wrap.appendChild(lightsCard);
+
   return wrap;
 }

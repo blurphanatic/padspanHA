@@ -18,7 +18,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, VERSION, DATA_PANEL_REGISTERED
+from .const import DOMAIN, VERSION, DATA_PANEL_REGISTERED, DATA_SETTINGS
 from .build_info import BUILD_ID
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,19 +95,28 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
         },
     )
 
-    await _register_panel(
-        hass=hass,
-        webcomponent_name=LIGHTS_WEB_COMPONENT,
-        frontend_url_path="padspan-lights",
-        sidebar_title="Lights",
-        sidebar_icon="mdi:lightbulb-group",
-        require_admin=False,
-        module_url=f"{STATIC_URL}/padspan-ha/lights_panel.js?v={VERSION}&b={BUILD_ID}",
-        config={
-            "title": "Lights",
-            "version": VERSION,
-        },
-    )
+    # Lights panel — only register if enabled in settings (default off)
+    _lights_on = False
+    try:
+        _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+        if _st and _st.data:
+            _lights_on = bool(_st.data.get("lights_panel_enabled", False))
+    except Exception:
+        pass
+    if _lights_on:
+        await _register_panel(
+            hass=hass,
+            webcomponent_name=LIGHTS_WEB_COMPONENT,
+            frontend_url_path="padspan-lights",
+            sidebar_title="Lights",
+            sidebar_icon="mdi:lightbulb-group",
+            require_admin=False,
+            module_url=f"{STATIC_URL}/padspan-ha/lights_panel.js?v={VERSION}&b={BUILD_ID}",
+            config={
+                "title": "Lights",
+                "version": VERSION,
+            },
+        )
 
     hass.data[DOMAIN][DATA_PANEL_REGISTERED] = True
     _LOGGER.info("PadSpan HA panel registered v%s (build %s)", VERSION, BUILD_ID)

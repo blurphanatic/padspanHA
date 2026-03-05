@@ -55,6 +55,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ha_entity_scanner_distance_enabled": True,
     # MQTT (experimental, off by default)
     "mqtt_publish_enabled": False,
+    # Lights sidebar panel (off by default — requires HA restart to take effect)
+    "lights_panel_enabled": False,
 }
 
 

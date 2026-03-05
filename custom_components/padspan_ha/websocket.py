@@ -1244,6 +1244,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("ha_entity_distance_enabled"): bool,
         vol.Optional("ha_entity_scanner_distance_enabled"): bool,
         vol.Optional("mqtt_publish_enabled"): bool,
+        vol.Optional("lights_panel_enabled"): bool,
     }
 )
 @websocket_api.async_response
@@ -1315,7 +1316,7 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["advanced_extra_tabs"] = [t for t in msg["advanced_extra_tabs"] if t in valid]
         for key in ("ha_entity_tracker_enabled", "ha_entity_area_enabled",
                     "ha_entity_distance_enabled", "ha_entity_scanner_distance_enabled",
-                    "mqtt_publish_enabled"):
+                    "mqtt_publish_enabled", "lights_panel_enabled"):
             if key in msg:
                 payload[key] = bool(msg[key])
         await st.async_set(**payload)
