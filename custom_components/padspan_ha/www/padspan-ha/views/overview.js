@@ -395,7 +395,7 @@ export function render(ctx){
         "data-kind": kind,
         "data-identified": identified ? "1":"0",
         "data-common": isCommon ? "1":"0",
-        "data-search": `${kind} ${name} ${addr} ${room} ${userLabel} ${(o.entity_id||"")} ${(o.linked_entities||[]).join(" ")}`.toLowerCase(),
+        "data-search": `${kind} ${name} ${addr} ${room} ${userLabel} ${(o.entity_id||"")} ${(o.linked_entities||[]).join(" ")} ${o.company_name||""} ${o.device_type||""} ${(o.service_names||[]).join(" ")}`.toLowerCase(),
         "data-mac": addr,
       },[
         el("td",{}, kind==="ble" ? pill("BLE","") : pill("Entity","")),
@@ -404,10 +404,18 @@ export function render(ctx){
           (userLabel && (o.name && o.name !== userLabel) ? el("div",{style:"color:#94a3b8"}, `raw: ${o.name}`) : null),
           (o.entity_id ? el("div",{style:"color:#94a3b8"}, o.entity_id) : null),
           (Array.isArray(o.linked_entities) && o.linked_entities.length ? el("div",{style:"color:#94a3b8"}, `Linked: ${o.linked_entities.join(", ")}`) : null),
-          (kind==="ble" && Array.isArray(o.sources) && o.sources.length ? el("div",{style:"color:#94a3b8"}, `Seen by: ${o.sources.join(", ")}`) : null),
-          (kind==="ble" && o.manufacturer_data && Object.keys(o.manufacturer_data).length ? el("div",{style:"color:#94a3b8"}, `Manuf IDs: ${Object.keys(o.manufacturer_data).slice(0,3).join(", ")}${Object.keys(o.manufacturer_data).length>3?"…":""}`) : null),
-          (kind==="ble" && Array.isArray(o.service_uuids) && o.service_uuids.length ? el("div",{style:"color:#94a3b8"}, `Services: ${o.service_uuids.length}`) : null),
+          (kind==="ble" && Array.isArray(o.sources) && o.sources.length ? el("div",{style:"color:#94a3b8"}, `Seen by: ${o.sources.map(s=>{const id=_sid(typeof s==="object"?(s.source||""):String(s));return id?id+" "+(typeof s==="object"?(s.source||""):String(s)):(typeof s==="object"?(s.source||""):String(s));}).join(", ")}`) : null),
+          ((o.company_name || o.device_type || (o.service_names && o.service_names.length))
+            ? el("div",{style:"display:flex;flex-wrap:wrap;gap:4px;margin-top:2px"}, [
+                o.company_name ? el("span",{style:"font-size:10px;padding:1px 5px;border-radius:4px;background:#1a2a3a;color:#7dd3fc;border:1px solid #1e4976"}, o.company_name) : null,
+                o.device_type  ? el("span",{style:"font-size:10px;padding:1px 5px;border-radius:4px;background:#2a1a3a;color:#c4b5fd;border:1px solid #5b21b6"}, o.device_type) : null,
+                ...(o.service_names || []).slice(0,3).map(sn =>
+                  el("span",{style:"font-size:10px;padding:1px 5px;border-radius:4px;background:#1a3a2a;color:#86efac;border:1px solid #166534"}, sn)
+                ),
+              ].filter(Boolean))
+            : (kind==="ble" && o.manufacturer_data && Object.keys(o.manufacturer_data).length ? el("div",{style:"color:#94a3b8;font-size:11px"}, `Manuf ID: ${Object.keys(o.manufacturer_data).slice(0,3).join(", ")}`) : null)),
           (o.device && (o.device.manufacturer || o.device.model) ? el("div",{style:"color:#94a3b8"}, `${o.device.manufacturer||""} ${o.device.model||""}`.trim()) : null),
+          (o.connectable === true ? el("span",{style:"font-size:9px;color:#52b788"}, "connectable") : null),
         ].filter(Boolean)),
         el("td",{}, addr || "—"),
         el("td",{}, room || "—"),
