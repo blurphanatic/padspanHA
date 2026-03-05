@@ -642,8 +642,10 @@ export function render(ctx){
         else if(r.wifi_signal >= -75) score += 5;
       }
       // Scanning status (0-20)
+      const _hasAds = bleAds.some(ad => ad.source === a.src);
       if(r.scanning && !r.lost && !r.disabled) score += 20;
       else if(r.scanning) score += 10;
+      else if(_hasAds && !r.lost && !r.disabled) score += 15;  // passive/listening
       relRaw[a.src] = score;
     }
 
@@ -785,7 +787,7 @@ export function render(ctx){
 
         // Status badges
         const statusRow = el("div",{style:"display:flex;gap:6px;flex-wrap:wrap;margin:8px 0"});
-        statusRow.appendChild(el("span",{class:r.scanning?"badge":"badge warn"}, r.scanning?"scanning":"not scanning"));
+        { const _ss = ctx.helpers.scannerStatus; if(_ss){ const ss = _ss(r, bleAds); const b = el("span",{class:ss.cls,title:ss.title},ss.label); if(ss.style) b.style.cssText+=ss.style; statusRow.appendChild(b); } else { statusRow.appendChild(el("span",{class:r.scanning?"badge":"badge warn"}, r.scanning?"scanning":"not scanning")); } }
         statusRow.appendChild(el("span",{class:"badge"}, r.connectable?"connectable":"not connectable"));
         if(r.lost) statusRow.appendChild(el("span",{class:"badge warn",style:"background:rgba(245,158,11,.18)"}, "\u26A0 Lost"));
         if(r.disabled) statusRow.appendChild(el("span",{class:"badge warn",style:"background:rgba(148,100,220,.18);color:#c084fc"}, "\u2298 Disabled"));

@@ -325,7 +325,7 @@ function _scannerMap(ctx, el, haFloors){
       },[
         el("div",{style:"font-size:10px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, (ctx.helpers.radioShortId ? ctx.helpers.radioShortId(r.source||"")+" " : "") + name),
         el("div",{style:"font-size:9px;color:#4a6670;font-family:monospace;white-space:nowrap"}, r.source.slice(-8)),
-        r.scanning ? el("span",{class:"badge",style:"font-size:9px"},"scanning") : el("span",{class:"badge warn",style:"font-size:9px"},"idle"),
+        (()=>{ const _ss = ctx.helpers.scannerStatus; if(!_ss){ return r.scanning ? el("span",{class:"badge",style:"font-size:9px"},"scanning") : el("span",{class:"badge warn",style:"font-size:9px"},"idle"); } const ss = _ss(r, snap?.ble?.advertisements); const b = el("span",{class:ss.cls,style:"font-size:9px",title:ss.title},ss.label); if(ss.style) b.style.cssText+="font-size:9px;"+ss.style; return b; })(),
       ]));
     }
     wrap.appendChild(unplacedCard);

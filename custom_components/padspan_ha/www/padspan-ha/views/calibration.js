@@ -19,7 +19,7 @@ const POLL_MS   = 1000;  // RSSI poll interval during collection (1s = ~60 sampl
 
 // ── Exports ──────────────────────────────────────────────────────────────────
 export function render(ctx) {
-  const { el, radioShortId } = ctx.helpers;
+  const { el, radioShortId, scannerStatus } = ctx.helpers;
   const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
   const root = el("section", { id: "calibration" });
   root.className = ctx.state.view === "calibration" ? "" : "hidden";
@@ -280,7 +280,7 @@ function _setup(ctx, el, cs, calData) {
         ]);
         const row = el("div", { style: "display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid #0d1f12;flex-wrap:wrap" }, [
           nameEl,
-          r.scanning ? el("span", { class: "badge", style: "font-size:10px" }, "scanning") : el("span", { class: "badge warn", style: "font-size:10px" }, "idle"),
+          (()=>{ const ss = scannerStatus ? scannerStatus(r, ads) : {label:r.scanning?"scanning":"idle",cls:r.scanning?"badge":"badge warn",title:""}; const b = el("span",{class:ss.cls,style:"font-size:10px",title:ss.title},ss.label); if(ss.style) b.style.cssText+="font-size:10px;"+ss.style; return b; })(),
           el("span", { class: "muted", style: "font-size:11px;white-space:nowrap" }, `${seen} device${seen !== 1 ? "s" : ""}`),
           beaconHere ? el("span", { style: "font-size:10px;color:#52b788;white-space:nowrap" }, "✓ beacon") : null,
         ].filter(Boolean));

@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.59";
+const APP_VERSION = "0.6.60";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260305T024429Z";
+const BUILD_ID = "20260305T025346Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -138,6 +138,22 @@ function radioShortId(source){
   const N  = (h >>> 5) % 10;
   const L2 = String.fromCharCode(65 + ((h >>> 9) % 26));
   return `${L1}${N}${L2}`;
+}
+
+/**
+ * Determine scanner status: "scanning", "listening", or "idle".
+ * @param {object} radio  — radio object with .scanning, .source
+ * @param {Array}  ads    — snapshot advertisements array (optional)
+ * @returns {{label:string, cls:string, title:string}}
+ */
+function scannerStatus(radio, ads){
+  if(radio.scanning === true)
+    return { label:"scanning", cls:"badge", title:"Actively requesting BLE advertisements from nearby devices" };
+  const src = radio.source || "";
+  const hasAds = Array.isArray(ads) && ads.some(a => a.source === src);
+  if(hasAds)
+    return { label:"listening", cls:"badge", style:"background:rgba(56,189,248,.14);color:#38bdf8", title:"Online and receiving BLE broadcasts (passive mode)" };
+  return { label:"idle", cls:"badge warn", title:"No recent BLE data — may be offline, rebooting, or in a quiet area" };
 }
 
 function _hash32(str){
@@ -887,6 +903,7 @@ class PadSpanHaApp extends HTMLElement {
         el, esc, pill,
         HELP,
         radioShortId,
+        scannerStatus,
         roomColor: (n)=>roomColor(n, this.state.model),
         helpBtn: (key)=>{
           const b = document.createElement("button");
@@ -1424,7 +1441,7 @@ class PadSpanHaApp extends HTMLElement {
             el("div", {}, rName),
             r.source ? el("div", {class:"muted", style:"font-size:11px;font-family:monospace"}, r.source) : null,
           ].filter(Boolean)),
-          r.scanning ? el("span", {class:"badge"}, "scanning") : null,
+          (()=>{ const ss = scannerStatus(r, snap?.ble?.advertisements); const b = el("span",{class:ss.cls,title:ss.title},ss.label); if(ss.style) b.style.cssText+=ss.style; return b; })(),
           el("button", {class:"btn tiny", onclick:()=>{ this._closeModal(); this._showScannerDetail(r); }}, "Details"),
         ].filter(Boolean));
         radioSection.appendChild(rRow);
@@ -1468,7 +1485,7 @@ class PadSpanHaApp extends HTMLElement {
     statusRow.appendChild(el("span", {class:"pill", style:"font-family:monospace;font-weight:700;font-size:13px;letter-spacing:.04em"}, sid));
     if(scanner.lost)     statusRow.appendChild(el("span", {class:"badge warn", style:"background:rgba(245,158,11,.18)"}, "⚠ Lost"));
     if(scanner.disabled) statusRow.appendChild(el("span", {class:"badge warn", style:"background:rgba(148,100,220,.18);color:#c084fc"}, "⊘ Disabled"));
-    if(scanner.scanning != null) statusRow.appendChild(el("span", {class:scanner.scanning?"badge":"badge warn"}, scanner.scanning?"scanning":"not scanning"));
+    { const ss = scannerStatus(scanner, snap?.ble?.advertisements); const b = el("span",{class:ss.cls,title:ss.title},ss.label); if(ss.style) b.style.cssText+=ss.style; statusRow.appendChild(b); }
     if(scanner.connectable != null) statusRow.appendChild(el("span", {class:"badge"}, scanner.connectable?"connectable":"not connectable"));
     if(scanner.adapter) statusRow.appendChild(el("span", {class:"muted", style:"font-family:monospace;font-size:12px"}, `adapter: ${scanner.adapter}`));
     body.appendChild(statusRow);

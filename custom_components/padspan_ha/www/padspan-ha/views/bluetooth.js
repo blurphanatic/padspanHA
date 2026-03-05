@@ -178,7 +178,7 @@ function renderScanners(ctx, radios, sources) {
     const sid  = radioShortId ? radioShortId(src) : "";
     const meta = [];
     if (r.adapter) meta.push(`adapter: ${r.adapter}`);
-    if (r.scanning != null) meta.push(`scanning: ${r.scanning ? "yes" : "no"}`);
+    { const _ss = ctx.helpers.scannerStatus; if(_ss){ const ss = _ss(r, adsAll); meta.push(`status: ${ss.label}`); } else if(r.scanning != null){ meta.push(`scanning: ${r.scanning ? "yes" : "no"}`); } }
     if (r.connectable != null) meta.push(`connectable: ${r.connectable ? "yes" : "no"}`);
 
     const nameRow = el("div", { style: "display:flex;align-items:center;gap:6px;flex-wrap:wrap" }, [
