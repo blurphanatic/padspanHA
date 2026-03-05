@@ -1088,6 +1088,42 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception:
         snapshot["objects"] = {"list": [], "summary": {"total": 0, "identified": 0, "unidentified": 0, "entities": 0, "ble": 0, "common_prefixes": {}}}
 
+    # ── Enrich raw advertisements with decoded metadata + object cross-reference ──
+    try:
+        from .ble_enrichment import enrich_object as _enrich_ad
+        _obj_by_addr: dict[str, dict[str, Any]] = {}
+        for _o in (snapshot.get("objects") or {}).get("list") or []:
+            for _a in ([_o.get("address")] + (_o.get("all_addresses") or [])):
+                if _a:
+                    _obj_by_addr[str(_a).upper()] = _o
+        _raw_ads = (snapshot.get("ble") or {}).get("advertisements") or []
+        for _ad in _raw_ads:
+            _enrich_ad(_ad)  # adds company_name, device_type, service_names, service_uuid_map
+            _ad_addr = str(_ad.get("address") or "").upper()
+            _xobj = _obj_by_addr.get(_ad_addr)
+            if _xobj:
+                _ad["_xref"] = {
+                    "key": _xobj.get("key"),
+                    "kind": _xobj.get("kind"),
+                    "label": _xobj.get("user_label") or _xobj.get("name"),
+                    "identified": _xobj.get("identified", False),
+                    "room": _xobj.get("room"),
+                }
+                if _xobj.get("canonical_id"):
+                    _ad["_xref"]["canonical_id"] = _xobj["canonical_id"]
+                if _xobj.get("all_addresses"):
+                    _ad["_xref"]["all_addresses"] = _xobj["all_addresses"]
+                if _xobj.get("ibeacon_uuid"):
+                    _ad["_xref"]["ibeacon_uuid"] = _xobj["ibeacon_uuid"]
+                    _ad["_xref"]["ibeacon_major"] = _xobj.get("ibeacon_major")
+                    _ad["_xref"]["ibeacon_minor"] = _xobj.get("ibeacon_minor")
+                if _xobj.get("entity_id"):
+                    _ad["_xref"]["entity_id"] = _xobj["entity_id"]
+            else:
+                _ad["_xref"] = None
+    except Exception:
+        pass
+
     snapshot["bermuda_devices"] = snapshot.get("receivers") or []
 
     # Frontend "radios" should reflect actual Bluetooth scanners/adapters (not Bermuda tag devices).

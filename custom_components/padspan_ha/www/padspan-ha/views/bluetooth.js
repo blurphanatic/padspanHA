@@ -42,7 +42,8 @@ export function render(ctx) {
       if (!a) return false;
       if (sourceSel !== "all" && String(a.source || "") !== sourceSel) return false;
       if (!filter) return true;
-      const hay = `${a.name || ""} ${a.address || ""} ${(a.source || "")}`.toLowerCase();
+      const xr = a._xref || {};
+      const hay = `${a.name || ""} ${a.address || ""} ${a.source || ""} ${a.company_name || ""} ${a.device_type || ""} ${(a.service_names||[]).join(" ")} ${xr.label || ""} ${xr.kind || ""} ${xr.room || ""} ${xr.canonical_id || ""} ${xr.ibeacon_uuid || ""}`.toLowerCase();
       return hay.includes(filter);
     })
     .slice(0, maxItems);
@@ -306,6 +307,7 @@ function renderScanners(ctx, radios, sources) {
 
 function renderMonitor(ctx, ads, radios, objIndex) {
   const { el, esc } = ctx.helpers;
+  const _rsid = ctx.helpers.radioShortId || (() => "");
 
   const selected = ctx.state.btSelectedAddr || null;
 
@@ -316,6 +318,8 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     ]);
   }
 
+  // ── helpers ──
+
   const rssiPill = rssi => {
     const v = Number(rssi);
     if (!isFinite(v)) return el("span", { class: "pill" }, "RSSI ?");
@@ -323,20 +327,12 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     if (v >= -60) cls += " good";
     else if (v >= -80) cls += " ok";
     else cls += " bad";
-    return el("span", { class: cls }, `RSSI ${v}`);
-  };
-
-  const statusPill = (addr) => {
-    const o = addr ? objIndex.get(String(addr).toUpperCase()) : null;
-    if (!o) return null;
-    const cls = o.identified ? "badge" : "badge warn";
-    const lbl = o.identified ? "identified" : "unidentified";
-    return el("span", { class: cls }, lbl);
+    return el("span", { class: cls }, `${v} dBm`);
   };
 
   const ageText = age_s => {
     const s = Number(age_s);
-    if (!isFinite(s)) return "—";
+    if (!isFinite(s)) return "\u2014";
     if (s < 1) return "<1s";
     if (s < 60) return `${Math.round(s)}s`;
     const m = Math.floor(s / 60);
@@ -344,71 +340,196 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     return `${m}m ${rs}s`;
   };
 
+  const badge = (text, bg, fg, border) => el("span", { style: `display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:${bg};color:${fg};border:1px solid ${border||bg};white-space:nowrap` }, text);
+
+  const kindBadge = kind => {
+    if (kind === "entity")      return badge("entity",      "#0a2a1a", "#86efac", "#2d6a4f");
+    if (kind === "private_ble") return badge("private BLE",  "#0a1a3a", "#93c5fd", "#1e4976");
+    if (kind === "ibeacon")     return badge("iBeacon",      "#2a1a00", "#fbbf24", "#92400e");
+    if (kind === "ble")         return badge("BLE",          "#1a1a2a", "#c4b5fd", "#4c3d8f");
+    return null;
+  };
+
+  // ── row renderer ──
+
   const row = a => {
-    const name = a.name || "";
     const addr = a.address || "";
     const src = a.source || "";
-    const services = Array.isArray(a.service_uuids) ? a.service_uuids.length : 0;
+    const xr = a._xref || {};
     const obj = addr ? objIndex.get(String(addr).toUpperCase()) : null;
-    const userLabel = (obj && obj.user_label) ? obj.user_label : "";
-    const displayName = userLabel || name || addr || "Unknown";
+    const userLabel = xr.label || (obj && obj.user_label) || "";
+    const displayName = userLabel || a.name || addr || "Unknown";
+    const sid = _rsid(src);
+
+    // Enrichment badges (inline, compact)
+    const badges = [];
+    if (xr.kind)          badges.push(kindBadge(xr.kind));
+    if (a.company_name)   badges.push(badge(a.company_name, "#1a2a3a", "#7dd3fc", "#1e4976"));
+    if (a.device_type)    badges.push(badge(a.device_type,  "#2a1a3a", "#c4b5fd", "#4c3d8f"));
+    if (a.connectable)    badges.push(badge("connectable",  "#0a2a1a", "#86efac", "#2d6a4f"));
+
+    // Service names as tiny pills (max 3)
+    const svcNames = a.service_names || (obj && obj.service_names) || [];
+    for (let i = 0; i < Math.min(3, svcNames.length); i++) {
+      badges.push(badge(svcNames[i], "#1a3a2a", "#86efac", "#2d6a4f"));
+    }
+    if (svcNames.length > 3) badges.push(badge(`+${svcNames.length - 3}`, "#1a2a2a", "#94a3b8", "#334155"));
+
+    // Sub-line: address • scanner (with short ID) • room
+    const subParts = [];
+    if (addr) subParts.push(addr);
+    subParts.push(sid ? `${sid} ${src}` : (src || "\u2014"));
+    if (xr.room) subParts.push(xr.room);
+    if (xr.canonical_id) subParts.push("IRK-resolved");
+    if (xr.ibeacon_uuid) subParts.push("iBeacon");
 
     const tagBtn = el("button", { class: "btn tiny" }, userLabel ? "Relabel" : "Tag");
-    tagBtn.addEventListener("click", e => {
-      e.stopPropagation();
-      ctx.actions.tagObjectPrompt(addr, userLabel);
-    });
+    tagBtn.addEventListener("click", e => { e.stopPropagation(); ctx.actions.tagObjectPrompt(addr, userLabel); });
 
-    return el(
-      "div",
-      {
-        class: "bt-adv-row" + (selected === addr ? " active" : ""),
-        onclick: () => {
-          ctx.state.btSelectedAddr = selected === addr ? null : addr;
-          ctx.actions.renderRooms();
-        },
-      },
-      [
-        el("div", { class: "bt-adv-main" }, [
-          el("div", { class: "bt-adv-name" }, displayName),
-          el("div", { class: "bt-adv-sub" }, addr ? `${addr} • ${src || "—"}` : src || "—"),
-        ]),
-        el("div", { class: "bt-adv-right" }, [
-          statusPill(addr),
-          rssiPill(a.rssi),
-          el("span", { class: "muted" }, ageText(a.age_s)),
-          el("span", { class: "muted" }, services ? `${services} svc` : ""),
-          tagBtn,
-        ]),
-      ]
-    );
+    const mainDiv = el("div", { class: "bt-adv-main" }, [
+      el("div", { class: "bt-adv-name" }, displayName),
+      el("div", { class: "bt-adv-sub" }, subParts.join(" \u2022 ")),
+    ]);
+    if (badges.length) {
+      const bRow = el("div", { style: "display:flex;flex-wrap:wrap;gap:3px;margin-top:2px" }, badges.filter(Boolean));
+      mainDiv.appendChild(bRow);
+    }
+
+    return el("div", {
+      class: "bt-adv-row" + (selected === addr ? " active" : ""),
+      onclick: () => { ctx.state.btSelectedAddr = selected === addr ? null : addr; ctx.actions.renderRooms(); },
+    }, [
+      mainDiv,
+      el("div", { class: "bt-adv-right" }, [
+        rssiPill(a.rssi),
+        el("span", { class: "muted" }, ageText(a.age_s)),
+        tagBtn,
+      ]),
+    ]);
   };
+
+  // ── detail panel ──
 
   const details = (() => {
     if (!selected) return null;
     const a = ads.find(x => x && String(x.address || "") === selected) || null;
     if (!a) return null;
+    const xr = a._xref || {};
+    const obj = objIndex.get(selected.toUpperCase()) || null;
+    const card = el("div", { class: "card" });
+
+    // Header
+    const hdrName = xr.label || a.name || selected;
+    card.appendChild(el("div", { style: "font-weight:700;font-size:15px;margin-bottom:4px" }, hdrName));
+    if (xr.kind) card.appendChild(el("div", { style: "margin-bottom:8px" }, [kindBadge(xr.kind)]));
+
+    // Section helper
+    const section = (title, rows) => {
+      const s = el("div", { style: "margin-bottom:10px" });
+      s.appendChild(el("div", { style: "font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;margin-bottom:4px" }, title));
+      for (const [k, v] of rows) {
+        if (v === null || v === undefined || v === "") continue;
+        s.appendChild(el("div", { style: "display:flex;gap:8px;font-size:12px;line-height:1.6" }, [
+          el("span", { style: "color:#64748b;min-width:120px;flex-shrink:0" }, k),
+          el("span", { style: "color:#e2e8f0;word-break:break-all" }, String(v)),
+        ]));
+      }
+      return s;
+    };
+
+    // Identity
+    const idRows = [
+      ["Address", a.address],
+      ["Name", a.name || "\u2014"],
+      ["User Label", xr.label || (obj?.user_label) || "\u2014"],
+      ["Object Kind", xr.kind || "untracked"],
+    ];
+    if (xr.canonical_id) idRows.push(["Canonical ID", xr.canonical_id]);
+    if (xr.entity_id)    idRows.push(["HA Entity", xr.entity_id]);
+    if (xr.all_addresses && xr.all_addresses.length > 1) {
+      idRows.push(["All Addresses", xr.all_addresses.join(", ")]);
+    }
+    if (xr.room) idRows.push(["Room", xr.room]);
+    card.appendChild(section("Identity", idRows));
+
+    // Signal
+    const sigRows = [
+      ["RSSI", a.rssi != null ? `${a.rssi} dBm` : "\u2014"],
+      ["TX Power", a.tx_power != null ? `${a.tx_power} dBm` : "\u2014"],
+      ["Age", ageText(a.age_s)],
+      ["Scanner", (_rsid(a.source) ? _rsid(a.source) + " " : "") + (a.source || "\u2014")],
+      ["Connectable", a.connectable ? "Yes" : "No"],
+    ];
+    card.appendChild(section("Signal", sigRows));
+
+    // Manufacturer
+    const md = a.manufacturer_data || {};
+    const mdKeys = Object.keys(md);
+    if (mdKeys.length || a.company_name || a.device_type) {
+      const mfRows = [
+        ["Company", a.company_name || "\u2014"],
+        ["Device Type", a.device_type || "\u2014"],
+      ];
+      for (const cid of mdKeys) {
+        mfRows.push(["Manuf ID " + cid, md[cid]]);
+      }
+      card.appendChild(section("Manufacturer", mfRows));
+    }
+
+    // Services
+    const svcUuids = a.service_uuids || [];
+    const svcMap = a.service_uuid_map || {};
+    if (svcUuids.length) {
+      const svcRows = svcUuids.map(u => [u, svcMap[u] || "Unknown service"]);
+      card.appendChild(section("Services (" + svcUuids.length + ")", svcRows));
+    }
+
+    // Service data
+    const sd = a.service_data || {};
+    const sdKeys = Object.keys(sd);
+    if (sdKeys.length) {
+      const sdRows = sdKeys.map(k => [svcMap[k] || k, sd[k]]);
+      card.appendChild(section("Service Data", sdRows));
+    }
+
+    // iBeacon
+    if (xr.ibeacon_uuid) {
+      card.appendChild(section("iBeacon", [
+        ["UUID", xr.ibeacon_uuid],
+        ["Major", xr.ibeacon_major],
+        ["Minor", xr.ibeacon_minor],
+      ]));
+    }
+
+    // Raw JSON (collapsible)
+    const rawToggle = el("button", { class: "btn tiny", style: "margin-top:4px" }, "Show raw JSON");
+    const rawPre = el("pre", { class: "pre", style: "display:none;margin-top:6px;max-height:300px;overflow:auto;font-size:11px" }, esc(JSON.stringify(a, null, 2)));
+    rawToggle.addEventListener("click", () => {
+      const vis = rawPre.style.display !== "none";
+      rawPre.style.display = vis ? "none" : "block";
+      rawToggle.textContent = vis ? "Show raw JSON" : "Hide raw JSON";
+    });
+    card.appendChild(rawToggle);
+    card.appendChild(rawPre);
+
+    // Object detail button
     const snap = ctx.state.live?.snapshot;
     const matchedObj = (snap?.objects?.list||[]).find(o =>
       o.address && o.address.toUpperCase() === selected.toUpperCase()
     );
-    const card = el("div", { class: "card" }, [
-      el("div", { class: "h2" }, "Details"),
-      el("div", { class: "muted", style: "margin-bottom:8px" }, "Raw advertisement record (trimmed to JSON-safe values)."),
-      el("pre", { class: "pre" }, esc(JSON.stringify(a, null, 2))),
-    ]);
-    if(matchedObj){
-      card.appendChild(el("button", {class:"btn inline", style:"margin-top:8px",
-        onclick:()=> ctx.actions.showObjectDetail(matchedObj)
+    if (matchedObj) {
+      card.appendChild(el("button", { class: "btn inline", style: "margin-top:8px",
+        onclick: () => ctx.actions.showObjectDetail(matchedObj)
       }, "Full object details"));
     }
+
     return card;
   })();
 
   return el("div", { class: "grid-2" }, [
     el("div", { class: "card" }, [
       el("div", { class: "h2" }, "Advertisement monitor"),
-      el("div", { class: "muted" }, "Click a row to inspect details."),
+      el("div", { class: "muted" }, "Click a row to inspect. Enrichment shows decoded manufacturer, services, and cross-references to tracked objects."),
       el("div", { class: "bt-list bt-adv-list" }, ads.map(row)),
     ]),
     details || el("div", { class: "card" }, [el("div", { class: "h2" }, "Details"), el("div", { class: "muted" }, "Select an advertisement on the left.")]),
