@@ -135,19 +135,28 @@ export function render(ctx) {
     ]),
   ]);
 
+  // ESPHome Configs tab is 100% static — skip full DOM rebuild on 5s poll
+  if (ctx.state.btTab === "esphome_configs") {
+    if (ctx.state._esphomeFullDom) return ctx.state._esphomeFullDom;
+    const body = renderEsphomeConfigs(ctx);
+    const out = el("div", { id: "bluetooth" }, [header, diagCard, tabs, body]);
+    ctx.state._esphomeFullDom = out;
+    return out;
+  }
+  // Clear the cache when leaving the tab so it rebuilds on re-entry
+  ctx.state._esphomeFullDom = null;
+  ctx.state._esphomeConfigsDom = null;
+
   let body = null;
   if (ctx.state.btTab === "scanners") {
     body = renderScanners(ctx, radios, sources);
   } else if (ctx.state.btTab === "monitor") {
     body = renderMonitor(ctx, ads, radios, objIndex);
-  } else if (ctx.state.btTab === "esphome_configs") {
-    body = renderEsphomeConfigs(ctx);
   } else {
     body = renderVisualization(ctx, radios, ads, objIndex);
   }
 
-  const showControls = ctx.state.btTab !== "esphome_configs";
-  const out = el("div", { id: "bluetooth" }, [header, diagCard, tabs, showControls ? controls : null, body].filter(Boolean));
+  const out = el("div", { id: "bluetooth" }, [header, diagCard, tabs, controls, body]);
   return out;
 }
 
