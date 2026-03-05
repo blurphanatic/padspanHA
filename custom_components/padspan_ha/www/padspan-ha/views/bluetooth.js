@@ -900,6 +900,10 @@ text_sensor:
 ];
 
 function renderEsphomeConfigs(ctx) {
+  // Cache the entire config library DOM — it's 100% static content.
+  // Without this, the 5s poll cycle rebuilds the DOM and flickers expanded YAML.
+  if (ctx.state._esphomeConfigsDom) return ctx.state._esphomeConfigsDom;
+
   const { el } = ctx.helpers;
 
   // Intro card
@@ -1026,7 +1030,9 @@ function renderEsphomeConfigs(ctx) {
     ]),
   ]);
 
-  return el("div", {}, [intro, chipTable, ...configCards, tips]);
+  const result = el("div", {}, [intro, chipTable, ...configCards, tips]);
+  ctx.state._esphomeConfigsDom = result;
+  return result;
 }
 
 function _escSvg(s) {
