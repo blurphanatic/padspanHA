@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.70";
+const APP_VERSION = "0.6.71";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260305T065331Z";
+const BUILD_ID = "20260305T065920Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -225,6 +225,8 @@ class PadSpanHaApp extends HTMLElement {
     // Render health tracking — used by watchdog to detect persistent blank screens
     this._lastGoodRender = performance.now();
     this._renderFailCount = 0;
+    // Track last user interaction to suppress poll re-renders during active use
+    this._lastUserInteraction = 0;
   }
 
   set hass(hass){
@@ -324,6 +326,13 @@ class PadSpanHaApp extends HTMLElement {
     this.$("#autodiag").addEventListener("click", ()=>this._runAutoDiag(true));
     this.$("#toggleSide").addEventListener("click", ()=>this.$("#app").classList.toggle("mini"));
     this.$("#mobileMenu").addEventListener("click", ()=>this.$("#app").classList.toggle("mobile-open"));
+
+    // Track user interaction to suppress poll re-renders during active use
+    const _markInteraction = () => { this._lastUserInteraction = performance.now(); };
+    this.$content.addEventListener("input", _markInteraction, true);
+    this.$content.addEventListener("change", _markInteraction, true);
+    this.$content.addEventListener("click", _markInteraction, true);
+    this.$content.addEventListener("focusin", _markInteraction, true);
 
     this.$("#dataModeToggle").addEventListener("click", async ()=>{
       const next = (this.state.dataMode === "sample") ? "live" : "sample";
@@ -628,10 +637,10 @@ class PadSpanHaApp extends HTMLElement {
 
       // Re-render views that show live data.
       const liveViews = new Set(["overview","follow","objects","devices","bluetooth","presence","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage","calibration"]);
-      if(liveViews.has(this.state.view)) this._renderCurrentView();
+      if(liveViews.has(this.state.view)) this._renderCurrentView(true);
     } catch(e){
       // Non-fatal — still re-render with whatever data we have to prevent blank screen
-      try { this._renderCurrentView(); } catch(e2){}
+      try { this._renderCurrentView(true); } catch(e2){}
     } finally {
       this._pollInFlight = false;
       this._pollStartedAt = null;
@@ -1599,9 +1608,22 @@ class PadSpanHaApp extends HTMLElement {
     this._openModal(name, body, `Bluetooth scanner · ${scanner.area_name || "unassigned"}`);
   }
 
-  _renderCurrentView(){
+  _renderCurrentView(fromPoll){
     // Skip re-render during active drag to prevent DOM destruction mid-interaction
     if(this.state._calibTune?._dragging || this.state._calibBeacon?._dragging || this.state._calibTune?._confirming || this.state._calibBeacon?._confirming) return;
+    // Skip poll-triggered re-renders when the user is actively interacting.
+    // Checks: (1) a form element has focus, or (2) user interacted within the last 3s.
+    // User-initiated renders (tab clicks, saves, etc.) always proceed.
+    if(fromPoll){
+      try {
+        const active = (this.shadowRoot || this).querySelector(":focus");
+        if(active){
+          const tag = active.tagName;
+          if(tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+        }
+      } catch(e) { /* ignore */ }
+      if(this._lastUserInteraction && (performance.now() - this._lastUserInteraction) < 3000) return;
+    }
     // Verify $content is a live node in the shadow DOM (not a stale detached reference)
     if(!this.$content || !this.$content.isConnected){
       this._ensureShadowDom();
