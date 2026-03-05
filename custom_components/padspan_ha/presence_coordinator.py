@@ -309,13 +309,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         objects: list[dict[str, Any]] = (snap.get("objects") or {}).get("list") or []
         result: dict[str, Any] = {}
 
-        # ── Load pinned beacon positions from maps store ──────────────────────
+        # ── Load pinned beacon positions + master map room bounds ────────────
         _pinned: dict[str, dict[str, Any]] = {}  # key → {map_id, x, y, room, floor_id}
+        _master_bounds: dict[str, Any] = {}  # room_bounds from the master map (precedence)
+        _master_rooms: set[str] = set()       # rooms defined on the master map
         try:
             _maps_store = self.hass.data.get(DOMAIN, {}).get(DATA_MAPS)
             if _maps_store:
                 for _m in (_maps_store.data.get("maps") or []):
                     _rb = _m.get("room_bounds") or {}
+                    # Capture master map's room_bounds for precedence
+                    if (_m.get("stack") or {}).get("is_master"):
+                        _master_bounds = _rb
+                        _master_rooms = set(_rb.keys())
                     for _bk in (_m.get("beacons") or []):
                         _bk_key = _bk.get("key")
                         if _bk_key and _bk.get("x") is not None:
@@ -627,7 +633,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _HYSTERESIS_MARGIN = 0.12
                 if _cur_room and _cur_room in room_scores and _best_room != _cur_room:
                     if room_scores[_best_room] - room_scores[_cur_room] < _HYSTERESIS_MARGIN:
-                        candidate = _cur_room  # stay — margin too small
+                        # Within hysteresis — prefer master map rooms as tie-breaker
+                        if _master_rooms and _cur_room not in _master_rooms and _best_room in _master_rooms:
+                            candidate = _best_room  # master map room wins the tie
+                        else:
+                            candidate = _cur_room  # stay — margin too small
                     else:
                         candidate = _best_room
                 else:
@@ -703,12 +713,24 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # When calibration data exists and the fingerprint match is confident
         # enough, use the k-NN result as the candidate instead of the Gaussian
         # winner.  Also captures sub-room (x_frac, y_frac) for map display.
+        # Master map precedence: if k-NN gives a position (x_frac, y_frac),
+        # test it against the master map's room_bounds.  If the position falls
+        # inside a room on the master map, that room overrides k-NN nearest_room.
         try:
             _calib = self.hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
             if _calib and len(_calib.data.get("points", [])) >= _KNN_MIN_POINTS:
                 _knn = _calib.knn_locate(dict(ema))
                 if _knn and _knn.get("confidence", 0.0) >= _KNN_LIVE_THRESHOLD:
                     _knn_room = _knn.get("nearest_room")
+                    # Master map room boundary check — geometry overrides k-NN nearest
+                    if _master_bounds and _knn.get("x_frac") is not None:
+                        _geo_room = _room_from_bounds(
+                            _master_bounds,
+                            float(_knn["x_frac"]),
+                            float(_knn["y_frac"]),
+                        )
+                        if _geo_room:
+                            _knn_room = _geo_room
                     if _knn_room:
                         candidate = _knn_room
                         self._knn_position[key] = _knn
