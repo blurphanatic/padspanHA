@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.89";
+const APP_VERSION = "0.6.90";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260305T222936Z";
+const BUILD_ID = "20260305T230526Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -666,8 +666,11 @@ class PadSpanHaApp extends HTMLElement {
       const stale = this._lastGoodRender && (performance.now() - this._lastGoodRender > 10_000);
       if(liveViews.has(this.state.view)) this._renderCurrentView(stale ? false : true);
     } catch(e){
-      // Non-fatal — still re-render with whatever data we have to prevent blank screen
-      try { this._renderCurrentView(); } catch(e2){}
+      // Non-fatal — snapshot is preserved from last good fetch.
+      // Only re-render if screen might be stale (> 10s since last good render).
+      if(!this._lastGoodRender || (performance.now() - this._lastGoodRender > 10_000)){
+        try { this._renderCurrentView(); } catch(e2){}
+      }
     } finally {
       this._pollInFlight = false;
       this._pollStartedAt = null;
@@ -738,6 +741,15 @@ class PadSpanHaApp extends HTMLElement {
       const m = (res?.settings?.data_mode || "sample").toLowerCase();
       this.state.dataMode = (m === "live") ? "live" : "sample";
       this._toast(`Data mode: ${this.state.dataMode.toUpperCase()}`);
+      // When switching to sample, explicitly assign sample snapshot.
+      // When switching to live, clear the sample snapshot so _getLiveSnapshot fetches fresh.
+      if(this.state.dataMode !== "live"){
+        this.state.live.snapshot = SAMPLE_SNAPSHOT;
+        this._recomputeDerived();
+      } else {
+        // Clear sample snapshot so first live fetch replaces it
+        if(this.state.live.snapshot === SAMPLE_SNAPSHOT) this.state.live.snapshot = null;
+      }
       await this._refreshAll(false);
       if(this.state.dataMode === "live") this._startPolling();
       else this._stopPolling();
@@ -787,18 +799,32 @@ class PadSpanHaApp extends HTMLElement {
 
   async _getLiveSnapshot(){
     if(this.state.dataMode !== "live") {
-      // Sample mode: use the built-in demo snapshot so all views render fully
-      this.state.live.snapshot = SAMPLE_SNAPSHOT;
+      // Sample mode: use the built-in demo snapshot so all views render fully.
+      // But only assign if we don't already have a live snapshot cached
+      // (prevents race conditions during _refreshAll where settings haven't loaded yet).
+      if(!this.state.live.snapshot || this.state.live.snapshot === SAMPLE_SNAPSHOT){
+        this.state.live.snapshot = SAMPLE_SNAPSHOT;
+      }
       this.state.live.error = null;
       this._recomputeDerived();
       return;
     }
-    const res = await this._callWS({ type: "padspan_ha/live_snapshot" });
-    this.state.live.snapshot = res?.snapshot || null;
-    this.state.live.error = null;
-    this._recomputeDerived();
-    const objCount = this.state.live.snapshot?.objects?.summary?.total ?? 0;
-    this._logEvent("snapshot", `${objCount} objects`);
+    try {
+      const res = await this._callWS({ type: "padspan_ha/live_snapshot" });
+      const snap = res?.snapshot;
+      // Only replace the snapshot if we got a valid response.
+      // Keep the last good snapshot on WS failure to prevent flickering.
+      if(snap && typeof snap === "object"){
+        this.state.live.snapshot = snap;
+        this.state.live.error = null;
+        this._recomputeDerived();
+        const objCount = snap?.objects?.summary?.total ?? 0;
+        this._logEvent("snapshot", `${objCount} objects`);
+      }
+    } catch(e) {
+      // Keep whatever snapshot we had — do NOT wipe to null
+      this.state.live.error = String(e);
+    }
   }
 
   async _getMapsList(){
@@ -843,7 +869,11 @@ class PadSpanHaApp extends HTMLElement {
     if(!this._hass) return;
     const t0 = performance.now();
     if(userAction) this._toast("Refreshing…");
-    // allSettled: individual WS failures don't abort the whole refresh
+    // IMPORTANT: Fetch settings FIRST so dataMode is correct before _getLiveSnapshot runs.
+    // This prevents the race condition where _getLiveSnapshot sees "sample" mode
+    // because settings haven't loaded yet, and incorrectly assigns SAMPLE_SNAPSHOT.
+    await Promise.allSettled([this._fetchSettings()]);
+    // Now run remaining fetches in parallel (dataMode is now correct)
     const results = await Promise.allSettled([
       this._getVersionInfo(),
       this._getStatus(),
@@ -852,11 +882,10 @@ class PadSpanHaApp extends HTMLElement {
       this._getMapsList(),
       this._getModel(),
       this._runAutoDiag(false),
-      this._fetchSettings(),
       this._loadAlertConfigs(),
     ]);
     // Log any WS failures to console for debugging
-    const names = ["getVersionInfo","getStatus","getRoomTags","getLiveSnapshot","getMapsList","getModel","runAutoDiag"];
+    const names = ["getVersionInfo","getStatus","getRoomTags","getLiveSnapshot","getMapsList","getModel","runAutoDiag","loadAlerts"];
     results.forEach((r,i)=>{ if(r.status==="rejected") console.warn("PadSpan refresh:", names[i], "failed:", r.reason); });
     this._recomputeDerived();
     try { this.state.timing.lastRefreshMs = Math.round(performance.now() - t0); } catch(e){}
