@@ -211,9 +211,30 @@ function _setup(ctx, el, cs, calData) {
       }
       deviceCard.appendChild(box);
     } else {
-      deviceCard.appendChild(el("div", {
-        style: "font-size:12px;color:#f59e0b;margin-top:6px;padding:8px;background:#0a150e;border-radius:6px"
-      }, `⚠ "${cs.deviceId}" not seen in any radio advertisement. Make sure Bluetooth is on and the device is near a scanner.`));
+      // Check if this is a Bermuda/entity tracker with its own RSSI attribute
+      const tag = (snap?.tags || []).find(t => t.entity_id === cs.deviceId);
+      const entityRssi = tag?.rssi || obj?.rssi;
+      const entityScanner = tag?.scanner || tag?.nearest_receiver || tag?.receiver;
+      if (entityRssi || entityScanner) {
+        const box = el("div", { style: "background:#0a150e;border:1px solid #3d2d0a;border-radius:8px;padding:10px;margin-top:6px" });
+        box.appendChild(el("div", { style: "font-weight:600;font-size:13px;color:#fbbf24;margin-bottom:6px" },
+          `⚠ ${obj?.user_label || obj?.name || cs.deviceId} — entity data only (no direct BLE advertisements)`));
+        if (obj?.room) box.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:6px" }, `Room: ${obj.room}`));
+        if (entityRssi) box.appendChild(el("div", { style: "font-size:12px;color:#94a3b8" }, `RSSI: ${entityRssi} dBm (from entity attributes)`));
+        if (entityScanner) box.appendChild(el("div", { style: "font-size:12px;color:#94a3b8" }, `Nearest scanner: ${entityScanner}`));
+        box.appendChild(el("div", { style: "font-size:11px;color:#78909c;margin-top:8px;line-height:1.5" },
+          "This device uses private BLE (rotating MAC). To get per-radio RSSI, set up the Private BLE Device integration in HA " +
+          "(Settings → Devices & Services → Add → Private BLE Device), or enable iBeacon transmitter in the HA Companion App."));
+        deviceCard.appendChild(box);
+      } else {
+        const warnBox = el("div", { style: "font-size:12px;color:#f59e0b;margin-top:6px;padding:10px;background:#0a150e;border-radius:6px;line-height:1.6" });
+        warnBox.appendChild(el("div", { style: "font-weight:600;margin-bottom:4px" }, `⚠ "${cs.deviceId}" not seen in any radio advertisement.`));
+        warnBox.appendChild(el("div", {}, "If this is a phone or watch (rotating MAC), you need one of:"));
+        warnBox.appendChild(el("div", { style: "padding-left:12px;margin-top:4px" }, "• Private BLE Device integration (Settings → Devices & Services → Add Integration)"));
+        warnBox.appendChild(el("div", { style: "padding-left:12px" }, "• HA Companion App with iBeacon transmitter enabled"));
+        warnBox.appendChild(el("div", { style: "margin-top:4px" }, "For other devices: make sure Bluetooth is on and the device is near a scanner."));
+        deviceCard.appendChild(warnBox);
+      }
     }
   }
   wrap.appendChild(deviceCard);

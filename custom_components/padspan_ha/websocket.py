@@ -477,7 +477,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             tag_label = st.attributes.get('friendly_name') or entity_id.split('.', 1)[-1]
 
             extra: dict[str, Any] = {}
-            for k in ('nearest_receiver', 'receiver', 'rssi', 'distance', 'gateway'):
+            for k in ('nearest_receiver', 'receiver', 'rssi', 'distance', 'gateway',
+                       'mac_address', 'address', 'mac', 'scanner', 'scanners'):
                 if k in (st.attributes or {}):
                     extra[k] = st.attributes.get(k)
 
@@ -880,6 +881,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         objects: list[dict[str, Any]] = []
 
         # (A) Entity-based objects (bermuda tags, device_trackers, etc.)
+        _MAC_RE = __import__("re").compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
         for t in (snapshot.get("tags") or []):
             eid = t.get("entity_id") or ""
             addr = ""
@@ -890,13 +892,22 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 if ent and ent.device_id:
                     dev = dr2.devices.get(ent.device_id)
                     if dev:
+                        # 1) Check device connections for a static BLE MAC
                         for (ctype, cid) in (dev.connections or set()):
                             if str(ctype) == "bluetooth" and isinstance(cid, str):
                                 addr = cid.upper()
                                 break
-                        # If no static BLE MAC, look for private_ble canonical identity.
-                        # Bermuda tracker entities for phones/watches link to devices that
-                        # have rotating MACs — match them to private_ble objects by device_id.
+
+                        # 2) Check device identifiers — Bermuda stores MAC as
+                        #    ("bermuda", "AA:BB:CC:DD:EE:FF") identifier
+                        if not addr:
+                            for (domain, ident) in (dev.identifiers or set()):
+                                ident_s = str(ident)
+                                if _MAC_RE.match(ident_s):
+                                    addr = ident_s.upper()
+                                    break
+
+                        # 3) Match to private_ble objects by device_id
                         if not addr:
                             for _cid, pg in _private_groups.items():
                                 _pg_dev = pg.get("device")
@@ -905,12 +916,24 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                                     addr = pg["best_addr"].upper() if pg.get("best_addr") else ""
                                     all_addrs = sorted(pg.get("addrs") or [])
                                     break
-                            # Also check regular BLE objects by device_id
-                            if not addr and ent.device_id:
-                                for _ba, _bd in addr_to_device.items():
-                                    if isinstance(_bd, dict) and _bd.get("id") == ent.device_id:
-                                        addr = _ba.upper()
-                                        break
+
+                        # 4) Match to regular BLE objects by device_id
+                        if not addr and ent.device_id:
+                            for _ba, _bd in addr_to_device.items():
+                                if isinstance(_bd, dict) and _bd.get("id") == ent.device_id:
+                                    addr = _ba.upper()
+                                    break
+
+                # 5) Check entity state attributes for MAC address hints
+                #    Bermuda entities often expose mac_address/address in attributes
+                if not addr:
+                    _st = hass.states.get(eid)
+                    if _st:
+                        for _attr_key in ("mac_address", "address", "mac"):
+                            _attr_val = (_st.attributes or {}).get(_attr_key)
+                            if isinstance(_attr_val, str) and _MAC_RE.match(_attr_val):
+                                addr = _attr_val.upper()
+                                break
             except Exception:
                 addr = ""
 
