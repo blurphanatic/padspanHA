@@ -570,7 +570,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const DEV_ROW_H = 16;
   const totalDevCount = Object.values(bySrc).reduce((sum, arr) => sum + Math.min(arr.length, 24), 0);
   const scannerMinH = srcs.length * 20 + pad * 2 + 40;
-  const h = Math.max(460, totalDevCount * DEV_ROW_H + pad * 3 + 30, scannerMinH);
+  let h = Math.max(460, totalDevCount * DEV_ROW_H + pad * 3 + 30, scannerMinH);
 
   // Place scanners evenly along the left (initial pass, repositioned after devices)
   const scannerNodes = srcs.map((src, i) => {
@@ -606,9 +606,20 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     const gap = deviceNodes[i].y - deviceNodes[i - 1].y;
     if (gap < MIN_GAP) deviceNodes[i].y = deviceNodes[i - 1].y + MIN_GAP;
   }
-  // Clamp all nodes within canvas bounds
-  for (const d of deviceNodes) {
-    d.y = Math.max(pad + 20, Math.min(h - pad - 10, d.y));
+  // If devices overflow the bottom, shift entire column up as a block
+  if (deviceNodes.length) {
+    const lastDevY = deviceNodes[deviceNodes.length - 1].y;
+    const maxDevY = h - pad - 10;
+    if (lastDevY > maxDevY) {
+      const shift = lastDevY - maxDevY;
+      for (const d of deviceNodes) d.y -= shift;
+    }
+    // If top overflows after shifting, clamp top and accept that we need more height
+    const topMin = pad + 20;
+    if (deviceNodes[0].y < topMin) {
+      const shift = topMin - deviceNodes[0].y;
+      for (const d of deviceNodes) d.y += shift;
+    }
   }
 
   // Reposition each scanner to the vertical center of its device cluster
@@ -642,6 +653,13 @@ function renderVisualization(ctx, radios, ads, objIndex) {
       const shift = topMin - scannerNodes[0].y;
       for (const sn of scannerNodes) sn.y += shift;
     }
+  }
+
+  // Expand SVG height if nodes extend beyond the initial estimate
+  const allYs = [...deviceNodes.map(d => d.y), ...scannerNodes.map(s => s.y)];
+  if (allYs.length) {
+    const neededH = Math.max(...allYs) + pad + 20;
+    if (neededH > h) h = neededH;
   }
 
   const rssiClass = rssi => {
