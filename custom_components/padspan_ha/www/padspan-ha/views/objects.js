@@ -229,8 +229,9 @@ export function render(ctx){
     const isPrivateBle = kind === "private_ble";
     const isIbeacon = kind === "ibeacon";
     const isAway = _isAway(o);
+    const _sid = ctx.helpers.radioShortId || (() => "");
     const scanner = (kind==="ble" || isPrivateBle || isIbeacon) && Array.isArray(o.sources) && o.sources.length
-      ? o.sources.map(s => typeof s === "object" ? (s.source || "") : String(s)).filter(Boolean).join(", ")
+      ? o.sources.map(s => { const src = typeof s === "object" ? (s.source || "") : String(s); const id = _sid(src); return id ? id+" "+src : src; }).filter(Boolean).join(", ")
       : (o.room || "");
 
     // For iBeacon the stable identifier is the UUID key, not the rotating MAC

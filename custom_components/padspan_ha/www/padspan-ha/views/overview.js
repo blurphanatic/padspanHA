@@ -1261,11 +1261,12 @@ export function render(ctx){
       const roomRadios = radiosByRoom[room] || [];
       roomRadios.slice(0,5).forEach((r, ri) => {
         const rx = x + 22 + ri * 52, ry = y + 105;
+        const sid = _sid(r.source || "");
         const rName = (r.name || r.source || "radio").substring(0, 12);
         s += `<circle cx="${rx}" cy="${ry}" r="14" fill="none" stroke="#52b788" stroke-width="0.7" opacity="0.2"/>`;
         s += `<circle cx="${rx}" cy="${ry}" r="8"  fill="none" stroke="#52b788" stroke-width="1"   opacity="0.5"/>`;
         s += `<circle cx="${rx}" cy="${ry}" r="4"  fill="#52b788"/>`;
-        s += `<text x="${rx}" y="${ry - 18}" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600">${_esc(rName)}</text>`;
+        s += `<text x="${rx}" y="${ry - 18}" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600">${sid ? _esc(sid)+" " : ""}${_esc(rName)}</text>`;
         const lbl = (r.name || r.source || "").substring(0, 9);
         s += `<text x="${rx}" y="${ry + 20}" text-anchor="middle" fill="#52b788" font-size="8" opacity="0.7">${_esc(lbl)}</text>`;
       });

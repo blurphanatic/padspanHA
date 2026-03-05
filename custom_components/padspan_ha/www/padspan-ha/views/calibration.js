@@ -19,7 +19,8 @@ const POLL_MS   = 1000;  // RSSI poll interval during collection (1s = ~60 sampl
 
 // ── Exports ──────────────────────────────────────────────────────────────────
 export function render(ctx) {
-  const { el } = ctx.helpers;
+  const { el, radioShortId } = ctx.helpers;
+  const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
   const root = el("section", { id: "calibration" });
   root.className = ctx.state.view === "calibration" ? "" : "hidden";
 
@@ -270,7 +271,8 @@ function _setup(ctx, el, cs, calData) {
           (a.address || "").toUpperCase() === (cs.deviceId || "").toUpperCase()
         ) : false;
         // Prefer area name (room) over raw adapter name
-        const displayName = r.area_name || r.area || r.name || r.source || "?";
+        const sid = _sid(r.source || "");
+        const displayName = (sid ? sid+" " : "") + (r.area_name || r.area || r.name || r.source || "?");
         const subLabel = (r.area_name || r.area) && r.name && r.name !== r.source ? r.name : "";
         const nameEl = el("div", { style: "flex:1;min-width:80px" }, [
           el("span", { style: "font-size:12px;font-weight:600" }, displayName),

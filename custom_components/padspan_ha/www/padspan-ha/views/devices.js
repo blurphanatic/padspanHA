@@ -7,7 +7,8 @@
 // We treat device_tracker state as "room" (common for Bermuda-style presence).
 
 export function render(ctx) {
-  const { el, esc } = ctx.helpers;
+  const { el, esc, radioShortId } = ctx.helpers;
+  const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
 
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const isLive = ctx.state.dataMode === "live";
@@ -148,7 +149,7 @@ export function render(ctx) {
       ? el("div", { class: "muted" }, "None — all detected BLE devices are identified or tagged.")
       : el("div", { class: "dev-tag-list list-scroll" }, unidentifiedBle.slice(0, 200).map(o => {
           const addr = o.address || "";
-          const sources = Array.isArray(o.sources) ? o.sources.join(", ") : "";
+          const sources = Array.isArray(o.sources) ? o.sources.map(s => { const id = _sid(s); return id ? id+" "+s : s; }).join(", ") : "";
           const rssi = o.rssi != null ? `RSSI ${o.rssi}` : "";
           const age = o.age_s != null ? `${Math.round(Number(o.age_s))}s ago` : "";
 
@@ -174,7 +175,7 @@ export function render(ctx) {
     el("div", { class: "dev-tag-list list-scroll" }, taggedBle.slice(0, 200).map(o => {
       const label = o.user_label || o.name || o.address || "Unknown";
       const addr = o.address || "";
-      const sources = Array.isArray(o.sources) ? o.sources.join(", ") : "";
+      const sources = Array.isArray(o.sources) ? o.sources.map(s => { const id = _sid(s); return id ? id+" "+s : s; }).join(", ") : "";
       const rssi = o.rssi != null ? `RSSI ${o.rssi}` : "";
       const age = o.age_s != null ? `${Math.round(Number(o.age_s))}s ago` : "";
       const relabelBtn = el("button", { class: "btn tiny" }, "Relabel");

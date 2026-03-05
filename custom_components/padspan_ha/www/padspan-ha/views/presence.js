@@ -3,7 +3,8 @@
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 export function render(ctx){
-  const { el } = ctx.helpers;
+  const { el, radioShortId } = ctx.helpers;
+  const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
   const { roomTagMap } = ctx.state;
 
   const root = el("section",{id:"presence"});
@@ -83,7 +84,8 @@ export function render(ctx){
       const scannerCards = el("div",{class:"grid"});
 
       for(const src of scanners){
-        const scannerName = radioNames[src] || src;
+        const sid = _sid(src);
+        const scannerName = (sid ? sid+" " : "") + (radioNames[src] || src);
         const devs = Object.values(scannerDevices[src])
           .sort((a,b)=>(b.rssi||(-Infinity))-(a.rssi||(-Infinity)))
           .slice(0, 50);

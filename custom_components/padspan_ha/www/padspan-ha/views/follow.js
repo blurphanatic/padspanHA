@@ -7,7 +7,8 @@
 // Position updates arrive via the existing 5s live-snapshot poll — no extra timers needed.
 
 export function render(ctx) {
-  const { el, esc, helpBtn } = ctx.helpers;
+  const { el, esc, helpBtn, radioShortId } = ctx.helpers;
+  const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
   const isBasic = ctx.state.complexity === "basic";
 
   const snap     = (ctx.state.live && ctx.state.live.snapshot) || null;
@@ -203,7 +204,7 @@ function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode
   const radiosEl = seenBy.length
     ? el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
         seenBy.map(a => el("span", { class: rssiClass(a.rssi || -999) },
-          `${a.source || "?"} ${a.rssi != null ? a.rssi + " dBm" : ""}`
+          `${_sid(a.source||"")}${_sid(a.source||"")?" ":""}${a.source || "?"} ${a.rssi != null ? a.rssi + " dBm" : ""}`
         ))
       )
     : el("div", { class: "muted", style: "margin-top:4px;font-size:12px" }, "No active detections");

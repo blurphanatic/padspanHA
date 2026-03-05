@@ -154,7 +154,8 @@ export function render(ctx){
     if(unmapped.length > 0){
       const chips = el("div",{style:"display:flex;flex-wrap:wrap;gap:4px;margin-top:4px"});
       for(const s of unmapped){
-        const chip = el("span",{style:"font-size:11px;color:#ffd54f;cursor:pointer;text-decoration:underline;text-decoration-style:dotted"}, s.name||s.source);
+        const chipLabel = (_sid(s.source||"") ? _sid(s.source||"")+" " : "") + (s.name||s.source);
+        const chip = el("span",{style:"font-size:11px;color:#ffd54f;cursor:pointer;text-decoration:underline;text-decoration-style:dotted"}, chipLabel);
         chip.addEventListener("click", ()=>ctx.actions.showScannerDetail(s));
         chips.appendChild(chip);
       }
