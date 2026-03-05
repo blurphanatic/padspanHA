@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.56";
+const APP_VERSION = "0.6.57";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260305T003944Z";
+const BUILD_ID = "20260305T012758Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -230,6 +230,24 @@ class PadSpanHaApp extends HTMLElement {
         this._refreshAll(false);
         if(this.state.dataMode === "live") this._startDataPoll();
       });
+    }
+    // ── Sidebar re-entry recovery ────────────────────────────────────────────
+    // HA calls set hass() when the user navigates back to PadSpan in the sidebar.
+    // If disconnectedCallback ran (cleared timers/listeners), re-start them here.
+    // This catches the case where HA re-attaches without calling connectedCallback.
+    if(hass && this._booted && this.isConnected){
+      if(!this._watchdogTimer || !this._activityTimer){
+        this._startKeepAlive();
+      }
+      if(this.state.dataMode === "live" && !this._pollTimer){
+        this._startDataPoll();
+      }
+      // If content is blank, rebuild
+      if(this.$content && !this.$content.children.length){
+        this._renderNav();
+        this._renderCurrentView();
+        this._refreshAll(false);
+      }
     }
   }
 
@@ -654,6 +672,7 @@ class PadSpanHaApp extends HTMLElement {
       const mode = (res?.settings?.data_mode || "sample").toLowerCase();
       this.state.dataMode = (mode === "live") ? "live" : "sample";
       this._updateBadges();
+      this._renderNav();
       this._renderCurrentView();
     } catch (e) {
       // Non-fatal
@@ -961,6 +980,7 @@ class PadSpanHaApp extends HTMLElement {
         settingsSet: async (payload) => {
           const res = await this._callWS(Object.assign({ type: "padspan_ha/settings_set", data_mode: this.state.dataMode }, payload));
           this.state.settings = res?.settings || this.state.settings;
+          this._renderNav();
           this._renderCurrentView();
           return res;
         },

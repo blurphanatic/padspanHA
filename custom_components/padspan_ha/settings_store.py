@@ -46,6 +46,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "overview_iso_floor_gap": 150,
     "overview_iso_horiz_gap": 0,
     "overview_iso_focus":     None,
+    # Advanced-mode extra tabs (user picks from Settings → UI Structure)
+    "advanced_extra_tabs": [],
     # HA entity publishing controls
     "ha_entity_tracker_enabled":          True,
     "ha_entity_area_enabled":             True,
