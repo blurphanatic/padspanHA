@@ -142,6 +142,9 @@ class BluetoothLive:
         # overwrite the first — meaning only one radio's RSSI ever appeared per device.
         self._seen_by_source: Dict[str, Dict[str, _Adv]] = {}
         self._unsubs: List[Any] = []
+        # Per-radio "last heard" timestamp — updated on every callback, independent of filtering.
+        # Used by the frontend to show a radio as "listening" even when its ads are old/filtered.
+        self._radio_last_heard: Dict[str, dt.datetime] = {}  # source → datetime
 
     def unload(self) -> None:
         for u in self._unsubs:
@@ -165,6 +168,9 @@ class BluetoothLive:
             if addr not in self._seen_by_source:
                 self._seen_by_source[addr] = {}
             self._seen_by_source[addr][src] = _Adv(record=rec, seen=seen)
+            # Track when each radio last sent us anything (independent of age filtering)
+            if src != "_unknown":
+                self._radio_last_heard[src] = seen
         except Exception as e:
             _LOGGER.debug("BLE adv parse failed: %s", e)
 
@@ -229,13 +235,17 @@ class BluetoothLive:
                         scanning = getattr(s, "scanning", None)
                         adapter = getattr(s, "adapter", None)
 
-                        radios.append(
+                        _radio_src = _coerce_source(src) or ""
+                    _lh = self._radio_last_heard.get(_radio_src)
+                    _lh_s = round((now - _lh).total_seconds(), 1) if _lh else None
+                    radios.append(
                             {
-                                "source": _coerce_source(src) or "",
+                                "source": _radio_src,
                                 "name": str(name or ""),
                                 "connectable": bool(connectable) if connectable is not None else None,
                                 "scanning": bool(scanning) if scanning is not None else None,
                                 "adapter": str(adapter or "") if adapter is not None else "",
+                                "last_heard_s": _lh_s,
                             }
                         )
                 else:

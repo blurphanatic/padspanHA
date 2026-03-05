@@ -592,13 +592,13 @@ function _settingsPresence(ctx, el){
   ]));
 
   // ── BLE Advertisement Timeout ─────────────────────────────────────────────
-  const currentBleAge = (settings.ble_max_age_s != null ? Number(settings.ble_max_age_s) : 300);
+  const currentBleAge = (settings.ble_max_age_s != null ? Number(settings.ble_max_age_s) : 900);
   const bleAgeInp = el("input", {
-    type: "number", min: "30", max: "600", step: "10", value: String(currentBleAge), style: inpStyle,
+    type: "number", min: "60", max: "1800", step: "30", value: String(currentBleAge), style: inpStyle,
   });
   const bleAgeSaveBtn = el("button", { class: "btn" }, "Save");
   bleAgeSaveBtn.addEventListener("click", async () => {
-    const v = Math.max(30, Math.min(600, parseInt(bleAgeInp.value) || 300));
+    const v = Math.max(60, Math.min(1800, parseInt(bleAgeInp.value) || 900));
     try {
       await ctx.actions.settingsSet({ ble_max_age_s: v });
       ctx.toast(`BLE timeout set to ${v}s`);
@@ -618,7 +618,7 @@ function _settingsPresence(ctx, el){
       bleAgeSaveBtn,
     ]),
     el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
-      `Current: ${currentBleAge}s. Default: 300s (5 min). Range: 30s – 600s (10 min).`
+      `Current: ${currentBleAge}s. Default: 900s (15 min). Range: 60s – 1800s (30 min).`
     ),
   ]));
 

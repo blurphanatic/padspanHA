@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.90";
+const APP_VERSION = "0.6.91";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260305T230526Z";
+const BUILD_ID = "20260305T232307Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -150,10 +150,16 @@ function radioShortId(source){
 function scannerStatus(radio, ads){
   if(radio.scanning === true)
     return { label:"scanning", cls:"badge", title:"Actively requesting BLE advertisements from nearby devices" };
+  // Use last_heard_s (seconds since last ad received, independent of age filter) if available
+  const lh = radio.last_heard_s;
+  if(typeof lh === "number" && lh < 120)
+    return { label:"listening", cls:"badge", style:"background:rgba(56,189,248,.14);color:#38bdf8", title:`Last heard ${Math.round(lh)}s ago — online and receiving BLE broadcasts` };
   const src = radio.source || "";
   const hasAds = Array.isArray(ads) && ads.some(a => a.source === src);
   if(hasAds)
     return { label:"listening", cls:"badge", style:"background:rgba(56,189,248,.14);color:#38bdf8", title:"Online and receiving BLE broadcasts (passive mode)" };
+  if(typeof lh === "number" && lh < 600)
+    return { label:`heard ${Math.round(lh)}s ago`, cls:"badge warn", title:`Last advertisement received ${Math.round(lh)}s ago — may be in a quiet area` };
   return { label:"idle", cls:"badge warn", title:"No recent BLE data — may be offline, rebooting, or in a quiet area" };
 }
 

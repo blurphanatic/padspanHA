@@ -280,7 +280,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
                 _v = ((_st.data if _st else {}).get("ble_max_age_s"))
                 if _v is not None:
-                    _ble_age = max(30, min(1800, int(_v)))
+                    _ble_age = max(60, min(1800, int(_v)))
             except Exception:
                 pass
             snapshot["ble"] = bl.get_snapshot(max_age_s=_ble_age)
