@@ -150,7 +150,7 @@ export function render(ctx) {
 
   let body = null;
   if (ctx.state.btTab === "scanners") {
-    body = renderScanners(ctx, radios, sources);
+    body = renderScanners(ctx, radios, sources, adsAll);
   } else if (ctx.state.btTab === "monitor") {
     body = renderMonitor(ctx, ads, radios, objIndex);
   } else {
@@ -161,7 +161,7 @@ export function render(ctx) {
   return out;
 }
 
-function renderScanners(ctx, radios, sources) {
+function renderScanners(ctx, radios, sources, adsAll) {
   const { el, radioShortId } = ctx.helpers;
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const scannerOffsets = (snap && snap.scanner_offsets) || (ctx.state.settings && ctx.state.settings.scanner_offsets) || {};
