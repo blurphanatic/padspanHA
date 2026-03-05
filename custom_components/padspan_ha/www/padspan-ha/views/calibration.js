@@ -138,13 +138,16 @@ function _setup(ctx, el, cs, calData) {
     placeholder.value = "";
     placeholder.textContent = cs.deviceId ? "" : "— choose device —";
     sel.appendChild(placeholder);
-    // Tracked objects
+    // Tracked objects — use stable identifiers for rotating-MAC devices
     for (const o of bleObjs) {
-      const addr = o.address || o.entity_id || "";
+      // private_ble → canonical_id (irk:...), ibeacon → key, else → address/entity_id
+      const stableId = o.kind === "private_ble" ? (o.canonical_id || o.address || "")
+                      : o.kind === "ibeacon"     ? (o.key || o.address || "")
+                      : (o.address || o.entity_id || "");
       const opt = document.createElement("option");
-      opt.value = addr;
-      opt.textContent = (o.user_label || o.name || addr) + (o.rssi ? ` (${o.rssi} dBm)` : "");
-      if (addr === cs.deviceId) opt.selected = true;
+      opt.value = stableId;
+      opt.textContent = (o.user_label || o.name || stableId) + (o.rssi ? ` (${o.rssi} dBm)` : "") + (o.kind === "private_ble" ? " [Private BLE]" : o.kind === "ibeacon" ? " [iBeacon]" : "");
+      if (stableId === cs.deviceId) opt.selected = true;
       sel.appendChild(opt);
     }
     // Raw advertisement devices not already in objects.list
@@ -162,7 +165,12 @@ function _setup(ctx, el, cs, calData) {
     }
     sel.addEventListener("change", () => {
       cs.deviceId = sel.value;
-      const obj = bleObjs.find(o => (o.address || o.entity_id || "") === sel.value);
+      const obj = bleObjs.find(o => {
+        const sid = o.kind === "private_ble" ? (o.canonical_id || o.address || "")
+                  : o.kind === "ibeacon"     ? (o.key || o.address || "")
+                  : (o.address || o.entity_id || "");
+        return sid === sel.value;
+      });
       cs.deviceLabel = obj ? (obj.user_label || obj.name || sel.value) : sel.value;
       ctx.actions.renderRooms();
     });
@@ -191,13 +199,19 @@ function _setup(ctx, el, cs, calData) {
   manualRow.appendChild(applyBtn);
   deviceCard.appendChild(manualRow);
 
+  // Resolve selected device's advertisements (used by both status box and radio status)
+  const _beaconResult = (cs.deviceId && snap) ? _findBeaconAds(snap, cs.deviceId) : { myAds: [], perRadio: {}, targetAddr: "" };
+
   // Show selected device live data using advertisements for real per-radio RSSI
   if (cs.deviceId && snap) {
-    const { perRadio, targetAddr } = _findBeaconAds(snap, cs.deviceId);
+    const { perRadio, targetAddr } = _beaconResult;
     const radioCount = Object.keys(perRadio).length;
+    const _did = cs.deviceId;
     const obj = (snap?.objects?.list || []).find(o =>
-      (o.address || "").toUpperCase() === (targetAddr || cs.deviceId).toUpperCase() ||
-      (o.entity_id || "") === cs.deviceId
+      (o.address || "").toUpperCase() === (targetAddr || _did).toUpperCase() ||
+      (o.entity_id || "") === _did ||
+      (o.canonical_id || "") === _did ||
+      (o.key || "") === _did
     );
     if (radioCount > 0) {
       const box = el("div", { style: "background:#0a150e;border:1px solid #1b3526;border-radius:8px;padding:10px;margin-top:6px" });
@@ -293,10 +307,7 @@ function _setup(ctx, el, cs, calData) {
       const ads = snap?.ble?.advertisements || [];
       for (const r of radios) {
         const seen = ads.filter(a => a.source === r.source).length;
-        const beaconHere = cs.deviceId ? ads.some(a =>
-          a.source === r.source &&
-          (a.address || "").toUpperCase() === (cs.deviceId || "").toUpperCase()
-        ) : false;
+        const beaconHere = cs.deviceId ? !!_beaconResult.perRadio[r.source] : false;
         // Prefer area name (room) over raw adapter name
         const sid = _sid(r.source || "");
         const displayName = (sid ? sid+" " : "") + (r.area_name || r.area || r.name || r.source || "?");
