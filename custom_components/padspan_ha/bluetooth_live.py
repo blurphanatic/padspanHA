@@ -194,7 +194,7 @@ class BluetoothLive:
                     del self._seen_by_source[addr]
         return cleared
 
-    def get_snapshot(self, max_ads: int = 300, max_age_s: int = 300) -> Dict[str, Any]:
+    def get_snapshot(self, max_ads: int = 1000, max_age_s: int = 900) -> Dict[str, Any]:
         """Return a lightweight BLE snapshot for the UI.
 
         radios: active scanners/adapters (local + remote proxies)
@@ -273,8 +273,8 @@ class BluetoothLive:
 
             now = _now()
             ads: List[Dict[str, Any]] = []
-            # Prune very old entries from cache (>10 min) to prevent unbounded growth
-            _prune_age = 600
+            # Prune very old entries from cache (>30 min) to prevent unbounded growth
+            _prune_age = 1800
             _prune_addrs: List[str] = []
             for addr, src_map in self._seen_by_source.items():
                 _dead = [s for s, a in src_map.items() if (now - a.seen).total_seconds() > _prune_age]

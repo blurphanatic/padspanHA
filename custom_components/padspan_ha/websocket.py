@@ -274,13 +274,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     try:
         bl = get_bluetooth_live(hass)
         if bl is not None:
-            # Read configurable BLE advertisement timeout from settings (default 300s)
-            _ble_age = 300
+            # Read configurable BLE advertisement timeout from settings (default 900s / 15 min)
+            _ble_age = 900
             try:
                 _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
                 _v = ((_st.data if _st else {}).get("ble_max_age_s"))
                 if _v is not None:
-                    _ble_age = max(30, min(600, int(_v)))
+                    _ble_age = max(30, min(1800, int(_v)))
             except Exception:
                 pass
             snapshot["ble"] = bl.get_snapshot(max_age_s=_ble_age)
@@ -1300,7 +1300,7 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             ids = msg["lights_hidden"]
             payload["lights_hidden"] = [str(x) for x in ids if isinstance(x, str)] if isinstance(ids, list) else []
         if "ble_max_age_s" in msg:
-            payload["ble_max_age_s"] = max(30, min(600, int(msg["ble_max_age_s"])))
+            payload["ble_max_age_s"] = max(30, min(1800, int(msg["ble_max_age_s"])))
         if "scanner_offsets" in msg:
             raw = msg["scanner_offsets"]
             if isinstance(raw, dict):

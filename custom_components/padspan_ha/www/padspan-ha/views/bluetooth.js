@@ -26,7 +26,7 @@ export function render(ctx) {
   if (!ctx.state.btTab) ctx.state.btTab = "visualization"; // visualization | monitor | scanners
   if (ctx.state.btFilter == null) ctx.state.btFilter = "";
   if (!ctx.state.btSource) ctx.state.btSource = "all"; // all | <scanner source>
-  if (!ctx.state.btMax) ctx.state.btMax = 60;
+  if (!ctx.state.btMax) ctx.state.btMax = 200;
 
   const radios = Array.isArray(ble.radios) ? ble.radios : [];
   const adsAll = Array.isArray(ble.advertisements) ? ble.advertisements : [];
@@ -35,7 +35,7 @@ export function render(ctx) {
   // Derived
   const filter = String(ctx.state.btFilter || "").trim().toLowerCase();
   const sourceSel = ctx.state.btSource || "all";
-  const maxItems = Math.max(10, Math.min(400, Number(ctx.state.btMax || 60)));
+  const maxItems = Math.max(10, Math.min(1000, Number(ctx.state.btMax || 200)));
 
   const ads = adsAll
     .filter(a => {
@@ -126,7 +126,7 @@ export function render(ctx) {
         class: "input",
         type: "number",
         min: 10,
-        max: 400,
+        max: 1000,
         value: String(ctx.state.btMax),
         oninput: e => {
           ctx.state.btMax = e.target.value;
