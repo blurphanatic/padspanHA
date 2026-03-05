@@ -87,6 +87,10 @@ async def async_setup_entry(
 
 
 def _device_uid(obj: dict[str, Any]) -> str:
+    # For private_ble (rotating MAC), use the stable canonical_id so the HA
+    # device identity survives address rotation.
+    if obj.get("canonical_id"):
+        return obj["canonical_id"]
     return obj.get("address") or obj.get("entity_id") or obj.get("key", "")
 
 

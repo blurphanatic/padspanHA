@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.6.61";
+const APP_VERSION = "0.6.62";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260305T030358Z";
+const BUILD_ID = "20260305T032957Z";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -1187,6 +1187,10 @@ class PadSpanHaApp extends HTMLElement {
           kind==="ble" ? (identified?"BLE · Identified":"BLE · Unidentified") : "HA Entity"),
       ]),
       addr ? el("div", {class:"muted", style:"font-family:monospace;font-size:12px"}, addr) : null,
+      obj.canonical_id ? el("div", {class:"muted", style:"font-size:11px"}, `Canonical: ${obj.canonical_id}`) : null,
+      (Array.isArray(obj.all_addresses) && obj.all_addresses.length > 1)
+        ? el("div", {class:"muted", style:"font-size:11px"}, `Rotating MACs: ${obj.all_addresses.join(", ")}`)
+        : null,
       obj.entity_id ? el("div", {class:"muted", style:"font-size:12px"}, `Entity: ${obj.entity_id}`) : null,
       // Enrichment badges
       (obj.company_name || obj.device_type || (obj.service_names && obj.service_names.length) || obj.connectable != null)

@@ -911,24 +911,60 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             })
 
         # (B) BLE advertisement objects (what HA Bluetooth "Advertisement monitor" shows)
+        # Group private_ble addresses by canonical_id so rotating MACs merge
+        # into ONE object per physical device (like iBeacon merging above).
+        _private_groups: dict[str, dict[str, Any]] = {}  # canonical_id → merged info
         for addr, rec in ble_by_addr.items():
             if addr in ibeacon_addrs:
                 continue  # absorbed into a merged iBeacon group (section C)
+            canonical = canonical_by_addr.get(addr)
+            if canonical:
+                cid = canonical["canonical_id"]
+                if cid not in _private_groups:
+                    _private_groups[cid] = {
+                        "canonical": canonical,
+                        "addrs": [],
+                        "all_sources": set(),
+                        "all_linked": set(),
+                        "best_rssi": -999,
+                        "best_rec": rec,
+                        "best_addr": addr,
+                        "device": None,
+                        "manufacturer_data": {},
+                        "service_data": {},
+                        "service_uuids": [],
+                    }
+                pg = _private_groups[cid]
+                pg["addrs"].append(addr)
+                for s in (rec.get("sources") or []):
+                    pg["all_sources"].add(s if isinstance(s, str) else str(s))
+                for e in addr_to_entities.get(addr, []):
+                    pg["all_linked"].add(e)
+                rssi = rec.get("rssi")
+                if rssi is not None and rssi > pg["best_rssi"]:
+                    pg["best_rssi"] = rssi
+                    pg["best_rec"] = rec
+                    pg["best_addr"] = addr
+                if not pg["device"] and addr in addr_to_device:
+                    pg["device"] = addr_to_device[addr]
+                # Merge BLE metadata
+                pg["manufacturer_data"].update(rec.get("manufacturer_data") or {})
+                pg["service_data"].update(rec.get("service_data") or {})
+                for u in (rec.get("service_uuids") or []):
+                    if u not in pg["service_uuids"]:
+                        pg["service_uuids"].append(u)
+                continue  # handled below in merged private_ble section
+
+            # Regular (non-rotating) BLE object
             parts = addr.split(":")
             prefix = ":".join(parts[:3]) if len(parts) >= 3 else ""
             identified = (addr in addr_to_device) or (addr in addr_to_entities)
 
-            canonical = canonical_by_addr.get(addr)
-
-            # If this address resolved to a Private BLE Device identity, promote it.
-            if canonical:
-                identified = True
-
             obj: dict[str, Any] = {
                 "key": f"ble:{addr}",
-                "kind": "private_ble" if canonical else "ble",
+                "kind": "ble",
                 "address": addr,
-                "name": (canonical or {}).get("name") or rec.get("name") or addr,
+                "name": rec.get("name") or addr,
                 "rssi": rec.get("rssi"),
                 "last_seen": rec.get("last_seen"),
                 "age_s": rec.get("age_s"),
@@ -943,10 +979,38 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "linked_entities": sorted(list(set(addr_to_entities.get(addr, [])))),
                 "device": addr_to_device.get(addr),
             }
-            if canonical:
-                obj["canonical_id"]   = canonical["canonical_id"]
-                obj["private_ble_name"] = canonical["name"]
             objects.append(obj)
+
+        # (B2) Merged private_ble objects — one per canonical_id (phone identity)
+        for cid, pg in _private_groups.items():
+            canonical = pg["canonical"]
+            rec = pg["best_rec"]
+            addr = pg["best_addr"]
+            parts = addr.split(":")
+            prefix = ":".join(parts[:3]) if len(parts) >= 3 else ""
+            obj_pb: dict[str, Any] = {
+                "key": cid,  # STABLE key — survives address rotation
+                "kind": "private_ble",
+                "address": addr,  # current best (strongest signal) rotating MAC
+                "canonical_id": cid,
+                "private_ble_name": canonical["name"],
+                "all_addresses": sorted(pg["addrs"]),  # all rotating MACs seen this cycle
+                "name": canonical.get("name") or rec.get("name") or addr,
+                "rssi": rec.get("rssi"),
+                "last_seen": rec.get("last_seen"),
+                "age_s": rec.get("age_s"),
+                "sources": sorted(pg["all_sources"]),
+                "manufacturer_data": pg["manufacturer_data"],
+                "service_data": pg["service_data"],
+                "service_uuids": pg["service_uuids"],
+                "connectable": rec.get("connectable"),
+                "prefix": prefix or None,
+                "prefix_count": prefix_counts.get(prefix, 0),
+                "identified": True,
+                "linked_entities": sorted(pg["all_linked"]),
+                "device": pg["device"],
+            }
+            objects.append(obj_pb)
 
         # (C) iBeacon objects — one per UUID/major/minor key, merged from all rotating MACs
         for uuid_key, g in ibeacon_groups.items():
