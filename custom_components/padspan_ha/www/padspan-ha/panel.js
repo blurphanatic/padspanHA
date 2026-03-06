@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.3";
+const APP_VERSION = "0.7.4";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260306T152211Z";
+const BUILD_ID = "20260306T160416Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1254,7 +1254,11 @@ class PadSpanHaApp extends HTMLElement {
     body.appendChild(el("div", {}, [
       el("div", {style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"}, [
         el("div", {style:"font-size:20px;font-weight:800;color:#e2e8f0"}, name),
-        el("span", {class:"badge"+(identified?"":" warn")},
+        el("span", {class:"badge"+(identified?"":" warn"), style:
+          kind==="private_ble" ? (identified?"background:#1a3a5a;color:#7dd3fc;border-color:#3b82f6":"") :
+          kind==="ibeacon" ? (identified?"background:#3a2a0a;color:#fbbf24;border-color:#d97706":"") : ""},
+          kind==="private_ble" ? (identified?"Private BLE · Identified":"Private BLE · Unidentified") :
+          kind==="ibeacon" ? (identified?"iBeacon · Identified":"iBeacon · Unidentified") :
           kind==="ble" ? (identified?"BLE · Identified":"BLE · Unidentified") : "HA Entity"),
       ]),
       addr ? el("div", {class:"muted", style:"font-family:monospace;font-size:12px"}, addr) : null,
@@ -1276,6 +1280,63 @@ class PadSpanHaApp extends HTMLElement {
           ].filter(Boolean))
         : null,
     ].filter(Boolean)));
+
+    // Status / Last seen
+    {
+      const statusItems = [];
+      // Last seen age
+      if (obj.age_s != null) {
+        const ageStr = fmtAgo(obj.age_s);
+        const isAway = typeof obj.age_s === "number" && obj.age_s > ((this.state.settings?.away_timeout_m ?? 5) * 60);
+        statusItems.push(el("div", {style:"display:flex;align-items:center;gap:8px"}, [
+          el("span", {style:"font-weight:600"}, "Last seen:"),
+          el("span", {}, ageStr + " ago"),
+          isAway ? el("span", {class:"badge", style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d;font-size:10px"}, "Away") : null,
+        ].filter(Boolean)));
+      }
+      // Last seen timestamp
+      if (obj.last_seen) {
+        try {
+          const d = new Date(obj.last_seen);
+          statusItems.push(el("div", {class:"muted", style:"font-size:11px"}, `Timestamp: ${d.toLocaleString()}`));
+        } catch(e){}
+      }
+      // RSSI summary
+      if (obj.rssi != null) {
+        const pct = Math.max(0, Math.min(100, ((obj.rssi + 100) / 60) * 100));
+        const bar = el("div", {style:`width:${pct.toFixed(0)}%;height:6px;background:#52b788;border-radius:3px;min-width:2px`});
+        statusItems.push(el("div", {style:"display:flex;align-items:center;gap:8px;margin-top:2px"}, [
+          el("span", {style:"font-weight:600"}, "Signal:"),
+          el("span", {}, `${obj.rssi} dBm`),
+          el("div", {style:"width:80px;background:#1a2e1e;border-radius:3px"}, bar),
+        ]));
+      }
+      // iBeacon details
+      if (kind === "ibeacon") {
+        if (obj.ibeacon_uuid) statusItems.push(el("div", {class:"muted", style:"font-size:11px;font-family:monospace"}, `UUID: ${obj.ibeacon_uuid}`));
+        if (obj.ibeacon_major != null) statusItems.push(el("div", {class:"muted", style:"font-size:11px"}, `Major: ${obj.ibeacon_major} · Minor: ${obj.ibeacon_minor}`));
+        if (obj.tx_power != null) statusItems.push(el("div", {class:"muted", style:"font-size:11px"}, `TX Power: ${obj.tx_power} dBm (factory calibrated at 1m)`));
+      }
+      // Private BLE details
+      if (kind === "private_ble") {
+        if (obj.private_ble_name) statusItems.push(el("div", {class:"muted", style:"font-size:11px"}, `Identity: ${obj.private_ble_name}`));
+        if (Array.isArray(obj.all_addresses) && obj.all_addresses.length > 1)
+          statusItems.push(el("div", {class:"muted", style:"font-size:11px"}, `Active rotating MACs: ${obj.all_addresses.length}`));
+      }
+      // KNN calibration confidence
+      if (obj.knn_confidence > 0) {
+        statusItems.push(el("div", {style:"display:flex;align-items:center;gap:8px;margin-top:2px"}, [
+          el("span", {style:"font-weight:600"}, "Calibrated:"),
+          el("span", {style:"color:#52b788"}, `${Math.round(obj.knn_confidence * 100)}% confidence`),
+        ]));
+      }
+      if (statusItems.length) {
+        body.appendChild(el("div", {}, [
+          el("div", {style:"font-weight:600;margin-bottom:4px"}, "Status"),
+          ...statusItems,
+        ]));
+      }
+    }
 
     // Location
     const objRoom = obj.room || "—";

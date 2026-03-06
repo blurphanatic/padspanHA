@@ -22,6 +22,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DATA_OBJECTS,
+    DATA_OBJECTS_CACHE,
     DEFAULT_FLOOR_ID, DATA_COORDINATOR, DATA_CALIBRATION, DATA_ADAPTIVE,
     DATA_ALERTS, DATA_MOVEMENT, BACKUPS_STORE_KEY,
     SETTINGS_STORE_KEY, CALIBRATION_STORE_KEY, ADAPTIVE_STORE_KEY,
@@ -274,13 +275,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     try:
         bl = get_bluetooth_live(hass)
         if bl is not None:
-            # Read configurable BLE advertisement timeout from settings (default 900s / 15 min)
-            _ble_age = 900
+            # Read configurable BLE advertisement timeout from settings (default 3600s / 1 hour)
+            _ble_age = 3600
             try:
                 _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
                 _v = ((_st.data if _st else {}).get("ble_max_age_s"))
                 if _v is not None:
-                    _ble_age = max(60, min(1800, int(_v)))
+                    _ble_age = max(60, min(14400, int(_v)))
             except Exception:
                 pass
             snapshot["ble"] = bl.get_snapshot(max_age_s=_ble_age)
@@ -1148,6 +1149,46 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 except Exception:
                     pass
 
+        # ── Persistent objects cache ──────────────────────────────────────────
+        # Objects accumulate in a long-lived cache so they don't vanish when
+        # BLE advertisements age out.  Tagged/identified objects NEVER expire;
+        # unidentified objects expire after _UNIDENT_TTL seconds.
+        import time as _time
+        _UNIDENT_TTL = 14400  # 4 hours for unidentified objects
+        _now_mono = _time.monotonic()
+
+        _cache: dict[str, dict[str, Any]] = hass.data.setdefault(DOMAIN, {}).setdefault(DATA_OBJECTS_CACHE, {})
+
+        # Index current objects by key for fast lookup
+        _current_keys: set[str] = set()
+        for obj in objects:
+            key = obj.get("key") or ""
+            if not key:
+                continue
+            _current_keys.add(key)
+            # Store when we last saw this object live, plus its age_s at that time
+            obj["_cache_ts"] = _now_mono
+            obj["_cache_age_s"] = obj.get("age_s") or 0
+            _cache[key] = obj
+
+        # Merge cached objects not seen this cycle back into the list
+        _cached_added = 0
+        for key, cached_obj in list(_cache.items()):
+            if key in _current_keys:
+                continue  # already in this cycle's list
+            stale_s = _now_mono - (cached_obj.get("_cache_ts") or _now_mono)
+            is_identified = cached_obj.get("identified") or cached_obj.get("user_label")
+            # Tagged/identified objects never expire from cache
+            if not is_identified and stale_s > _UNIDENT_TTL:
+                del _cache[key]
+                continue
+            # Bring it back — compute age_s = original age + time since last seen
+            obj_copy = dict(cached_obj)
+            base_age = cached_obj.get("_cache_age_s") or 0
+            obj_copy["age_s"] = base_age + stale_s
+            objects.append(obj_copy)
+            _cached_added += 1
+
         unidentified = [o for o in objects if o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified")]
         identified = [o for o in objects if not (o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified"))]
         common_prefixes = {p: c for p, c in prefix_counts.items() if c >= 3}
@@ -1164,6 +1205,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "ibeacon": len([o for o in objects if o.get("kind") == "ibeacon"]),
                 "common_prefixes": common_prefixes,  # prefix -> count (>=3)
                 "resolver": _resolver_diag,
+                "cached_objects": _cached_added,
             },
         }
     except Exception:
@@ -1382,7 +1424,7 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             ids = msg["lights_hidden"]
             payload["lights_hidden"] = [str(x) for x in ids if isinstance(x, str)] if isinstance(ids, list) else []
         if "ble_max_age_s" in msg:
-            payload["ble_max_age_s"] = max(30, min(1800, int(msg["ble_max_age_s"])))
+            payload["ble_max_age_s"] = max(30, min(14400, int(msg["ble_max_age_s"])))
         if "scanner_offsets" in msg:
             raw = msg["scanner_offsets"]
             if isinstance(raw, dict):

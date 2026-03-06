@@ -292,8 +292,10 @@ class BluetoothLive:
                     diag["errors"].append(f"seed_failed: {e!s}")
 
             ads: List[Dict[str, Any]] = []
-            # Prune very old entries from cache (>30 min) to prevent unbounded growth
-            _prune_age = 1800
+            # Prune very old entries from cache (>4 hours) to prevent unbounded growth
+            # Previously 30 min — too aggressive, caused beacons/tags to vanish
+            # from the objects list before users could find/tag them.
+            _prune_age = 14400
             _prune_addrs: List[str] = []
             for addr, src_map in self._seen_by_source.items():
                 _dead = [s for s, a in src_map.items() if (now - a.seen).total_seconds() > _prune_age]

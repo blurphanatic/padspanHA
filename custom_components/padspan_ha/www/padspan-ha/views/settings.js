@@ -592,13 +592,13 @@ function _settingsPresence(ctx, el){
   ]));
 
   // ── BLE Advertisement Timeout ─────────────────────────────────────────────
-  const currentBleAge = (settings.ble_max_age_s != null ? Number(settings.ble_max_age_s) : 900);
+  const currentBleAge = (settings.ble_max_age_s != null ? Number(settings.ble_max_age_s) : 3600);
   const bleAgeInp = el("input", {
-    type: "number", min: "60", max: "1800", step: "30", value: String(currentBleAge), style: inpStyle,
+    type: "number", min: "60", max: "14400", step: "60", value: String(currentBleAge), style: inpStyle,
   });
   const bleAgeSaveBtn = el("button", { class: "btn" }, "Save");
   bleAgeSaveBtn.addEventListener("click", async () => {
-    const v = Math.max(60, Math.min(1800, parseInt(bleAgeInp.value) || 900));
+    const v = Math.max(60, Math.min(14400, parseInt(bleAgeInp.value) || 3600));
     try {
       await ctx.actions.settingsSet({ ble_max_age_s: v });
       ctx.toast(`BLE timeout set to ${v}s`);
