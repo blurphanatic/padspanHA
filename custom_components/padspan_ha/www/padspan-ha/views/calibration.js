@@ -3497,21 +3497,56 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     hdr.textContent = `Placed Beacons (${totalCount})`;
     beaconListCard.appendChild(hdr);
 
+    const snap2 = (ctx.state.live && ctx.state.live.snapshot) || null;
     for (const { bk, map } of allEntries) {
       const isSel = bs.selectedBk && bs.selectedBk.mapId === map.id && bs.selectedBk.bkId === bk.id;
+      const obj = (snap2?.objects?.list || []).find(o => o.key === bk.key);
+      const detectedRoom = map ? _detectRoom(bk.x, bk.y, map) : "";
+      const isLive = bs._liveBeaconKeys.has(bk.key);
+      const timerEntry = bs._liveTimers[bk.id];
+      const isTimerActive = timerEntry && timerEntry.endTime > Date.now();
+      const calRounds = bs._calibRounds[bk.key] || 0;
+
+      // Per-radio RSSI data
+      const addr = obj?.address || obj?.canonical_id || bk.key || "";
+      const beaconAds = addr ? _findBeaconAds(snap2, addr) : { myAds: [], perRadio: {}, targetAddr: "" };
+      const radioEntries = Object.entries(beaconAds.perRadio).sort((a, b) => (b[1].rssi || -200) - (a[1].rssi || -200));
+
       const row = document.createElement("div");
-      row.style.cssText = `display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;${isSel ? "background:#0d2818;" : ""}`;
-      // Teal diamond icon
+      row.style.cssText = `display:flex;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;border:1px solid ${isSel ? "#5eead4" : "transparent"};${isSel ? "background:#0d2818;" : ""}`;
+      row.addEventListener("mouseenter", () => { if (!isSel) row.style.background = "#0a1a12"; });
+      row.addEventListener("mouseleave", () => { if (!isSel) row.style.background = ""; });
+
+      // Left column: icon + name + actions (compact)
+      const leftCol = document.createElement("div");
+      leftCol.style.cssText = "flex:0 0 auto;min-width:100px;max-width:160px;display:flex;flex-direction:column;gap:4px";
+
+      // Name row with diamond icon
+      const nameRow = document.createElement("div");
+      nameRow.style.cssText = "display:flex;align-items:center;gap:6px";
       const icon = document.createElement("div");
-      icon.style.cssText = "width:12px;height:12px;background:#5eead4;transform:rotate(45deg);border-radius:2px;flex-shrink:0;";
-      row.appendChild(icon);
-      const lbl = document.createElement("span");
-      lbl.style.cssText = "flex:1;font-size:12px;color:#d1d5db";
-      lbl.textContent = `${bk.label || bk.key} \u2014 ${map.name || map.id} \u2014 x:${(bk.x*100).toFixed(1)}% y:${(bk.y*100).toFixed(1)}%`;
-      row.appendChild(lbl);
+      const fillC = isLive && !isTimerActive ? "#52b788" : "#5eead4";
+      icon.style.cssText = `width:10px;height:10px;background:${fillC};transform:rotate(45deg);border-radius:2px;flex-shrink:0`;
+      nameRow.appendChild(icon);
+      const nameEl = document.createElement("span");
+      nameEl.style.cssText = "font-size:12px;font-weight:600;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+      nameEl.textContent = bk.label || bk.key;
+      nameEl.title = bk.label || bk.key;
+      nameRow.appendChild(nameEl);
+      leftCol.appendChild(nameRow);
+
+      // Map name (small)
+      const mapLbl = document.createElement("div");
+      mapLbl.style.cssText = "font-size:10px;color:#94a3b8;padding-left:16px";
+      mapLbl.textContent = map.name || map.id;
+      leftCol.appendChild(mapLbl);
+
+      // Actions row
+      const actRow = document.createElement("div");
+      actRow.style.cssText = "display:flex;gap:4px;padding-left:16px;flex-wrap:wrap";
       const rmBtn = document.createElement("button");
       rmBtn.className = "btn inline";
-      rmBtn.style.cssText = "font-size:11px;padding:2px 8px;color:#f87171;border-color:#f87171;";
+      rmBtn.style.cssText = "font-size:10px;padding:1px 6px;color:#f87171;border-color:#7f1d1d";
       rmBtn.textContent = "Remove";
       rmBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
@@ -3524,22 +3559,19 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         _refreshBeaconList();
         _refreshAvailable();
       });
-      row.appendChild(rmBtn);
-      // Move-to-map dropdown (only if >1 map)
+      actRow.appendChild(rmBtn);
+      // Compact move dropdown
       const otherMaps2 = maps_list.filter(m => m.id !== map.id);
       if (otherMaps2.length) {
         const moveSel2 = document.createElement("select");
-        moveSel2.style.cssText = "font-size:10px;padding:1px 4px;border-radius:4px;background:#071008;color:#60a5fa;border:1px solid #2d4a6f;cursor:pointer";
+        moveSel2.style.cssText = "font-size:10px;padding:1px 4px;border-radius:4px;background:#071008;color:#60a5fa;border:1px solid #2d4a6f;cursor:pointer;max-width:70px";
         const def2 = document.createElement("option");
         def2.value = ""; def2.textContent = "Move\u2026";
         moveSel2.appendChild(def2);
         for (const m2 of otherMaps2) {
-          const fl2 = ctx.state.model?.floors || [];
-          const flObj2 = fl2.find(f => f.level === (m2.stack?.z_level ?? 0));
-          const fName2 = flObj2 ? (flObj2.name || `L${m2.stack?.z_level ?? 0}`) : "";
           const o2 = document.createElement("option");
           o2.value = m2.id;
-          o2.textContent = `${m2.name || m2.id}${fName2 ? ` (${fName2})` : ""}`;
+          o2.textContent = m2.name || m2.id;
           moveSel2.appendChild(o2);
         }
         moveSel2.addEventListener("click", (ev) => ev.stopPropagation());
@@ -3548,8 +3580,101 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           if (!moveSel2.value) return;
           _moveBeaconToMap(bk, map.id, moveSel2.value);
         });
-        row.appendChild(moveSel2);
+        actRow.appendChild(moveSel2);
       }
+      leftCol.appendChild(actRow);
+      row.appendChild(leftCol);
+
+      // Right column: detailed info (takes most space)
+      const rightCol = document.createElement("div");
+      rightCol.style.cssText = "flex:1;min-width:0;display:flex;flex-direction:column;gap:3px";
+
+      // Status badges row
+      const badgeRow = document.createElement("div");
+      badgeRow.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;align-items:center";
+      // Kind badge
+      const kindBadge = document.createElement("span");
+      const kindLabel = bk.kind === "ibeacon" ? "iBeacon" : bk.kind === "private_ble" ? "Private BLE" : "BLE";
+      const kindColor = bk.kind === "ibeacon" ? "#c4b5fd" : bk.kind === "private_ble" ? "#7dd3fc" : "#5eead4";
+      kindBadge.style.cssText = `font-size:9px;padding:1px 6px;border-radius:3px;background:${kindColor}18;color:${kindColor};border:1px solid ${kindColor}40`;
+      kindBadge.textContent = kindLabel;
+      badgeRow.appendChild(kindBadge);
+      // Room badge
+      const roomName = obj?.room || detectedRoom || "";
+      if (roomName) {
+        const roomBadge = document.createElement("span");
+        const rc = roomColorFn(roomName);
+        roomBadge.style.cssText = `font-size:9px;padding:1px 6px;border-radius:3px;background:${rc}18;color:${rc};border:1px solid ${rc}40`;
+        roomBadge.textContent = roomName;
+        badgeRow.appendChild(roomBadge);
+      }
+      // Live / Timer badge
+      if (isTimerActive) {
+        const rem = Math.max(0, Math.ceil((timerEntry.endTime - Date.now()) / 1000));
+        const tmBadge = document.createElement("span");
+        tmBadge.style.cssText = "font-size:9px;padding:1px 6px;border-radius:3px;background:#f59e0b18;color:#f59e0b;border:1px solid #f59e0b40;font-weight:600";
+        tmBadge.textContent = `Calibrating ${rem}s`;
+        badgeRow.appendChild(tmBadge);
+      } else if (isLive) {
+        const liveBadge = document.createElement("span");
+        liveBadge.style.cssText = "font-size:9px;padding:1px 6px;border-radius:3px;background:#52b78818;color:#52b788;border:1px solid #52b78840;font-weight:600";
+        liveBadge.textContent = "LIVE";
+        badgeRow.appendChild(liveBadge);
+      }
+      // Cal rounds badge
+      if (calRounds > 0) {
+        const calBadge = document.createElement("span");
+        calBadge.style.cssText = "font-size:9px;padding:1px 6px;border-radius:3px;background:#60a5fa18;color:#60a5fa;border:1px solid #60a5fa40";
+        calBadge.textContent = `${calRounds} cal round${calRounds > 1 ? "s" : ""}`;
+        badgeRow.appendChild(calBadge);
+      }
+      rightCol.appendChild(badgeRow);
+
+      // Detail metrics row
+      const metricsRow = document.createElement("div");
+      metricsRow.style.cssText = "display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:#94a3b8";
+      const addMetric = (label, value, color) => {
+        const m = document.createElement("span");
+        m.style.cssText = "white-space:nowrap";
+        m.innerHTML = `<span style="color:#64748b">${label}</span> <span style="color:${color || "#d1d5db"}">${_esc(String(value))}</span>`;
+        metricsRow.appendChild(m);
+      };
+      addMetric("Pos:", `${(bk.x*100).toFixed(1)}%, ${(bk.y*100).toFixed(1)}%`);
+      if (obj?.rssi != null) addMetric("RSSI:", `${obj.rssi} dBm`, obj.rssi > -70 ? "#52b788" : obj.rssi > -85 ? "#f59e0b" : "#f87171");
+      if (obj?.age_s != null) addMetric("Seen:", `${Math.round(obj.age_s)}s ago`, obj.age_s < 30 ? "#52b788" : obj.age_s < 120 ? "#f59e0b" : "#f87171");
+      if (obj?.knn_confidence != null) addMetric("Conf:", `${(obj.knn_confidence*100).toFixed(0)}%`, obj.knn_confidence > 0.7 ? "#52b788" : "#f59e0b");
+      if (obj?.sources?.length) addMetric("Radios:", String(obj.sources.length));
+      rightCol.appendChild(metricsRow);
+
+      // Per-radio RSSI breakdown (compact)
+      if (radioEntries.length) {
+        const radioRow = document.createElement("div");
+        radioRow.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;font-size:10px";
+        for (const [src, info] of radioEntries.slice(0, 6)) {
+          const chip = document.createElement("span");
+          const rssiColor = (info.rssi || -200) > -70 ? "#52b788" : (info.rssi || -200) > -85 ? "#f59e0b" : "#f87171";
+          const shortName = (info.name || src || "?").substring(0, 10);
+          chip.style.cssText = `padding:1px 6px;border-radius:3px;background:#0a1a12;border:1px solid #1b3526;color:#d1d5db;white-space:nowrap`;
+          chip.innerHTML = `${_esc(shortName)} <span style="color:${rssiColor};font-weight:600">${info.rssi ?? "?"}</span>`;
+          if (info.age_s != null) chip.innerHTML += ` <span style="color:#64748b">${Math.round(info.age_s)}s</span>`;
+          radioRow.appendChild(chip);
+        }
+        if (radioEntries.length > 6) {
+          const more = document.createElement("span");
+          more.style.cssText = "color:#64748b;font-size:10px;padding:1px 4px";
+          more.textContent = `+${radioEntries.length - 6} more`;
+          radioRow.appendChild(more);
+        }
+        rightCol.appendChild(radioRow);
+      } else {
+        const noRadio = document.createElement("div");
+        noRadio.style.cssText = "font-size:10px;color:#64748b;font-style:italic";
+        noRadio.textContent = "No radio data available";
+        rightCol.appendChild(noRadio);
+      }
+
+      row.appendChild(rightCol);
+
       row.addEventListener("click", () => {
         bs.selectedBk = { mapId: map.id, bkId: bk.id };
         _refreshSVG();
