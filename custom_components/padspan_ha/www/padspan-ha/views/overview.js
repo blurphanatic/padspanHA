@@ -283,22 +283,42 @@ export function render(ctx){
     const commonPrefixes = summary.common_prefixes || {};
 
     // Dedup: suppress entity rows whose device already has a BLE/iBeacon/private_ble row
-    const _ovBleAddrSet = new Set(
-      list.filter(o => o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon")
-        .map(o => o.address).filter(Boolean)
-    );
+    const _ovBleAddrSet = new Set();
+    for (const o of list) {
+      if (o.kind !== "ble" && o.kind !== "private_ble" && o.kind !== "ibeacon") continue;
+      if (o.address) _ovBleAddrSet.add(o.address);
+      if (Array.isArray(o.all_addresses)) {
+        for (const a of o.all_addresses) _ovBleAddrSet.add(String(a).toUpperCase());
+      }
+    }
     const _ovLinkedSet = new Set(
       list.flatMap(o => Array.isArray(o.linked_entities) ? o.linked_entities : [])
     );
     const _ovIsDup = (o) =>
       o.kind === "entity" && (
-        (o.address && _ovBleAddrSet.has(o.address)) ||
+        (o.address && _ovBleAddrSet.has(String(o.address).toUpperCase())) ||
         (o.entity_id && _ovLinkedSet.has(o.entity_id))
       );
 
+    // Away detection
+    const awayTimeoutS = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null)
+      ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
+    const _isAway = (o) => {
+      if (o.kind !== "ble" && o.kind !== "private_ble" && o.kind !== "ibeacon") return false;
+      const a = o.age_s;
+      return typeof a === "number" && isFinite(a) && a > awayTimeoutS;
+    };
+
+    // Time range slider
+    const _ageSteps = [300, 900, 3600, 21600, 86400, 259200, 604800];
+    const _ageLabels = ["5 min", "15 min", "1 hour", "6 hours", "1 day", "3 days", "1 week"];
+    if (ctx.state.objAgeMax == null) ctx.state.objAgeMax = 604800;
+    const _ageIdx = _ageSteps.indexOf(ctx.state.objAgeMax);
+    const _curIdx = _ageIdx >= 0 ? _ageIdx : _ageSteps.length - 1;
+
     const body = el("div",{});
     const controls = el("div",{class:"controls"});
-    const search = el("input",{type:"text", placeholder:"Filter by address, vendor, entity, room…"});
+    const search = el("input",{type:"text", placeholder:"Search address, name, label…"});
     const kindSel = el("select",{},[
       el("option",{value:"all"}, "All kinds"),
       el("option",{value:"entity"}, "Entities only"),
@@ -308,6 +328,7 @@ export function render(ctx){
       el("option",{value:"all"}, "All statuses"),
       el("option",{value:"identified"}, "Identified"),
       el("option",{value:"unidentified"}, "Unidentified"),
+      el("option",{value:"away"}, "Away"),
     ]);
     statusSel.value = initialFilter === "unidentified" ? "unidentified" : "all";
 
@@ -316,6 +337,19 @@ export function render(ctx){
       el("span",{}, "Only common OUIs (≥3)")
     ]);
 
+    const ageLabel = el("span",{class:"muted",style:"white-space:nowrap;font-size:12px"}, _ageLabels[_curIdx]);
+    const ageSlider = el("input",{
+      type:"range", min:"0", max:String(_ageSteps.length - 1), step:"1",
+      value: String(_curIdx),
+      style: "width:120px;accent-color:#52b788",
+    });
+    ageSlider.addEventListener("input", ()=>{
+      const idx = Number(ageSlider.value);
+      ctx.state.objAgeMax = _ageSteps[idx];
+      ageLabel.textContent = _ageLabels[idx];
+      apply();
+    });
+
     const stats = el("div",{class:"spacer"});
     controls.appendChild(el("span",{class:"badge"}, `${fmtNum(summary.total||0)} total`));
     controls.appendChild(el("span",{class:"badge"}, `${fmtNum(summary.unidentified||0)} unidentified`));
@@ -323,6 +357,8 @@ export function render(ctx){
     controls.appendChild(kindSel);
     controls.appendChild(statusSel);
     controls.appendChild(commonOnly);
+    controls.appendChild(el("div",{style:"display:flex;align-items:center;gap:6px"},
+      [el("span",{class:"muted",style:"font-size:12px;white-space:nowrap"}, "History:"), ageSlider, ageLabel]));
     controls.appendChild(stats);
 
     const table = el("table",{class:"table"});
@@ -380,13 +416,16 @@ export function render(ctx){
         return el("td",{}, btn);
       })();
 
-      // Tag button for BLE rows
+      // Tag button for BLE/iBeacon/private_ble rows
       const tagCell = (() => {
-        if (kind !== "ble" || !addr) return el("td",{}, "");
+        const tagAddr = kind === "private_ble" ? (o.canonical_id || addr)
+                      : kind === "ibeacon"     ? (o.key || "")
+                      : addr;
+        if ((kind !== "ble" && kind !== "private_ble" && kind !== "ibeacon") || !tagAddr) return el("td",{}, "");
         const btn = el("button",{class:"btn tiny"}, userLabel ? "Relabel" : "Tag");
         btn.addEventListener("click",(e)=>{
           e.stopPropagation();
-          ctx.actions.tagObjectPrompt(addr, userLabel);
+          ctx.actions.tagObjectPrompt(tagAddr, userLabel);
         });
         const wrap = el("div",{style:"display:flex;align-items:center;gap:6px"});
         if(userLabel) wrap.appendChild(el("span",{style:"color:#94a3b8;font-size:12px"}, userLabel));
@@ -394,11 +433,25 @@ export function render(ctx){
         return el("td",{}, wrap);
       })();
 
+      const isAway = _isAway(o);
       const tr = el("tr",{
         "data-kind": kind,
         "data-identified": identified ? "1":"0",
         "data-common": isCommon ? "1":"0",
-        "data-search": `${kind} ${name} ${addr} ${room} ${userLabel} ${(o.entity_id||"")} ${(o.linked_entities||[]).join(" ")} ${o.company_name||""} ${o.device_type||""} ${(o.service_names||[]).join(" ")}`.toLowerCase(),
+        "data-age": String(o.age_s != null ? Math.round(o.age_s) : 0),
+        "data-search": [
+          kind, name, addr, room, userLabel, o.entity_id,
+          o.ibeacon_uuid, o.company_name, o.device_type,
+          (o.service_names||[]).join(" "),
+          o.canonical_id, o.key, o.name, o.private_ble_name,
+          (o.all_addresses||[]).join(" "),
+          (o.linked_entities||[]).join(" "),
+          o.ibeacon_major, o.ibeacon_minor,
+          o.vendor, o.device, o.prefix,
+          o.first_seen,
+          (o.service_uuids||[]).join(" "),
+          isAway ? "away" : "",
+        ].filter(Boolean).join(" ").toLowerCase(),
         "data-mac": addr,
       },[
         el("td",{}, kind==="ble" ? pill("BLE","") : pill("Entity","")),
@@ -447,6 +500,7 @@ export function render(ctx){
       const k = kindSel.value;
       const st = statusSel.value;
       const co = commonOnly.querySelector("input").checked;
+      const maxAge = ctx.state.objAgeMax || 604800;
 
       let shown = 0;
 
@@ -455,20 +509,25 @@ export function render(ctx){
         const idf = tr.getAttribute("data-identified")==="1";
         const common = tr.getAttribute("data-common")==="1";
         const hay = tr.getAttribute("data-search") || "";
+        const away = hay.includes(" away");
+        const age = Number(tr.getAttribute("data-age") || "0");
 
         let ok = true;
+        // Entity objects always pass the age filter
+        if(kind !== "entity" && age > maxAge) ok = false;
         if(q && !hay.includes(q)) ok=false;
         // "ble" filter covers ble, private_ble, and ibeacon (all physical BLE devices)
         if(k === "ble" && kind !== "ble" && kind !== "private_ble" && kind !== "ibeacon") ok = false;
         else if(k!=="all" && k!=="ble" && kind!==k) ok=false;
         if(st==="identified" && !idf) ok=false;
         if(st==="unidentified" && idf) ok=false;
+        if(st==="away" && !away) ok=false;
         if(co && !common) ok=false;
 
         tr.style.display = ok ? "" : "none";
         if(ok) shown++;
       }
-      stats.textContent = `${shown} shown`;
+      stats.textContent = `${shown} of ${rowEls.length}`;
     }
 
     search.addEventListener("input", apply);
