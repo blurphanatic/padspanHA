@@ -218,6 +218,7 @@ class BluetoothLive:
         try:
             from homeassistant.components import bluetooth  # type: ignore
 
+            now = _now()
             radios: List[Dict[str, Any]] = []
             try:
                 scanners_fn = getattr(bluetooth, "async_current_scanners", None)
@@ -236,18 +237,16 @@ class BluetoothLive:
                         adapter = getattr(s, "adapter", None)
 
                         _radio_src = _coerce_source(src) or ""
-                    _lh = self._radio_last_heard.get(_radio_src)
-                    _lh_s = round((now - _lh).total_seconds(), 1) if _lh else None
-                    radios.append(
-                            {
-                                "source": _radio_src,
-                                "name": str(name or ""),
-                                "connectable": bool(connectable) if connectable is not None else None,
-                                "scanning": bool(scanning) if scanning is not None else None,
-                                "adapter": str(adapter or "") if adapter is not None else "",
-                                "last_heard_s": _lh_s,
-                            }
-                        )
+                        _lh = self._radio_last_heard.get(_radio_src)
+                        _lh_s = round((now - _lh).total_seconds(), 1) if _lh else None
+                        radios.append({
+                            "source": _radio_src,
+                            "name": str(name or ""),
+                            "connectable": bool(connectable) if connectable is not None else None,
+                            "scanning": bool(scanning) if scanning is not None else None,
+                            "adapter": str(adapter or "") if adapter is not None else "",
+                            "last_heard_s": _lh_s,
+                        })
                 else:
                     # Older HA: we may not be able to list scanners individually.
                     count = None
@@ -281,7 +280,6 @@ class BluetoothLive:
                     diag["ok"] = False
                     diag["errors"].append(f"seed_failed: {e!s}")
 
-            now = _now()
             ads: List[Dict[str, Any]] = []
             # Prune very old entries from cache (>30 min) to prevent unbounded growth
             _prune_age = 1800
