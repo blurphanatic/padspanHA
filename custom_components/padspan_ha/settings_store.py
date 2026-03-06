@@ -57,6 +57,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "mqtt_publish_enabled": False,
     # Lights sidebar panel (off by default — requires HA restart to take effect)
     "lights_panel_enabled": False,
+    "bermuda_ignore": False,  # experimental: ignore all Bermuda integration data
 }
 
 

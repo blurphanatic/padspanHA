@@ -989,6 +989,36 @@ function _settingsPresence(ctx, el){
     resetAdaptiveBtn,
   ]));
 
+  // ── Ignore Bermuda Data (Experimental) ──────────────────────────────────
+  const bermudaIgnore = settings.bermuda_ignore === true;
+
+  const bermudaToggle = el("input",{type:"checkbox",id:"bermudaIgnoreToggle",style:"width:16px;height:16px;accent-color:#52b788;cursor:pointer"});
+  bermudaToggle.checked = bermudaIgnore;
+
+  bermudaToggle.addEventListener("change", async()=>{
+    try {
+      await ctx.actions.settingsSet({ bermuda_ignore: bermudaToggle.checked });
+      ctx.toast(bermudaToggle.checked ? "Bermuda data will be ignored" : "Bermuda data re-enabled");
+      ctx.actions.renderRooms();
+    } catch(e){ ctx.toast("Failed to save setting", true); }
+  });
+
+  wrap.appendChild(el("div",{class:"card"},[
+    el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
+      el("div",{class:"h2",style:"margin:0"},"Ignore Bermuda"),
+      el("span",{style:"font-size:10px;font-weight:600;color:#fbbf24;background:#422006;padding:2px 6px;border-radius:4px"},"EXPERIMENTAL"),
+    ]),
+    el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
+      bermudaToggle,
+      el("label",{for:"bermudaIgnoreToggle",style:"font-size:13px;color:#e2e8f0;cursor:pointer"},
+        "Ignore all Bermuda integration data"),
+    ]),
+    el("div",{class:"muted",style:"font-size:12px"},
+      "When enabled, PadSpan completely ignores all data from the Bermuda integration — no Bermuda devices, " +
+      "receivers, or entity candidates will appear in snapshots. Useful for troubleshooting to isolate whether " +
+      "unexpected activity originates from Bermuda. Requires a snapshot refresh to take effect."),
+  ]));
+
   return wrap;
 }
 

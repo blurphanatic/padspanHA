@@ -54,6 +54,13 @@ export function render(ctx){
       desc: "Publishes device presence to MQTT topics for external systems",
     },
     {
+      name: "Ignore Bermuda",
+      enabled: settings.bermuda_ignore === true,
+      location: "Settings \u2192 Presence",
+      tab: "settings",
+      desc: "Completely ignore all data from the Bermuda integration",
+    },
+    {
       name: "Beacon Tune",
       enabled: false,
       location: "Calibration \u2192 Beacon Tune",

@@ -301,12 +301,23 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
     # --- Find Bermuda config entries (if installed) ---
     bermuda_entry_ids: set[str] = set()
+    _bermuda_ignore = False
+    try:
+        _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+        if _st and _st.get("bermuda_ignore"):
+            _bermuda_ignore = True
+    except Exception:
+        pass
+    # Always discover Bermuda entry IDs (needed for both include and exclude logic)
+    _all_bermuda_entry_ids: set[str] = set()
     try:
         for ent in hass.config_entries.async_entries():
             if ent.domain == "bermuda":
-                bermuda_entry_ids.add(ent.entry_id)
+                _all_bermuda_entry_ids.add(ent.entry_id)
     except Exception:
-        bermuda_entry_ids = set()
+        pass
+    if not _bermuda_ignore:
+        bermuda_entry_ids = set(_all_bermuda_entry_ids)
 
     # --- Receivers (devices belonging to Bermuda entries) ---
     try:
@@ -363,6 +374,9 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
     def _is_candidate(entity_id: str, st: State) -> bool:
         ent = er.async_get(entity_id)
+        # When bermuda_ignore is on, reject any entity from a Bermuda config entry
+        if _bermuda_ignore and ent and ent.config_entry_id in _all_bermuda_entry_ids:
+            return False
         if ent and ent.config_entry_id in bermuda_entry_ids:
             return True
 
@@ -1299,6 +1313,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("ha_entity_scanner_distance_enabled"): bool,
         vol.Optional("mqtt_publish_enabled"): bool,
         vol.Optional("lights_panel_enabled"): bool,
+        vol.Optional("bermuda_ignore"): bool,
     }
 )
 @websocket_api.async_response
@@ -1370,7 +1385,7 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["advanced_extra_tabs"] = [t for t in msg["advanced_extra_tabs"] if t in valid]
         for key in ("ha_entity_tracker_enabled", "ha_entity_area_enabled",
                     "ha_entity_distance_enabled", "ha_entity_scanner_distance_enabled",
-                    "mqtt_publish_enabled", "lights_panel_enabled"):
+                    "mqtt_publish_enabled", "lights_panel_enabled", "bermuda_ignore"):
             if key in msg:
                 payload[key] = bool(msg[key])
         await st.async_set(**payload)
