@@ -101,13 +101,36 @@ export function render(ctx){
           const tagBtn = el("button",{class:"btn tiny"}, o&&o.user_label ? "Relabel" : "Tag");
           tagBtn.addEventListener("click",()=>ctx.actions.tagObjectPrompt(d.addr, (o&&o.user_label)||""));
 
+          // Follow toggle
+          const followKey = (d.addr || (o && o.entity_id) || "").toUpperCase();
+          const followBtn = (() => {
+            if(!followKey) return null;
+            const isF = ctx.actions.followedHas(followKey);
+            const btn = el("button",{class:"btn tiny", style: isF ? "background:#1a3a2a;border-color:#52b788;color:#52b788" : ""}, isF ? "Following" : "Follow");
+            btn.addEventListener("click",()=>{
+              ctx.actions.followedToggle(followKey);
+              const nowF = ctx.actions.followedHas(followKey);
+              btn.textContent = nowF ? "Following" : "Follow";
+              btn.style.cssText = nowF ? "background:#1a3a2a;border-color:#52b788;color:#52b788" : "";
+            });
+            return btn;
+          })();
+
+          // Clickable label for drill-down
+          const labelEl = el("span",{style:"cursor:pointer"}, label);
+          labelEl.addEventListener("click",()=>{
+            const detailObj = o || { address: d.addr, name: d.name || d.addr, kind: "ble" };
+            ctx.actions.showObjectDetail(detailObj);
+          });
+
           return el("div",{class:"item"},[
             el("div",{style:"flex:1"},[
-              el("span",{}, label),
+              labelEl,
               rssiStr ? el("span",{class:"muted", style:"margin-left:8px"}, rssiStr) : null,
             ].filter(Boolean)),
+            followBtn,
             tagBtn,
-          ]);
+          ].filter(Boolean));
         };
 
         const areaName = radioAreas[src];
