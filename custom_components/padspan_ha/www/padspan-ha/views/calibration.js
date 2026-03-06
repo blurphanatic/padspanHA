@@ -2645,7 +2645,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     for (const bk of bks) if (bk.key) allPinnedKeys.add(bk.key);
   }
   const availObjs = (snap?.objects?.list || [])
-    .filter(o => (o.user_label || o.identified || _isFollowed(o)) && !allPinnedKeys.has(o.key))
+    .filter(o => (o.user_label || o.identified || _isFollowed(o)) && !allPinnedKeys.has(o.key)
+      && (o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon" || (o.kind === "entity" && o.address)))
     .sort((a, b) => (a.user_label || a.name || "").localeCompare(b.user_label || b.name || ""));
 
   const pickerRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
@@ -3396,27 +3397,71 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   _refreshInfo();
 
   // ── Available beacons (tracked objects from snapshot) ──────────────────
-  const _trackedObjects = (snap?.objects?.list || []).filter(o => o.user_label || o.identified || _isFollowed(o));
+  // Only show objects with actual BLE radio presence (not entity-only trackers or Bermuda sensors).
+  // An object is "BLE-capable" if it has kind ble/private_ble/ibeacon, or is an entity with an address.
+  if (!bs._hiddenObjKeys) bs._hiddenObjKeys = new Set();
+  const _allTracked = (snap?.objects?.list || []).filter(o => o.user_label || o.identified || _isFollowed(o));
+  const _hasBlePresence = (o) => {
+    // Must have BLE advertisements to be useful for calibration
+    if (o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon") return true;
+    // Entity with a resolved BLE address
+    if (o.kind === "entity" && o.address) return true;
+    return false;
+  };
+  const _trackedObjects = _allTracked.filter(o => _hasBlePresence(o) && !bs._hiddenObjKeys.has(o.key));
+  const _hiddenCount = _allTracked.filter(o => bs._hiddenObjKeys.has(o.key)).length;
+  const _entityOnlyCount = _allTracked.filter(o => !_hasBlePresence(o)).length;
   const availCard = document.createElement("div");
   availCard.className = "card";
   function _refreshAvailable() {
     availCard.innerHTML = "";
-    const hdr0 = document.createElement("div");
-    hdr0.style.cssText = "font-weight:700;font-size:13px;margin-bottom:4px;color:#f59e0b";
-    hdr0.textContent = `Tracked Objects (${_trackedObjects.length})`;
-    availCard.appendChild(hdr0);
+    // Recompute with latest hidden set
+    const visibleObjs = _allTracked.filter(o => _hasBlePresence(o) && !bs._hiddenObjKeys.has(o.key));
+    const hiddenN = _allTracked.filter(o => bs._hiddenObjKeys.has(o.key)).length;
+    const entityOnlyN = _allTracked.filter(o => !_hasBlePresence(o)).length;
+    const filteredN = hiddenN + entityOnlyN;
 
-    if (!_trackedObjects.length) {
+    // Header row
+    const hdrRow = document.createElement("div");
+    hdrRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:4px";
+    const hdr0 = document.createElement("div");
+    hdr0.style.cssText = "font-weight:700;font-size:13px;flex:1;color:#f59e0b";
+    hdr0.textContent = `BLE Objects for Calibration (${visibleObjs.length})`;
+    hdrRow.appendChild(hdr0);
+    if (filteredN > 0) {
+      const filterNote = document.createElement("span");
+      filterNote.style.cssText = "font-size:10px;color:#64748b";
+      const parts = [];
+      if (entityOnlyN) parts.push(`${entityOnlyN} entity-only`);
+      if (hiddenN) parts.push(`${hiddenN} hidden`);
+      filterNote.textContent = `${parts.join(", ")} filtered`;
+      hdrRow.appendChild(filterNote);
+    }
+    if (hiddenN > 0) {
+      const showAllBtn = document.createElement("button");
+      showAllBtn.className = "btn inline";
+      showAllBtn.style.cssText = "font-size:10px;padding:1px 6px";
+      showAllBtn.textContent = "Show hidden";
+      showAllBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        bs._hiddenObjKeys.clear();
+        _refreshAvailable();
+      });
+      hdrRow.appendChild(showAllBtn);
+    }
+    availCard.appendChild(hdrRow);
+
+    if (!visibleObjs.length) {
       const msg = document.createElement("div");
       msg.style.cssText = "font-size:12px;color:#94a3b8";
-      msg.textContent = "No tracked objects detected. Label objects in the Objects tab or follow them in the Follow tab.";
+      msg.textContent = "No BLE objects available. Label objects in the Objects tab or follow them in the Follow tab.";
       availCard.appendChild(msg);
       return;
     }
 
     const hint0 = document.createElement("div");
     hint0.style.cssText = "font-size:11px;color:#94a3b8;margin-bottom:8px";
-    hint0.textContent = "Click an object, then double-click on the 3D map to mark its current location.";
+    hint0.textContent = "Click to select for placement, then double-click on the 3D map. Hide irrelevant objects with \u00d7.";
     availCard.appendChild(hint0);
 
     // Build lookup: which objects are already pinned
@@ -3425,7 +3470,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       for (const bk of recs) { if (bk.key) pinnedKeys.add(bk.key); }
     }
 
-    for (const obj of _trackedObjects) {
+    for (const obj of visibleObjs) {
       const isPinned = pinnedKeys.has(obj.key);
       const isPending = bs.pendingPlace && bs.pendingPlace.key === obj.key;
       const row = document.createElement("div");
@@ -3436,20 +3481,34 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       // Icon
       const icon = document.createElement("div");
       if (isPinned) {
-        icon.style.cssText = "width:12px;height:12px;background:#5eead4;transform:rotate(45deg);border-radius:2px;flex-shrink:0";
+        icon.style.cssText = "width:10px;height:10px;background:#5eead4;transform:rotate(45deg);border-radius:2px;flex-shrink:0";
       } else {
-        icon.style.cssText = "width:12px;height:12px;border:2px solid #94a3b8;transform:rotate(45deg);border-radius:2px;flex-shrink:0;background:transparent";
+        icon.style.cssText = "width:10px;height:10px;border:2px solid #94a3b8;transform:rotate(45deg);border-radius:2px;flex-shrink:0;background:transparent";
       }
       row.appendChild(icon);
 
-      // Label
-      const lbl = document.createElement("span");
-      lbl.style.cssText = `flex:1;font-size:12px;color:${isPinned ? "#d1d5db" : "#e2e8f0;font-weight:600"}`;
-      const displayName = obj.user_label || obj.name || obj.key;
-      const kindTag = obj.kind !== "ble" ? ` [${obj.kind}]` : "";
-      lbl.textContent = `${displayName}${kindTag}`;
-      row.appendChild(lbl);
+      // Name + kind
+      const nameCol = document.createElement("div");
+      nameCol.style.cssText = "flex:1;min-width:0;display:flex;flex-direction:column;gap:1px";
+      const nameEl = document.createElement("span");
+      nameEl.style.cssText = `font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${isPinned ? "#d1d5db" : "#e2e8f0"};${isPinned ? "" : "font-weight:600"}`;
+      nameEl.textContent = obj.user_label || obj.name || obj.key;
+      nameCol.appendChild(nameEl);
+      // Detail line: kind + RSSI + room
+      const detailParts = [];
+      const kindLabel = obj.kind === "ibeacon" ? "iBeacon" : obj.kind === "private_ble" ? "Private BLE" : obj.kind === "entity" ? "Entity+BLE" : "BLE";
+      detailParts.push(kindLabel);
+      if (obj.rssi != null) detailParts.push(`${obj.rssi} dBm`);
+      if (obj.room) detailParts.push(obj.room);
+      if (obj.sources?.length) detailParts.push(`${obj.sources.length} radio${obj.sources.length > 1 ? "s" : ""}`);
+      if (obj.age_s != null) detailParts.push(`${Math.round(obj.age_s)}s ago`);
+      const detailEl = document.createElement("span");
+      detailEl.style.cssText = "font-size:10px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+      detailEl.textContent = detailParts.join(" \u00b7 ");
+      nameCol.appendChild(detailEl);
+      row.appendChild(nameCol);
 
+      // Status badge
       if (isPinned) {
         const tag = document.createElement("span");
         tag.style.cssText = "font-size:10px;color:#5eead4;background:#5eead418;padding:1px 6px;border-radius:4px;white-space:nowrap";
@@ -3460,6 +3519,23 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         tag.style.cssText = `font-size:10px;padding:1px 6px;border-radius:4px;white-space:nowrap;${isPending ? "color:#fbbf24;background:#fbbf2418;font-weight:600" : "color:#94a3b8;background:#94a3b818"}`;
         tag.textContent = isPending ? "Double-click map\u2026" : "Not placed";
         row.appendChild(tag);
+      }
+
+      // Hide button (only for non-pinned)
+      if (!isPinned) {
+        const hideBtn = document.createElement("button");
+        hideBtn.style.cssText = "background:none;border:none;color:#64748b;cursor:pointer;font-size:14px;padding:0 4px;line-height:1;flex-shrink:0";
+        hideBtn.textContent = "\u00d7";
+        hideBtn.title = "Hide from this list";
+        hideBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          bs._hiddenObjKeys.add(obj.key);
+          _refreshAvailable();
+        });
+        row.appendChild(hideBtn);
+      }
+
+      if (!isPinned) {
         row.addEventListener("click", () => {
           bs.pendingPlace = { key: obj.key, label: obj.user_label || obj.name || "", kind: obj.kind || "ble" };
           _refreshAvailable();
