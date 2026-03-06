@@ -22,7 +22,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DATA_OBJECTS,
-    DATA_OBJECTS_CACHE,
+    DATA_OBJECTS_CACHE, DATA_OBJECT_HISTORY, OBJECT_HISTORY_STORE_KEY,
     DEFAULT_FLOOR_ID, DATA_COORDINATOR, DATA_CALIBRATION, DATA_ADAPTIVE,
     DATA_ALERTS, DATA_MOVEMENT, BACKUPS_STORE_KEY,
     SETTINGS_STORE_KEY, CALIBRATION_STORE_KEY, ADAPTIVE_STORE_KEY,
@@ -1188,15 +1188,36 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 except Exception:
                     pass
 
-        # ── Persistent objects cache ──────────────────────────────────────────
-        # Objects accumulate in a long-lived cache so they don't vanish when
-        # BLE advertisements age out.  Tagged/identified objects NEVER expire;
-        # unidentified objects expire after _UNIDENT_TTL seconds.
+        # ── Persistent object history (7-day rolling, disk-backed) ─────────
+        # Every object we see is recorded here with all metadata.  Tagged/
+        # identified objects never expire; unidentified expire after 7 days.
+        # The cache is loaded from disk on first access and saved every 60 s.
         import time as _time
-        _UNIDENT_TTL = 14400  # 4 hours for unidentified objects
-        _now_mono = _time.monotonic()
+        _HISTORY_TTL = 604800       # 7 days for unidentified objects
+        _SAVE_INTERVAL = 60         # save to disk at most every 60 s
+        _now_ts = _time.time()      # real wall-clock time (survives restarts)
 
-        _cache: dict[str, dict[str, Any]] = hass.data.setdefault(DOMAIN, {}).setdefault(DATA_OBJECTS_CACHE, {})
+        _dom = hass.data.setdefault(DOMAIN, {})
+        _cache: dict[str, dict[str, Any]] = _dom.get(DATA_OBJECT_HISTORY)
+
+        # First access: load from disk
+        if _cache is None:
+            from homeassistant.helpers.storage import Store as _Store
+            _hist_store = _dom.setdefault("_obj_hist_store", _Store(hass, 1, OBJECT_HISTORY_STORE_KEY))
+            _loaded = await _hist_store.async_load()
+            _cache = _loaded if isinstance(_loaded, dict) else {}
+            _dom[DATA_OBJECT_HISTORY] = _cache
+            _dom["_obj_hist_last_save"] = _now_ts
+            _LOGGER.debug("Object history loaded from disk: %d entries", len(_cache))
+
+        # Fields to merge (never overwrite good data with empty values)
+        _MERGE_FIELDS = (
+            "company_name", "device_type", "service_names", "service_uuid_map",
+            "name", "private_ble_name", "ibeacon_uuid", "ibeacon_major",
+            "ibeacon_minor", "tx_power", "manufacturer_data", "service_data",
+            "service_uuids", "all_addresses", "linked_entities", "device",
+            "prefix", "prefix_count",
+        )
 
         # Index current objects by key for fast lookup
         _current_keys: set[str] = set()
@@ -1205,20 +1226,40 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             if not key:
                 continue
             _current_keys.add(key)
-            # Store when we last saw this object live, plus its age_s at that time
-            obj["_cache_ts"] = _now_mono
+
+            # Merge: keep previously-discovered metadata if current is empty
+            prev = _cache.get(key)
+            if prev:
+                for fld in _MERGE_FIELDS:
+                    cur_val = obj.get(fld)
+                    prev_val = prev.get(fld)
+                    if not cur_val and prev_val:
+                        obj[fld] = prev_val
+                # Preserve first_seen from history
+                obj["_first_seen"] = prev.get("_first_seen") or _now_ts
+                # Merge all_addresses (accumulate over time)
+                if prev.get("all_addresses") and obj.get("all_addresses"):
+                    merged = list(dict.fromkeys(
+                        list(obj["all_addresses"]) + list(prev["all_addresses"])
+                    ))
+                    obj["all_addresses"] = merged
+            else:
+                obj["_first_seen"] = _now_ts
+
+            # Update cache entry
+            obj["_last_seen_ts"] = _now_ts
             obj["_cache_age_s"] = obj.get("age_s") or 0
-            _cache[key] = obj
+            _cache[key] = dict(obj)  # snapshot copy
 
         # Merge cached objects not seen this cycle back into the list
         _cached_added = 0
         for key, cached_obj in list(_cache.items()):
             if key in _current_keys:
                 continue  # already in this cycle's list
-            stale_s = _now_mono - (cached_obj.get("_cache_ts") or _now_mono)
+            stale_s = _now_ts - (cached_obj.get("_last_seen_ts") or _now_ts)
             is_identified = cached_obj.get("identified") or cached_obj.get("user_label")
-            # Tagged/identified objects never expire from cache
-            if not is_identified and stale_s > _UNIDENT_TTL:
+            # Tagged/identified objects never expire from history
+            if not is_identified and stale_s > _HISTORY_TTL:
                 del _cache[key]
                 continue
             # Bring it back — compute age_s = original age + time since last seen
@@ -1228,9 +1269,33 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             objects.append(obj_copy)
             _cached_added += 1
 
-        # Strip internal cache fields before sending to frontend
+        # Periodic disk save (at most every 60 s)
+        _last_save = _dom.get("_obj_hist_last_save") or 0
+        if _now_ts - _last_save >= _SAVE_INTERVAL:
+            _hist_store = _dom.get("_obj_hist_store")
+            if _hist_store is None:
+                from homeassistant.helpers.storage import Store as _Store
+                _hist_store = _Store(hass, 1, OBJECT_HISTORY_STORE_KEY)
+                _dom["_obj_hist_store"] = _hist_store
+            # Strip non-serializable fields before saving
+            _save_data = {}
+            for _k, _v in _cache.items():
+                _sv = dict(_v)
+                # Remove any fields that might not be JSON-serializable
+                _sv.pop("_smoothed", None)
+                _sv.pop("_stale", None)
+                _save_data[_k] = _sv
+            await _hist_store.async_save(_save_data)
+            _dom["_obj_hist_last_save"] = _now_ts
+
+        # Send first_seen to frontend, strip internal cache fields
         for obj in objects:
-            obj.pop("_cache_ts", None)
+            # Convert _first_seen to ISO string for frontend
+            fs = obj.pop("_first_seen", None)
+            if fs:
+                from datetime import datetime, timezone
+                obj["first_seen"] = datetime.fromtimestamp(fs, tz=timezone.utc).isoformat()
+            obj.pop("_last_seen_ts", None)
             obj.pop("_cache_age_s", None)
 
         unidentified = [o for o in objects if o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified")]

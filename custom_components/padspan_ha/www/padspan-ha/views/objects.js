@@ -148,7 +148,10 @@ export function render(ctx){
     if(m < 60) return `${m}m ${rs}s`;
     const h = Math.floor(m/60);
     const rm = m - h*60;
-    return `${h}h ${rm}m`;
+    if(h < 24) return `${h}h ${rm}m`;
+    const d = Math.floor(h/24);
+    const rh = h - d*24;
+    return `${d}d ${rh}h`;
   };
   const fmtNum = (n)=>{
     const v = Number(n);
@@ -187,6 +190,14 @@ export function render(ctx){
   if (!ctx.state.objSearch) ctx.state.objSearch = "";
   if (!ctx.state.objKind)   ctx.state.objKind   = "all";
   if (!ctx.state.objStatus) ctx.state.objStatus  = "all";
+  if (ctx.state.objAgeMax == null) ctx.state.objAgeMax = 300; // default 5 min (live)
+
+  // Time range slider: controls how far back to show objects
+  // Steps: 5m=300, 15m=900, 1h=3600, 6h=21600, 1d=86400, 3d=259200, 7d=604800
+  const _ageSteps = [300, 900, 3600, 21600, 86400, 259200, 604800];
+  const _ageLabels = ["5 min", "15 min", "1 hour", "6 hours", "1 day", "3 days", "1 week"];
+  const _ageIdx = _ageSteps.indexOf(ctx.state.objAgeMax);
+  const _curIdx = _ageIdx >= 0 ? _ageIdx : 0;
 
   const objSearchInput = el("input",{type:"text", placeholder:"Search address, name, label…", value: ctx.state.objSearch});
   const objKindSel = el("select",{class:"btn"});
@@ -199,6 +210,18 @@ export function render(ctx){
     .forEach(o=>objStatusSel.appendChild(el("option",{value:o.v},o.t)));
   objStatusSel.value = ctx.state.objStatus;
 
+  const objAgeLabel = el("span",{class:"muted",style:"white-space:nowrap;font-size:12px"}, _ageLabels[_curIdx]);
+  const objAgeSlider = el("input",{
+    type:"range", min:"0", max:String(_ageSteps.length - 1), step:"1",
+    value: String(_curIdx),
+    style: "width:140px;accent-color:#52b788",
+  });
+  objAgeSlider.addEventListener("input", ()=>{
+    const idx = Number(objAgeSlider.value);
+    ctx.state.objAgeMax = _ageSteps[idx];
+    objAgeLabel.textContent = _ageLabels[idx];
+    applyObjFilter();
+  });
   const objStats = el("span",{class:"muted"});
 
   const objTbody = el("tbody",{});
@@ -270,6 +293,7 @@ export function render(ctx){
     const tr = el("tr",{
       "data-kind": kind,
       "data-identified": identified ? "1" : "0",
+      "data-age": String(o.age_s != null ? Math.round(o.age_s) : 0),
       "data-search": `${kind} ${displayName} ${addr} ${userLabel} ${o.entity_id||""} ${scanner} ${o.ibeacon_uuid||""} ${o.company_name||""} ${o.device_type||""} ${(o.service_names||[]).join(" ")} ${isAway?"away":""}`.toLowerCase(),
     },[
       el("td",{}, [
@@ -326,13 +350,17 @@ export function render(ctx){
     const q = String(ctx.state.objSearch||"").toLowerCase();
     const k = ctx.state.objKind || "all";
     const s = ctx.state.objStatus || "all";
+    const maxAge = ctx.state.objAgeMax || 300;
     let shown = 0;
     for(const tr of objRowEls){
       const kind = tr.getAttribute("data-kind");
       const ident = tr.getAttribute("data-identified")==="1";
       const hay = tr.getAttribute("data-search")||"";
       const away = hay.includes(" away");
+      const age = Number(tr.getAttribute("data-age") || "0");
       let ok = true;
+      // Entity objects always pass the age filter (they're real-time from HA)
+      if(kind !== "entity" && age > maxAge) ok = false;
       // "ble" filter covers ble, private_ble, and ibeacon (all physical BLE devices)
       if(k === "ble" && kind !== "ble" && kind !== "private_ble" && kind !== "ibeacon") ok = false;
       else if(k !== "all" && k !== "ble" && kind !== k) ok = false;
@@ -343,7 +371,7 @@ export function render(ctx){
       tr.style.display = ok ? "" : "none";
       if(ok) shown++;
     }
-    objStats.textContent = `${shown} shown`;
+    objStats.textContent = `${shown} of ${objRowEls.length}`;
   }
 
   objSearchInput.addEventListener("input",  ()=>{ ctx.state.objSearch = objSearchInput.value; applyObjFilter(); });
@@ -353,11 +381,26 @@ export function render(ctx){
 
   // ── Basic mode: card-per-object list ─────────────────────────────────────────
   if(isBasic){
-    const identified = allObjects.filter(o => o.identified);
-    const unidentified = allObjects.filter(o => !o.identified);
+    const _basicMaxAge = ctx.state.objAgeMax || 300;
+    const _ageFilter = (o) => o.kind === "entity" || (typeof o.age_s !== "number") || o.age_s <= _basicMaxAge;
+    const identified = allObjects.filter(o => o.identified && _ageFilter(o));
+    const unidentified = allObjects.filter(o => !o.identified && _ageFilter(o));
 
-    const headerRow = el("div",{class:"card-head"},[
-      el("div",{class:"h2"}, "Tracked Objects"),
+    const basicAgeLabel = el("span",{class:"muted",style:"white-space:nowrap;font-size:12px"}, _ageLabels[_curIdx]);
+    const basicAgeSlider = el("input",{
+      type:"range", min:"0", max:String(_ageSteps.length - 1), step:"1",
+      value: String(_curIdx),
+      style: "width:120px;accent-color:#52b788",
+    });
+    basicAgeSlider.addEventListener("input", ()=>{
+      const idx = Number(basicAgeSlider.value);
+      ctx.state.objAgeMax = _ageSteps[idx];
+      ctx.actions.renderRooms();
+    });
+    const headerRow = el("div",{class:"card-head",style:"flex-wrap:wrap;gap:8px"},[
+      el("div",{class:"h2",style:"flex:1"}, "Tracked Objects"),
+      el("div",{style:"display:flex;align-items:center;gap:6px"},
+        [el("span",{class:"muted",style:"font-size:12px"}, "History:"), basicAgeSlider, basicAgeLabel]),
       helpBtn("objects"),
     ]);
 
@@ -451,7 +494,10 @@ export function render(ctx){
       summary ? el("span",{class:"badge"}, `${summary.entities||0} entities`) : null,
       awayCount ? el("span",{class:"badge",style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d"}, `${awayCount} away`) : null,
     ].filter(Boolean)),
-    el("div",{class:"toolbar"},[objSearchInput, objKindSel, objStatusSel, objStats]),
+    el("div",{class:"toolbar"},[objSearchInput, objKindSel, objStatusSel,
+      el("div",{style:"display:flex;align-items:center;gap:6px"},
+        [el("span",{class:"muted",style:"font-size:12px;white-space:nowrap"}, "History:"), objAgeSlider, objAgeLabel]),
+      objStats]),
     allObjects.length
       ? objTable
       : el("div",{class:"muted"}, isLive ? "Waiting for scanner data…" : "Switch to Live mode to see real BLE detections."),

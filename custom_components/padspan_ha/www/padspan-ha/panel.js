@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.9";
+const APP_VERSION = "0.7.10";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260306T162517Z";
+const BUILD_ID = "20260306T191403Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1245,7 +1245,10 @@ class PadSpanHaApp extends HTMLElement {
       if(s < 60) return `${Math.round(s)}s`;
       const m = Math.floor(s/60), rs = Math.round(s - m*60);
       if(m < 60) return `${m}m ${rs}s`;
-      return `${Math.floor(m/60)}h ${m%60}m`;
+      const h = Math.floor(m/60), rm = m - h*60;
+      if(h < 24) return `${h}h ${rm}m`;
+      const d = Math.floor(h/24), rh = h - d*24;
+      return `${d}d ${rh}h`;
     };
 
     const body = el("div", {style:"display:flex;flex-direction:column;gap:14px"});
@@ -1298,7 +1301,14 @@ class PadSpanHaApp extends HTMLElement {
       if (obj.last_seen) {
         try {
           const d = new Date(obj.last_seen);
-          statusItems.push(el("div", {class:"muted", style:"font-size:11px"}, `Timestamp: ${d.toLocaleString()}`));
+          statusItems.push(el("div", {class:"muted", style:"font-size:11px"}, `Last seen: ${d.toLocaleString()}`));
+        } catch(e){}
+      }
+      // First seen timestamp
+      if (obj.first_seen) {
+        try {
+          const d = new Date(obj.first_seen);
+          statusItems.push(el("div", {class:"muted", style:"font-size:11px"}, `First seen: ${d.toLocaleString()}`));
         } catch(e){}
       }
       // RSSI summary

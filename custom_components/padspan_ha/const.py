@@ -4,7 +4,7 @@
 # See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 DOMAIN = "padspan_ha"
 NAME = "PadSpan HA"
-VERSION = "0.7.9"
+VERSION = "0.7.10"
 
 CONF_ENABLE_CLOUD = "enable_cloud"
 CONF_HUB_URL = "hub_url"
@@ -47,3 +47,5 @@ DATA_MOVEMENT = "movement"
 ADAPTIVE_STORE_KEY = "padspan_ha.adaptive"
 DATA_ADAPTIVE = "adaptive"
 BACKUPS_STORE_KEY = "padspan_ha.backups"
+OBJECT_HISTORY_STORE_KEY = "padspan_ha.object_history"
+DATA_OBJECT_HISTORY = "object_history"
