@@ -582,7 +582,23 @@ export function render(ctx){
     const pt  = c=>`${Math.round(c[0])},${Math.round(c[1])}`;
     const pts = cs=>cs.map(pt).join(" ");
 
-    const allObjects = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
+    const _allObjRaw = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
+    // Dedup: suppress entity rows whose physical device already has a BLE/iBeacon/private_ble row
+    const _isoAddrSet = new Set();
+    for (const o of _allObjRaw) {
+      if (o.kind !== "ble" && o.kind !== "private_ble" && o.kind !== "ibeacon") continue;
+      if (o.address) _isoAddrSet.add(String(o.address).toUpperCase());
+      if (Array.isArray(o.all_addresses)) for (const a of o.all_addresses) _isoAddrSet.add(String(a).toUpperCase());
+    }
+    const _isoLinkedSet = new Set(_allObjRaw.flatMap(o => Array.isArray(o.linked_entities) ? o.linked_entities : []));
+    const allObjects = _allObjRaw.filter(o => {
+      // Skip entity duplicates
+      if (o.kind === "entity" && (
+        (o.address && _isoAddrSet.has(String(o.address).toUpperCase())) ||
+        (o.entity_id && _isoLinkedSet.has(o.entity_id))
+      )) return false;
+      return true;
+    });
     const allRadios_live = radios;
 
     // Sync _hiddenMapIds from settings (authoritative, fetched on every refresh).
@@ -921,10 +937,23 @@ export function render(ctx){
       // When persistent OFF: only unlabeled objects shown as dim amber dots.
       {
         const _isFollowed = (o) => ctx.actions.followedHas(o.address || "") || ctx.actions.followedHas(o.entity_id || "") || ctx.actions.followedHas(o.key || "");
-        const _mapObjs = allObjects.filter(o =>
-          o.room && o.room !== "unknown" && o.room !== "not_home" && roomIsoPos[o.room] &&
-          !_renderedObjKeys.has(o.key || o.address || o.entity_id || "") &&
-          (!ctx.state._overviewPersistentPins || _isFollowed(o)));
+        const _mapAwayM = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null) ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
+        // For dots on the map: show active objects (within away timeout) + followed items when persistent is on
+        // Skip very stale objects (>1hr unless followed) to prevent "army of dots" from 7-day history
+        const _mapMaxAge = Math.max(_mapAwayM * 2, 3600); // show up to 2x away timeout or 1hr, whichever is larger
+        const _mapObjs = allObjects.filter(o => {
+          if (!o.room || o.room === "unknown" || o.room === "not_home" || !roomIsoPos[o.room]) return false;
+          if (_renderedObjKeys.has(o.key || o.address || o.entity_id || "")) return false;
+          const isFol = _isFollowed(o);
+          // Persistent pins mode: only show followed items
+          if (ctx.state._overviewPersistentPins && !isFol) return false;
+          // Non-persistent: skip stale objects from history (keeps map clean)
+          if (!ctx.state._overviewPersistentPins && !isFol) {
+            const age = typeof o.age_s === "number" ? o.age_s : 0;
+            if (age > _mapMaxAge) return false;
+          }
+          return true;
+        });
         const _roomObjCount = {};
         for(const obj of _mapObjs){
           const oKey = obj.key || obj.address || obj.entity_id || "";
@@ -940,7 +969,9 @@ export function render(ctx){
           const px = Math.round(pos[0] + offX);
           const py = Math.round(pos[1] + offY);
           const _ok = _esc(oKey);
-          const isAway = typeof obj.age_s === "number" && obj.age_s > 30;
+          const _awayThresh = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null)
+            ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
+          const isAway = typeof obj.age_s === "number" && obj.age_s > _awayThresh;
           const objLabel = obj.user_label || obj.name || "";
 
           if(ctx.state._overviewPersistentPins){
@@ -1275,7 +1306,26 @@ export function render(ctx){
     const haFloors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
 
     const allRadios  = (liveSnap && liveSnap.ble && Array.isArray(liveSnap.ble.radios)) ? liveSnap.ble.radios : [];
-    const allObjects = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
+    const _rgRaw = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
+    // Dedup entity rows + filter stale history for room grid
+    const _rgAddrSet = new Set();
+    for (const o of _rgRaw) {
+      if (o.kind !== "ble" && o.kind !== "private_ble" && o.kind !== "ibeacon") continue;
+      if (o.address) _rgAddrSet.add(String(o.address).toUpperCase());
+      if (Array.isArray(o.all_addresses)) for (const a of o.all_addresses) _rgAddrSet.add(String(a).toUpperCase());
+    }
+    const _rgLinkedSet = new Set(_rgRaw.flatMap(o => Array.isArray(o.linked_entities) ? o.linked_entities : []));
+    const _rgAwayS = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null) ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
+    const allObjects = _rgRaw.filter(o => {
+      if (o.kind === "entity" && (
+        (o.address && _rgAddrSet.has(String(o.address).toUpperCase())) ||
+        (o.entity_id && _rgLinkedSet.has(o.entity_id))
+      )) return false;
+      // Skip objects from deep history (>2x away timeout) for room grid dots
+      const age = typeof o.age_s === "number" ? o.age_s : 0;
+      if (o.kind !== "entity" && age > Math.max(_rgAwayS * 2, 3600)) return false;
+      return true;
+    });
 
     // Build room list from HA areas + roomTagMap (union)
     const roomSet = new Set(haAreas.map(a => a.name));

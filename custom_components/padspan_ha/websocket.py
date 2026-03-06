@@ -322,7 +322,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     _ble_age = max(60, min(14400, int(_v)))
             except Exception:
                 pass
-            snapshot["ble"] = bl.get_snapshot(max_age_s=_ble_age)
+            snapshot["ble"] = bl.get_snapshot(max_ads=5000, max_age_s=_ble_age)
         else:
             snapshot["ble"] = {"radios": [], "advertisements": [], "diag": {"ok": False, "errors": ["no_bluetooth_live"]}}
     except Exception as e:
