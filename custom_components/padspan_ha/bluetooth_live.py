@@ -293,6 +293,12 @@ class BluetoothLive:
             for addr in _prune_addrs:
                 del self._seen_by_source[addr]
 
+            # Collect per-address records, keeping ALL per-source readings for
+            # each address.  The max_ads cap applies to unique *addresses* (not
+            # total per-source records) so that multiple scanners don't crowd
+            # out devices.
+            addr_best_age: Dict[str, float] = {}  # addr → best (lowest) age_s
+            addr_records: Dict[str, List[Dict[str, Any]]] = {}
             for addr, src_map in self._seen_by_source.items():
                 for src, a in src_map.items():
                     age_s = (now - a.seen).total_seconds()
@@ -300,14 +306,25 @@ class BluetoothLive:
                         continue
                     rec = dict(a.record)
                     rec["age_s"] = age_s
-                    ads.append(rec)
+                    addr_records.setdefault(addr, []).append(rec)
+                    prev = addr_best_age.get(addr)
+                    if prev is None or age_s < prev:
+                        addr_best_age[addr] = age_s
+
+            # Cap by unique address count (most recently seen first)
+            sorted_addrs = sorted(addr_best_age, key=lambda a: addr_best_age[a])
+            if max_ads and len(sorted_addrs) > max_ads:
+                sorted_addrs = sorted_addrs[:max_ads]
+            kept = set(sorted_addrs)
+            for addr in kept:
+                ads.extend(addr_records[addr])
 
             # Sort: most recently seen first
             ads.sort(key=lambda x: x.get("age_s", 1e9))
-            if max_ads and len(ads) > max_ads:
-                ads = ads[:max_ads]
 
             diag["adv_cache_size"] = sum(len(v) for v in self._seen_by_source.values())
+            diag["unique_addresses"] = len(addr_best_age)
+            diag["unique_after_cap"] = len(kept)
 
             return {
                 "radios": radios,
