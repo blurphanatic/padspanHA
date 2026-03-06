@@ -75,9 +75,16 @@ export function render(ctx) {
     el("div", { class: "bt-kpis" }, [
       el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(radios.length)), el("div", { class: "kpi-lbl" }, "Scanners")]),
       el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(adsAll.length)), el("div", { class: "kpi-lbl" }, "Recent ads")]),
+      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(diag.unique_cached || 0)), el("div", { class: "kpi-lbl" }, "Unique MACs")]),
+      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(((snap?.objects?.summary?.resolver || {}).irk_devices) || 0)), el("div", { class: "kpi-lbl" }, "Private BLE IRKs")]),
+      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(((snap?.objects?.summary?.resolver || {}).resolved) || 0)), el("div", { class: "kpi-lbl" }, "RPAs resolved")]),
+      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String((snap?.objects?.summary?.ibeacon) || 0)), el("div", { class: "kpi-lbl" }, "iBeacons")]),
     ]),
   ]);
 
+  const _resolverDiag = (snap?.objects?.summary?.resolver) || {};
+  const _resolverErrors = _resolverDiag.errors || [];
+  const _callbackOk = diag.callback_active !== false;
   const diagCard =
     diag && (diag.ok === false || (diag.errors && diag.errors.length))
       ? el("div", { class: "card warn" }, [
@@ -90,6 +97,20 @@ export function render(ctx) {
           el("pre", { class: "pre" }, esc(JSON.stringify(diag, null, 2))),
         ])
       : null;
+
+  // Warn if BLE callback isn't active or resolver has errors
+  const bleDiagCard = (!_callbackOk || _resolverErrors.length)
+    ? el("div", { class: "card warn" }, [
+        !_callbackOk ? el("div", { style: "margin-bottom:6px" }, [
+          el("span", { style: "font-weight:700" }, "BLE callback not active"),
+          el("div", { class: "muted" }, "No live BLE advertisements are being received. Only seeded data (from HA's discovered list) is shown. This means the bluetooth.async_register_callback() call failed — check HA logs for Bluetooth integration errors."),
+        ]) : null,
+        _resolverErrors.length ? el("div", {}, [
+          el("span", { style: "font-weight:700" }, "Private BLE resolver errors"),
+          el("pre", { class: "pre" }, _resolverErrors.join("\n")),
+        ]) : null,
+      ].filter(Boolean))
+    : null;
 
   const tabs = el("div", { class: "tabs" }, [tabButton("visualization", "Visualization"), tabButton("monitor", "Advertisement monitor"), tabButton("scanners", "Scanners"), tabButton("esphome_configs", "ESPHome Configs")]);
 
@@ -140,7 +161,7 @@ export function render(ctx) {
   if (ctx.state.btTab === "esphome_configs") {
     if (ctx.state._esphomeFullDom) return ctx.state._esphomeFullDom;
     const body = renderEsphomeConfigs(ctx);
-    const out = el("div", { id: "bluetooth" }, [header, diagCard, tabs, body]);
+    const out = el("div", { id: "bluetooth" }, [header, diagCard, bleDiagCard, tabs, body]);
     ctx.state._esphomeFullDom = out;
     return out;
   }
@@ -157,7 +178,7 @@ export function render(ctx) {
     body = renderVisualization(ctx, radios, ads, objIndex);
   }
 
-  const out = el("div", { id: "bluetooth" }, [header, diagCard, tabs, controls, body]);
+  const out = el("div", { id: "bluetooth" }, [header, diagCard, bleDiagCard, tabs, controls, body]);
   return out;
 }
 

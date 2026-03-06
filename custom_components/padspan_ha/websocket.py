@@ -843,13 +843,16 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         canonical_by_addr: dict[str, dict[str, Any]] = {}   # addr → {canonical_id, name, kind}
         ibeacon_groups: dict[str, dict[str, Any]] = {}       # "ibeacon:uuid:major:minor" → merged group
         ibeacon_addrs: set[str] = set()                      # MAC addresses absorbed into an iBeacon group
+        _resolver_diag: dict[str, Any] = {"irk_devices": 0, "resolved": 0, "ibeacon_groups": 0, "errors": []}
         try:
             resolver = await _get_ble_resolver(hass)
+            _resolver_diag["irk_devices"] = resolver.device_count
             if resolver.has_devices():
                 for addr, rec in ble_by_addr.items():
                     resolved = resolver.resolve_address(addr)
                     if resolved:
                         canonical_by_addr[addr] = resolved
+                _resolver_diag["resolved"] = len(canonical_by_addr)
             # Parse iBeacon from every advertisement; group by stable UUID/major/minor key
             for addr, rec in ble_by_addr.items():
                 ib = resolver.parse_ibeacon(rec.get("manufacturer_data") or {})
@@ -889,8 +892,55 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     if sk not in seen_srcs:
                         seen_srcs.add(sk); dedup.append(s)
                 g["sources"] = dedup
-        except Exception:
-            pass
+            _resolver_diag["ibeacon_groups"] = len(ibeacon_groups)
+        except Exception as _res_err:
+            _resolver_diag["errors"].append(str(_res_err))
+
+        # (B) BLE advertisement objects (what HA Bluetooth "Advertisement monitor" shows)
+        # Group private_ble addresses by canonical_id so rotating MACs merge
+        # into ONE object per physical device (like iBeacon merging above).
+        # NOTE: _private_groups MUST be initialized before section A because
+        # section A references it to link entity objects to private_ble devices.
+        _private_groups: dict[str, dict[str, Any]] = {}  # canonical_id → merged info
+        for addr, rec in ble_by_addr.items():
+            if addr in ibeacon_addrs:
+                continue  # absorbed into a merged iBeacon group (section C)
+            canonical = canonical_by_addr.get(addr)
+            if canonical:
+                cid = canonical["canonical_id"]
+                if cid not in _private_groups:
+                    _private_groups[cid] = {
+                        "canonical": canonical,
+                        "addrs": [],
+                        "all_sources": set(),
+                        "all_linked": set(),
+                        "best_rssi": -999,
+                        "best_rec": rec,
+                        "best_addr": addr,
+                        "device": None,
+                        "manufacturer_data": {},
+                        "service_data": {},
+                        "service_uuids": [],
+                    }
+                pg = _private_groups[cid]
+                pg["addrs"].append(addr)
+                for s in (rec.get("sources") or []):
+                    pg["all_sources"].add(s if isinstance(s, str) else str(s))
+                for e in addr_to_entities.get(addr, []):
+                    pg["all_linked"].add(e)
+                rssi = rec.get("rssi")
+                if rssi is not None and rssi > pg["best_rssi"]:
+                    pg["best_rssi"] = rssi
+                    pg["best_rec"] = rec
+                    pg["best_addr"] = addr
+                if not pg["device"] and addr in addr_to_device:
+                    pg["device"] = addr_to_device[addr]
+                # Merge BLE metadata
+                pg["manufacturer_data"].update(rec.get("manufacturer_data") or {})
+                pg["service_data"].update(rec.get("service_data") or {})
+                for u in (rec.get("service_uuids") or []):
+                    if u not in pg["service_uuids"]:
+                        pg["service_uuids"].append(u)
 
         objects: list[dict[str, Any]] = []
 
@@ -971,50 +1021,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 _ent_obj["all_addresses"] = all_addrs
             objects.append(_ent_obj)
 
-        # (B) BLE advertisement objects (what HA Bluetooth "Advertisement monitor" shows)
-        # Group private_ble addresses by canonical_id so rotating MACs merge
-        # into ONE object per physical device (like iBeacon merging above).
-        _private_groups: dict[str, dict[str, Any]] = {}  # canonical_id → merged info
+        # (B-cont) Regular (non-rotating, non-iBeacon) BLE advertisement objects
         for addr, rec in ble_by_addr.items():
             if addr in ibeacon_addrs:
                 continue  # absorbed into a merged iBeacon group (section C)
-            canonical = canonical_by_addr.get(addr)
-            if canonical:
-                cid = canonical["canonical_id"]
-                if cid not in _private_groups:
-                    _private_groups[cid] = {
-                        "canonical": canonical,
-                        "addrs": [],
-                        "all_sources": set(),
-                        "all_linked": set(),
-                        "best_rssi": -999,
-                        "best_rec": rec,
-                        "best_addr": addr,
-                        "device": None,
-                        "manufacturer_data": {},
-                        "service_data": {},
-                        "service_uuids": [],
-                    }
-                pg = _private_groups[cid]
-                pg["addrs"].append(addr)
-                for s in (rec.get("sources") or []):
-                    pg["all_sources"].add(s if isinstance(s, str) else str(s))
-                for e in addr_to_entities.get(addr, []):
-                    pg["all_linked"].add(e)
-                rssi = rec.get("rssi")
-                if rssi is not None and rssi > pg["best_rssi"]:
-                    pg["best_rssi"] = rssi
-                    pg["best_rec"] = rec
-                    pg["best_addr"] = addr
-                if not pg["device"] and addr in addr_to_device:
-                    pg["device"] = addr_to_device[addr]
-                # Merge BLE metadata
-                pg["manufacturer_data"].update(rec.get("manufacturer_data") or {})
-                pg["service_data"].update(rec.get("service_data") or {})
-                for u in (rec.get("service_uuids") or []):
-                    if u not in pg["service_uuids"]:
-                        pg["service_uuids"].append(u)
-                continue  # handled below in merged private_ble section
+            if canonical_by_addr.get(addr):
+                continue  # handled by _private_groups (section B2)
 
             # Regular (non-rotating) BLE object
             parts = addr.split(":")
@@ -1151,6 +1163,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "private_ble": len([o for o in objects if o.get("kind") == "private_ble"]),
                 "ibeacon": len([o for o in objects if o.get("kind") == "ibeacon"]),
                 "common_prefixes": common_prefixes,  # prefix -> count (>=3)
+                "resolver": _resolver_diag,
             },
         }
     except Exception:

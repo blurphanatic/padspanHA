@@ -186,6 +186,15 @@ class BluetoothLive:
         except Exception as e:
             _LOGGER.debug("BLE seed failed: %s", e)
 
+    @property
+    def callback_active(self) -> bool:
+        """True if at least one BLE callback is registered."""
+        return bool(self._unsubs)
+
+    @property
+    def unique_address_count(self) -> int:
+        return len(self._seen_by_source)
+
     def clear_scanner(self, source: str) -> int:
         """Remove all cached advertisements from a specific scanner.
 
@@ -211,7 +220,9 @@ class BluetoothLive:
         diag: Dict[str, Any] = {
             "ok": True,
             "seeded": False,
+            "callback_active": self.callback_active,
             "adv_cache_size": sum(len(v) for v in self._seen_by_source.values()),
+            "unique_cached": self.unique_address_count,
             "errors": [],
         }
 
