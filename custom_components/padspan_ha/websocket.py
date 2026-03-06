@@ -1521,6 +1521,31 @@ async def ws_calibration_health_check(hass: HomeAssistant, connection, msg) -> N
 @websocket_api.async_response
 async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
     snap = await _live_snapshot(hass)
+
+    # Overlay presence-coordinator smoothed data (x_frac, y_frac,
+    # knn_confidence, room, room_confidence) onto snapshot objects so the
+    # UI has access to calibration-derived positions and stable rooms.
+    try:
+        pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+        if pc and pc.data:
+            _MERGE_KEYS = ("x_frac", "y_frac", "knn_confidence",
+                           "room", "room_confidence", "rssi_margin_confidence",
+                           "_smoothed", "_stale")
+            obj_list = (snap.get("objects") or {}).get("list") or []
+            for obj in obj_list:
+                key = obj.get("key", "")
+                if not key:
+                    continue
+                smoothed = pc.data.get(key)
+                if not smoothed:
+                    continue
+                for mk in _MERGE_KEYS:
+                    val = smoothed.get(mk)
+                    if val is not None:
+                        obj[mk] = val
+    except Exception:
+        pass  # non-fatal — UI still works without smoothed data
+
     connection.send_result(msg["id"], {"snapshot": snap})
 
 

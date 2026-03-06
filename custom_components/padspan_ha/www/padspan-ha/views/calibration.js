@@ -2367,6 +2367,25 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     _autoPinTracked();
   }
 
+  // Auto-enable live tracking for beacons that have snapshot position data
+  // (x_frac/y_frac from k-NN or room from presence coordinator). This makes
+  // beacons float to their RSSI-derived position by default instead of being
+  // stuck at pinned coordinates until a calibration round completes.
+  if (snap) {
+    const snapObjs = snap?.objects?.list || [];
+    for (const bks of Object.values(bs.draftBeacons)) {
+      for (const bk of bks) {
+        if (!bk.key || bs._liveBeaconKeys.has(bk.key)) continue;
+        // Skip beacons that have an active timer (calibration in progress)
+        if (bs._liveTimers[bk.id] && bs._liveTimers[bk.id].endTime > Date.now()) continue;
+        const obj = snapObjs.find(o => o.key === bk.key);
+        if (obj && (typeof obj.x_frac === "number" || obj.room)) {
+          bs._liveBeaconKeys.add(bk.key);
+        }
+      }
+    }
+  }
+
   let _fg = bs.fg, _hg = bs.hg;
 
   // ── Transforms ────────────────────────────────────────────────────────────
