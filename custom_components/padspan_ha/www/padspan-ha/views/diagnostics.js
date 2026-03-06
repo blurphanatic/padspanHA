@@ -49,6 +49,21 @@ export function render(ctx){
     ctx.toast("Selected. Press Ctrl/Cmd+C to copy.");
   });
 
+  const btnDownload = el("button",{class:"btn"}, "Download Report");
+  btnDownload.addEventListener("click", ()=>{
+    const ts = new Date().toISOString().replace(/[:.]/g,"-").slice(0,19);
+    const blob = new Blob([text], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `padspan-diag-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    ctx.toast("Downloaded diagnostic report.");
+  });
+
   const btnCopy = el("button",{class:"btn"}, "Copy");
   btnCopy.addEventListener("click", async ()=>{
     // Try modern clipboard first
@@ -89,7 +104,7 @@ export function render(ctx){
           el("div",{style:"font-weight:700"}, "Diagnostics"),
           el("div",{class:"muted"}, "Paste this back into chat when something breaks."),
         ]),
-        el("div",{style:"display:flex;gap:8px;align-items:center"},[ btnSelect, btnCopy ])
+        el("div",{style:"display:flex;gap:8px;align-items:center"},[ btnSelect, btnCopy, btnDownload ])
       ]),
       ta,
     ]),
