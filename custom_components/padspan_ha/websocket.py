@@ -38,6 +38,41 @@ from .ble_enrichment import enrich_object as _enrich_ble_object
 
 _LOGGER = logging.getLogger(__name__)
 
+# ── In-memory ring buffer for PadSpan logs ────────────────────────────────────
+# Captures WARNING+ from all padspan_ha loggers so the UI can show them.
+_LOG_BUFFER_SIZE = 500
+
+class _RingLogHandler(logging.Handler):
+    """Captures log records into a bounded list for UI display."""
+    def __init__(self, maxlen: int = _LOG_BUFFER_SIZE) -> None:
+        super().__init__(level=logging.DEBUG)
+        self._maxlen = maxlen
+        self.records: list[dict[str, Any]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        entry = {
+            "ts": record.created,
+            "level": record.levelname,
+            "logger": record.name.replace("custom_components.padspan_ha.", ""),
+            "message": self.format(record),
+        }
+        self.records.append(entry)
+        if len(self.records) > self._maxlen:
+            self.records = self.records[-self._maxlen:]
+
+_log_handler: _RingLogHandler | None = None
+
+def _ensure_log_handler() -> _RingLogHandler:
+    global _log_handler
+    if _log_handler is None:
+        _log_handler = _RingLogHandler()
+        _log_handler.setFormatter(logging.Formatter("%(message)s"))
+        # Attach to the padspan_ha root logger to capture all sub-modules
+        root = logging.getLogger("custom_components.padspan_ha")
+        root.addHandler(_log_handler)
+    return _log_handler
+
+
 @callback
 def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_status)
@@ -90,6 +125,8 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_store_backup_delete)
     websocket_api.async_register_command(hass, ws_beacon_positions_get)
     websocket_api.async_register_command(hass, ws_ha_entities_audit)
+    websocket_api.async_register_command(hass, ws_logs_get)
+    _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
@@ -3034,6 +3071,23 @@ async def ws_beacon_positions_get(hass: HomeAssistant, connection, msg) -> None:
                 "kind": bk.get("kind", ""),
             })
     connection.send_result(msg["id"], {"positions": positions})
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/logs_get",
+    vol.Optional("level", default="DEBUG"): str,
+    vol.Optional("limit", default=200): int,
+})
+@websocket_api.async_response
+async def ws_logs_get(hass: HomeAssistant, connection, msg) -> None:
+    """Return recent PadSpan log entries from the in-memory ring buffer."""
+    handler = _ensure_log_handler()
+    min_level = getattr(logging, str(msg.get("level", "DEBUG")).upper(), logging.DEBUG)
+    limit = min(500, max(1, int(msg.get("limit", 200))))
+    filtered = [e for e in handler.records if getattr(logging, e["level"], 0) >= min_level]
+    # Most recent first
+    entries = list(reversed(filtered[-limit:]))
+    connection.send_result(msg["id"], {"entries": entries, "total": len(handler.records)})
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/ha_entities_audit"})

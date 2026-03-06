@@ -19,6 +19,7 @@ export function render(ctx){
     ["ha_entities","HA Entities"],
     ["history","History"],
     ["events","Events"],
+    ["logs","Logs"],
   ];
 
   const tabBar = el("div",{class:"tabs",style:"margin-bottom:12px;flex-wrap:wrap;gap:4px"});
@@ -30,6 +31,7 @@ export function render(ctx){
   if(mTab === "ha_entities") { root.appendChild(_haEntities(ctx, el));  return root; }
   if(mTab === "history")     { root.appendChild(_history(ctx, el));     return root; }
   if(mTab === "events")      { root.appendChild(_events(ctx, el));      return root; }
+  if(mTab === "logs")        { root.appendChild(_logs(ctx, el));        return root; }
   // ── Data tab ─────────────────────────────────────────────────────────────────
   const snap     = (ctx.state.live && ctx.state.live.snapshot) || null;
   const haAreas  = (ctx.state.model && Array.isArray(ctx.state.model.areas))  ? ctx.state.model.areas  : [];
@@ -1681,6 +1683,105 @@ function _buildNotifications(ctx, el){
 
   editCard.appendChild(list);
   wrap.appendChild(editCard);
+  return wrap;
+}
+
+// ── Logs tab ──────────────────────────────────────────────────────────────────
+function _logs(ctx, el) {
+  const wrap = el("div", {});
+  if (!ctx.state._logsLevel) ctx.state._logsLevel = "DEBUG";
+  if (!ctx.state._logsData) ctx.state._logsData = null;
+  if (!ctx.state._logsLoading) ctx.state._logsLoading = false;
+
+  const levelColors = { DEBUG: "#94a3b8", INFO: "#52b788", WARNING: "#fbbf24", ERROR: "#f87171", CRITICAL: "#f87171" };
+
+  const fetchLogs = async () => {
+    ctx.state._logsLoading = true;
+    try {
+      const res = await ctx.actions.callWS({ type: "padspan_ha/logs_get", level: ctx.state._logsLevel, limit: 300 });
+      ctx.state._logsData = res;
+    } catch (e) {
+      ctx.state._logsData = { entries: [], total: 0, error: String(e) };
+    }
+    ctx.state._logsLoading = false;
+    ctx.actions.renderRooms();
+  };
+
+  // Auto-fetch on first visit
+  if (!ctx.state._logsData && !ctx.state._logsLoading) {
+    fetchLogs();
+  }
+
+  // Level filter
+  const levelSel = el("select", { class: "btn" });
+  for (const lv of ["DEBUG", "INFO", "WARNING", "ERROR"]) {
+    const opt = el("option", { value: lv }, lv);
+    if (lv === ctx.state._logsLevel) opt.selected = true;
+    levelSel.appendChild(opt);
+  }
+  levelSel.addEventListener("change", () => {
+    ctx.state._logsLevel = levelSel.value;
+    ctx.state._logsData = null;
+    fetchLogs();
+  });
+
+  const refreshBtn = el("button", { class: "btn" }, "Refresh");
+  refreshBtn.addEventListener("click", () => fetchLogs());
+
+  const toolbar = el("div", { style: "display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap" }, [
+    el("span", { style: "font-weight:600;font-size:13px" }, "Min level:"),
+    levelSel,
+    refreshBtn,
+  ]);
+  wrap.appendChild(toolbar);
+
+  const data = ctx.state._logsData;
+  if (ctx.state._logsLoading) {
+    wrap.appendChild(el("div", { class: "muted" }, "Loading logs..."));
+    return wrap;
+  }
+  if (!data) {
+    wrap.appendChild(el("div", { class: "muted" }, "Fetching logs..."));
+    return wrap;
+  }
+  if (data.error) {
+    wrap.appendChild(el("div", { class: "card warn" }, [
+      el("div", { style: "font-weight:700" }, "Failed to fetch logs"),
+      el("div", { class: "muted" }, data.error),
+    ]));
+    return wrap;
+  }
+
+  const entries = data.entries || [];
+  wrap.appendChild(el("div", { class: "muted", style: "margin-bottom:8px;font-size:12px" },
+    `Showing ${entries.length} of ${data.total || 0} buffered entries (newest first). Buffer holds up to 500 entries since last restart.`));
+
+  if (!entries.length) {
+    wrap.appendChild(el("div", { class: "card" }, el("div", { class: "muted", style: "padding:12px 0" },
+      `No ${ctx.state._logsLevel}+ log entries yet. PadSpan logs appear here as the integration runs.`)));
+    return wrap;
+  }
+
+  const logList = el("div", { style: "display:flex;flex-direction:column;gap:1px;font-family:monospace;font-size:11px;max-height:70vh;overflow-y:auto;background:#0a150e;border:1px solid #1b3526;border-radius:8px;padding:4px" });
+
+  for (const e of entries) {
+    const ts = e.ts ? new Date(e.ts * 1000) : null;
+    const timeStr = ts ? ts.toLocaleTimeString("en-GB", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "??:??:??";
+    const dateStr = ts ? ts.toLocaleDateString("en-CA") : "";
+    const color = levelColors[e.level] || "#94a3b8";
+    const bgColor = e.level === "ERROR" || e.level === "CRITICAL" ? "rgba(248,113,113,.08)" : e.level === "WARNING" ? "rgba(251,191,36,.05)" : "transparent";
+
+    const row = el("div", { style: `display:flex;gap:8px;padding:3px 6px;background:${bgColor};border-radius:3px;align-items:flex-start` }, [
+      el("span", { style: "color:#64748b;white-space:nowrap;min-width:68px" }, timeStr),
+      el("span", { style: `color:${color};font-weight:700;min-width:56px` }, e.level),
+      el("span", { style: "color:#64748b;min-width:90px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: e.logger || "" }, e.logger || ""),
+      el("span", { style: "color:#e2e8f0;word-break:break-word;flex:1" }, e.message || ""),
+    ]);
+    row.title = `${dateStr} ${timeStr} [${e.level}] ${e.logger}: ${e.message}`;
+    logList.appendChild(row);
+  }
+
+  wrap.appendChild(logList);
   return wrap;
 }
 
