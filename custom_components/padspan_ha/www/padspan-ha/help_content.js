@@ -271,10 +271,14 @@ export const HELP = {
   sandbox: {
     title: "Sandbox — Experimental data playground",
     body: [
-      "Sandbox is a collection of visual debugging widgets for exploring your live data.",
-      "State Inspector — current data mode, snapshot age, and counts. Room Color Grid — visual tiles showing each room's assigned colour and device count.",
-      "RSSI Distribution — histogram of all current signal strengths bucketed by 10 dBm. Live Signal Bars — per-scanner bar chart showing device count.",
-      "Click any room tile or scanner bar for full details.",
+      "Sandbox is your data playground — explore live data, check experimental feature status, and poke around under the hood. Nothing here changes your config.",
+      "Experimental Features — status dashboard for all experimental features across PadSpan (Adaptive Learning, MQTT Publishing, Beacon Tune). Click any row to jump to its settings.",
+      "State Inspector — current data mode, snapshot age, object/room/radio counts, and session uptime at a glance.",
+      "Room Color Grid — compact tiles showing each room's assigned colour and device count. Click any tile for room details.",
+      "RSSI Distribution — histogram of all current signal strengths bucketed by 10 dBm, with average RSSI shown.",
+      "Live Signal Bars — per-scanner bar chart showing device count. Click any bar for scanner details.",
+      "Signal Pulse — animated room activity bubbles. Ring size reflects device count, pulsing rings indicate fresh signal activity.",
+      "Raw Snapshot Explorer — browse the live data snapshot as a collapsible JSON tree. Copy the full snapshot to clipboard for debugging.",
     ],
   },
 };

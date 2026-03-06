@@ -6,57 +6,130 @@ export function render(ctx){
   const { el, helpBtn, radioShortId } = ctx.helpers;
   const _sid = (source) => radioShortId ? radioShortId(source || "") : "";
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const settings = ctx.state.settings || {};
   const root = el("section",{id:"sandbox"});
 
   // Header
   root.appendChild(el("div",{class:"row",style:"align-items:center;gap:8px;margin-bottom:14px"},[
     el("h2",{},"Sandbox"),
+    el("span",{style:"font-size:10px;font-weight:600;color:#fbbf24;background:#422006;padding:2px 6px;border-radius:4px"},"PLAYGROUND"),
     helpBtn("sandbox"),
   ]));
 
+  root.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:16px;line-height:1.5"},
+    "Experimental data playground — explore live data, check experimental feature status, and poke around under the hood. Nothing here changes your config."));
+
   const grid = el("div",{class:"grid"});
 
-  // ── State Inspector ──
+  // ── Experimental Features Hub ──────────────────────────────────────────────
+  const expCard = el("div",{class:"card",style:"border-color:#f59e0b"});
+  expCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
+    el("span",{style:"font-size:16px"},"\u2697\uFE0F"),
+    el("div",{style:"font-weight:700;font-size:14px;color:#f59e0b"},"Experimental Features"),
+  ]));
+  expCard.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:12px"},
+    "Status of all experimental features across PadSpan. Click any row to jump to its settings."));
+
+  const expFeatures = [
+    {
+      name: "Adaptive Learning",
+      enabled: settings.adaptive_learning_enabled === true,
+      location: "Settings \u2192 Presence",
+      tab: "settings",
+      desc: "Passively learns room RSSI fingerprints from high-confidence assignments",
+    },
+    {
+      name: "Floor Detection",
+      enabled: settings.adaptive_floor_detection === true,
+      location: "Settings \u2192 Presence",
+      tab: "settings",
+      desc: "Learns cross-floor signal attenuation for multi-story accuracy",
+      sub: true,
+    },
+    {
+      name: "MQTT Publishing",
+      enabled: settings.mqtt_publish_enabled === true,
+      location: "Manage \u2192 Data",
+      tab: "manage",
+      desc: "Publishes device presence to MQTT topics for external systems",
+    },
+    {
+      name: "Beacon Tune",
+      enabled: false,
+      location: "Calibration \u2192 Beacon Tune",
+      tab: "calibration",
+      desc: "Mark beacon positions on floor plans for auto-calibration",
+      alwaysAvailable: true,
+    },
+  ];
+
+  const expList = el("div",{style:"display:flex;flex-direction:column;gap:2px"});
+  for(const f of expFeatures){
+    const statusColor = f.alwaysAvailable ? "#38bdf8" : f.enabled ? "#52b788" : "#64748b";
+    const statusText = f.alwaysAvailable ? "AVAILABLE" : f.enabled ? "ON" : "OFF";
+    const row = el("div",{style:`display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;${f.sub?"padding-left:24px":""}`});
+    row.addEventListener("mouseenter", ()=>{ row.style.background = "rgba(255,255,255,0.04)"; });
+    row.addEventListener("mouseleave", ()=>{ row.style.background = ""; });
+    row.addEventListener("click", ()=>{ ctx.actions.navigate(f.tab); });
+    row.appendChild(el("div",{style:`width:6px;height:6px;border-radius:50%;background:${statusColor};flex-shrink:0`}));
+    row.appendChild(el("div",{style:"flex:1;min-width:0"},[
+      el("div",{style:"font-size:12px;font-weight:600;color:#e2e8f0"}, f.name),
+      el("div",{style:"font-size:10px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, f.desc),
+    ]));
+    row.appendChild(el("div",{style:`font-size:9px;font-weight:700;color:${statusColor};letter-spacing:.05em;flex-shrink:0`}, statusText));
+    expList.appendChild(row);
+  }
+  expCard.appendChild(expList);
+  grid.appendChild(expCard);
+
+  // ── State Inspector ────────────────────────────────────────────────────────
   const rooms = snap ? (snap.rooms_discovered || []) : [];
   const objects = snap ? ((snap.objects && snap.objects.list) || []) : [];
+  const radios = snap ? ((snap.ble && snap.ble.radios) || []) : [];
+  const ads = snap ? ((snap.ble && snap.ble.advertisements) || []) : [];
   const genAt = snap ? (snap.generated_at || "\u2014") : "\u2014";
   const uptimeMs = Date.now() - (ctx.state._sessionStart || Date.now());
   const uptimeMin = Math.floor(uptimeMs / 60000);
 
   grid.appendChild(el("div",{class:"card"},[
     el("div",{style:"font-weight:700;margin-bottom:8px"},"State Inspector"),
-    el("div",{style:"display:flex;flex-direction:column;gap:4px;font-size:12px"},[
-      el("div",{}, [el("span",{class:"muted"},"Data mode: "), el("span",{style:"font-weight:600"}, ctx.state.dataMode.toUpperCase())]),
-      el("div",{}, [el("span",{class:"muted"},"Snapshot age: "), el("span",{style:"font-weight:600"}, genAt)]),
-      el("div",{}, [el("span",{class:"muted"},"Objects: "), el("span",{style:"font-weight:600"}, String(objects.length))]),
-      el("div",{}, [el("span",{class:"muted"},"Rooms: "), el("span",{style:"font-weight:600"}, String(rooms.length))]),
+    el("div",{style:"display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:12px"},[
+      el("div",{}, [el("span",{class:"muted"},"Mode: "), el("span",{style:"font-weight:600"}, ctx.state.dataMode.toUpperCase())]),
       el("div",{}, [el("span",{class:"muted"},"Session: "), el("span",{style:"font-weight:600"}, `${uptimeMin}m`)]),
+      el("div",{}, [el("span",{class:"muted"},"Objects: "), el("span",{style:"font-weight:600"}, String(objects.length))]),
+      el("div",{}, [el("span",{class:"muted"},"Radios: "), el("span",{style:"font-weight:600"}, String(radios.length))]),
+      el("div",{}, [el("span",{class:"muted"},"Rooms: "), el("span",{style:"font-weight:600"}, String(rooms.length))]),
+      el("div",{}, [el("span",{class:"muted"},"Ads: "), el("span",{style:"font-weight:600"}, String(ads.length))]),
+      el("div",{style:"grid-column:1/-1"}, [el("span",{class:"muted"},"Snapshot: "), el("span",{style:"font-weight:600;font-size:11px"}, genAt)]),
     ]),
   ]));
 
-  // ── Room Color Grid ──
+  // ── Room Color Grid (compact tiles, always shows all) ───────────────────
   if(rooms.length > 0){
-    const roomGrid = el("div",{style:"display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px"});
-    for(let i = 0; i < rooms.length; i++){
-      const room = rooms[i];
+    const roomCard = el("div",{class:"card"});
+    roomCard.appendChild(el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"},[
+      el("div",{style:"font-weight:700"},"Room Color Grid"),
+      el("span",{class:"muted",style:"font-size:11px"}, `${rooms.length} rooms`),
+    ]));
+
+    // Smaller minmax (70px) so more fit per row; compact padding
+    const roomGrid = el("div",{style:"display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:4px"});
+    for(const room of rooms){
       const rc = ctx.helpers.roomColor(room);
       const count = objects.filter(o=>o.room===room).length;
-      const tile = el("div",{style:`background:${rc}22;border:1px solid ${rc}44;border-radius:6px;padding:8px;text-align:center;cursor:pointer`});
+      const tile = el("div",{style:`background:${rc}22;border:1px solid ${rc}44;border-radius:5px;padding:4px;text-align:center;cursor:pointer`});
       tile.addEventListener("mouseenter", ()=>{ tile.style.borderColor = rc; });
       tile.addEventListener("mouseleave", ()=>{ tile.style.borderColor = `${rc}44`; });
-      tile.appendChild(el("div",{style:`font-size:11px;color:${rc};font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`}, room));
-      tile.appendChild(el("div",{style:"font-size:18px;font-weight:800;color:#e2e8f0;margin-top:2px"}, String(count)));
+      tile.appendChild(el("div",{style:`font-size:9px;color:${rc};font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`}, room));
+      tile.appendChild(el("div",{style:"font-size:14px;font-weight:800;color:#e2e8f0"}, String(count)));
       tile.addEventListener("click", ()=>ctx.actions.showRoomDetail(room));
       roomGrid.appendChild(tile);
     }
-    grid.appendChild(el("div",{class:"card"},[
-      el("div",{style:"font-weight:700;margin-bottom:8px"},"Room Color Grid"),
-      roomGrid,
-    ]));
+    roomCard.appendChild(roomGrid);
+    grid.appendChild(roomCard);
   }
 
-  // ── RSSI Distribution ──
-  const ads = snap ? ((snap.ble && snap.ble.advertisements) || []) : [];
+  // ── RSSI Distribution ─────────────────────────────────────────────────────
   if(ads.length > 0){
     const buckets = {};
     for(const ad of ads){
@@ -68,20 +141,26 @@ export function render(ctx){
       .map(([k,v])=>([Number(k),v]))
       .sort((a,b)=>a[0]-b[0]);
     const maxBucket = Math.max(...sortedBuckets.map(x=>x[1]), 1);
+    const totalAds = sortedBuckets.reduce((s,b)=>s+b[1], 0);
+    const avgRssi = totalAds > 0
+      ? Math.round(ads.reduce((s,a)=>s+(a.rssi||0),0) / ads.filter(a=>a.rssi!=null).length)
+      : 0;
 
     const histCard = el("div",{class:"card"});
-    histCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:8px"},"RSSI Distribution"));
+    histCard.appendChild(el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"},[
+      el("div",{style:"font-weight:700"},"RSSI Distribution"),
+      el("div",{style:"font-size:11px;color:#94a3b8"}, `avg ${avgRssi} dBm`),
+    ]));
 
-    const chart = el("div",{style:"display:flex;align-items:flex-end;gap:4px;height:100px;overflow:hidden"});
+    const chart = el("div",{style:"display:flex;align-items:flex-end;gap:4px;height:80px;overflow:hidden"});
     for(const [range, count] of sortedBuckets){
-      const barH = Math.round((count / maxBucket) * 72);
+      const barH = Math.round((count / maxBucket) * 60);
       let barColor = "#52b788";
       if(range < -80) barColor = "#ef5350";
       else if(range < -70) barColor = "#ffd54f";
       else if(range < -60) barColor = "#81c784";
 
       const col = el("div",{style:"display:flex;flex-direction:column;align-items:center;flex:1;min-width:0"});
-      // Count label on top
       col.appendChild(el("div",{style:`font-size:9px;color:${barColor};font-weight:600;margin-bottom:2px`}, String(count)));
       col.appendChild(el("div",{style:`height:${barH}px;width:100%;background:${barColor};border-radius:2px 2px 0 0;min-height:2px`}));
       col.appendChild(el("div",{style:"font-size:9px;color:#64748b;margin-top:2px;white-space:nowrap"}, `${range}`));
@@ -92,8 +171,7 @@ export function render(ctx){
     grid.appendChild(histCard);
   }
 
-  // ── Live Signal Bars ──
-  const radios = snap ? ((snap.ble && snap.ble.radios) || []) : [];
+  // ── Live Signal Bars ──────────────────────────────────────────────────────
   if(radios.length > 0){
     const scannerDevCounts = {};
     for(const ad of ads){
@@ -128,6 +206,149 @@ export function render(ctx){
     barsCard.appendChild(barList);
     grid.appendChild(barsCard);
   }
+
+  // ── Signal Pulse (animated activity visualization) ─────────────────────────
+  if(ads.length > 0 && rooms.length > 0){
+    const pulseCard = el("div",{class:"card"});
+    pulseCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:8px"},"Signal Pulse"));
+    pulseCard.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:10px"},
+      "Live room activity \u2014 ring size = device count, pulse = recent signal freshness."));
+
+    const pulseWrap = el("div",{style:"display:flex;flex-wrap:wrap;gap:12px;justify-content:center;padding:8px 0"});
+
+    // Build per-room stats
+    const roomStats = [];
+    for(const room of rooms){
+      const devs = objects.filter(o=>o.room===room);
+      const roomAds = ads.filter(a=> devs.some(d=> (d.address && a.address===d.address) || (d.entity_id && a.entity_id===d.entity_id)));
+      const freshest = roomAds.reduce((best,a)=>{
+        const age = a.age_s != null ? a.age_s : 999;
+        return age < best ? age : best;
+      }, 999);
+      roomStats.push({ room, count: devs.length, freshest });
+    }
+    // Sort by count desc so active rooms are first
+    roomStats.sort((a,b)=>b.count-a.count);
+
+    const maxCount = Math.max(...roomStats.map(r=>r.count), 1);
+
+    for(const rs of roomStats){
+      const rc = ctx.helpers.roomColor(rs.room);
+      const size = 24 + Math.round((rs.count / maxCount) * 36);
+      const isFresh = rs.freshest < 30;
+      const pulseAnim = isFresh && rs.count > 0
+        ? `animation:padspan-pulse 2s ease-in-out infinite;`
+        : "";
+
+      const dot = el("div",{style:`
+        display:flex;align-items:center;justify-content:center;flex-direction:column;
+        width:${size}px;height:${size}px;border-radius:50%;
+        background:${rc}22;border:2px solid ${rc}66;
+        cursor:pointer;position:relative;${pulseAnim}
+      `.replace(/\s+/g," ")});
+      if(rs.count > 0){
+        dot.appendChild(el("div",{style:`font-size:${size > 40 ? 14 : 11}px;font-weight:800;color:${rc}`}, String(rs.count)));
+      }
+      dot.title = `${rs.room}: ${rs.count} device${rs.count!==1?"s":""}`;
+      dot.addEventListener("click", ()=>ctx.actions.showRoomDetail(rs.room));
+
+      const wrap = el("div",{style:"display:flex;flex-direction:column;align-items:center;gap:2px"});
+      wrap.appendChild(dot);
+      wrap.appendChild(el("div",{style:`font-size:9px;color:${rc};max-width:${size+20}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center`}, rs.room));
+      pulseWrap.appendChild(wrap);
+    }
+
+    pulseCard.appendChild(pulseWrap);
+
+    // Inject keyframes if not already present
+    if(!document.getElementById("padspan-pulse-keyframes")){
+      const style = document.createElement("style");
+      style.id = "padspan-pulse-keyframes";
+      style.textContent = `@keyframes padspan-pulse { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.12);opacity:.85} }`;
+      document.head.appendChild(style);
+    }
+    grid.appendChild(pulseCard);
+  }
+
+  // ── Raw Snapshot Explorer ─────────────────────────────────────────────────
+  const explorerCard = el("div",{class:"card"});
+  explorerCard.appendChild(el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"},[
+    el("div",{style:"font-weight:700"},"Raw Snapshot Explorer"),
+    el("span",{class:"muted",style:"font-size:11px"}, snap ? `${JSON.stringify(snap).length.toLocaleString()} bytes` : "no data"),
+  ]));
+  explorerCard.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:10px"},
+    "Browse the raw live snapshot data. Expand any key to inspect values."));
+
+  if(snap){
+    const topKeys = Object.keys(snap).sort();
+    const treeWrap = el("div",{style:"font-family:monospace;font-size:11px;line-height:1.6;max-height:300px;overflow-y:auto"});
+
+    for(const key of topKeys){
+      const val = snap[key];
+      const isExpandable = val !== null && typeof val === "object";
+      const row = el("div",{style:"cursor:pointer;padding:2px 4px;border-radius:3px"});
+      row.addEventListener("mouseenter", ()=>{ row.style.background = "rgba(255,255,255,0.04)"; });
+      row.addEventListener("mouseleave", ()=>{ row.style.background = ""; });
+
+      const arrow = el("span",{style:"display:inline-block;width:14px;color:#52b788;font-size:10px"},
+        isExpandable ? "\u25B6" : "\u00B7");
+      const keySpan = el("span",{style:"color:#52b788;font-weight:600"}, key);
+      const preview = el("span",{class:"muted",style:"margin-left:6px"});
+
+      if(!isExpandable){
+        preview.textContent = val === null ? "null" : typeof val === "string" ? `"${val.slice(0,60)}"` : String(val);
+      } else {
+        const isArr = Array.isArray(val);
+        preview.textContent = isArr ? `[ ${val.length} items ]` : `{ ${Object.keys(val).length} keys }`;
+      }
+
+      row.appendChild(arrow);
+      row.appendChild(el("span",{}," "));
+      row.appendChild(keySpan);
+      row.appendChild(preview);
+
+      const detail = el("div",{style:"display:none;margin-left:18px;padding:4px 8px;background:#0a1a0f;border-left:2px solid #253e2e;border-radius:0 4px 4px 0;margin-bottom:4px;max-height:200px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:#94a3b8"});
+
+      if(isExpandable){
+        let loaded = false;
+        row.addEventListener("click", ()=>{
+          const showing = detail.style.display !== "none";
+          detail.style.display = showing ? "none" : "";
+          arrow.textContent = showing ? "\u25B6" : "\u25BC";
+          if(!loaded){
+            try {
+              detail.textContent = JSON.stringify(val, null, 2);
+            } catch(e){
+              detail.textContent = "[circular or unserializable]";
+            }
+            loaded = true;
+          }
+        });
+      }
+
+      treeWrap.appendChild(row);
+      if(isExpandable) treeWrap.appendChild(detail);
+    }
+    explorerCard.appendChild(treeWrap);
+  } else {
+    explorerCard.appendChild(el("div",{class:"muted",style:"font-size:12px"}, "No snapshot data available."));
+  }
+
+  // Copy button
+  if(snap){
+    const copyBtn = el("button",{class:"btn tiny",style:"margin-top:8px;font-size:11px"}, "Copy snapshot JSON");
+    copyBtn.addEventListener("click", async ()=>{
+      try {
+        await navigator.clipboard.writeText(JSON.stringify(snap, null, 2));
+        copyBtn.textContent = "Copied!";
+        setTimeout(()=>{ copyBtn.textContent = "Copy snapshot JSON"; }, 2000);
+      } catch(e){
+        ctx.toast("Copy failed: " + String(e), true);
+      }
+    });
+    explorerCard.appendChild(copyBtn);
+  }
+  grid.appendChild(explorerCard);
 
   root.appendChild(grid);
   return root;
