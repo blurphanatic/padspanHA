@@ -314,7 +314,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         bl = get_bluetooth_live(hass)
         if bl is not None:
             # Read configurable BLE advertisement timeout from settings (default 3600s / 1 hour)
-            _ble_age = 3600
+            _ble_age = 14400
             try:
                 _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
                 _v = ((_st.data if _st else {}).get("ble_max_age_s"))

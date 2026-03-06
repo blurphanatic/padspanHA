@@ -190,7 +190,7 @@ export function render(ctx){
   if (!ctx.state.objSearch) ctx.state.objSearch = "";
   if (!ctx.state.objKind)   ctx.state.objKind   = "all";
   if (!ctx.state.objStatus) ctx.state.objStatus  = "all";
-  if (ctx.state.objAgeMax == null) ctx.state.objAgeMax = 300; // default 5 min (live)
+  if (ctx.state.objAgeMax == null) ctx.state.objAgeMax = 604800; // default: show all (1 week)
 
   // Time range slider: controls how far back to show objects
   // Steps: 5m=300, 15m=900, 1h=3600, 6h=21600, 1d=86400, 3d=259200, 7d=604800
