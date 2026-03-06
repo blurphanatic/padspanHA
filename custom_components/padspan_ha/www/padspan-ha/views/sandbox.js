@@ -104,29 +104,139 @@ export function render(ctx){
     ]),
   ]));
 
-  // ── Room Color Grid (compact tiles, always shows all) ───────────────────
+  // ── Floor Color Stack (rooms grouped by floor, each floor a column) ─────
   if(rooms.length > 0){
-    const roomCard = el("div",{class:"card"});
-    roomCard.appendChild(el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"},[
-      el("div",{style:"font-weight:700"},"Room Color Grid"),
-      el("span",{class:"muted",style:"font-size:11px"}, `${rooms.length} rooms`),
+    const haFloors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
+    const haAreas  = (ctx.state.model && Array.isArray(ctx.state.model.areas))  ? ctx.state.model.areas  : [];
+
+    // Group rooms by floor; rooms not matched to a floor go into "Unassigned"
+    const floorMap = new Map(); // floorLabel → [{room, color, count}]
+    const floorOrder = []; // ordered labels (by level desc so top floor is left)
+
+    // Build a lookup: room name → floor_id
+    const roomFloorId = {};
+    for(const area of haAreas) roomFloorId[area.name] = area.floor_id || "";
+
+    // Collect unique floors sorted by level descending (top floor first / leftmost)
+    const usedFloorIds = new Set(Object.values(roomFloorId));
+    const sortedFloors = [...haFloors].filter(f => usedFloorIds.has(f.id)).sort((a,b) => (b.level||0) - (a.level||0));
+    for(const f of sortedFloors) floorOrder.push({ id: f.id, label: f.name || `Level ${f.level}` });
+
+    // Rooms without a floor
+    const hasUnassigned = rooms.some(r => !roomFloorId[r] || !sortedFloors.some(f => f.id === roomFloorId[r]));
+    if(hasUnassigned) floorOrder.push({ id: "__none__", label: "Unassigned" });
+
+    // Populate floor groups
+    for(const fo of floorOrder) floorMap.set(fo.id, []);
+    for(const room of rooms){
+      const fid = roomFloorId[room] || "";
+      const bucket = (fid && floorMap.has(fid)) ? fid : "__none__";
+      if(!floorMap.has(bucket)) floorMap.set(bucket, []);
+      const rc = ctx.helpers.roomColor(room);
+      const count = objects.filter(o => o.room === room).length;
+      floorMap.get(bucket).push({ room, color: rc, count });
+    }
+
+    const floorCard = el("div",{class:"card",style:"overflow:hidden"});
+    floorCard.appendChild(el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"},[
+      el("div",{style:"font-weight:700"},"Floor Towers"),
+      el("span",{class:"muted",style:"font-size:11px"}, `${rooms.length} rooms \u00B7 ${sortedFloors.length} floor${sortedFloors.length!==1?"s":""}`),
     ]));
 
-    // Smaller minmax (70px) so more fit per row; compact padding
-    const roomGrid = el("div",{style:"display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:4px"});
-    for(const room of rooms){
-      const rc = ctx.helpers.roomColor(room);
-      const count = objects.filter(o=>o.room===room).length;
-      const tile = el("div",{style:`background:${rc}22;border:1px solid ${rc}44;border-radius:5px;padding:4px;text-align:center;cursor:pointer`});
-      tile.addEventListener("mouseenter", ()=>{ tile.style.borderColor = rc; });
-      tile.addEventListener("mouseleave", ()=>{ tile.style.borderColor = `${rc}44`; });
-      tile.appendChild(el("div",{style:`font-size:9px;color:${rc};font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`}, room));
-      tile.appendChild(el("div",{style:"font-size:14px;font-weight:800;color:#e2e8f0"}, String(count)));
-      tile.addEventListener("click", ()=>ctx.actions.showRoomDetail(room));
-      roomGrid.appendChild(tile);
+    // Inject glow keyframes
+    if(!document.getElementById("padspan-glow-keyframes")){
+      const st = document.createElement("style");
+      st.id = "padspan-glow-keyframes";
+      st.textContent = `@keyframes padspan-glow{0%,100%{filter:brightness(1)}50%{filter:brightness(1.3)}}`;
+      document.head.appendChild(st);
     }
-    roomCard.appendChild(roomGrid);
-    grid.appendChild(roomCard);
+
+    // Tower layout: each floor is a column with a rooftop label, rooms fill vertically
+    const totalDevices = objects.length;
+    const towerWrap = el("div",{style:"display:flex;gap:10px;align-items:flex-end;min-height:160px;padding-top:24px"});
+
+    const _buildTower = (floorRooms, label) => {
+      const col = el("div",{style:"flex:1;min-width:56px;display:flex;flex-direction:column;align-items:stretch"});
+
+      // Floor label — sits above the tower like a rooftop sign
+      col.appendChild(el("div",{style:"font-size:9px;font-weight:800;color:#e2e8f0;text-align:center;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"}, label));
+
+      // Tower body — rounded container with room bands inside
+      const tower = el("div",{style:"border-radius:6px;overflow:hidden;border:1px solid #1e3a2a;background:#0a1a0f"});
+
+      if(floorRooms.length === 0){
+        tower.appendChild(el("div",{style:"height:40px;display:flex;align-items:center;justify-content:center;color:#253e2e;font-size:9px;font-style:italic"},"empty"));
+      } else {
+        for(let i = 0; i < floorRooms.length; i++){
+          const r = floorRooms[i];
+          const hasDevices = r.count > 0;
+          const glowAnim = hasDevices ? "animation:padspan-glow 3s ease-in-out infinite;" : "";
+
+          // Room band — gradient fill, no gaps between bands for a solid tower look
+          const band = el("div",{style:`
+            min-height:28px;padding:4px 6px;cursor:pointer;position:relative;
+            background:linear-gradient(135deg, ${r.color}18 0%, ${r.color}35 100%);
+            border-bottom:${i < floorRooms.length-1 ? `1px solid ${r.color}20` : "none"};
+            display:flex;align-items:center;gap:4px;
+            transition:all 0.2s ease;${glowAnim}
+          `.replace(/\s+/g," ")});
+
+          // Left color accent bar
+          band.appendChild(el("div",{style:`width:3px;align-self:stretch;background:${r.color};border-radius:2px;flex-shrink:0;opacity:0.7`}));
+
+          // Room name
+          band.appendChild(el("div",{style:`flex:1;min-width:0;font-size:9px;font-weight:600;color:${r.color};overflow:hidden;text-overflow:ellipsis;white-space:nowrap`}, r.room));
+
+          // Device count pips — small dots for 1-3, number for 4+
+          if(r.count > 0 && r.count <= 3){
+            const pips = el("div",{style:"display:flex;gap:2px;flex-shrink:0"});
+            for(let p = 0; p < r.count; p++){
+              pips.appendChild(el("div",{style:`width:5px;height:5px;border-radius:50%;background:${r.color};opacity:0.9`}));
+            }
+            band.appendChild(pips);
+          } else if(r.count > 3){
+            band.appendChild(el("div",{style:`font-size:10px;font-weight:800;color:${r.color};flex-shrink:0`}, String(r.count)));
+          }
+
+          // Hover glow effect
+          band.addEventListener("mouseenter", ()=>{
+            band.style.background = `linear-gradient(135deg, ${r.color}30 0%, ${r.color}50 100%)`;
+            band.style.boxShadow = `inset 0 0 12px ${r.color}25, 0 0 8px ${r.color}15`;
+          });
+          band.addEventListener("mouseleave", ()=>{
+            band.style.background = `linear-gradient(135deg, ${r.color}18 0%, ${r.color}35 100%)`;
+            band.style.boxShadow = "";
+          });
+          band.addEventListener("click", ()=> ctx.actions.showRoomDetail(r.room));
+          tower.appendChild(band);
+        }
+      }
+
+      col.appendChild(tower);
+
+      // Floor device total at base
+      const floorTotal = floorRooms.reduce((s,r)=>s+r.count, 0);
+      col.appendChild(el("div",{style:"font-size:9px;color:#475569;text-align:center;margin-top:4px"}, floorTotal > 0 ? `${floorTotal} device${floorTotal!==1?"s":""}` : "\u00B7"));
+
+      return col;
+    };
+
+    for(const fo of floorOrder){
+      towerWrap.appendChild(_buildTower(floorMap.get(fo.id) || [], fo.label));
+    }
+
+    // Fallback: no floors at all → single tower
+    if(floorOrder.length === 0){
+      const allRooms = rooms.map(room => ({
+        room,
+        color: ctx.helpers.roomColor(room),
+        count: objects.filter(o=>o.room===room).length,
+      }));
+      towerWrap.appendChild(_buildTower(allRooms, "All Rooms"));
+    }
+
+    floorCard.appendChild(towerWrap);
+    grid.appendChild(floorCard);
   }
 
   // ── RSSI Distribution ─────────────────────────────────────────────────────
