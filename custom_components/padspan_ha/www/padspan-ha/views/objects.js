@@ -202,7 +202,7 @@ export function render(ctx){
   const _ageSteps = [300, 900, 3600, 21600, 86400, 259200, 604800];
   const _ageLabels = ["5 min", "15 min", "1 hour", "6 hours", "1 day", "3 days", "1 week"];
   const _ageIdx = _ageSteps.indexOf(ctx.state.objAgeMax);
-  const _curIdx = _ageIdx >= 0 ? _ageIdx : 0;
+  const _curIdx = _ageIdx >= 0 ? _ageIdx : _ageSteps.length - 1;
 
   const objSearchInput = el("input",{type:"text", placeholder:"Search address, name, label…", value: ctx.state.objSearch});
   const objKindSel = el("select",{class:"btn"});
@@ -367,7 +367,7 @@ export function render(ctx){
     const q = String(ctx.state.objSearch||"").toLowerCase();
     const k = ctx.state.objKind || "all";
     const s = ctx.state.objStatus || "all";
-    const maxAge = ctx.state.objAgeMax || 300;
+    const maxAge = ctx.state.objAgeMax != null ? ctx.state.objAgeMax : 604800;
     let shown = 0;
     for(const tr of objRowEls){
       const kind = tr.getAttribute("data-kind");
@@ -398,7 +398,7 @@ export function render(ctx){
 
   // ── Basic mode: card-per-object list ─────────────────────────────────────────
   if(isBasic){
-    const _basicMaxAge = ctx.state.objAgeMax || 300;
+    const _basicMaxAge = ctx.state.objAgeMax != null ? ctx.state.objAgeMax : 604800;
     const _ageFilter = (o) => o.kind === "entity" || (typeof o.age_s !== "number") || o.age_s <= _basicMaxAge;
     const identified = allObjects.filter(o => o.identified && _ageFilter(o));
     const unidentified = allObjects.filter(o => !o.identified && _ageFilter(o));
@@ -495,7 +495,14 @@ export function render(ctx){
         el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
           "These Bluetooth devices haven't been named yet. Click Tag to give one a friendly name."),
       ]);
-      unidentified.slice(0, 20).forEach(o => unCard.appendChild(mkCard(o)));
+      // Sort: iBeacons and private_ble first, then by age (newest first)
+      const _sortedUnident = [...unidentified].sort((a,b) => {
+        const kindPri = (o) => o.kind === "ibeacon" ? 0 : o.kind === "private_ble" ? 1 : 2;
+        const kd = kindPri(a) - kindPri(b);
+        if(kd !== 0) return kd;
+        return (a.age_s || 0) - (b.age_s || 0);
+      });
+      _sortedUnident.slice(0, 50).forEach(o => unCard.appendChild(mkCard(o)));
       root.appendChild(unCard);
     }
     return root;
@@ -507,6 +514,8 @@ export function render(ctx){
     el("div",{class:"row",style:"margin-bottom:8px"},[
       el("div",{class:"h2",style:"flex:1"},"BLE Scanner Detections"),
       summary ? el("span",{class:"badge"}, `${summary.ble||0} BLE`) : null,
+      summary && summary.ibeacon ? el("span",{class:"badge",style:"background:#2a1a00;color:#fbbf24;border-color:#92400e"}, `${summary.ibeacon} iBeacon`) : null,
+      summary && summary.private_ble ? el("span",{class:"badge",style:"background:#0a1a3a;color:#93c5fd;border-color:#1e4976"}, `${summary.private_ble} Private BLE`) : null,
       summary ? el("span",{class:"badge warn"}, `${summary.unidentified||0} unidentified`) : null,
       summary ? el("span",{class:"badge"}, `${summary.entities||0} entities`) : null,
       awayCount ? el("span",{class:"badge",style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d"}, `${awayCount} away`) : null,

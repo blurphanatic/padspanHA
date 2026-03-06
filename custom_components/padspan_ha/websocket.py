@@ -899,9 +899,16 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     if resolved:
                         canonical_by_addr[addr] = resolved
                 _resolver_diag["resolved"] = len(canonical_by_addr)
-            # Parse iBeacon from every advertisement; group by stable UUID/major/minor key
+        except Exception as _res_err:
+            _resolver_diag["errors"].append(f"resolver: {_res_err}")
+
+        # Parse iBeacon from every advertisement; group by stable UUID/major/minor key.
+        # This is deliberately OUTSIDE the resolver try/except so iBeacon detection
+        # never gets silently skipped if the private BLE resolver has issues.
+        try:
+            _ib_resolver = await _get_ble_resolver(hass)
             for addr, rec in ble_by_addr.items():
-                ib = resolver.parse_ibeacon(rec.get("manufacturer_data") or {})
+                ib = _ib_resolver.parse_ibeacon(rec.get("manufacturer_data") or {})
                 if ib:
                     uuid_key = f"ibeacon:{ib['uuid']}:{ib['major']}:{ib['minor']}"
                     ibeacon_addrs.add(addr)
@@ -939,8 +946,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         seen_srcs.add(sk); dedup.append(s)
                 g["sources"] = dedup
             _resolver_diag["ibeacon_groups"] = len(ibeacon_groups)
-        except Exception as _res_err:
-            _resolver_diag["errors"].append(str(_res_err))
+        except Exception as _ib_err:
+            _resolver_diag["errors"].append(f"ibeacon: {_ib_err}")
 
         # (B) BLE advertisement objects (what HA Bluetooth "Advertisement monitor" shows)
         # Group private_ble addresses by canonical_id so rotating MACs merge
