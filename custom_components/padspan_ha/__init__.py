@@ -20,6 +20,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from .build_info import BUILD_ID, BUILD_VERSION
@@ -104,6 +105,9 @@ async def _ensure_stores(hass: HomeAssistant) -> None:
         await ad_store.async_load()
         hass.data[DOMAIN][DATA_ADAPTIVE] = ad_store
         _LOGGER.debug("AdaptiveStore ready (%d observations)", ad_store.data.get("stats", {}).get("total_observations", 0))
+
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
