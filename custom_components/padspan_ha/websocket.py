@@ -1194,7 +1194,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         # The cache is loaded from disk on first access and saved every 60 s.
         import time as _time
         _HISTORY_TTL = 604800       # 7 days for unidentified objects
-        _SAVE_INTERVAL = 60         # save to disk at most every 60 s
+        _SAVE_INTERVAL = 15         # save to disk at most every 15 s
         _now_ts = _time.time()      # real wall-clock time (survives restarts)
 
         _dom = hass.data.setdefault(DOMAIN, {})

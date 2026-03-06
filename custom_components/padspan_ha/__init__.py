@@ -292,4 +292,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:
         _LOGGER.debug("BLE cleanup error: %s", err)
 
+    # Flush object history to disk before shutdown
+    try:
+        from .const import DATA_OBJECT_HISTORY, OBJECT_HISTORY_STORE_KEY
+        _dom = hass.data.get(DOMAIN, {})
+        _hist = _dom.get(DATA_OBJECT_HISTORY)
+        _store = _dom.get("_obj_hist_store")
+        if _hist is not None and _store is not None:
+            await _store.async_save(dict(_hist))
+            _LOGGER.debug("Object history flushed to disk (%d entries)", len(_hist))
+    except Exception as err:
+        _LOGGER.debug("Object history flush error: %s", err)
+
     return unload_ok
