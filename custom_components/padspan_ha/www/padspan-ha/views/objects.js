@@ -165,16 +165,21 @@ export function render(ctx){
 
   // Dedup: suppress entity rows whose physical device already has a BLE/iBeacon/private_ble row.
   // This prevents e.g. "Dog Tracker" entity appearing alongside its BLE advertisement row.
-  const _bleAddrSet = new Set(
-    allObjects.filter(o => o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon")
-      .map(o => o.address).filter(Boolean)
-  );
+  const _bleAddrSet = new Set();
+  for (const o of allObjects) {
+    if (o.kind !== "ble" && o.kind !== "private_ble" && o.kind !== "ibeacon") continue;
+    if (o.address) _bleAddrSet.add(o.address);
+    // Include all rotating MACs from iBeacon/private_ble groups
+    if (Array.isArray(o.all_addresses)) {
+      for (const a of o.all_addresses) _bleAddrSet.add(String(a).toUpperCase());
+    }
+  }
   const _linkedEntitySet = new Set(
     allObjects.flatMap(o => Array.isArray(o.linked_entities) ? o.linked_entities : [])
   );
   const _isDuplicateEntity = (o) =>
     o.kind === "entity" && (
-      (o.address && _bleAddrSet.has(o.address)) ||
+      (o.address && _bleAddrSet.has(String(o.address).toUpperCase())) ||
       (o.entity_id && _linkedEntitySet.has(o.entity_id))
     );
 

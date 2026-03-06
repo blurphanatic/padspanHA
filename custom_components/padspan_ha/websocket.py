@@ -826,6 +826,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
             # Merge identification hints (keep the richest set we have)
             try:
+                # Name: prefer a real name over the MAC address
+                ad_name = a.get("name") or ""
+                cur_name = rec.get("name") or ""
+                if ad_name and ad_name != addr and (not cur_name or cur_name == addr):
+                    rec["name"] = ad_name
+
                 md = a.get("manufacturer_data") or {}
                 sd = a.get("service_data") or {}
                 su = a.get("service_uuids") or []
@@ -1138,12 +1144,22 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 _ib_entry = _obj_store_c.get(uuid_key)
                 if _ib_entry:
                     _ib_label = _ib_entry.get("label") or None
+            # Try to get a real BLE device name from the MAC addresses in this group
+            _ib_ble_name = None
+            for _ib_mac in (g.get("addrs") or []):
+                _ib_rec = ble_by_addr.get(_ib_mac)
+                if _ib_rec:
+                    _n = _ib_rec.get("name") or ""
+                    if _n and _n != _ib_mac:
+                        _ib_ble_name = _n
+                        break
             obj_ib: dict[str, Any] = {
                 "key": uuid_key,
                 "kind": "ibeacon",
                 "address": uuid_key,           # stable key — used by label store & tagging
                 "all_addresses": g["addrs"],   # rotating MACs this beacon was seen from
-                "name": _ib_label or f"iBeacon {g['uuid'][:8]}",
+                "name": _ib_label or _ib_ble_name or f"iBeacon {g['uuid'][:8]}",
+                "ble_name": _ib_ble_name,      # original BLE broadcast name for display
                 "rssi": g.get("rssi"),
                 "age_s": g.get("age_s"),
                 "sources": g.get("sources") or [],
@@ -1156,26 +1172,99 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             }
             objects.append(obj_ib)
 
+        # ── Cross-link MAC ↔ iBeacon ↔ entity for the same physical device ──
+        # Build lookup maps so labels/tags propagate across all representations.
+        _mac_to_ibeacon_key: dict[str, str] = {}   # MAC → ibeacon:uuid:major:minor
+        _ibeacon_to_macs: dict[str, list[str]] = {}  # ibeacon key → [MAC, ...]
+        for uuid_key, g in ibeacon_groups.items():
+            macs = list(g.get("addrs") or [])
+            _ibeacon_to_macs[uuid_key] = macs
+            for mac in macs:
+                _mac_to_ibeacon_key[mac] = uuid_key
+
+        # Tag entity objects with their iBeacon key if their MAC matches
+        for obj in objects:
+            if obj.get("kind") == "entity":
+                eaddr = (obj.get("address") or "").upper()
+                ib_key = _mac_to_ibeacon_key.get(eaddr)
+                if ib_key:
+                    obj["ibeacon_key"] = ib_key
+
         # Attach user labels from ObjectStore (labels make BLE objects "identified")
+        # Labels propagate: iBeacon label → entity with same MAC; MAC label → iBeacon
         try:
             obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
             if obj_store:
+                # First pass: find the best label for each physical device
+                # (could be stored under iBeacon key, MAC address, or canonical_id)
+                _device_labels: dict[str, str] = {}  # any key → label
+
                 for obj in objects:
                     addr = obj.get("address", "") or ""
-                    # private_ble objects are tagged by canonical_id in the UI (not the
-                    # rotating MAC address), so try canonical_id first, fall back to MAC.
-                    if obj.get("kind") == "private_ble":
+                    kind = obj.get("kind", "")
+
+                    if kind == "private_ble":
                         lookup_key = obj.get("canonical_id") or addr
                     else:
                         lookup_key = addr
+
                     if not lookup_key:
                         continue
+
                     entry = obj_store.get(lookup_key)
                     if not entry and lookup_key != addr:
-                        entry = obj_store.get(addr)  # fallback to MAC
+                        entry = obj_store.get(addr)
+
+                    # Also check via iBeacon cross-reference
+                    if not entry and kind == "entity":
+                        ib_key = obj.get("ibeacon_key")
+                        if ib_key:
+                            entry = obj_store.get(ib_key)
+
+                    # For iBeacon objects, also check if any of their MACs have a label
+                    if not entry and kind == "ibeacon":
+                        for mac in _ibeacon_to_macs.get(lookup_key, []):
+                            entry = obj_store.get(mac)
+                            if entry:
+                                break
+
                     if entry:
-                        obj["user_label"] = entry.get("label", "")
-                        if obj.get("kind") in ("ble", "ibeacon", "private_ble"):
+                        label = entry.get("label", "")
+                        if label:
+                            _device_labels[lookup_key] = label
+                            # Propagate to all related keys
+                            if kind == "ibeacon":
+                                for mac in _ibeacon_to_macs.get(lookup_key, []):
+                                    _device_labels[mac] = label
+                            elif addr in _mac_to_ibeacon_key:
+                                _device_labels[_mac_to_ibeacon_key[addr]] = label
+
+                # Second pass: apply labels to all objects
+                for obj in objects:
+                    addr = obj.get("address", "") or ""
+                    kind = obj.get("kind", "")
+
+                    if kind == "private_ble":
+                        lookup_key = obj.get("canonical_id") or addr
+                    else:
+                        lookup_key = addr
+
+                    label = _device_labels.get(lookup_key)
+                    if not label and addr:
+                        label = _device_labels.get(addr)
+                    if not label and kind == "entity":
+                        ib_key = obj.get("ibeacon_key")
+                        if ib_key:
+                            label = _device_labels.get(ib_key)
+                    if not label and kind == "ibeacon":
+                        for mac in _ibeacon_to_macs.get(lookup_key, []):
+                            label = _device_labels.get(mac)
+                            if label:
+                                break
+
+                    if label:
+                        obj["user_label"] = label
+                        if kind in ("ble", "ibeacon", "private_ble"):
                             obj["identified"] = True
         except Exception:
             pass

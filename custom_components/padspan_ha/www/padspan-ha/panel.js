@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.12";
+const APP_VERSION = "0.7.13";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260306T193840Z";
+const BUILD_ID = "20260306T194938Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1270,6 +1270,10 @@ class PadSpanHaApp extends HTMLElement {
         ? el("div", {class:"muted", style:"font-size:11px"}, `Rotating MACs: ${obj.all_addresses.join(", ")}`)
         : null,
       obj.entity_id ? el("div", {class:"muted", style:"font-size:12px"}, `Entity: ${obj.entity_id}`) : null,
+      obj.ibeacon_key ? el("div", {class:"muted", style:"font-size:11px;color:#fbbf24"}, `Linked iBeacon: ${obj.ibeacon_key}`) : null,
+      (Array.isArray(obj.linked_entities) && obj.linked_entities.length)
+        ? el("div", {class:"muted", style:"font-size:11px;color:#60a5fa"}, `Linked entities: ${obj.linked_entities.join(", ")}`)
+        : null,
       // Enrichment badges
       (obj.company_name || obj.device_type || (obj.service_names && obj.service_names.length) || obj.connectable != null)
         ? el("div", {style:"display:flex;flex-wrap:wrap;gap:5px;margin-top:6px"}, [
