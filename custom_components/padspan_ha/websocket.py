@@ -1189,6 +1189,11 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             objects.append(obj_copy)
             _cached_added += 1
 
+        # Strip internal cache fields before sending to frontend
+        for obj in objects:
+            obj.pop("_cache_ts", None)
+            obj.pop("_cache_age_s", None)
+
         unidentified = [o for o in objects if o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified")]
         identified = [o for o in objects if not (o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified"))]
         common_prefixes = {p: c for p, c in prefix_counts.items() if c >= 3}
@@ -1208,7 +1213,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "cached_objects": _cached_added,
             },
         }
-    except Exception:
+    except Exception as _obj_err:
+        _LOGGER.warning("Objects list build failed: %s", _obj_err, exc_info=True)
         snapshot["objects"] = {"list": [], "summary": {"total": 0, "identified": 0, "unidentified": 0, "entities": 0, "ble": 0, "common_prefixes": {}}}
 
     # ── Enrich raw advertisements with decoded metadata + object cross-reference ──
