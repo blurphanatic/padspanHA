@@ -85,6 +85,62 @@ export function render(ctx) {
   const _resolverDiag = (snap?.objects?.summary?.resolver) || {};
   const _resolverErrors = _resolverDiag.errors || [];
   const _callbackOk = diag.callback_active !== false;
+
+  // ── Private BLE status card ─────────────────────────────────────────────────
+  const _irkCount = _resolverDiag.irk_devices || 0;
+  const _rpaCount = _resolverDiag.rpa_count || 0;
+  const _resolvedCount = _resolverDiag.resolved || 0;
+  const _privateBleCount = (snap?.objects?.summary?.private_ble) || 0;
+
+  let privateBleCard = null;
+  if (_rpaCount > 0 && _irkCount === 0) {
+    // RPAs detected but no IRKs — user needs to set up Private BLE Device
+    privateBleCard = el("div", { class: "card", style: "border-color:#f59e0b;background:rgba(245,158,11,.06)" }, [
+      el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [
+        el("span", { style: "font-size:20px" }, "\u{1F4F1}"),
+        el("div", {}, [
+          el("div", { style: "font-weight:700;font-size:14px" }, `${_rpaCount} rotating-MAC device${_rpaCount !== 1 ? "s" : ""} detected but unresolvable`),
+          el("div", { class: "muted" }, "Phones and watches rotate their Bluetooth MAC address every ~15 min. To track them, you need to register their Identity Resolving Key (IRK)."),
+        ]),
+      ]),
+      el("div", { style: "background:rgba(0,0,0,.2);border-radius:8px;padding:12px;margin-bottom:10px" }, [
+        el("div", { style: "font-weight:700;margin-bottom:8px;font-size:13px" }, "Setup steps:"),
+        el("ol", { style: "margin:0;padding-left:20px;font-size:13px;line-height:1.8" }, [
+          el("li", {}, [
+            el("span", {}, "Install the "),
+            el("a", { href: "https://www.home-assistant.io/integrations/private_ble_device/", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "Private BLE Device"),
+            el("span", {}, " integration in HA (Settings \u2192 Devices & Services \u2192 Add Integration \u2192 search \"Private BLE Device\")"),
+          ]),
+          el("li", {}, [
+            el("span", {}, "Install the "),
+            el("a", { href: "https://companion.home-assistant.io/", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "HA Companion App"),
+            el("span", {}, " on each phone/watch you want to track"),
+          ]),
+          el("li", {}, "In the Companion App, go to Settings \u2192 Companion App \u2192 BLE Transmitter \u2192 enable it"),
+          el("li", {}, "The app will show the device's IRK \u2014 copy it and paste it into the Private BLE Device integration config"),
+          el("li", {}, "PadSpan will automatically detect the IRK within 5 minutes and start resolving rotating addresses"),
+        ]),
+      ]),
+      el("div", { class: "muted", style: "font-size:12px" }, [
+        el("span", {}, "Tip: Apple devices (iPhone, Apple Watch) share IRKs during Bluetooth pairing. Android devices expose the IRK via the Companion App. "),
+        el("a", { href: "https://community.home-assistant.io/t/private-ble-device-apple-devices/546810", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "Community guide for Apple IRKs"),
+      ]),
+    ]);
+  } else if (_irkCount > 0) {
+    // IRKs configured — show success status
+    privateBleCard = el("div", { class: "card", style: "border-color:#22c55e;background:rgba(34,197,94,.06)" }, [
+      el("div", { style: "display:flex;align-items:center;gap:8px" }, [
+        el("span", { style: "font-size:18px" }, "\u2705"),
+        el("div", {}, [
+          el("div", { style: "font-weight:700;font-size:13px" }, `Private BLE: ${_irkCount} IRK${_irkCount !== 1 ? "s" : ""} loaded \u2022 ${_resolvedCount} address${_resolvedCount !== 1 ? "es" : ""} resolved \u2022 ${_privateBleCount} device${_privateBleCount !== 1 ? "s" : ""} tracked`),
+          _rpaCount > _resolvedCount
+            ? el("div", { class: "muted", style: "font-size:12px" }, `${_rpaCount - _resolvedCount} additional RPA${_rpaCount - _resolvedCount !== 1 ? "s" : ""} seen but not matching any registered IRK \u2014 these may be neighbors' devices or unregistered phones`)
+            : null,
+        ].filter(Boolean)),
+      ]),
+    ]);
+  }
+
   const diagCard =
     diag && (diag.ok === false || (diag.errors && diag.errors.length))
       ? el("div", { class: "card warn" }, [
@@ -161,7 +217,7 @@ export function render(ctx) {
   if (ctx.state.btTab === "esphome_configs") {
     if (ctx.state._esphomeFullDom) return ctx.state._esphomeFullDom;
     const body = renderEsphomeConfigs(ctx);
-    const out = el("div", { id: "bluetooth" }, [header, diagCard, bleDiagCard, tabs, body]);
+    const out = el("div", { id: "bluetooth" }, [header, privateBleCard, diagCard, bleDiagCard, tabs, body]);
     ctx.state._esphomeFullDom = out;
     return out;
   }
@@ -178,7 +234,7 @@ export function render(ctx) {
     body = renderVisualization(ctx, radios, ads, objIndex);
   }
 
-  const out = el("div", { id: "bluetooth" }, [header, diagCard, bleDiagCard, tabs, controls, body]);
+  const out = el("div", { id: "bluetooth" }, [header, privateBleCard, diagCard, bleDiagCard, tabs, controls, body]);
   return out;
 }
 

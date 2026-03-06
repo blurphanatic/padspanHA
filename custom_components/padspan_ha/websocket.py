@@ -126,6 +126,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_beacon_positions_get)
     websocket_api.async_register_command(hass, ws_ha_entities_audit)
     websocket_api.async_register_command(hass, ws_logs_get)
+    websocket_api.async_register_command(hass, ws_private_ble_status)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -881,10 +882,11 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         canonical_by_addr: dict[str, dict[str, Any]] = {}   # addr → {canonical_id, name, kind}
         ibeacon_groups: dict[str, dict[str, Any]] = {}       # "ibeacon:uuid:major:minor" → merged group
         ibeacon_addrs: set[str] = set()                      # MAC addresses absorbed into an iBeacon group
-        _resolver_diag: dict[str, Any] = {"irk_devices": 0, "resolved": 0, "ibeacon_groups": 0, "errors": []}
+        _resolver_diag: dict[str, Any] = {"irk_devices": 0, "resolved": 0, "ibeacon_groups": 0, "rpa_count": 0, "errors": []}
         try:
             resolver = await _get_ble_resolver(hass)
             _resolver_diag["irk_devices"] = resolver.device_count
+            _resolver_diag["rpa_count"] = resolver.count_rpas(ble_by_addr.keys())
             if resolver.has_devices():
                 for addr, rec in ble_by_addr.items():
                     resolved = resolver.resolve_address(addr)
@@ -3275,3 +3277,33 @@ def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
             if inside:
                 return str(room_name)
     return ""
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/private_ble_status"})
+@websocket_api.async_response
+async def ws_private_ble_status(hass: HomeAssistant, connection, msg) -> None:
+    """Return Private BLE Device resolver status for UI setup guidance."""
+    try:
+        resolver = await _get_ble_resolver(hass)
+        status = resolver.get_status()
+
+        # Count RPAs in live BLE cache
+        ble_live = get_bluetooth_live(hass)
+        snap = ble_live.get_snapshot(max_ads=2000, max_age_s=3600)
+        all_addrs = set()
+        for ad in snap:
+            addr = ad.get("address")
+            if addr:
+                all_addrs.add(addr)
+        status["rpa_count"] = resolver.count_rpas(all_addrs)
+        status["total_ble_addresses"] = len(all_addrs)
+
+        connection.send_result(msg["id"], status)
+    except Exception as err:
+        _LOGGER.warning("private_ble_status failed: %s", err)
+        connection.send_result(msg["id"], {
+            "irk_count": 0, "devices": [], "source_info": [],
+            "has_private_ble_integration": False, "mobile_apps": [],
+            "rpa_count": 0, "total_ble_addresses": 0,
+            "error": str(err),
+        })

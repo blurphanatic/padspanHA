@@ -74,21 +74,53 @@ class PrivateBLEResolver:
     # ── public interface ──────────────────────────────────────────────────────
 
     async def async_load(self) -> None:
-        """Read all private_ble_device config entries and cache their IRKs."""
+        """Read IRKs from private_ble_device + mobile_app config entries."""
         self._devices.clear()
+        self._source_info: list[dict[str, Any]] = []  # for UI status
+        seen_irk_hex: set[str] = set()
         try:
+            # 1) private_ble_device entries (the standard HA integration)
             for entry in self._hass.config_entries.async_entries("private_ble_device"):
                 irk_raw = (entry.data or {}).get("irk")
                 if not irk_raw:
                     continue
                 irk_bytes = _parse_irk(irk_raw)
-                if irk_bytes:
+                if irk_bytes and irk_bytes.hex() not in seen_irk_hex:
+                    seen_irk_hex.add(irk_bytes.hex())
                     canonical_id = f"irk:{irk_bytes.hex()}"
+                    name = entry.title or entry.entry_id
                     self._devices.append({
                         "canonical_id": canonical_id,
-                        "name": entry.title or entry.entry_id,
+                        "name": name,
                         "irk_bytes": irk_bytes,
                     })
+                    self._source_info.append({
+                        "name": name, "source": "private_ble_device",
+                        "entry_id": entry.entry_id,
+                    })
+
+            # 2) mobile_app entries — some companion apps expose IRK
+            for entry in self._hass.config_entries.async_entries("mobile_app"):
+                data = entry.data or {}
+                # Check common IRK key names the companion app might use
+                irk_raw = data.get("ble_irk") or data.get("irk")
+                if not irk_raw:
+                    continue
+                irk_bytes = _parse_irk(irk_raw)
+                if irk_bytes and irk_bytes.hex() not in seen_irk_hex:
+                    seen_irk_hex.add(irk_bytes.hex())
+                    canonical_id = f"irk:{irk_bytes.hex()}"
+                    name = entry.title or entry.entry_id
+                    self._devices.append({
+                        "canonical_id": canonical_id,
+                        "name": name,
+                        "irk_bytes": irk_bytes,
+                    })
+                    self._source_info.append({
+                        "name": name, "source": "mobile_app",
+                        "entry_id": entry.entry_id,
+                    })
+
             _LOGGER.debug(
                 "PrivateBLEResolver loaded %d private device(s)", len(self._devices)
             )
@@ -140,6 +172,34 @@ class PrivateBLEResolver:
     @property
     def device_count(self) -> int:
         return len(self._devices)
+
+    def count_rpas(self, addresses: list[str] | set[str]) -> int:
+        """Count how many addresses in the list are Resolvable Private Addresses."""
+        return sum(1 for a in addresses if _is_rpa(a.upper()))
+
+    def get_status(self) -> dict[str, Any]:
+        """Return status info for the UI."""
+        has_integration = False
+        try:
+            entries = list(self._hass.config_entries.async_entries("private_ble_device"))
+            has_integration = len(entries) > 0
+        except Exception:
+            pass
+
+        mobile_apps: list[str] = []
+        try:
+            for entry in self._hass.config_entries.async_entries("mobile_app"):
+                mobile_apps.append(entry.title or entry.entry_id)
+        except Exception:
+            pass
+
+        return {
+            "irk_count": len(self._devices),
+            "devices": [{"name": d["name"], "canonical_id": d["canonical_id"]} for d in self._devices],
+            "source_info": getattr(self, "_source_info", []),
+            "has_private_ble_integration": has_integration,
+            "mobile_apps": mobile_apps,
+        }
 
     # ── iBeacon ───────────────────────────────────────────────────────────────
 
