@@ -310,19 +310,108 @@ function renderScanners(ctx, radios, sources, adsAll) {
     ]);
     if(r.lost || r.disabled) div.style.opacity = "0.7";
     div.style.cursor = "pointer";
-    div.title = "Click for scanner details";
-    div.addEventListener("click", (ev) => { if(ev.target.tagName === "BUTTON" || ev.target.tagName === "INPUT") return; ctx.actions.showScannerDetail(r); });
+    div.title = "Click to see devices heard by this scanner";
     return div;
   };
 
-  return el("div", { class: "grid-2" }, [
-    el("div", { class: "card" }, [el("div", { class: "h2" }, "Scanners"), el("div", { class: "muted" }, "All currently registered scanners/adapters."), el("div", { class: "bt-list" }, radios.map(row))]),
-    el("div", { class: "card" }, [
-      el("div", { class: "h2" }, "Sources"),
-      el("div", { class: "muted" }, "Unique scanner source IDs."),
+  // ── Right panel: objects heard by selected scanner ──
+  if (!ctx.state._scannerSel && radios.length) ctx.state._scannerSel = radios[0].source || "";
+  const selSrc = ctx.state._scannerSel || "";
 
-      el("div", { class: "bt-pills" }, sources.filter(s => s !== "all").map(s => el("span", { class: "pill" }, s))),
-    ]),
+  // Highlight selected scanner in the left list
+  const scannerListEl = el("div", { class: "bt-list" });
+  for (const r of radios) {
+    const rowEl = row(r);
+    const src = String(r.source || "");
+    if (src === selSrc) rowEl.style.cssText += ";border-left:3px solid #52b788;padding-left:8px;background:rgba(82,183,136,.08)";
+    rowEl.addEventListener("click", (ev) => {
+      if (ev.target.tagName === "BUTTON" || ev.target.tagName === "INPUT") return;
+      ev.stopPropagation(); ev.preventDefault();
+      ctx.state._scannerSel = src;
+      ctx.actions.renderRooms();
+    });
+    scannerListEl.appendChild(rowEl);
+  }
+
+  // Build objects list for selected scanner from raw advertisements
+  const objModel = snap && snap.objects ? snap.objects : null;
+  const allObjects = objModel && Array.isArray(objModel.list) ? objModel.list : [];
+
+  // Index objects by address for enrichment
+  const objByAddr = new Map();
+  for (const o of allObjects) {
+    if (o.address) objByAddr.set(String(o.address).toUpperCase(), o);
+    for (const a of (o.all_addresses || [])) { if (a) objByAddr.set(String(a).toUpperCase(), o); }
+  }
+
+  // Find all ads from this scanner
+  const scannerAds = adsAll.filter(a => String(a.source || "") === selSrc);
+  // Dedup by address, keep best RSSI
+  const addrMap = new Map();
+  for (const a of scannerAds) {
+    const addr = (a.address || "").toUpperCase();
+    if (!addr) continue;
+    const prev = addrMap.get(addr);
+    if (!prev || (a.rssi || -200) > (prev.rssi || -200)) addrMap.set(addr, a);
+  }
+  const uniqueAds = [...addrMap.values()].sort((a, b) => (b.rssi || -200) - (a.rssi || -200));
+
+  const fmtAgo = (s) => {
+    const v = Number(s); if (!isFinite(v)) return "—";
+    if (v < 1) return "<1s"; if (v < 60) return `${Math.round(v)}s`;
+    const m = Math.floor(v/60); if (m < 60) return `${m}m ${Math.round(v-m*60)}s`;
+    return `${Math.floor(m/60)}h ${m%60}m`;
+  };
+
+  const detailCard = el("div", { class: "card", style: "max-height:80vh;overflow-y:auto" });
+  const selRadio = radios.find(r => String(r.source || "") === selSrc);
+  const selName = selRadio ? (selRadio.name || selSrc) : selSrc;
+  const _sid = ctx.helpers.radioShortId ? ctx.helpers.radioShortId(selSrc) : "";
+  detailCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap" }, [
+    _sid ? el("span", { class: "pill", style: "font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px" }, _sid) : null,
+    el("div", { class: "h2", style: "margin:0" }, selName),
+    el("span", { class: "badge" }, `${uniqueAds.length} devices`),
+  ].filter(Boolean)));
+  detailCard.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:10px" }, "All BLE devices heard by this scanner, sorted by signal strength."));
+
+  if (!uniqueAds.length) {
+    detailCard.appendChild(el("div", { class: "muted", style: "padding:12px 0" }, "No devices heard by this scanner yet."));
+  } else {
+    const tbody = el("tbody");
+    for (const a of uniqueAds) {
+      const addr = (a.address || "").toUpperCase();
+      const obj = objByAddr.get(addr);
+      const displayName = obj ? (obj.user_label || obj.name || addr) : (a.name && a.name !== addr ? a.name : addr);
+      const kindLabel = obj ? (obj.kind === "private_ble" ? "Private BLE" : obj.kind === "ibeacon" ? "iBeacon" : obj.identified ? "BLE" : "BLE?") : "";
+      const pct = Math.max(0, Math.min(100, ((a.rssi || -100) + 100) / 60 * 100));
+      const bar = el("div", { style: `width:${pct.toFixed(0)}%;height:5px;background:#52b788;border-radius:3px;min-width:2px` });
+
+      const tr = el("tr", { style: "cursor:pointer" }, [
+        el("td", { style: "max-width:200px" }, [
+          el("div", { style: "font-weight:600;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, displayName),
+          displayName !== addr ? el("div", { class: "muted", style: "font-size:10px;font-family:monospace" }, addr) : null,
+        ].filter(Boolean)),
+        el("td", {}, kindLabel ? el("span", { class: "badge", style: "font-size:9px;padding:1px 5px" }, kindLabel) : ""),
+        el("td", { style: "white-space:nowrap" }, [
+          el("div", { style: "width:60px;background:#1a2e1e;border-radius:3px" }, bar),
+          el("div", { class: "muted", style: "font-size:10px" }, `${a.rssi || "?"} dBm`),
+        ]),
+        el("td", { class: "muted", style: "font-size:11px;white-space:nowrap" }, fmtAgo(a.age_s)),
+      ]);
+      if (obj) {
+        tr.addEventListener("click", () => ctx.actions.showObjectDetail(obj));
+      }
+      tbody.appendChild(tr);
+    }
+    detailCard.appendChild(el("table", { class: "table" }, [
+      el("thead", {}, el("tr", {}, [el("th",{},"Device"), el("th",{},"Kind"), el("th",{},"Signal"), el("th",{},"Age")])),
+      tbody,
+    ]));
+  }
+
+  return el("div", { class: "grid-2" }, [
+    el("div", { class: "card" }, [el("div", { class: "h2" }, "Scanners"), el("div", { class: "muted", style: "margin-bottom:8px" }, "Select a scanner to see what it hears."), scannerListEl]),
+    detailCard,
   ]);
 }
 
