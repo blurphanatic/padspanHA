@@ -274,9 +274,9 @@ export function render(ctx){
     },[
       el("td",{}, [
         isPrivateBle
-          ? el("span",{class:"badge",style:"background:#1a3a5a;color:#7dd3fc;border-color:#3b82f6"}, "Private BLE")
+          ? el("span",{class:"badge"+(identified?"":" warn"),style:identified?"background:#1a3a5a;color:#7dd3fc;border-color:#3b82f6":""}, identified?"Private BLE":"Private BLE?")
           : isIbeacon
-            ? el("span",{class:"badge",style:"background:#3a2a0a;color:#fbbf24;border-color:#d97706"}, "iBeacon")
+            ? el("span",{class:"badge"+(identified?"":" warn"),style:identified?"background:#3a2a0a;color:#fbbf24;border-color:#d97706":""}, identified?"iBeacon":"iBeacon?")
             : el("span",{class:"badge"+(identified?"":" warn")}, kind==="ble" ? (identified?"BLE":"BLE?") : "Entity"),
       ]),
       el("td",{}, [

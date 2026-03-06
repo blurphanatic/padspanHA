@@ -1053,7 +1053,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "connectable": rec.get("connectable"),
                 "prefix": prefix or None,
                 "prefix_count": prefix_counts.get(prefix, 0),
-                "identified": True,
+                "identified": bool(pg["device"] or pg["all_linked"]),
                 "linked_entities": sorted(pg["all_linked"]),
                 "device": pg["device"],
             }
@@ -1122,8 +1122,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 except Exception:
                     pass
 
-        unidentified = [o for o in objects if o.get("kind") == "ble" and not o.get("identified")]
-        identified = [o for o in objects if not (o.get("kind") == "ble" and not o.get("identified"))]
+        unidentified = [o for o in objects if o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified")]
+        identified = [o for o in objects if not (o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified"))]
         common_prefixes = {p: c for p, c in prefix_counts.items() if c >= 3}
 
         snapshot["objects"] = {
