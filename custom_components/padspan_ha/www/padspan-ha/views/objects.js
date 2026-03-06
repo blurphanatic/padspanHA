@@ -299,7 +299,19 @@ export function render(ctx){
       "data-kind": kind,
       "data-identified": identified ? "1" : "0",
       "data-age": String(o.age_s != null ? Math.round(o.age_s) : 0),
-      "data-search": `${kind} ${displayName} ${addr} ${userLabel} ${o.entity_id||""} ${scanner} ${o.ibeacon_uuid||""} ${o.company_name||""} ${o.device_type||""} ${(o.service_names||[]).join(" ")} ${isAway?"away":""}`.toLowerCase(),
+      "data-search": [
+        kind, displayName, addr, userLabel, o.entity_id, scanner,
+        o.ibeacon_uuid, o.company_name, o.device_type,
+        (o.service_names||[]).join(" "),
+        o.canonical_id, o.key, o.name, o.private_ble_name,
+        (o.all_addresses||[]).join(" "),
+        (o.linked_entities||[]).join(" "),
+        o.ibeacon_major, o.ibeacon_minor,
+        o.vendor, o.device, o.prefix,
+        o.first_seen,
+        (o.service_uuids||[]).join(" "),
+        isAway ? "away" : "",
+      ].filter(Boolean).join(" ").toLowerCase(),
     },[
       el("td",{}, [
         isPrivateBle
