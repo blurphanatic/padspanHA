@@ -195,12 +195,11 @@ export function render(ctx){
   if (!ctx.state.objSearch) ctx.state.objSearch = "";
   if (!ctx.state.objKind)   ctx.state.objKind   = "all";
   if (!ctx.state.objStatus) ctx.state.objStatus  = "all";
-  if (ctx.state.objAgeMax == null) ctx.state.objAgeMax = 604800; // default: show all (1 week)
+  if (ctx.state.objAgeMax == null) ctx.state.objAgeMax = 14400; // default: 4 hours
 
   // Time range slider: controls how far back to show objects
-  // Steps: 5m=300, 15m=900, 1h=3600, 6h=21600, 1d=86400, 3d=259200, 7d=604800
-  const _ageSteps = [300, 900, 3600, 21600, 86400, 259200, 604800];
-  const _ageLabels = ["5 min", "15 min", "1 hour", "6 hours", "1 day", "3 days", "1 week"];
+  const _ageSteps = [60, 300, 900, 3600, 14400, 43200, 86400, 259200, 604800];
+  const _ageLabels = ["1 min", "5 min", "15 min", "1 hour", "4 hours", "12 hours", "1 day", "3 days", "1 week"];
   const _ageIdx = _ageSteps.indexOf(ctx.state.objAgeMax);
   const _curIdx = _ageIdx >= 0 ? _ageIdx : _ageSteps.length - 1;
 

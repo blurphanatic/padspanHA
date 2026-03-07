@@ -134,6 +134,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_companion_discover)
     websocket_api.async_register_command(hass, ws_companion_follow)
     websocket_api.async_register_command(hass, ws_companion_unfollow)
+    websocket_api.async_register_command(hass, ws_tags_status)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -2097,6 +2098,9 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("mqtt_publish_enabled"): bool,
         vol.Optional("lights_panel_enabled"): bool,
         vol.Optional("bermuda_ignore"): bool,
+        vol.Optional("tags_room_events_enabled"): bool,
+        vol.Optional("tags_nfc_identify_enabled"): bool,
+        vol.Optional("tags_phone_autolink_enabled"): bool,
     }
 )
 @websocket_api.async_response
@@ -2168,7 +2172,9 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["advanced_extra_tabs"] = [t for t in msg["advanced_extra_tabs"] if t in valid]
         for key in ("ha_entity_tracker_enabled", "ha_entity_area_enabled",
                     "ha_entity_distance_enabled", "ha_entity_scanner_distance_enabled",
-                    "mqtt_publish_enabled", "lights_panel_enabled", "bermuda_ignore"):
+                    "mqtt_publish_enabled", "lights_panel_enabled", "bermuda_ignore",
+                    "tags_room_events_enabled", "tags_nfc_identify_enabled",
+                    "tags_phone_autolink_enabled"):
             if key in msg:
                 payload[key] = bool(msg[key])
         await st.async_set(**payload)
@@ -4439,3 +4445,55 @@ async def ws_companion_unfollow(hass: HomeAssistant, connection, msg) -> None:
     except Exception as err:
         _LOGGER.warning("companion_unfollow failed: %s", err)
         connection.send_error(msg["id"], "unfollow_failed", str(err))
+
+
+# ── HA Tags integration status ──────────────────────────────────────────────
+
+@websocket_api.websocket_command({"type": "padspan_ha/tags_status"})
+@websocket_api.async_response
+async def ws_tags_status(hass: HomeAssistant, connection, msg) -> None:
+    """Return HA Tags integration status and followed object tag mappings."""
+    try:
+        settings = _get_settings(hass)
+        room_events = settings.get("tags_room_events_enabled", False)
+        nfc_identify = settings.get("tags_nfc_identify_enabled", False)
+        phone_autolink = settings.get("tags_phone_autolink_enabled", False)
+
+        # Build tag_id mappings for followed objects
+        import re
+        followed = settings.get("followed_addrs") or []
+        obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+        mappings: list[dict[str, str]] = []
+        for addr in followed:
+            tag_id = "padspan_" + re.sub(r"[^a-z0-9_]", "_", addr.lower().strip())
+            label = addr
+            if obj_store:
+                entry = obj_store.get(addr)
+                if entry:
+                    label = entry.get("label", addr)
+            mappings.append({
+                "object_key": addr,
+                "tag_id": tag_id,
+                "label": label,
+            })
+
+        # Check if HA tag component is loaded
+        tag_available = "tag" in hass.config.components
+
+        connection.send_result(msg["id"], {
+            "tag_available": tag_available,
+            "room_events_enabled": room_events,
+            "nfc_identify_enabled": nfc_identify,
+            "phone_autolink_enabled": phone_autolink,
+            "followed_tag_mappings": mappings,
+        })
+    except Exception as err:
+        _LOGGER.warning("tags_status failed: %s", err)
+        connection.send_result(msg["id"], {
+            "tag_available": False,
+            "room_events_enabled": False,
+            "nfc_identify_enabled": False,
+            "phone_autolink_enabled": False,
+            "followed_tag_mappings": [],
+            "error": str(err),
+        })

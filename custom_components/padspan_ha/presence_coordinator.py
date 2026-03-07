@@ -478,6 +478,16 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._pending_room_changes:
             await self._process_room_alerts(now, result)
             await self._record_movement(result)
+            # Emit HA tag events for room changes (Feature 1)
+            try:
+                from .const import DATA_TAG_INTEGRATION
+                tag_int = self.hass.data.get(DOMAIN, {}).get(DATA_TAG_INTEGRATION)
+                if tag_int:
+                    await tag_int.async_emit_room_changes(
+                        self._pending_room_changes, result
+                    )
+            except Exception:
+                pass
             self._pending_room_changes.clear()
 
         # ── Experimental MQTT publishing ─────────────────────────────────────

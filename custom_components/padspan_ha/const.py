@@ -4,7 +4,7 @@
 # See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 DOMAIN = "padspan_ha"
 NAME = "PadSpan HA"
-VERSION = "0.7.32"
+VERSION = "0.7.33"
 
 CONF_ENABLE_CLOUD = "enable_cloud"
 CONF_HUB_URL = "hub_url"
@@ -51,3 +51,4 @@ OBJECT_HISTORY_STORE_KEY = "padspan_ha.object_history"
 DATA_OBJECT_HISTORY = "object_history"
 TRACEBACK_STORE_KEY = "padspan_ha.traceback"
 DATA_TRACEBACK = "traceback"
+DATA_TAG_INTEGRATION = "tag_integration"

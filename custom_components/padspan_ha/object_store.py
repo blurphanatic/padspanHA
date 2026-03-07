@@ -60,6 +60,11 @@ class ObjectStore:
         """Return the label entry for a MAC address, or None."""
         return self._data.get(mac.upper())
 
+    def get_label(self, mac: str) -> str | None:
+        """Return just the label string for a MAC address, or None."""
+        entry = self._data.get(mac.upper())
+        return entry.get("label") if entry else None
+
     def all(self) -> dict[str, dict[str, Any]]:
         """Return a copy of all label entries."""
         return dict(self._data)

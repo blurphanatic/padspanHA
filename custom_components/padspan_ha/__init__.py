@@ -39,6 +39,7 @@ from .const import (
     DATA_MOVEMENT,
     DATA_ADAPTIVE,
     DATA_TRACEBACK,
+    DATA_TAG_INTEGRATION,
     DATA_PANEL_REGISTERED,
 )
 from .adaptive_store import AdaptiveStore
@@ -113,6 +114,13 @@ async def _ensure_stores(hass: HomeAssistant) -> None:
         await tb_store.async_load()
         hass.data[DOMAIN][DATA_TRACEBACK] = tb_store
         _LOGGER.debug("TracebackStore ready (%d frames)", len(tb_store.frames))
+
+    if DATA_TAG_INTEGRATION not in hass.data[DOMAIN]:
+        from .tag_integration import TagIntegration
+        tag_int = TagIntegration(hass)
+        await tag_int.async_setup()
+        hass.data[DOMAIN][DATA_TAG_INTEGRATION] = tag_int
+        _LOGGER.debug("TagIntegration ready")
 
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -291,6 +299,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Stop presence coordinator
     try:
         hass.data.get(DOMAIN, {}).pop("presence_coordinator", None)
+    except Exception:
+        pass
+
+    # Stop tag integration listener
+    try:
+        tag_int = hass.data.get(DOMAIN, {}).pop(DATA_TAG_INTEGRATION, None)
+        if tag_int:
+            tag_int.unload()
     except Exception:
         pass
 

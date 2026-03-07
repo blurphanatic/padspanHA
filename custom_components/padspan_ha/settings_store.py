@@ -58,6 +58,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Lights sidebar panel (off by default — requires HA restart to take effect)
     "lights_panel_enabled": False,
     "bermuda_ignore": False,  # experimental: ignore all Bermuda integration data
+    # HA Tags integration
+    "tags_room_events_enabled": False,     # emit tag_scanned on room changes
+    "tags_nfc_identify_enabled": False,    # NFC tap-to-identify BLE objects
+    "tags_phone_autolink_enabled": False,  # auto-track phone on NFC scan
 }
 
 

@@ -1327,6 +1327,107 @@ function _settingsPresence(ctx, el){
     resetAdaptiveBtn,
   ]));
 
+  // ── HA Tags Integration ─────────────────────────────────────────────────
+  {
+    const tagsRoomEvt = settings.tags_room_events_enabled === true;
+    const tagsNfc = settings.tags_nfc_identify_enabled === true;
+    const tagsAutolink = settings.tags_phone_autolink_enabled === true;
+
+    const roomEvtToggle = el("input",{type:"checkbox",id:"tagsRoomEvtToggle",style:"width:16px;height:16px;accent-color:#52b788;cursor:pointer"});
+    roomEvtToggle.checked = tagsRoomEvt;
+    roomEvtToggle.addEventListener("change", async()=>{
+      try {
+        await ctx.actions.settingsSet({ tags_room_events_enabled: roomEvtToggle.checked });
+        ctx.toast(roomEvtToggle.checked ? "Room-change tag events enabled" : "Room-change tag events disabled");
+      } catch(e){ ctx.toast("Failed to save", true); }
+    });
+
+    const nfcToggle = el("input",{type:"checkbox",id:"tagsNfcToggle",style:"width:16px;height:16px;accent-color:#52b788;cursor:pointer"});
+    nfcToggle.checked = tagsNfc;
+    nfcToggle.addEventListener("change", async()=>{
+      try {
+        await ctx.actions.settingsSet({ tags_nfc_identify_enabled: nfcToggle.checked });
+        ctx.toast(nfcToggle.checked ? "NFC tap-to-identify enabled" : "NFC tap-to-identify disabled");
+      } catch(e){ ctx.toast("Failed to save", true); }
+    });
+
+    const autolinkToggle = el("input",{type:"checkbox",id:"tagsAutolinkToggle",style:"width:16px;height:16px;accent-color:#52b788;cursor:pointer"});
+    autolinkToggle.checked = tagsAutolink;
+    autolinkToggle.addEventListener("change", async()=>{
+      try {
+        await ctx.actions.settingsSet({ tags_phone_autolink_enabled: autolinkToggle.checked });
+        ctx.toast(autolinkToggle.checked ? "Phone auto-link enabled" : "Phone auto-link disabled");
+      } catch(e){ ctx.toast("Failed to save", true); }
+    });
+
+    // Tag mappings info (async load)
+    const mappingsDiv = el("div",{style:"margin-top:10px;display:none"});
+    (async () => {
+      try {
+        const res = await ctx.actions.wsCall("padspan_ha/tags_status", {});
+        if (!res.tag_available) {
+          mappingsDiv.style.display = "";
+          mappingsDiv.appendChild(el("div",{style:"font-size:12px;color:#fbbf24;padding:6px 10px;background:#422006;border-radius:4px"},
+            "HA Tags component not loaded. Add a Tag in HA Settings \u2192 Tags to enable it."));
+          return;
+        }
+        const maps = res.followed_tag_mappings || [];
+        if (maps.length && tagsRoomEvt) {
+          mappingsDiv.style.display = "";
+          mappingsDiv.appendChild(el("div",{style:"font-size:12px;font-weight:600;color:#94a3b8;margin-bottom:4px"},
+            `Tag IDs for ${maps.length} followed object(s):`));
+          for (const m of maps.slice(0, 10)) {
+            mappingsDiv.appendChild(el("div",{style:"font-size:11px;color:#64748b;padding:2px 0"},
+              `${m.label} \u2192 tag_id: "${m.tag_id}"`));
+          }
+          mappingsDiv.appendChild(el("div",{style:"font-size:11px;color:#475569;margin-top:4px"},
+            "Use these tag_ids in HA Automations to trigger actions on room changes."));
+        }
+      } catch(e) {}
+    })();
+
+    wrap.appendChild(el("div",{class:"card"},[
+      el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:8px"},[
+        el("div",{class:"h2",style:"margin:0;color:#60a5fa"}, "HA Tags Integration"),
+      ]),
+      el("div",{class:"muted",style:"font-size:12px;margin-bottom:12px"},
+        "Connect PadSpan to Home Assistant's Tags system for automations and easy object setup."),
+      el("div",{style:"display:flex;flex-direction:column;gap:10px"},[
+        el("div",{style:"padding:10px;background:#0f172a;border-radius:6px"},[
+          el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
+            roomEvtToggle,
+            el("label",{for:"tagsRoomEvtToggle",style:"font-size:13px;color:#e2e8f0;cursor:pointer;font-weight:600"},
+              "Room-change tag events"),
+          ]),
+          el("div",{style:"font-size:11px;color:#64748b"},
+            "Fires a tag_scanned event when a followed object changes rooms. " +
+            "Build HA automations that trigger on room transitions (e.g. turn on lights when you enter a room)."),
+        ]),
+        el("div",{style:"padding:10px;background:#0f172a;border-radius:6px"},[
+          el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
+            nfcToggle,
+            el("label",{for:"tagsNfcToggle",style:"font-size:13px;color:#e2e8f0;cursor:pointer;font-weight:600"},
+              "NFC tap-to-identify"),
+          ]),
+          el("div",{style:"font-size:11px;color:#64748b"},
+            "Scan an NFC tag near an unidentified BLE object to auto-label and follow it. " +
+            "PadSpan matches the scanning phone's room to the nearest unidentified BLE signal."),
+        ]),
+        el("div",{style:"padding:10px;background:#0f172a;border-radius:6px"},[
+          el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
+            autolinkToggle,
+            el("label",{for:"tagsAutolinkToggle",style:"font-size:13px;color:#e2e8f0;cursor:pointer;font-weight:600"},
+              "Phone auto-link on NFC scan"),
+          ]),
+          el("div",{style:"font-size:11px;color:#64748b"},
+            "When a phone scans any NFC tag, PadSpan auto-discovers and follows that phone's BLE Transmitter. " +
+            "A quick way to onboard new phones without visiting the Overview page."),
+        ]),
+      ]),
+      mappingsDiv,
+    ]));
+  }
+
   // ── Ignore Bermuda Data (Experimental) ──────────────────────────────────
   const bermudaIgnore = settings.bermuda_ignore === true;
 
