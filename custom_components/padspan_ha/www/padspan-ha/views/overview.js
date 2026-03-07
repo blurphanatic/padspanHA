@@ -1656,12 +1656,42 @@ export function render(ctx){
           info.appendChild(meta);
           row.appendChild(info);
 
-          // Status badge
+          // Status badge + untrack
           if (phone.is_followed) {
+            const btnWrap = document.createElement("div");
+            btnWrap.style.cssText = "display:flex;align-items:center;gap:6px";
             const badge = document.createElement("span");
             badge.style.cssText = "font-size:11px;color:#34d399;font-weight:600;padding:3px 8px;border:1px solid #065f46;border-radius:4px";
             badge.textContent = "Tracked";
-            row.appendChild(badge);
+            btnWrap.appendChild(badge);
+            const unBtn = document.createElement("button");
+            unBtn.className = "btn inline";
+            unBtn.style.cssText = "font-size:11px;padding:3px 10px;color:#f87171;border-color:#7f1d1d";
+            unBtn.textContent = "Untrack";
+            unBtn.addEventListener("click", async () => {
+              if (!confirm(`Stop tracking ${phone.device_name || "this phone"} and remove its label?`)) return;
+              unBtn.disabled = true;
+              unBtn.textContent = "Removing...";
+              try {
+                await ctx.actions.wsCall("padspan_ha/companion_unfollow", {
+                  ibeacon_key: phone.ibeacon_key,
+                });
+                // Sync local state
+                const fk = phone.ibeacon_key.toUpperCase();
+                ctx.state.followedAddrs.delete(fk);
+                try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
+                badge.textContent = "Removed";
+                badge.style.color = "#64748b";
+                badge.style.borderColor = "#334155";
+                unBtn.style.display = "none";
+                setTimeout(() => ctx.actions.renderRooms(), 1500);
+              } catch (e) {
+                unBtn.textContent = "Error";
+                unBtn.disabled = false;
+              }
+            });
+            btnWrap.appendChild(unBtn);
+            row.appendChild(btnWrap);
           } else {
             // Follow button
             const btn = document.createElement("button");

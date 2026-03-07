@@ -133,6 +133,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_objects_clear_history)
     websocket_api.async_register_command(hass, ws_companion_discover)
     websocket_api.async_register_command(hass, ws_companion_follow)
+    websocket_api.async_register_command(hass, ws_companion_unfollow)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -4400,3 +4401,41 @@ async def ws_companion_follow(hass: HomeAssistant, connection, msg) -> None:
     except Exception as err:
         _LOGGER.warning("companion_follow failed: %s", err)
         connection.send_error(msg["id"], "follow_failed", str(err))
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/companion_unfollow",
+    vol.Required("ibeacon_key"): str,
+})
+@websocket_api.async_response
+async def ws_companion_unfollow(hass: HomeAssistant, connection, msg) -> None:
+    """Remove a Companion App phone from followed list and delete its label."""
+    try:
+        ibeacon_key = str(msg["ibeacon_key"])
+        follow_key = ibeacon_key.upper()
+        results: list[str] = []
+
+        # 1) Remove label from ObjectStore
+        obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+        if obj_store:
+            await obj_store.async_delete(ibeacon_key)
+            await obj_store.async_delete(follow_key)
+            results.append("Label removed")
+
+        # 2) Remove from followed_addrs
+        st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+        if st:
+            followed_list = list(st.data.get("followed_addrs") or [])
+            new_list = [f for f in followed_list if f.upper() != follow_key]
+            if len(new_list) < len(followed_list):
+                await st.async_set(followed_addrs=new_list)
+                results.append("Removed from followed list")
+
+        connection.send_result(msg["id"], {
+            "ok": True,
+            "ibeacon_key": ibeacon_key,
+            "actions": results,
+        })
+    except Exception as err:
+        _LOGGER.warning("companion_unfollow failed: %s", err)
+        connection.send_error(msg["id"], "unfollow_failed", str(err))
