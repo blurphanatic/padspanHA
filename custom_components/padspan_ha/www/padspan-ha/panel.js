@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.22";
+const APP_VERSION = "0.7.23";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260307T172300Z";
+const BUILD_ID = "20260307T180558Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -52,6 +52,7 @@ const _viewsPromise = Promise.allSettled([
   import(`./views/qa.js?b=${BUILD_ID}`).then(m => { VIEWS.qa = m; }),
   import(`./views/training.js?b=${BUILD_ID}`).then(m => { VIEWS.training = m; }),
   import(`./views/calibration.js?b=${BUILD_ID}`).then(m => { VIEWS.calibration = m; }),
+  import(`./views/traceback.js?b=${BUILD_ID}`).then(m => { VIEWS.traceback = m; }),
   import(`./views/sandbox.js?b=${BUILD_ID}`).then(m => { VIEWS.sandbox = m; }),
 ]).then(results => {
   results.forEach((r, i) => {
@@ -72,6 +73,7 @@ const MENU = [
   ["manage","Manage","mdi:cog-wrench"],
   ["training","Training","mdi:school-outline"],
   ["calibration","Calibration","mdi:crosshairs"],
+  ["traceback","Traceback","mdi:history"],
   ["qa","QA","mdi:clipboard-check-outline"],
   ["sandbox","Sandbox","mdi:flask-outline"],
 ];
@@ -81,7 +83,7 @@ const BASIC_TABS = new Set(["follow", "overview", "maps", "settings", "training"
 // Tabs shown in Advanced mode by default (user can add more via Settings → UI Structure)
 const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration"]);
 // Tabs that only appear in Development mode unless opted into Advanced
-const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox"];
+const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","traceback","qa","sandbox"];
 
 const MENU_COLORS = {
   follow: "#5eead4",
@@ -103,6 +105,7 @@ const MENU_COLORS = {
   calibration: "#26a69a",
   diagnostics: "#9575cd",
   debug: "#ef5350",
+  traceback: "#fbbf24",
   qa: "#26c6da",
   sandbox: "#9ccc65",
 };

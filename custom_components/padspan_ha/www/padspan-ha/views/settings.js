@@ -715,12 +715,247 @@ function _settingsPresence(ctx, el){
     irkCard.appendChild(el("div", { style: rowStyle + ";margin-top:4px" }, [nameInp, addBtn]));
     irkCard.appendChild(irkMsg);
 
-    // Help text
+    // Brief help
     irkCard.appendChild(el("div", { class: "muted", style: "font-size:11px;margin-top:12px;line-height:1.6" },
-      "How to get your IRK: On iOS, use Keychain Access on a Mac synced to the same iCloud. " +
-      "On Android, enable BLE Transmitter in the HA Companion App (Settings → Companion App → BLE Transmitter) — " +
-      "the IRK is shown in the settings. Alternatively, use an ESP32 IRK capture tool."
+      "Paste your device's IRK above and PadSpan handles the rest. Click below for step-by-step instructions for every device type."
     ));
+
+    // Detailed guide toggle
+    const guideBtn = el("button", { class: "btn inline", style: "margin-top:8px;font-size:12px;color:#60a5fa;border-color:#1e4976" }, "Detailed Setup Guide");
+    const guidePanel = el("div", { style: "display:none;margin-top:12px;border:1px solid #1e3a2a;border-radius:8px;padding:14px;background:#060d08;line-height:1.7;font-size:12px;color:#cbd5e1" });
+    guideBtn.addEventListener("click", () => {
+      const open = guidePanel.style.display !== "none";
+      guidePanel.style.display = open ? "none" : "block";
+      guideBtn.textContent = open ? "Detailed Setup Guide" : "Hide Guide";
+    });
+    irkCard.appendChild(guideBtn);
+
+    guidePanel.innerHTML = `
+<div style="font-size:14px;font-weight:700;color:#e2e8f0;margin-bottom:10px">What is an IRK and why do you need it?</div>
+<p style="margin:0 0 10px">
+  Modern phones, watches, and tablets use <b>BLE Privacy</b> — they constantly rotate their Bluetooth MAC address
+  (called a <b>Random Private Address</b> or <b>RPA</b>) every ~15 minutes to prevent tracking.
+  This means a single phone looks like dozens of different devices to your BLE scanners.
+</p>
+<p style="margin:0 0 10px">
+  The <b>IRK (Identity Resolving Key)</b> is a secret 128-bit key stored on the device. Anyone who knows the IRK
+  can mathematically verify that a rotating MAC belongs to that specific device. By giving PadSpan your device's IRK,
+  it can resolve all those rotating addresses back to one identity — enabling reliable room-level tracking.
+</p>
+<p style="margin:0 0 16px">
+  PadSpan uses Home Assistant's <b>Private BLE Device</b> integration under the hood. You just paste the IRK here
+  and PadSpan creates the integration entry automatically — no manual HA configuration needed.
+</p>
+
+<div style="font-size:14px;font-weight:700;color:#e2e8f0;margin-bottom:8px;border-top:1px solid #1e3a2a;padding-top:12px">
+  Getting the IRK: By Device Type
+</div>
+
+<!-- ── iPhone / iPad ── -->
+<div style="margin-bottom:16px">
+  <div style="font-weight:700;color:#60a5fa;font-size:13px;margin-bottom:4px">Apple iPhone / iPad / Apple Watch</div>
+  <p style="margin:0 0 6px">Apple does NOT expose the IRK in iOS settings. You need a <b>Mac</b> signed into the <b>same iCloud account</b>.</p>
+  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Method 1: Mac Keychain Access (recommended)</div>
+  <ol style="margin:0 0 8px;padding-left:20px">
+    <li>On your Mac, open <b>Keychain Access</b> (search in Spotlight).</li>
+    <li>In the top menu, select <b>Keychain Access → Preferences → Show Keychain Status in Menu Bar</b> (if needed).</li>
+    <li>Ensure you're viewing the <b>iCloud</b> or <b>login</b> keychain (sidebar).</li>
+    <li>In the search bar, type <b>BluetoothLE</b> or <b>GattServer</b>.</li>
+    <li>Look for entries like <code style="background:#1a2a1a;padding:1px 4px;border-radius:3px">com.apple.bluetooth.…LTK</code> or similar.</li>
+    <li>Double-click each entry → click <b>Show password</b> (enter your Mac password).</li>
+    <li>The data contains a <b>plist</b> or binary blob. Look for a 16-byte (32 hex character) value labeled <b>IRK</b> or <b>IdentityResolvingKey</b>.</li>
+    <li>Copy the 32-character hex string and paste it above.</li>
+  </ol>
+
+  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Method 2: macOS Terminal (faster if you know your way around)</div>
+  <ol style="margin:0 0 8px;padding-left:20px">
+    <li>Open <b>Terminal</b> on your Mac.</li>
+    <li>Run: <code style="background:#1a2a1a;padding:2px 6px;border-radius:3px;display:inline-block;margin:2px 0">
+      sudo defaults read /private/var/root/Library/Preferences/com.apple.bluetoothd.plist</code></li>
+    <li>Enter your admin password.</li>
+    <li>Search the output for your iPhone/iPad/Watch name. Under its entry, find the <b>IRK</b> field.</li>
+    <li>The IRK will be shown as a <b>base64</b> string (e.g., <code style="background:#1a2a1a;padding:1px 4px;border-radius:3px">aBcDeFgHiJkLmNoPqRsTuA==</code>)
+        or as hex data inside angle brackets (<code style="background:#1a2a1a;padding:1px 4px;border-radius:3px">&lt;a1b2c3d4 e5f6a7b8…&gt;</code>).</li>
+    <li>Paste either format — PadSpan accepts both hex and base64.</li>
+  </ol>
+
+  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Method 3: ESP32 BLE IRK Sniffer</div>
+  <ol style="margin:0 0 8px;padding-left:20px">
+    <li>If you don't have a Mac, use an ESP32 running a BLE bond/pairing sketch.</li>
+    <li>Flash the ESP32 with a BLE pairing firmware (search for <b>"ESP32 IRK capture"</b> — several open-source tools exist).</li>
+    <li>Put your phone in Bluetooth pairing mode and pair it with the ESP32.</li>
+    <li>After pairing completes, the ESP32 serial output shows the exchanged keys including the IRK.</li>
+    <li>Copy the 32-hex-character IRK and paste it above.</li>
+  </ol>
+
+  <div style="background:#1a1a0a;border:1px solid #92400e;border-radius:6px;padding:8px 10px;margin-top:4px">
+    <div style="font-weight:600;color:#fbbf24;font-size:11px;margin-bottom:2px">Apple Watch Note</div>
+    <div style="font-size:11px;color:#d4d4aa">
+      Apple Watch has its own separate IRK (different from the paired iPhone). You need to find and add it separately.
+      Look for the Watch's Bluetooth name in the Keychain/plist data. Each Watch will appear as a separate device.
+    </div>
+  </div>
+</div>
+
+<!-- ── Android ── -->
+<div style="margin-bottom:16px">
+  <div style="font-weight:700;color:#34d399;font-size:13px;margin-bottom:4px">Android Phones / Tablets</div>
+
+  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Method 1: Home Assistant Companion App (easiest)</div>
+  <ol style="margin:0 0 8px;padding-left:20px">
+    <li>Install the <b>Home Assistant Companion App</b> on the Android device.</li>
+    <li>Open the app → <b>Settings</b> (gear icon) → <b>Companion App</b> → <b>Manage Sensors</b>.</li>
+    <li>Find and enable <b>BLE Transmitter</b>.</li>
+    <li>Once enabled, go back to <b>Companion App</b> → <b>Troubleshooting</b> → scroll to <b>BLE Transmitter</b> section.</li>
+    <li>The <b>IRK</b> is displayed as a hex string. Copy it.</li>
+    <li>Paste the IRK above and give the device a name (e.g., "Bob's Pixel 8").</li>
+  </ol>
+  <div style="background:#0a1a1a;border:1px solid #164e63;border-radius:6px;padding:8px 10px;margin-bottom:8px">
+    <div style="font-weight:600;color:#22d3ee;font-size:11px;margin-bottom:2px">Important: BLE Transmitter must stay enabled</div>
+    <div style="font-size:11px;color:#a5c8d4">
+      The HA Companion App's BLE Transmitter makes Android broadcast a consistent BLE identity that can be resolved
+      with the IRK. Without it enabled, Android's BLE privacy will still rotate addresses but without a resolvable IRK.
+      Keep it enabled for continuous tracking. Battery impact is minimal (~1-2%).
+    </div>
+  </div>
+
+  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Method 2: ADB / Root Access (advanced)</div>
+  <ol style="margin:0 0 8px;padding-left:20px">
+    <li>On a rooted Android device (or via ADB with root): <code style="background:#1a2a1a;padding:2px 6px;border-radius:3px;display:inline-block;margin:2px 0">
+      adb shell su -c "cat /data/misc/bluedroid/bt_config.conf"</code></li>
+    <li>Find the <b>[Local]</b> section → look for <b>LE_LOCAL_KEY_IRK</b>.</li>
+    <li>The value is your IRK in hex. Copy and paste above.</li>
+  </ol>
+
+  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Method 3: ESP32 Pairing (same as iPhone method)</div>
+  <p style="margin:0 0 8px;padding-left:20px">Pair the Android phone with an ESP32 running BLE pairing firmware. The IRK is exchanged during pairing and shown in the serial output.</p>
+</div>
+
+<!-- ── Wear OS / Samsung Galaxy Watch ── -->
+<div style="margin-bottom:16px">
+  <div style="font-weight:700;color:#c4b5fd;font-size:13px;margin-bottom:4px">Wear OS / Samsung Galaxy Watch</div>
+  <p style="margin:0 0 6px">Smart watches have their own BLE identity, separate from the phone they're paired with.</p>
+  <ol style="margin:0 0 8px;padding-left:20px">
+    <li>If the watch runs <b>Wear OS</b> and has the <b>HA Companion App</b> installed, use the same BLE Transmitter method as Android above.</li>
+    <li>For <b>Samsung Galaxy Watch</b> without HA app: Use the ESP32 pairing method. Put the watch in pairing mode and pair with the ESP32.</li>
+    <li>Alternatively, on the paired phone, the watch's IRK may be stored in the Bluetooth bond data:
+      <code style="background:#1a2a1a;padding:2px 6px;border-radius:3px;display:inline-block;margin:2px 0">
+      adb shell su -c "cat /data/misc/bluedroid/bt_config.conf"</code>
+      — look for the watch's MAC under <b>[Bonded Devices]</b> section.</li>
+  </ol>
+</div>
+
+<!-- ── BLE Tags / Trackers ── -->
+<div style="margin-bottom:16px">
+  <div style="font-weight:700;color:#fb923c;font-size:13px;margin-bottom:4px">BLE Tags & Trackers (Tile, AirTag, SmartTag, Chipolo, etc.)</div>
+
+  <div style="background:#1a1a0a;border:1px solid #92400e;border-radius:6px;padding:8px 10px;margin-bottom:8px">
+    <div style="font-weight:600;color:#fbbf24;font-size:11px;margin-bottom:2px">Do you actually need an IRK for tags?</div>
+    <div style="font-size:11px;color:#d4d4aa">
+      Many BLE tags use <b>iBeacon</b> or fixed MAC addresses — PadSpan already tracks these natively without
+      needing an IRK. Check the <b>Objects</b> tab: if your tag shows up as an "iBeacon" or "BLE" object with a
+      consistent address, you're already set. IRKs are only needed for tags that use <b>rotating random MACs</b>.
+    </div>
+  </div>
+
+  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Apple AirTag</div>
+  <ul style="margin:0 0 8px;padding-left:20px">
+    <li>AirTags rotate their MAC address and use Apple's proprietary FindMy network.</li>
+    <li>The IRK is <b>not easily extractable</b> from AirTags without specialized tools.</li>
+    <li>However, AirTags broadcast an <b>Apple Continuity advertisement</b> that PadSpan's dedup engine groups automatically.</li>
+    <li>For direct tracking: use the <b>ESP32 OpenHaystack</b> project or similar to extract the AirTag's advertising key, then use an ESP32-based scanner.</li>
+    <li>Alternative: use the <b>Bermuda BLE Trilateration</b> integration which can track AirTags via the HA iBeacon integration.</li>
+  </ul>
+
+  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Samsung SmartTag / SmartTag2</div>
+  <ul style="margin:0 0 8px;padding-left:20px">
+    <li>SmartTags use Samsung's SmartThings Find network and rotate MACs.</li>
+    <li>They often broadcast a fixed <b>service UUID</b> that PadSpan can group via dedup.</li>
+    <li>For IRK extraction: pair the SmartTag with an ESP32, or extract from the SmartThings app data on a rooted phone.</li>
+  </ul>
+
+  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Tile Trackers</div>
+  <ul style="margin:0 0 8px;padding-left:20px">
+    <li>Tile trackers typically use a <b>fixed public MAC</b> — PadSpan tracks them directly without an IRK.</li>
+    <li>If your Tile uses a rotating MAC (newer models), the IRK can be extracted via ESP32 pairing.</li>
+  </ul>
+
+  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Chipolo, Nutfind, and Other Tags</div>
+  <ul style="margin:0 0 8px;padding-left:20px">
+    <li>Most use fixed MACs or iBeacon — check the Objects tab first.</li>
+    <li>If rotating: pair with ESP32 to extract IRK.</li>
+  </ul>
+</div>
+
+<!-- ── Laptops / Bluetooth Headphones ── -->
+<div style="margin-bottom:16px">
+  <div style="font-weight:700;color:#f472b6;font-size:13px;margin-bottom:4px">Laptops, Headphones & Other BLE Devices</div>
+  <ul style="margin:0 0 8px;padding-left:20px">
+    <li><b>Windows laptops</b>: Usually use a fixed public MAC for Bluetooth. Check the Objects tab — if it appears with a consistent address, no IRK needed.</li>
+    <li><b>Mac laptops</b>: Use BLE privacy with rotating MACs. Extract IRK from the macOS Bluetooth plist (same Terminal method as iPhone above, look for the Mac's own entry).</li>
+    <li><b>Bluetooth headphones/earbuds</b>: Most use a <b>fixed MAC</b> when actively connected/broadcasting. No IRK needed — PadSpan tracks them directly.</li>
+    <li><b>Fitness bands</b>: Varies by manufacturer. Check Objects tab first. If rotating MAC, try ESP32 pairing method.</li>
+  </ul>
+</div>
+
+<!-- ── IRK Format ── -->
+<div style="margin-bottom:16px;border-top:1px solid #1e3a2a;padding-top:12px">
+  <div style="font-weight:700;color:#e2e8f0;font-size:13px;margin-bottom:6px">IRK Format</div>
+  <p style="margin:0 0 6px">PadSpan accepts IRKs in two formats — paste either one:</p>
+  <ul style="margin:0 0 8px;padding-left:20px">
+    <li><b>Hex</b>: 32 hexadecimal characters (e.g., <code style="background:#1a2a1a;padding:1px 4px;border-radius:3px">a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6</code>)</li>
+    <li><b>Base64</b>: 24 characters ending in <code style="background:#1a2a1a;padding:1px 4px;border-radius:3px">=</code> or <code style="background:#1a2a1a;padding:1px 4px;border-radius:3px">==</code> (e.g., <code style="background:#1a2a1a;padding:1px 4px;border-radius:3px">obLD1OX2p7jJ0OHyo7TF1g==</code>)</li>
+  </ul>
+  <p style="margin:0 0 6px">Both represent the same 16-byte (128-bit) key. Hex is more common from Android; base64 from macOS.</p>
+  <p style="margin:0">
+    <b>Spaces, colons, and dashes are stripped automatically</b> — so formats like
+    <code style="background:#1a2a1a;padding:1px 4px;border-radius:3px">a1:b2:c3:d4:…</code> or
+    <code style="background:#1a2a1a;padding:1px 4px;border-radius:3px">a1 b2 c3 d4 …</code> also work.
+  </p>
+</div>
+
+<!-- ── Troubleshooting ── -->
+<div style="margin-bottom:8px;border-top:1px solid #1e3a2a;padding-top:12px">
+  <div style="font-weight:700;color:#e2e8f0;font-size:13px;margin-bottom:6px">Troubleshooting</div>
+  <div style="margin-bottom:8px">
+    <div style="font-weight:600;color:#f87171;font-size:12px">"IRK added but device not showing up"</div>
+    <ul style="margin:4px 0 0;padding-left:20px;font-size:11px">
+      <li>Make sure the device is <b>within BLE range</b> of at least one ESPHome proxy / HA Bluetooth adapter.</li>
+      <li>The device must be <b>actively advertising</b> BLE — phones in airplane mode or with Bluetooth off won't appear.</li>
+      <li>Wait 1-2 minutes after adding the IRK. The Private BLE Device integration needs time to match rotating addresses.</li>
+      <li>On Android, ensure <b>BLE Transmitter is enabled</b> in the HA Companion App.</li>
+      <li>Check <b>Developer Tools → States</b> in HA — search for <code style="background:#1a2a1a;padding:1px 4px;border-radius:3px">device_tracker.private_ble_</code> entities.</li>
+    </ul>
+  </div>
+  <div style="margin-bottom:8px">
+    <div style="font-weight:600;color:#f87171;font-size:12px">"IRK invalid" error</div>
+    <ul style="margin:4px 0 0;padding-left:20px;font-size:11px">
+      <li>Ensure the IRK is exactly <b>32 hex characters</b> or a valid <b>base64 string</b> (24 chars with padding).</li>
+      <li>Remove any surrounding quotes, brackets, or whitespace.</li>
+      <li>If you copied from macOS plist data inside angle brackets like <code style="background:#1a2a1a;padding:1px 4px;border-radius:3px">&lt;a1b2c3d4…&gt;</code>, remove the angle brackets.</li>
+    </ul>
+  </div>
+  <div style="margin-bottom:8px">
+    <div style="font-weight:600;color:#f87171;font-size:12px">"Device shows in wrong room / jumps between rooms"</div>
+    <ul style="margin:4px 0 0;padding-left:20px;font-size:11px">
+      <li>This is a <b>signal strength issue</b>, not an IRK issue. The IRK only resolves identity — room assignment uses RSSI from your scanners.</li>
+      <li>Add more <b>ESPHome BLE proxies</b> to improve coverage. Ideally one per room you want to track.</li>
+      <li>Use the <b>Calibration</b> tab to create reference points — this dramatically improves room accuracy.</li>
+      <li>Adjust <b>Distance Calibration</b> settings (below) if distance estimates are way off.</li>
+    </ul>
+  </div>
+  <div>
+    <div style="font-weight:600;color:#f87171;font-size:12px">"Multiple entries for the same phone"</div>
+    <ul style="margin:4px 0 0;padding-left:20px;font-size:11px">
+      <li>If you see both a Private BLE entry AND regular BLE entries for the same phone, PadSpan's dedup engine should merge them automatically.</li>
+      <li>Check the <b>Objects</b> tab — look for objects with a "N MACs merged" badge.</li>
+      <li>If duplicates persist, the phone may be advertising on <b>multiple protocols simultaneously</b> (e.g., iBeacon + regular BLE). PadSpan handles this.</li>
+    </ul>
+  </div>
+</div>
+`;
+
+    irkCard.appendChild(guidePanel);
 
     wrap.appendChild(irkCard);
   }
