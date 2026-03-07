@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.30";
+const APP_VERSION = "0.7.31";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260307T213318Z";
+const BUILD_ID = "20260307T213554Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -978,6 +978,15 @@ class PadSpanHaApp extends HTMLElement {
 
     const items = MENU.filter(x => visible.has(x[0]));
     const _switchView = (id) => {
+      // Clear traceback active flag when leaving traceback tab
+      if (this.state._traceback && this.state.view === "traceback" && id !== "traceback") {
+        this.state._traceback.active = false;
+        if (this.state._traceback._animTimer) {
+          clearInterval(this.state._traceback._animTimer);
+          this.state._traceback._animTimer = null;
+          this.state._traceback.playing = false;
+        }
+      }
       this.state.view = id;
       this._logEvent("view_change", id);
       if (this._closeDrawer) this._closeDrawer();
@@ -1886,8 +1895,8 @@ class PadSpanHaApp extends HTMLElement {
   _renderCurrentView(fromPoll){
     // Skip re-render during active drag to prevent DOM destruction mid-interaction
     if(this.state._calibTune?._dragging || this.state._calibBeacon?._dragging || this.state._calibTune?._confirming || this.state._calibBeacon?._confirming) return;
-    // Skip poll re-renders while traceback playback is active (prevents flicker/reset)
-    if(fromPoll && this.state._traceback?.active) return;
+    // Skip ALL re-renders while traceback tab is active (prevents flicker/DOM destruction)
+    if(this.state._traceback?.active && this.state.view === "traceback") return;
     // Skip poll-triggered re-renders when the user is actively interacting.
     // Checks: (1) a form element has focus, or (2) user interacted within the last 3s.
     // User-initiated renders (tab clicks, saves, etc.) always proceed.

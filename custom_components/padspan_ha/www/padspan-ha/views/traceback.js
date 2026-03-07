@@ -603,6 +603,9 @@ export function render(ctx) {
   outer.appendChild(mapDiv);
   outer.appendChild(ctrlCard);
 
+  // Mark traceback as active to suppress poll re-renders (panel.js checks this)
+  tb.active = true;
+
   // Auto-load data on tab open
   _loadTracebackData().then(() => {
     _buildControls();
