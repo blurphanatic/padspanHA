@@ -622,6 +622,109 @@ function _settingsPresence(ctx, el){
     ),
   ]));
 
+  // ── Private BLE / IRK Management ─────────────────────────────────────────
+  {
+    const irkCard = el("div", { class: "card" });
+    irkCard.appendChild(el("div", { class: "h2" }, "Phone Tracking (Private BLE)"));
+    irkCard.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
+      "Track phones and watches with rotating MAC addresses by pasting their IRK (Identity Resolving Key). " +
+      "PadSpan creates the Private BLE Device entry automatically."
+    ));
+
+    // Status: load current IRKs
+    const irkStatus = el("div", { style: "margin-bottom:12px" });
+    irkStatus.textContent = "Loading...";
+    (async () => {
+      try {
+        const st = await ctx.actions.wsCall("padspan_ha/private_ble_status", {});
+        const devices = st.devices || [];
+        const rpas = st.rpa_count || 0;
+        if (devices.length) {
+          irkStatus.innerHTML = "";
+          const tbl = el("table", { class: "table", style: "font-size:12px;margin-bottom:8px" });
+          const thead = el("thead", {}, el("tr", {}, [el("th",{},"Name"), el("th",{},"Source")]));
+          tbl.appendChild(thead);
+          const tbody = el("tbody", {});
+          for (const d of devices) {
+            tbody.appendChild(el("tr", {}, [
+              el("td", {}, d.name || "—"),
+              el("td", { class: "muted" }, d.source || "—"),
+            ]));
+          }
+          tbl.appendChild(tbody);
+          irkStatus.appendChild(tbl);
+          if (rpas > 0) {
+            irkStatus.appendChild(el("div", { class: "muted", style: "font-size:11px" },
+              `${devices.length} IRK(s) registered · ${rpas} rotating address(es) detected`));
+          }
+        } else {
+          irkStatus.innerHTML = "";
+          irkStatus.appendChild(el("div", { style: "color:#fbbf24;font-size:12px;margin-bottom:4px" },
+            rpas > 0
+              ? `No IRKs registered yet — ${rpas} rotating MAC address(es) detected. Add IRKs below to track phones.`
+              : "No IRKs registered and no rotating addresses detected."
+          ));
+        }
+      } catch(e) {
+        irkStatus.textContent = "Could not load status";
+      }
+    })();
+    irkCard.appendChild(irkStatus);
+
+    // Add IRK form
+    const irkInp = el("input", {
+      type: "text", placeholder: "Paste IRK (hex or base64)",
+      style: "flex:1;min-width:200px;background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:13px;font-family:monospace",
+    });
+    const nameInp = el("input", {
+      type: "text", placeholder: "Device name (e.g., Alice's iPhone)",
+      style: "flex:1;min-width:160px;background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:13px",
+    });
+    const addBtn = el("button", { class: "btn" }, "Add IRK");
+    const irkMsg = el("div", { style: "font-size:11px;margin-top:6px;min-height:16px" });
+
+    addBtn.addEventListener("click", async () => {
+      const irk = irkInp.value.trim();
+      const name = nameInp.value.trim();
+      if (!irk) { irkMsg.textContent = "Please paste an IRK"; irkMsg.style.color = "#f87171"; return; }
+      addBtn.disabled = true;
+      addBtn.textContent = "Adding...";
+      irkMsg.textContent = "";
+      try {
+        const res = await ctx.actions.wsCall("padspan_ha/private_ble_add_irk", { irk, name: name || "PadSpan Device" });
+        if (res.duplicate) {
+          irkMsg.style.color = "#fbbf24";
+          irkMsg.textContent = res.message || "Already registered";
+        } else {
+          irkMsg.style.color = "#52b788";
+          irkMsg.textContent = res.message || "IRK added successfully";
+          irkInp.value = "";
+          nameInp.value = "";
+        }
+        // Refresh status
+        ctx.actions.renderRooms();
+      } catch(e) {
+        irkMsg.style.color = "#f87171";
+        irkMsg.textContent = e.message || "Failed to add IRK";
+      }
+      addBtn.disabled = false;
+      addBtn.textContent = "Add IRK";
+    });
+
+    irkCard.appendChild(el("div", { style: rowStyle }, [irkInp]));
+    irkCard.appendChild(el("div", { style: rowStyle + ";margin-top:4px" }, [nameInp, addBtn]));
+    irkCard.appendChild(irkMsg);
+
+    // Help text
+    irkCard.appendChild(el("div", { class: "muted", style: "font-size:11px;margin-top:12px;line-height:1.6" },
+      "How to get your IRK: On iOS, use Keychain Access on a Mac synced to the same iCloud. " +
+      "On Android, enable BLE Transmitter in the HA Companion App (Settings → Companion App → BLE Transmitter) — " +
+      "the IRK is shown in the settings. Alternatively, use an ESP32 IRK capture tool."
+    ));
+
+    wrap.appendChild(irkCard);
+  }
+
   // ── Distance Calibration ───────────────────────────────────────────────────
   const currentRefPower   = (settings.ref_power    != null ? Number(settings.ref_power)    : -59);
   const currentPathLoss   = (settings.path_loss_exp != null ? Number(settings.path_loss_exp) : 2.5);

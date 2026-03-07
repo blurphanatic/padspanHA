@@ -416,7 +416,8 @@ function renderScanners(ctx, radios, sources, adsAll) {
     const v = Number(s); if (!isFinite(v)) return "—";
     if (v < 1) return "<1s"; if (v < 60) return `${Math.round(v)}s`;
     const m = Math.floor(v/60); if (m < 60) return `${m}m ${Math.round(v-m*60)}s`;
-    return `${Math.floor(m/60)}h ${m%60}m`;
+    const h = Math.floor(m/60); if (h < 24) return `${h}h ${m%60}m`;
+    const d = Math.floor(h/24); return `${d}d ${h%24}h`;
   };
 
   const detailCard = el("div", { class: "card", style: "max-height:80vh;overflow-y:auto" });
@@ -502,8 +503,11 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     if (s < 1) return "<1s";
     if (s < 60) return `${Math.round(s)}s`;
     const m = Math.floor(s / 60);
-    const rs = Math.round(s - m * 60);
-    return `${m}m ${rs}s`;
+    if (m < 60) return `${m}m ${Math.round(s - m * 60)}s`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ${m % 60}m`;
+    const d = Math.floor(h / 24);
+    return `${d}d ${h % 24}h`;
   };
 
   const badge = (text, bg, fg, border) => el("span", { style: `display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:${bg};color:${fg};border:1px solid ${border||bg};white-space:nowrap` }, text);

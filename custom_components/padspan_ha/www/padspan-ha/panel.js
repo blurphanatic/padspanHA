@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.21";
+const APP_VERSION = "0.7.22";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260307T171156Z";
+const BUILD_ID = "20260307T172300Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1594,7 +1594,7 @@ class PadSpanHaApp extends HTMLElement {
         const isFollowed = oKey && this.state.followedAddrs.has(oKey);
         const oc = isFollowed ? "#fbbf24" : (o.identified ? "#5eead4" : "#f59e0b");
         const rssiTxt = o.rssi != null ? `${o.rssi} dBm` : "";
-        const ageTxt = o.age_s != null ? `${Math.round(o.age_s)}s` : "";
+        const ageTxt = o.age_s != null ? fmtAgo(o.age_s) : "";
         const oRow = el("div", {style:"display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #0d1f12"}, [
           el("span", {style:`width:8px;height:8px;border-radius:50%;background:${oc};flex-shrink:0`}),
           el("div", {style:"flex:1"}, oName),
@@ -1750,7 +1750,7 @@ class PadSpanHaApp extends HTMLElement {
         const pct = Math.max(0, Math.min(100, ((rssi ?? -100) + 100) / 60 * 100));
         const bar = el("div", {style:`width:${pct.toFixed(0)}%;height:5px;background:#52b788;border-radius:2px`});
         const barWrap = el("div", {style:"width:60px;background:#1a2e1e;border-radius:2px"}, bar);
-        const ageTxt = d.srcAge != null ? `${Math.round(d.srcAge)}s` : "";
+        const ageTxt = d.srcAge != null ? fmtAgo(d.srcAge) : "";
         const dRow = el("div", {style:"display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #0d1f12"}, [
           el("div", {style:"flex:1"}, [
             el("div", {style:"font-weight:600"}, dName),

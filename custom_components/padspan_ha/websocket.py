@@ -129,6 +129,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_ha_entities_audit)
     websocket_api.async_register_command(hass, ws_logs_get)
     websocket_api.async_register_command(hass, ws_private_ble_status)
+    websocket_api.async_register_command(hass, ws_private_ble_add_irk)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -4016,3 +4017,111 @@ async def ws_private_ble_status(hass: HomeAssistant, connection, msg) -> None:
             "rpa_count": 0, "total_ble_addresses": 0,
             "error": str(err),
         })
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/private_ble_add_irk",
+    vol.Required("irk"): str,
+    vol.Optional("name", default=""): str,
+})
+@websocket_api.async_response
+async def ws_private_ble_add_irk(hass: HomeAssistant, connection, msg) -> None:
+    """Add a Private BLE Device IRK via PadSpan UI (creates HA config entry)."""
+    import re as _re
+    import base64 as _b64
+
+    irk_input = str(msg.get("irk", "")).strip()
+    device_name = str(msg.get("name", "")).strip() or "PadSpan Device"
+
+    if not irk_input:
+        connection.send_error(msg["id"], "invalid_irk", "IRK is required")
+        return
+
+    # Normalise IRK: accept hex (with/without colons/spaces) or base64
+    irk_hex = ""
+    try:
+        # Try hex first — strip separators
+        cleaned = _re.sub(r"[:\-\s]", "", irk_input)
+        if _re.fullmatch(r"[0-9a-fA-F]{32}", cleaned):
+            irk_hex = cleaned.lower()
+        else:
+            # Try base64
+            decoded = _b64.b64decode(irk_input)
+            if len(decoded) == 16:
+                irk_hex = decoded.hex()
+    except Exception:
+        pass
+
+    if not irk_hex or len(irk_hex) != 32:
+        connection.send_error(msg["id"], "invalid_irk",
+            "IRK must be 32 hex characters or 24-char base64 (16 bytes)")
+        return
+
+    # Check for duplicates
+    for entry in hass.config_entries.async_entries("private_ble_device"):
+        existing_irk = (entry.data or {}).get("irk", "")
+        existing_clean = _re.sub(r"[:\-\s]", "", str(existing_irk)).lower()
+        if existing_clean == irk_hex:
+            connection.send_result(msg["id"], {
+                "ok": True, "duplicate": True,
+                "message": f"IRK already registered as '{entry.title}'",
+            })
+            return
+
+    # Check if private_ble_device integration is available
+    try:
+        # Create config entry programmatically
+        result = await hass.config_entries.flow.async_init(
+            "private_ble_device",
+            context={"source": "user"},
+            data={"irk": irk_hex},
+        )
+        if result.get("type") == "create_entry":
+            # Update the title to the user's chosen name
+            entry = result.get("result")
+            if entry and device_name:
+                hass.config_entries.async_update_entry(entry, title=device_name)
+            # Force resolver refresh
+            try:
+                resolver = await _get_ble_resolver(hass)
+                await resolver.async_load()
+            except Exception:
+                pass
+            connection.send_result(msg["id"], {
+                "ok": True, "duplicate": False,
+                "message": f"IRK registered as '{device_name}'",
+                "entry_id": entry.entry_id if entry else None,
+            })
+        elif result.get("type") == "form":
+            # Integration needs a form step — try to configure it
+            flow_id = result.get("flow_id")
+            if flow_id:
+                result2 = await hass.config_entries.flow.async_configure(
+                    flow_id, user_input={"irk": irk_hex}
+                )
+                if result2.get("type") == "create_entry":
+                    entry = result2.get("result")
+                    if entry and device_name:
+                        hass.config_entries.async_update_entry(entry, title=device_name)
+                    try:
+                        resolver = await _get_ble_resolver(hass)
+                        await resolver.async_load()
+                    except Exception:
+                        pass
+                    connection.send_result(msg["id"], {
+                        "ok": True, "duplicate": False,
+                        "message": f"IRK registered as '{device_name}'",
+                        "entry_id": entry.entry_id if entry else None,
+                    })
+                else:
+                    connection.send_error(msg["id"], "flow_failed",
+                        f"Config flow returned: {result2.get('type', 'unknown')}")
+            else:
+                connection.send_error(msg["id"], "flow_failed", "Could not start config flow")
+        else:
+            connection.send_error(msg["id"], "flow_failed",
+                f"Unexpected flow result: {result.get('type', 'unknown')}")
+    except Exception as err:
+        _LOGGER.warning("private_ble_add_irk failed: %s", err)
+        connection.send_error(msg["id"], "add_failed",
+            f"Failed to add IRK: {err}. Make sure 'Private BLE Device' integration is available in HA.")
