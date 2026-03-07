@@ -114,6 +114,8 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_calibration_swap_radio)
     websocket_api.async_register_command(hass, ws_calibration_health_check)
     websocket_api.async_register_command(hass, ws_movement_history_get)
+    websocket_api.async_register_command(hass, ws_traceback_get)
+    websocket_api.async_register_command(hass, ws_traceback_objects)
     websocket_api.async_register_command(hass, ws_notify_services_list)
     websocket_api.async_register_command(hass, ws_notify_test)
     websocket_api.async_register_command(hass, ws_adaptive_status_get)
@@ -835,12 +837,17 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 md = a.get("manufacturer_data") or {}
                 sd = a.get("service_data") or {}
                 su = a.get("service_uuids") or []
-                if md and (not rec.get("manufacturer_data")):
-                    rec["manufacturer_data"] = md
-                if sd and (not rec.get("service_data")):
-                    rec["service_data"] = sd
-                if su and (not rec.get("service_uuids")):
-                    rec["service_uuids"] = su
+                # Merge (not replace) so multi-protocol devices keep all data
+                # e.g. same MAC broadcasting iBeacon + Eddystone
+                if md:
+                    rec.setdefault("manufacturer_data", {}).update(md)
+                if sd:
+                    rec.setdefault("service_data", {}).update(sd)
+                if su:
+                    existing = rec.setdefault("service_uuids", [])
+                    for _u in su:
+                        if _u not in existing:
+                            existing.append(_u)
                 # Connectable: prefer True over None
                 ac = a.get("connectable")
                 if ac is True or rec.get("connectable") is None:
@@ -1151,15 +1158,33 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 _ib_entry = _obj_store_c.get(uuid_key)
                 if _ib_entry:
                     _ib_label = _ib_entry.get("label") or None
-            # Try to get a real BLE device name from the MAC addresses in this group
+            # Merge BLE metadata from all underlying MAC addresses so that
+            # service_data (e.g. Eddystone), manufacturer_data, and service_uuids
+            # are preserved on the merged iBeacon object instead of being lost.
             _ib_ble_name = None
+            _ib_manuf: dict[str, Any] = {}
+            _ib_svcdata: dict[str, Any] = {}
+            _ib_svcuuids: list[str] = []
+            _ib_connectable = None
+            _ib_device = None
             for _ib_mac in (g.get("addrs") or []):
                 _ib_rec = ble_by_addr.get(_ib_mac)
-                if _ib_rec:
-                    _n = _ib_rec.get("name") or ""
-                    if _n and _n != _ib_mac:
-                        _ib_ble_name = _n
-                        break
+                if not _ib_rec:
+                    continue
+                _n = _ib_rec.get("name") or ""
+                if _n and _n != _ib_mac and not _ib_ble_name:
+                    _ib_ble_name = _n
+                _ib_manuf.update(_ib_rec.get("manufacturer_data") or {})
+                _ib_svcdata.update(_ib_rec.get("service_data") or {})
+                for _u in (_ib_rec.get("service_uuids") or []):
+                    if _u not in _ib_svcuuids:
+                        _ib_svcuuids.append(_u)
+                if _ib_rec.get("connectable") is True:
+                    _ib_connectable = True
+                elif _ib_connectable is None:
+                    _ib_connectable = _ib_rec.get("connectable")
+                if not _ib_device and _ib_mac in addr_to_device:
+                    _ib_device = addr_to_device[_ib_mac]
             obj_ib: dict[str, Any] = {
                 "key": uuid_key,
                 "kind": "ibeacon",
@@ -1174,8 +1199,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "ibeacon_major": g["major"],
                 "ibeacon_minor": g["minor"],
                 "tx_power": g.get("tx_power"),  # factory TX power dBm at 1m (from iBeacon payload)
+                "manufacturer_data": _ib_manuf,
+                "service_data": _ib_svcdata,
+                "service_uuids": _ib_svcuuids,
+                "connectable": _ib_connectable,
                 "identified": bool(identified_ib),
                 "linked_entities": all_linked,
+                "device": _ib_device,
             }
             objects.append(obj_ib)
 
@@ -1196,6 +1226,104 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 ib_key = _mac_to_ibeacon_key.get(eaddr)
                 if ib_key:
                     obj["ibeacon_key"] = ib_key
+
+        # ── Merge duplicate objects that represent the same physical device ──
+        # A device can broadcast multiple BLE protocols (iBeacon + Eddystone,
+        # iBeacon + regular BLE, etc.) on different MACs. When they share the
+        # same HA device_id, merge the secondary into the primary (iBeacon wins).
+        try:
+            # Index iBeacon objects by device_id and by all their MAC addresses
+            _ib_by_devid: dict[str, dict[str, Any]] = {}
+            _ib_by_mac: dict[str, dict[str, Any]] = {}
+            for obj in objects:
+                if obj.get("kind") != "ibeacon":
+                    continue
+                dev = obj.get("device")
+                if isinstance(dev, dict) and dev.get("id"):
+                    _ib_by_devid[dev["id"]] = obj
+                for mac in (obj.get("all_addresses") or []):
+                    _ib_by_mac[mac.upper()] = obj
+
+            _absorbed_keys: set[str] = set()  # keys of objects merged into an iBeacon
+            for obj in objects:
+                if obj.get("kind") not in ("ble", "private_ble"):
+                    continue
+                # Match by HA device_id
+                target_ib = None
+                dev = obj.get("device")
+                if isinstance(dev, dict) and dev.get("id"):
+                    target_ib = _ib_by_devid.get(dev["id"])
+                # Match by MAC address overlap
+                if not target_ib:
+                    obj_addr = (obj.get("address") or "").upper()
+                    if obj_addr:
+                        target_ib = _ib_by_mac.get(obj_addr)
+                    if not target_ib:
+                        for mac in (obj.get("all_addresses") or []):
+                            target_ib = _ib_by_mac.get(mac.upper())
+                            if target_ib:
+                                break
+                if not target_ib:
+                    continue
+                # Merge: fold BLE/private_ble data into the iBeacon object
+                _absorbed_keys.add(obj.get("key", ""))
+                # Merge metadata (don't overwrite existing non-empty fields)
+                for _mf in ("manufacturer_data", "service_data"):
+                    src_d = obj.get(_mf) or {}
+                    if src_d:
+                        target_ib.setdefault(_mf, {}).update(src_d)
+                for _u in (obj.get("service_uuids") or []):
+                    target_uuids = target_ib.setdefault("service_uuids", [])
+                    if _u not in target_uuids:
+                        target_uuids.append(_u)
+                # Merge MAC addresses
+                for _ma in (obj.get("all_addresses") or [obj.get("address")]):
+                    if _ma:
+                        existing_addrs = list(target_ib.get("all_addresses") or [])
+                        if _ma not in existing_addrs:
+                            existing_addrs.append(_ma)
+                        target_ib["all_addresses"] = sorted(existing_addrs)
+                # Merge linked entities
+                for _le in (obj.get("linked_entities") or []):
+                    existing_le = target_ib.setdefault("linked_entities", [])
+                    if _le not in existing_le:
+                        existing_le.append(_le)
+                # Merge sources
+                existing_srcs = target_ib.get("sources") or []
+                for _s in (obj.get("sources") or []):
+                    sk = _s.get("source") if isinstance(_s, dict) else str(_s)
+                    if sk not in {(s.get("source") if isinstance(s, dict) else str(s)) for s in existing_srcs}:
+                        existing_srcs.append(_s)
+                target_ib["sources"] = existing_srcs
+                # Prefer better RSSI
+                if obj.get("rssi") is not None:
+                    if target_ib.get("rssi") is None or obj["rssi"] > target_ib["rssi"]:
+                        target_ib["rssi"] = obj["rssi"]
+                        target_ib["age_s"] = obj.get("age_s")
+                # Connectable
+                if obj.get("connectable") is True:
+                    target_ib["connectable"] = True
+                # Device info
+                if not target_ib.get("device") and obj.get("device"):
+                    target_ib["device"] = obj["device"]
+                # BLE name
+                obj_name = obj.get("name") or ""
+                if obj_name and obj_name != obj.get("address") and not target_ib.get("ble_name"):
+                    target_ib["ble_name"] = obj_name
+                # Mark iBeacon as identified if the absorbed object was
+                if obj.get("identified"):
+                    target_ib["identified"] = True
+                # Track merged protocols
+                _merged = target_ib.setdefault("merged_protocols", ["ibeacon"])
+                obj_kind = obj.get("kind", "ble")
+                if obj_kind not in _merged:
+                    _merged.append(obj_kind)
+
+            # Remove absorbed objects from the list
+            if _absorbed_keys:
+                objects = [o for o in objects if o.get("key", "") not in _absorbed_keys]
+        except Exception as _merge_err:
+            _LOGGER.debug("Object merge error: %s", _merge_err)
 
         # Attach user labels from ObjectStore (labels make BLE objects "identified")
         # Labels propagate: iBeacon label → entity with same MAC; MAC label → iBeacon
@@ -1529,6 +1657,17 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                             best_area = area
                     if best_area:
                         obj["room"] = best_area
+    except Exception:
+        pass
+
+    # ── Traceback: record object positions for playback ──────────────────────
+    try:
+        from .const import DATA_TRACEBACK
+        tb_store = hass.data.get(DOMAIN, {}).get(DATA_TRACEBACK)
+        if tb_store:
+            _tb_objs = (snapshot.get("objects") or {}).get("list") or []
+            tb_store.record_frame(_tb_objs)
+            await tb_store.async_maybe_save()
     except Exception:
         pass
 
@@ -2641,6 +2780,51 @@ async def ws_movement_history_get(hass: HomeAssistant, connection, msg) -> None:
     limit = msg.get("limit", 100)
     entries = mv.get_history(device=device, limit=limit)
     connection.send_result(msg["id"], {"entries": entries})
+
+
+# Traceback playback
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/traceback_get",
+    vol.Optional("start_ts"): vol.Coerce(float),
+    vol.Optional("end_ts"): vol.Coerce(float),
+    vol.Optional("obj_key"): str,
+    vol.Optional("max_frames", default=4000): int,
+})
+@websocket_api.async_response
+async def ws_traceback_get(hass: HomeAssistant, connection, msg) -> None:
+    """Return traceback position frames for playback."""
+    from .const import DATA_TRACEBACK
+    tb = hass.data.get(DOMAIN, {}).get(DATA_TRACEBACK)
+    if not tb:
+        connection.send_result(msg["id"], {"frames": [], "range": {"start": 0, "end": 0, "count": 0}})
+        return
+    frames = tb.get_frames(
+        start_ts=msg.get("start_ts"),
+        end_ts=msg.get("end_ts"),
+        obj_key=msg.get("obj_key"),
+        max_frames=msg.get("max_frames", 4000),
+    )
+    connection.send_result(msg["id"], {
+        "frames": frames,
+        "range": tb.get_time_range(),
+    })
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/traceback_objects"})
+@websocket_api.async_response
+async def ws_traceback_objects(hass: HomeAssistant, connection, msg) -> None:
+    """Return all object keys seen in traceback history."""
+    from .const import DATA_TRACEBACK
+    tb = hass.data.get(DOMAIN, {}).get(DATA_TRACEBACK)
+    if not tb:
+        connection.send_result(msg["id"], {"objects": [], "range": {"start": 0, "end": 0, "count": 0}})
+        return
+    connection.send_result(msg["id"], {
+        "objects": tb.get_object_keys(),
+        "range": tb.get_time_range(),
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

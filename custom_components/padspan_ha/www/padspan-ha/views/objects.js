@@ -310,6 +310,8 @@ export function render(ctx){
         o.vendor, o.device, o.prefix,
         o.first_seen,
         (o.service_uuids||[]).join(" "),
+        (o.merged_protocols||[]).join(" "),
+        Object.keys(o.service_data||{}).join(" "),
         isAway ? "away" : "",
       ].filter(Boolean).join(" ").toLowerCase(),
     },[
@@ -317,7 +319,10 @@ export function render(ctx){
         isPrivateBle
           ? el("span",{class:"badge"+(identified?"":" warn"),style:identified?"background:#1a3a5a;color:#7dd3fc;border-color:#3b82f6":""}, identified?"Private BLE":"Private BLE?")
           : isIbeacon
-            ? el("span",{class:"badge"+(identified?"":" warn"),style:identified?"background:#3a2a0a;color:#fbbf24;border-color:#d97706":""}, identified?"iBeacon":"iBeacon?")
+            ? el("span",{class:"badge"+(identified?"":" warn"),style:identified?"background:#3a2a0a;color:#fbbf24;border-color:#d97706":""},
+                (Array.isArray(o.merged_protocols) && o.merged_protocols.length > 1)
+                  ? (identified ? o.merged_protocols.join("+") : o.merged_protocols.join("+")+"?")
+                  : (identified?"iBeacon":"iBeacon?"))
             : el("span",{class:"badge"+(identified?"":" warn")}, kind==="ble" ? (identified?"BLE":"BLE?") : "Entity"),
       ]),
       el("td",{}, [

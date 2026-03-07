@@ -329,6 +329,22 @@ def enrich_object(obj: Dict[str, Any]) -> Dict[str, Any]:
             if name not in seen:
                 service_names.append(name)
                 seen.add(name)
+    # Also check service_data keys (e.g. Eddystone "feaa" or full 128-bit UUIDs)
+    svc_data = obj.get("service_data") or {}
+    for sdk in svc_data:
+        sdk_str = str(sdk).lower()
+        # Extract short UUID from full 128-bit if it follows the BT SIG base pattern
+        short = sdk_str
+        if len(sdk_str) > 8 and sdk_str.endswith("-0000-1000-8000-00805f9b34fb"):
+            short = sdk_str[:8].lstrip("0") or "0"
+        name = lookup_service_uuid(short)
+        if not name:
+            name = lookup_service_uuid(sdk_str)
+        if name:
+            service_uuid_map[sdk_str] = name
+            if name not in seen:
+                service_names.append(name)
+                seen.add(name)
     obj["service_names"] = service_names
     obj["service_uuid_map"] = service_uuid_map
 

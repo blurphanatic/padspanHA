@@ -2546,22 +2546,23 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           s += `<text x="${Math.round(lix)}" y="${Math.round(liy) + lidx * 2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
         }
 
-        // Receiver markers (non-draggable green reference) — skip stale
+        // Receiver markers (non-draggable green reference) — show all, dim offline
         const _liveRadios = snap?.ble?.radios || [];
         for (const r of (m.receivers || [])) {
-          const _lr = _liveRadios.find(rd => rd.name === (r.label || "") || rd.source === (r.id || ""));
-          if (!_lr) continue; // stale receiver — scanner no longer exists
+          const _lr = _liveRadios.find(rd => rd.name === (r.label || "") || rd.source === (r.id || "") || rd.source === (r.source || "") || rd.name === (r.id || ""));
+          const _isLive = !!_lr;
           const [wx, wy] = xf.mapPt(r.x || 0, r.y || 0);
           const [px, py] = iso(wx, wy, z);
           const rx = Math.round(px), ry = Math.round(py);
           const lbl = (r.label || r.id || "R").substring(0, 6);
-          const tip = `Scanner: ${r.label || r.id || "Receiver"}${r.room ? " | Room: " + r.room : ""}`;
-          s += `<g data-tip="${_esc(tip)}" style="cursor:default;opacity:0.6">`;
-          s += `<circle cx="${rx}" cy="${ry}" r="10" fill="none" stroke="#52b788" stroke-width="1.2" opacity="0.5"/>`;
-          s += `<circle cx="${rx}" cy="${ry}" r="5" fill="#52b788" opacity="0.6"/>`;
+          const tip = `Scanner: ${r.label || r.id || "Receiver"}${r.room ? " | Room: " + r.room : ""}${!_isLive ? " (offline)" : ""}`;
+          const _rxCol = _isLive ? "#52b788" : "#4a6052";
+          s += `<g data-tip="${_esc(tip)}" style="cursor:default;opacity:${_isLive ? 0.6 : 0.3}">`;
+          s += `<circle cx="${rx}" cy="${ry}" r="10" fill="none" stroke="${_rxCol}" stroke-width="1.2" opacity="0.5"/>`;
+          s += `<circle cx="${rx}" cy="${ry}" r="5" fill="${_rxCol}" opacity="0.6"/>`;
           const lblW = Math.min(lbl.length * 6 + 6, 50);
           s += `<rect x="${rx - lblW / 2}" y="${ry + 12}" width="${lblW}" height="11" rx="3" fill="#071008" opacity="0.7"/>`;
-          s += `<text x="${rx}" y="${ry + 21}" text-anchor="middle" fill="#52b788" font-size="7" opacity="0.7">${_esc(lbl)}</text>`;
+          s += `<text x="${rx}" y="${ry + 21}" text-anchor="middle" fill="${_rxCol}" font-size="7" opacity="0.7">${_esc(lbl)}</text>`;
           s += `</g>`;
         }
 

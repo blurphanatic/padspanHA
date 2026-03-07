@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.18";
+const APP_VERSION = "0.7.19";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260306T210854Z";
+const BUILD_ID = "20260307T061915Z";
 const CHANNEL = "stable";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1330,6 +1330,21 @@ class PadSpanHaApp extends HTMLElement {
         if (obj.ibeacon_uuid) statusItems.push(el("div", {class:"muted", style:"font-size:11px;font-family:monospace"}, `UUID: ${obj.ibeacon_uuid}`));
         if (obj.ibeacon_major != null) statusItems.push(el("div", {class:"muted", style:"font-size:11px"}, `Major: ${obj.ibeacon_major} · Minor: ${obj.ibeacon_minor}`));
         if (obj.tx_power != null) statusItems.push(el("div", {class:"muted", style:"font-size:11px"}, `TX Power: ${obj.tx_power} dBm (factory calibrated at 1m)`));
+        // Merged protocols badge (iBeacon + Eddystone, etc.)
+        if (Array.isArray(obj.merged_protocols) && obj.merged_protocols.length > 1) {
+          statusItems.push(el("div", {style:"display:flex;gap:4px;flex-wrap:wrap;margin-top:2px"},
+            obj.merged_protocols.map(p => el("span", {class:"badge", style:"font-size:10px;background:#2a1a3a;color:#c4b5fd;border-color:#5b21b6"}, p))
+          ));
+        }
+        // Eddystone service data (UUID feaa)
+        const svcData = obj.service_data || {};
+        const eddyPayload = svcData["0000feaa-0000-1000-8000-00805f9b34fb"] || svcData["feaa"];
+        if (eddyPayload) {
+          statusItems.push(el("div", {style:"margin-top:4px"}, [
+            el("span", {style:"font-weight:600;font-size:12px;color:#fbbf24"}, "Eddystone: "),
+            el("span", {class:"muted", style:"font-family:monospace;font-size:11px"}, String(eddyPayload)),
+          ]));
+        }
       }
       // Private BLE details
       if (kind === "private_ble") {
@@ -1413,9 +1428,10 @@ class PadSpanHaApp extends HTMLElement {
 
     // Raw BLE data (collapsible)
     const manufData = obj.manufacturer_data || {};
+    const svcData = obj.service_data || {};
     const svcUUIDs = obj.service_uuids || [];
     const svcUuidMap = obj.service_uuid_map || {};
-    if((kind==="ble"||kind==="private_ble"||kind==="ibeacon") && (Object.keys(manufData).length || svcUUIDs.length)){
+    if((kind==="ble"||kind==="private_ble"||kind==="ibeacon") && (Object.keys(manufData).length || Object.keys(svcData).length || svcUUIDs.length)){
       const det = document.createElement("details");
       det.style.cssText = "margin-top:4px";
       const sum = document.createElement("summary");
@@ -1423,7 +1439,8 @@ class PadSpanHaApp extends HTMLElement {
       sum.textContent = "Raw BLE data";
       det.appendChild(sum);
       if(Object.keys(manufData).length){
-        det.appendChild(el("table", {class:"table", style:"margin-top:8px"}, [
+        det.appendChild(el("div", {style:"font-size:12px;color:#94a3b8;margin-top:8px"}, "Manufacturer data:"));
+        det.appendChild(el("table", {class:"table", style:"margin-top:4px"}, [
           el("thead", {}, el("tr", {}, [el("th",{},"Company ID"),el("th",{},"Company"),el("th",{},"Payload (hex)")])),
           el("tbody", {}, Object.entries(manufData).map(([k,v]) =>
             el("tr", {}, [
@@ -1432,6 +1449,21 @@ class PadSpanHaApp extends HTMLElement {
               el("td",{class:"muted",style:"font-family:monospace;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis"},String(v)),
             ])
           )),
+        ]));
+      }
+      if(Object.keys(svcData).length){
+        det.appendChild(el("div", {style:"font-size:12px;color:#94a3b8;margin-top:8px"}, "Service data:"));
+        det.appendChild(el("table", {class:"table", style:"margin-top:4px"}, [
+          el("thead", {}, el("tr", {}, [el("th",{},"Service UUID"),el("th",{},"Name"),el("th",{},"Payload (hex)")])),
+          el("tbody", {}, Object.entries(svcData).map(([k,v]) => {
+            const uKey = String(k).toLowerCase();
+            const sName = svcUuidMap[uKey] || svcUuidMap[k] || (uKey.includes("feaa") ? "Eddystone" : "—");
+            return el("tr", {}, [
+              el("td",{style:"font-size:11px;font-family:monospace"},String(k)),
+              el("td",{style:"font-size:11px;color:#fbbf24"}, sName),
+              el("td",{class:"muted",style:"font-family:monospace;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis"},String(v)),
+            ]);
+          })),
         ]));
       }
       if(svcUUIDs.length){

@@ -38,6 +38,7 @@ from .const import (
     DATA_ALERTS,
     DATA_MOVEMENT,
     DATA_ADAPTIVE,
+    DATA_TRACEBACK,
     DATA_PANEL_REGISTERED,
 )
 from .adaptive_store import AdaptiveStore
@@ -105,6 +106,13 @@ async def _ensure_stores(hass: HomeAssistant) -> None:
         await ad_store.async_load()
         hass.data[DOMAIN][DATA_ADAPTIVE] = ad_store
         _LOGGER.debug("AdaptiveStore ready (%d observations)", ad_store.data.get("stats", {}).get("total_observations", 0))
+
+    if DATA_TRACEBACK not in hass.data[DOMAIN]:
+        from .traceback_store import TracebackStore
+        tb_store = TracebackStore(hass)
+        await tb_store.async_load()
+        hass.data[DOMAIN][DATA_TRACEBACK] = tb_store
+        _LOGGER.debug("TracebackStore ready (%d frames)", len(tb_store.frames))
 
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -307,5 +315,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug("Object history flushed to disk (%d entries)", len(_hist))
     except Exception as err:
         _LOGGER.debug("Object history flush error: %s", err)
+
+    # Flush traceback store to disk before shutdown
+    try:
+        _dom = hass.data.get(DOMAIN, {})
+        _tb = _dom.get(DATA_TRACEBACK)
+        if _tb is not None:
+            _tb._prune()
+            await _tb._store.async_save({"frames": _tb.frames})
+            _LOGGER.debug("Traceback flushed to disk (%d frames)", len(_tb.frames))
+    except Exception as err:
+        _LOGGER.debug("Traceback flush error: %s", err)
 
     return unload_ok
