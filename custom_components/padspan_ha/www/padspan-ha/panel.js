@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.26";
+const APP_VERSION = "0.7.27";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260307T191426Z";
+const BUILD_ID = "20260307T191704Z";
 const CHANNEL = "stable";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -288,7 +288,12 @@ class PadSpanHaApp extends HTMLElement {
         :host{display:block;min-height:100vh;background:#0a150e;color:#e2e8f0;font-family:Inter,system-ui,Arial,sans-serif;box-sizing:border-box}
       </style>
       <div id="app" class="app">
+        <div class="side-backdrop" id="sideBackdrop"></div>
         <aside class="left">
+          <div class="sidebar-mobile-header" id="sidebarMobileHeader">
+            <span style="font-weight:700;font-size:15px;flex:1">PadSpan HA</span>
+            <button class="btn inline" id="sidebarClose" style="width:auto;font-size:18px;padding:4px 10px">&times;</button>
+          </div>
           <div class="brand">
             <img src="/padspan_ha_static/padspan-ha/assets/padspan-mark.svg?b=${BUILD_ID}" alt="PadSpan" onerror="this.style.display='none'">
             <div>
@@ -298,7 +303,6 @@ class PadSpanHaApp extends HTMLElement {
           </div>
 
           <div class="toolbar" style="margin-top:10px">
-            <button class="btn inline" id="mobileMenu">☰ Menu</button>
             <button class="btn inline" id="refresh">Refresh</button>
             <button class="btn inline" id="autodiag">Auto Diagnostics</button>
             <button class="btn inline" id="toggleSide">Toggle</button>
@@ -309,7 +313,13 @@ class PadSpanHaApp extends HTMLElement {
         </aside>
 
         <main class="main">
-          <div class="row" style="margin-bottom:10px;align-items:center">
+          <div class="mobile-topbar" id="mobileTopbar">
+            <button class="mobile-topbar-btn" id="mobileMenuBtn">&#9776;</button>
+            <span class="mobile-topbar-title" id="mobileTitle">Overview</span>
+            <button class="mobile-topbar-pill" id="mobileDataPill">Sample</button>
+            <button class="mobile-topbar-pill" id="mobileModePill">Advanced</button>
+          </div>
+          <div class="row desktop-topbar" style="margin-bottom:10px;align-items:center">
             <span class="pill" id="cloudBadge">Cloud disabled</span>
             <span class="pill" id="scanBadge">Scan: —</span>
             <span class="pill" id="statusBadge">Status: —</span>
@@ -324,6 +334,8 @@ class PadSpanHaApp extends HTMLElement {
           <div id="modal" class="modal hidden"></div>
           <div id="content"></div>
         </main>
+
+        <div class="mobile-bottom-nav" id="mobileBottomNav"></div>
       </div>
     `;
 
@@ -335,7 +347,30 @@ class PadSpanHaApp extends HTMLElement {
     this.$("#refresh").addEventListener("click", ()=>this._refreshAll(true));
     this.$("#autodiag").addEventListener("click", ()=>this._runAutoDiag(true));
     this.$("#toggleSide").addEventListener("click", ()=>this.$("#app").classList.toggle("mini"));
-    this.$("#mobileMenu").addEventListener("click", ()=>this.$("#app").classList.toggle("mobile-open"));
+
+    // Mobile navigation wiring
+    const _openDrawer = () => {
+      this.$("#app").classList.add("mobile-open");
+      this.$("#sideBackdrop").classList.add("active");
+    };
+    const _closeDrawer = () => {
+      this.$("#app").classList.remove("mobile-open");
+      this.$("#sideBackdrop").classList.remove("active");
+    };
+    this.$("#mobileMenuBtn").addEventListener("click", _openDrawer);
+    this.$("#sidebarClose").addEventListener("click", _closeDrawer);
+    this.$("#sideBackdrop").addEventListener("click", _closeDrawer);
+    this._closeDrawer = _closeDrawer;
+
+    // Mobile topbar pills mirror the desktop toggles
+    this.$("#mobileDataPill").addEventListener("click", async () => {
+      const next = (this.state.dataMode === "sample") ? "live" : "sample";
+      await this._setDataMode(next);
+    });
+    this.$("#mobileModePill").addEventListener("click", () => {
+      // Re-use the same complexity toggle logic
+      this.$("#complexityToggle").click();
+    });
 
     // Track user interaction to suppress poll re-renders during active use
     const _markInteraction = () => { this._lastUserInteraction = performance.now(); };
@@ -942,14 +977,81 @@ class PadSpanHaApp extends HTMLElement {
     if(navLabel) navLabel.textContent = isBasic ? "Basic Menu" : this.state.complexity === "development" ? "Dev Menu" : "Menu";
 
     const items = MENU.filter(x => visible.has(x[0]));
+    const _switchView = (id) => {
+      this.state.view = id;
+      this._logEvent("view_change", id);
+      if (this._closeDrawer) this._closeDrawer();
+      this._renderNav();
+      this._renderCurrentView();
+    };
+
     for(const [id,label] of items.map(x=>[x[0],x[1]])) {
       const color = MENU_COLORS[id] || "#37588f";
       const btn = el("button",{
         class:"navbtn"+(this.state.view===id?" active":""),
         style:`--navcolor:${color}`,
-        onclick:()=>{ this.state.view=id; this._logEvent("view_change", id); this._renderNav(); this._renderCurrentView(); }
+        onclick:()=>_switchView(id)
       }, [el("span",{class:"navdot"}), el("span",{}, label)]);
       this.$nav.appendChild(btn);
+    }
+
+    // ── Mobile bottom nav: pinned tabs + "More" button ──────────────
+    const bottomNav = this.shadowRoot.querySelector("#mobileBottomNav");
+    if (bottomNav) {
+      bottomNav.innerHTML = "";
+      // Pinned tabs vary by complexity mode
+      const pinned = isBasic
+        ? ["follow","overview","maps","settings"]
+        : ["follow","overview","maps","calibration"];
+      for (const pid of pinned) {
+        const mi = MENU.find(x => x[0] === pid);
+        if (!mi) continue;
+        const color = MENU_COLORS[pid] || "#37588f";
+        const isActive = this.state.view === pid;
+        const btn = document.createElement("button");
+        btn.className = "mobile-bottom-nav-btn" + (isActive ? " active" : "");
+        btn.style.cssText = `--navcolor:${color}`;
+        btn.innerHTML = `<span class="bn-dot" style="background:${color}"></span><span>${esc(mi[1])}</span>`;
+        btn.addEventListener("click", () => _switchView(pid));
+        bottomNav.appendChild(btn);
+      }
+      // "More" button opens the sidebar drawer
+      const moreBtn = document.createElement("button");
+      moreBtn.className = "mobile-bottom-nav-btn";
+      moreBtn.style.cssText = "--navcolor:#78909c";
+      // Highlight "More" if the current view isn't one of the pinned tabs
+      if (!pinned.includes(this.state.view)) {
+        moreBtn.classList.add("active");
+        moreBtn.style.cssText = `--navcolor:${MENU_COLORS[this.state.view] || "#78909c"}`;
+      }
+      moreBtn.innerHTML = `<span class="bn-dot" style="background:#78909c"></span><span>More</span>`;
+      moreBtn.addEventListener("click", () => {
+        if (this.$("#app").classList.contains("mobile-open")) {
+          if (this._closeDrawer) this._closeDrawer();
+        } else {
+          this.$("#app").classList.add("mobile-open");
+          this.$("#sideBackdrop").classList.add("active");
+        }
+      });
+      bottomNav.appendChild(moreBtn);
+    }
+
+    // ── Mobile topbar: update title and pills ───────────────────────
+    const mobileTitle = this.shadowRoot.querySelector("#mobileTitle");
+    if (mobileTitle) {
+      const mi = MENU.find(x => x[0] === this.state.view);
+      mobileTitle.textContent = mi ? mi[1] : this.state.view;
+    }
+    const mobileDataPill = this.shadowRoot.querySelector("#mobileDataPill");
+    if (mobileDataPill) {
+      const isLive = this.state.dataMode === "live";
+      mobileDataPill.textContent = isLive ? "Live" : "Sample";
+      mobileDataPill.className = "mobile-topbar-pill" + (isLive ? " live" : "");
+    }
+    const mobileModePill = this.shadowRoot.querySelector("#mobileModePill");
+    if (mobileModePill) {
+      mobileModePill.textContent = isBasic ? "Basic" : this.state.complexity === "development" ? "Dev" : "Adv";
+      mobileModePill.className = "mobile-topbar-pill" + (isBasic ? " basic" : "");
     }
   }
 
