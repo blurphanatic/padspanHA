@@ -1325,6 +1325,361 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         except Exception as _merge_err:
             _LOGGER.debug("Object merge error: %s", _merge_err)
 
+        # ── Aggressive beacon deduplication ──────────────────────────────────
+        # Reduces ~700 beacons down by merging devices that are clearly the
+        # same physical device broadcasting under different MACs or protocols.
+        _dedup_absorbed: set[str] = set()
+        try:
+
+            # Helper: merge obj_src into obj_dst (like the iBeacon merge above)
+            def _merge_into(dst: dict, src: dict) -> None:
+                for _mf in ("manufacturer_data", "service_data"):
+                    sd = src.get(_mf) or {}
+                    if sd:
+                        dst.setdefault(_mf, {}).update(sd)
+                for _u in (src.get("service_uuids") or []):
+                    tl = dst.setdefault("service_uuids", [])
+                    if _u not in tl:
+                        tl.append(_u)
+                for _ma in (src.get("all_addresses") or [src.get("address")]):
+                    if _ma:
+                        ea = dst.setdefault("all_addresses", [])
+                        if _ma not in ea:
+                            ea.append(_ma)
+                dst["all_addresses"] = sorted(dst.get("all_addresses") or [])
+                for _le in (src.get("linked_entities") or []):
+                    el = dst.setdefault("linked_entities", [])
+                    if _le not in el:
+                        el.append(_le)
+                for _s in (src.get("sources") or []):
+                    es = dst.setdefault("sources", [])
+                    sk = _s.get("source") if isinstance(_s, dict) else str(_s)
+                    if sk not in {(s.get("source") if isinstance(s, dict) else str(s)) for s in es}:
+                        es.append(_s)
+                if src.get("rssi") is not None:
+                    if dst.get("rssi") is None or src["rssi"] > dst["rssi"]:
+                        dst["rssi"] = src["rssi"]
+                        dst["age_s"] = src.get("age_s")
+                if src.get("connectable") is True:
+                    dst["connectable"] = True
+                if not dst.get("device") and src.get("device"):
+                    dst["device"] = src["device"]
+                sn = src.get("name") or ""
+                if sn and sn != src.get("address") and not dst.get("ble_name"):
+                    dst["ble_name"] = sn
+                if src.get("identified"):
+                    dst["identified"] = True
+                _mp = dst.setdefault("merged_protocols", [dst.get("kind", "ble")])
+                sk2 = src.get("kind", "ble")
+                if sk2 not in _mp:
+                    _mp.append(sk2)
+
+            # --- (D1) Entity absorbs its BLE counterpart ─────────────────────
+            # Entity objects that share a MAC with a ble/private_ble/ibeacon
+            # object → absorb the raw BLE object (entity is the richer representation)
+            _ent_macs: dict[str, dict[str, Any]] = {}  # MAC → entity obj
+            for obj in objects:
+                if obj.get("kind") == "entity" and obj.get("address"):
+                    _ent_macs[obj["address"].upper()] = obj
+            for obj in objects:
+                if obj.get("kind") not in ("ble",):
+                    continue
+                obj_addr = (obj.get("address") or "").upper()
+                ent_obj = _ent_macs.get(obj_addr) if obj_addr else None
+                if ent_obj:
+                    _dedup_absorbed.add(obj.get("key", ""))
+                    # Copy BLE metadata into the entity object
+                    for _mf in ("manufacturer_data", "service_data", "service_uuids",
+                                "company_name", "device_type", "service_names"):
+                        v = obj.get(_mf)
+                        if v and not ent_obj.get(_mf):
+                            ent_obj[_mf] = v
+                    if obj.get("rssi") is not None and ent_obj.get("rssi") is None:
+                        ent_obj["rssi"] = obj["rssi"]
+                    if obj.get("sources"):
+                        ent_obj.setdefault("sources", [])
+                        for _s in obj["sources"]:
+                            if _s not in ent_obj["sources"]:
+                                ent_obj["sources"].append(_s)
+
+            # --- (D2) Eddystone-UID namespace grouping ───────────────────────
+            # Eddystone-UID beacons broadcast service_data under UUID 0xFEAA.
+            # Frame type 0x00 = UID frame: 10-byte namespace + 6-byte instance.
+            # Group by namespace+instance (like iBeacon UUID/major/minor).
+            _eddystone_groups: dict[str, list[dict[str, Any]]] = {}  # "eddy:ns:inst" → [objs]
+            for obj in objects:
+                if obj.get("key", "") in _dedup_absorbed:
+                    continue
+                if obj.get("kind") not in ("ble", "private_ble"):
+                    continue
+                sd = obj.get("service_data") or {}
+                for sdk in ("0000feaa-0000-1000-8000-00805f9b34fb", "feaa", "0xFEAA"):
+                    raw = sd.get(sdk)
+                    if not raw:
+                        continue
+                    try:
+                        if isinstance(raw, str):
+                            payload = bytes(int(x, 16) for x in raw.split())
+                        elif isinstance(raw, (bytes, bytearray)):
+                            payload = bytes(raw)
+                        else:
+                            continue
+                        if len(payload) >= 18 and payload[0] == 0x00:
+                            # UID frame: byte 0 = frame type, byte 1 = tx power,
+                            # bytes 2-11 = namespace (10 bytes), bytes 12-17 = instance (6 bytes)
+                            ns = payload[2:12].hex()
+                            inst = payload[12:18].hex()
+                            eddy_key = f"eddy:{ns}:{inst}"
+                            _eddystone_groups.setdefault(eddy_key, []).append(obj)
+                    except Exception:
+                        pass
+
+            for eddy_key, group in _eddystone_groups.items():
+                if len(group) <= 1:
+                    continue
+                # Keep the one with best RSSI as primary
+                group.sort(key=lambda o: o.get("rssi") or -999, reverse=True)
+                primary = group[0]
+                primary["eddystone_uid"] = eddy_key
+                for secondary in group[1:]:
+                    _dedup_absorbed.add(secondary.get("key", ""))
+                    _merge_into(primary, secondary)
+
+            # --- (D3) Same BLE name merging ──────────────────────────────────
+            # Devices with identical non-generic broadcast names and random MACs
+            # are very likely the same device with rotating addresses.
+            # Generic names (empty, MAC-like, short hex) are excluded.
+            _GENERIC_NAME_RE = __import__("re").compile(
+                r"^$|^([0-9A-Fa-f]{2}[:\-]){2,}|^[0-9A-Fa-f]{4,}$|^BLE$|^Unknown$"
+            )
+            _name_groups: dict[str, list[dict[str, Any]]] = {}
+            for obj in objects:
+                if obj.get("key", "") in _dedup_absorbed:
+                    continue
+                if obj.get("kind") not in ("ble",):
+                    continue
+                name = (obj.get("name") or "").strip()
+                addr = (obj.get("address") or "").upper()
+                # Skip if name is generic or IS the MAC address
+                if not name or name.upper() == addr or _GENERIC_NAME_RE.match(name):
+                    continue
+                # Only merge random-address MACs (bit 1 of first octet set = random)
+                try:
+                    first_octet = int(addr.split(":")[0], 16)
+                    is_random = bool(first_octet & 0x02)  # locally administered bit
+                except Exception:
+                    is_random = False
+                if not is_random:
+                    continue
+                _name_groups.setdefault(name, []).append(obj)
+
+            for name, group in _name_groups.items():
+                if len(group) <= 1:
+                    continue
+                # All share the same broadcast name + have random MACs → likely same device
+                group.sort(key=lambda o: o.get("rssi") or -999, reverse=True)
+                primary = group[0]
+                for secondary in group[1:]:
+                    _dedup_absorbed.add(secondary.get("key", ""))
+                    _merge_into(primary, secondary)
+                primary.setdefault("merged_protocols", [primary.get("kind", "ble")])
+                primary["_dedup_reason"] = f"same_name:{name}"
+
+            # --- (D4) Manufacturer data fingerprint dedup ────────────────────
+            # Devices with identical manufacturer_data payloads on different
+            # random MACs are the same rotating device.  Only for random MACs.
+            # Exclude Apple (76) continuity data which changes frequently.
+            _manuf_groups: dict[str, list[dict[str, Any]]] = {}
+            for obj in objects:
+                if obj.get("key", "") in _dedup_absorbed:
+                    continue
+                if obj.get("kind") not in ("ble",):
+                    continue
+                md = obj.get("manufacturer_data") or {}
+                if not md:
+                    continue
+                addr = (obj.get("address") or "").upper()
+                try:
+                    first_octet = int(addr.split(":")[0], 16)
+                    is_random = bool(first_octet & 0x02)
+                except Exception:
+                    is_random = False
+                if not is_random:
+                    continue
+                # Build a fingerprint from manufacturer_data, excluding Apple
+                # continuity (company 76) which rotates frequently
+                fp_parts = []
+                for k, v in sorted(md.items()):
+                    if str(k) in ("76", "0x004c", "0x004C"):
+                        continue  # skip Apple continuity — too variable
+                    fp_parts.append(f"{k}={v}")
+                if not fp_parts:
+                    continue
+                fp = "|".join(fp_parts)
+                _manuf_groups.setdefault(fp, []).append(obj)
+
+            for fp, group in _manuf_groups.items():
+                if len(group) <= 1:
+                    continue
+                group.sort(key=lambda o: o.get("rssi") or -999, reverse=True)
+                primary = group[0]
+                for secondary in group[1:]:
+                    _dedup_absorbed.add(secondary.get("key", ""))
+                    _merge_into(primary, secondary)
+                primary["_dedup_reason"] = "same_manuf_data"
+
+            # --- (D5) Apple continuity dedup ─────────────────────────────────
+            # Apple devices rotate MACs but broadcast company 76 with a
+            # consistent subtype byte (byte 0 after company ID).  Devices
+            # from the same scanners with the same subtype are grouped.
+            _apple_groups: dict[str, list[dict[str, Any]]] = {}
+            for obj in objects:
+                if obj.get("key", "") in _dedup_absorbed:
+                    continue
+                if obj.get("kind") not in ("ble",):
+                    continue
+                md = obj.get("manufacturer_data") or {}
+                apple_raw = None
+                for k in ("76", "0x004c", "0x004C"):
+                    if k in md:
+                        apple_raw = md[k]
+                        break
+                if not apple_raw:
+                    continue
+                addr = (obj.get("address") or "").upper()
+                try:
+                    first_octet = int(addr.split(":")[0], 16)
+                    is_random = bool(first_octet & 0x02)
+                except Exception:
+                    is_random = False
+                if not is_random:
+                    continue
+                # Parse subtype from Apple continuity data
+                try:
+                    if isinstance(apple_raw, str):
+                        raw_bytes = [int(x, 16) for x in apple_raw.split()]
+                    elif isinstance(apple_raw, (bytes, bytearray)):
+                        raw_bytes = list(apple_raw)
+                    else:
+                        continue
+                    if len(raw_bytes) < 2:
+                        continue
+                    subtype = raw_bytes[0]
+                    data_len = raw_bytes[1]
+                except Exception:
+                    continue
+                # Skip iBeacon subtype (already handled)
+                if subtype == 0x02 and data_len == 0x15:
+                    continue
+                # Group by subtype + data length + scanner set
+                srcs = obj.get("sources") or []
+                src_key = ",".join(sorted(str(s) for s in srcs)) if srcs else "_"
+                apple_key = f"apple:{subtype:02x}:{data_len:02x}:{src_key}"
+                _apple_groups.setdefault(apple_key, []).append(obj)
+
+            for apple_key, group in _apple_groups.items():
+                if len(group) <= 1:
+                    continue
+                # Same Apple subtype + same scanners → likely same device rotating MACs
+                group.sort(key=lambda o: o.get("rssi") or -999, reverse=True)
+                primary = group[0]
+                for secondary in group[1:]:
+                    _dedup_absorbed.add(secondary.get("key", ""))
+                    _merge_into(primary, secondary)
+                primary["_dedup_reason"] = f"apple_continuity:{apple_key}"
+
+            # --- (D6) Identical service_uuids + same scanners dedup ──────────
+            # Random-MAC devices advertising identical service_uuids from the
+            # same set of scanners are very likely the same rotating device.
+            _svcuuid_groups: dict[str, list[dict[str, Any]]] = {}
+            for obj in objects:
+                if obj.get("key", "") in _dedup_absorbed:
+                    continue
+                if obj.get("kind") not in ("ble",):
+                    continue
+                su = obj.get("service_uuids") or []
+                if not su:
+                    continue
+                addr = (obj.get("address") or "").upper()
+                try:
+                    first_octet = int(addr.split(":")[0], 16)
+                    is_random = bool(first_octet & 0x02)
+                except Exception:
+                    is_random = False
+                if not is_random:
+                    continue
+                name = (obj.get("name") or "").strip()
+                # Only group unnamed or generic-named devices
+                if name and name.upper() != addr and not _GENERIC_NAME_RE.match(name):
+                    continue  # named devices already handled by D3
+                srcs = obj.get("sources") or []
+                src_key = ",".join(sorted(str(s) for s in srcs)) if srcs else "_"
+                uuid_key = "+".join(sorted(su)) + "@" + src_key
+                _svcuuid_groups.setdefault(uuid_key, []).append(obj)
+
+            for uuid_key, group in _svcuuid_groups.items():
+                if len(group) <= 1:
+                    continue
+                group.sort(key=lambda o: o.get("rssi") or -999, reverse=True)
+                primary = group[0]
+                for secondary in group[1:]:
+                    _dedup_absorbed.add(secondary.get("key", ""))
+                    _merge_into(primary, secondary)
+                primary["_dedup_reason"] = "same_svc_uuids_scanners"
+
+            # --- (D7) Bare random MACs with no data ──────────────────────────
+            # Random-address devices with no name, no manufacturer_data, no
+            # service_data, no service_uuids → group by scanner set.
+            # These are typically the same device rotating its address.
+            _bare_groups: dict[str, list[dict[str, Any]]] = {}
+            for obj in objects:
+                if obj.get("key", "") in _dedup_absorbed:
+                    continue
+                if obj.get("kind") not in ("ble",):
+                    continue
+                addr = (obj.get("address") or "").upper()
+                try:
+                    first_octet = int(addr.split(":")[0], 16)
+                    is_random = bool(first_octet & 0x02)
+                except Exception:
+                    is_random = False
+                if not is_random:
+                    continue
+                name = (obj.get("name") or "").strip()
+                if name and name.upper() != addr:
+                    continue  # has a real name
+                md = obj.get("manufacturer_data") or {}
+                sd = obj.get("service_data") or {}
+                su = obj.get("service_uuids") or []
+                if md or sd or su:
+                    continue  # has some distinguishing data
+                srcs = obj.get("sources") or []
+                src_key = ",".join(sorted(str(s) for s in srcs)) if srcs else "_"
+                _bare_groups.setdefault(src_key, []).append(obj)
+
+            for src_key, group in _bare_groups.items():
+                if len(group) <= 1:
+                    continue
+                # Group all bare random-MAC devices per scanner set into one
+                group.sort(key=lambda o: o.get("rssi") or -999, reverse=True)
+                primary = group[0]
+                primary["name"] = f"Unknown BLE ({len(group)} rotations)"
+                for secondary in group[1:]:
+                    _dedup_absorbed.add(secondary.get("key", ""))
+                    _merge_into(primary, secondary)
+                primary["_dedup_reason"] = "bare_random_mac"
+
+            # Remove all absorbed objects
+            if _dedup_absorbed:
+                _pre = len(objects)
+                objects = [o for o in objects if o.get("key", "") not in _dedup_absorbed]
+                _LOGGER.debug(
+                    "Aggressive dedup: %d → %d objects (-%d)",
+                    _pre, len(objects), _pre - len(objects),
+                )
+        except Exception as _dedup_err:
+            _LOGGER.debug("Aggressive dedup error: %s", _dedup_err)
+
         # Attach user labels from ObjectStore (labels make BLE objects "identified")
         # Labels propagate: iBeacon label → entity with same MAC; MAC label → iBeacon
         try:
@@ -1476,10 +1831,14 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             _cache[key] = dict(obj)  # snapshot copy
 
         # Merge cached objects not seen this cycle back into the list
+        # Skip keys absorbed by deduplication — they are ghosts of merged objects
         _cached_added = 0
         for key, cached_obj in list(_cache.items()):
             if key in _current_keys:
                 continue  # already in this cycle's list
+            if key in _dedup_absorbed:
+                del _cache[key]  # purge absorbed ghost from cache
+                continue
             stale_s = _now_ts - (cached_obj.get("_last_seen_ts") or _now_ts)
             is_identified = cached_obj.get("identified") or cached_obj.get("user_label")
             # Tagged/identified objects never expire from history
@@ -1539,6 +1898,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "common_prefixes": common_prefixes,  # prefix -> count (>=3)
                 "resolver": _resolver_diag,
                 "cached_objects": _cached_added,
+                "dedup_absorbed": len(_dedup_absorbed),
             },
         }
     except Exception as _obj_err:

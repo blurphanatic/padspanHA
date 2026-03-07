@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.19";
+const APP_VERSION = "0.7.20";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260307T061915Z";
+const BUILD_ID = "20260307T165254Z";
 const CHANNEL = "stable";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1267,8 +1267,9 @@ class PadSpanHaApp extends HTMLElement {
       addr ? el("div", {class:"muted", style:"font-family:monospace;font-size:12px"}, addr) : null,
       obj.canonical_id ? el("div", {class:"muted", style:"font-size:11px"}, `Canonical: ${obj.canonical_id}`) : null,
       (Array.isArray(obj.all_addresses) && obj.all_addresses.length > 1)
-        ? el("div", {class:"muted", style:"font-size:11px"}, `Rotating MACs: ${obj.all_addresses.join(", ")}`)
+        ? el("div", {class:"muted", style:"font-size:11px"}, `Addresses (${obj.all_addresses.length}): ${obj.all_addresses.slice(0,5).join(", ")}${obj.all_addresses.length>5?" + "+(obj.all_addresses.length-5)+" more":""}`)
         : null,
+      obj._dedup_reason ? el("div", {class:"muted", style:"font-size:10px;color:#a78bfa"}, `Merged: ${obj._dedup_reason}`) : null,
       obj.entity_id ? el("div", {class:"muted", style:"font-size:12px"}, `Entity: ${obj.entity_id}`) : null,
       obj.ibeacon_key ? el("div", {class:"muted", style:"font-size:11px;color:#fbbf24"}, `Linked iBeacon: ${obj.ibeacon_key}`) : null,
       (Array.isArray(obj.linked_entities) && obj.linked_entities.length)

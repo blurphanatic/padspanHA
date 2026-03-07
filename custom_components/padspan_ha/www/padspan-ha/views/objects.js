@@ -333,6 +333,9 @@ export function render(ctx){
           ? el("div",{class:"muted",style:"font-size:11px"}, `\u{1F512} ${o.private_ble_name}`) : null),
         (isIbeacon && o.ibeacon_uuid
           ? el("div",{class:"muted",style:"font-size:11px"}, `UUID: ${o.ibeacon_uuid.slice(0,8)}\u2026 \u00B7 M${o.ibeacon_major}.${o.ibeacon_minor}`) : null),
+        (Array.isArray(o.all_addresses) && o.all_addresses.length > 1
+          ? el("div",{class:"muted",style:"font-size:10px;color:#a78bfa"}, `${o.all_addresses.length} MACs merged`)
+          : null),
         // Enrichment: company + device type + services
         ((o.company_name || o.device_type || (o.service_names && o.service_names.length))
           ? el("div",{style:"display:flex;flex-wrap:wrap;gap:4px;margin-top:2px"}, [
@@ -393,7 +396,8 @@ export function render(ctx){
       tr.style.display = ok ? "" : "none";
       if(ok) shown++;
     }
-    objStats.textContent = `${shown} of ${objRowEls.length}`;
+    const _dedupN = (summary && summary.dedup_absorbed) || 0;
+    objStats.textContent = `${shown} of ${objRowEls.length}` + (_dedupN ? ` (${_dedupN} merged)` : "");
   }
 
   objSearchInput.addEventListener("input",  ()=>{ ctx.state.objSearch = objSearchInput.value; applyObjFilter(); });
