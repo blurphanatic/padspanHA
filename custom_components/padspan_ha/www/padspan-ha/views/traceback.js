@@ -78,7 +78,7 @@ export function render(ctx) {
   // ── Traceback state ────────────────────────────────────────────────────
   if (!ctx.state._traceback) ctx.state._traceback = {
     playing: false,
-    speed: 1,
+    playDurationS: 300,  // how long full playback takes (1 min to 1 hr slider)
     frameIdx: 0,
     frames: [],
     range: null,
@@ -328,7 +328,10 @@ export function render(ctx) {
   function _startPlayback() {
     if (tb._animTimer) clearInterval(tb._animTimer);
     tb.playing = true;
-    const interval = Math.max(16, Math.round(200 / tb.speed));
+    // Compute interval: total run time / remaining frames
+    const remaining = Math.max(1, tb.frames.length - 1 - tb.frameIdx);
+    const totalMs = tb.playDurationS * 1000;
+    const interval = Math.max(16, Math.round(totalMs / tb.frames.length));
     tb._animTimer = setInterval(() => {
       if (tb.frameIdx >= tb.frames.length - 1) {
         _stopPlayback();
@@ -522,28 +525,35 @@ export function render(ctx) {
     endBtn.addEventListener("click", () => { tb.frameIdx = tb.frames.length - 1; _renderFrame(); _updateScrubber(); });
     transport.appendChild(endBtn);
 
-    // Speed selector
-    const speedLbl = document.createElement("span");
-    speedLbl.style.cssText = "font-size:11px;color:#94a3b8;margin-left:8px";
-    speedLbl.textContent = "Speed:";
-    transport.appendChild(speedLbl);
+    // Run time slider (1 min to 60 min)
+    const rtWrap = document.createElement("span");
+    rtWrap.style.cssText = "display:flex;align-items:center;gap:6px;margin-left:8px";
+    const rtLbl = document.createElement("span");
+    rtLbl.style.cssText = "font-size:11px;color:#94a3b8;white-space:nowrap";
+    rtLbl.textContent = "Run time:";
+    rtWrap.appendChild(rtLbl);
 
-    const speeds = [1, 2, 4, 8, 16, 32, 64];
-    for (const sp of speeds) {
-      const btn = document.createElement("button");
-      btn.className = "btn inline";
-      const isActive = tb.speed === sp;
-      btn.style.cssText = isActive
-        ? "font-size:10px;padding:1px 6px;background:#92400e;color:#fbbf24;border-color:#fbbf24;font-weight:700"
-        : "font-size:10px;padding:1px 6px;color:#94a3b8";
-      btn.textContent = `${sp}x`;
-      btn.addEventListener("click", () => {
-        tb.speed = sp;
-        if (tb.playing) { _stopPlayback(); _startPlayback(); }
-        _buildControls();
-      });
-      transport.appendChild(btn);
-    }
+    const rtSlider = document.createElement("input");
+    rtSlider.type = "range";
+    rtSlider.min = "60";
+    rtSlider.max = "3600";
+    rtSlider.step = "30";
+    rtSlider.value = String(tb.playDurationS);
+    rtSlider.style.cssText = "width:100px;accent-color:#fbbf24;cursor:pointer;height:20px";
+    rtSlider.title = "How long the full playback takes";
+
+    const rtValLbl = document.createElement("span");
+    rtValLbl.style.cssText = "font-size:11px;color:#fbbf24;font-weight:600;min-width:36px;font-family:monospace";
+    rtValLbl.textContent = _fmtDuration(tb.playDurationS);
+
+    rtSlider.addEventListener("input", () => {
+      tb.playDurationS = parseInt(rtSlider.value, 10);
+      rtValLbl.textContent = _fmtDuration(tb.playDurationS);
+      if (tb.playing) { _stopPlayback(); _startPlayback(); }
+    });
+    rtWrap.appendChild(rtSlider);
+    rtWrap.appendChild(rtValLbl);
+    transport.appendChild(rtWrap);
 
     // Current time display
     const timeLbl = document.createElement("span");
