@@ -52,16 +52,19 @@ class TracebackStore:
         self._last_save_ts = time.time()
         _LOGGER.debug("TracebackStore loaded: %d frames", len(self.frames))
 
-    def record_frame(self, objects: list[dict[str, Any]]) -> None:
-        """Record a position snapshot for all relevant objects.
+    def record_frame(self, objects: list[dict[str, Any]], followed_set: set[str] | None = None) -> None:
+        """Record a position snapshot for identified/followed objects only.
 
         Called from the snapshot builder (~every 10 s).  Only records
-        objects that have a known room.
+        objects that are identified (labelled/known) or followed — matching
+        what overview actually displays.  Raw unidentified BLE noise is excluded.
         """
         now = time.time()
         if now - self._last_frame_ts < MIN_FRAME_INTERVAL_S:
             return
         self._last_frame_ts = now
+
+        _fset = followed_set or set()
 
         compact: list[dict[str, Any]] = []
         for o in objects:
@@ -70,6 +73,11 @@ class TracebackStore:
                 continue
             key = o.get("key") or o.get("address") or o.get("entity_id") or ""
             if not key:
+                continue
+            # Only record identified or followed objects (skip anonymous BLE noise)
+            is_identified = o.get("identified") or o.get("user_label")
+            is_followed = key in _fset or o.get("address", "") in _fset or o.get("entity_id", "") in _fset
+            if not is_identified and not is_followed:
                 continue
             entry: dict[str, Any] = {
                 "k": key,

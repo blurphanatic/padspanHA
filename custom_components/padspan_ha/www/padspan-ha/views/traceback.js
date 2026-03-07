@@ -123,6 +123,23 @@ export function render(ctx) {
       tb.frames = res.frames || [];
       tb.range = res.range || { start: 0, end: 0, count: 0 };
       tb.frameIdx = 0;
+
+      // If filtering by object and no frames found, auto-expand to full data range
+      if (tb.filterKey && !tb.frames.length && tb.range && tb.range.start > 0) {
+        const fullRes = await ctx.actions.wsCall("padspan_ha/traceback_get", {
+          start_ts: tb.range.start,
+          end_ts: tb.range.end || now,
+          obj_key: tb.filterKey,
+          max_frames: 4000,
+        });
+        tb.frames = fullRes.frames || [];
+        if (tb.frames.length) {
+          tb._autoExpanded = true;
+        }
+      } else {
+        tb._autoExpanded = false;
+      }
+
       const objRes = await ctx.actions.wsCall("padspan_ha/traceback_objects", {});
       tb.objKeys = objRes.objects || [];
       tb.range = objRes.range || tb.range;
@@ -426,16 +443,23 @@ export function render(ctx) {
 
     const infoLbl = document.createElement("span");
     infoLbl.style.cssText = "font-size:11px;color:#64748b;margin-left:auto";
-    infoLbl.textContent = tb.frames.length
-      ? `${tb.frames.length} frames | ${_fmtDuration(tb.rangePreset)} window`
-      : "No data in range";
+    if (tb.frames.length) {
+      const rangeNote = tb._autoExpanded ? "auto-expanded to full range" : `${_fmtDuration(tb.rangePreset)} window`;
+      infoLbl.textContent = `${tb.frames.length} frames | ${rangeNote}`;
+    } else {
+      infoLbl.textContent = tb.filterKey ? "No data for this object" : "No data in range";
+    }
     filterRow.appendChild(infoLbl);
     ctrlCard.appendChild(filterRow);
 
     if (!tb.frames.length) {
       const empty = document.createElement("div");
       empty.style.cssText = "text-align:center;padding:20px;color:#64748b;font-size:13px";
-      empty.textContent = "No traceback data in this time range. Data records automatically while PadSpan is running (~10s intervals). Check back after some time.";
+      if (tb.filterKey) {
+        empty.textContent = `No traceback data found for "${tb.filterName}". This object may not have been seen recently or may not be identified/followed. Only identified and followed objects are recorded.`;
+      } else {
+        empty.textContent = "No traceback data in this time range. Only identified and followed objects are recorded (~10s intervals). Try a longer time range or check back after some time.";
+      }
       ctrlCard.appendChild(empty);
       return;
     }

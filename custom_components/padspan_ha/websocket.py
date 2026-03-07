@@ -2045,7 +2045,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         tb_store = hass.data.get(DOMAIN, {}).get(DATA_TRACEBACK)
         if tb_store:
             _tb_objs = (snapshot.get("objects") or {}).get("list") or []
-            tb_store.record_frame(_tb_objs)
+            _tb_followed = set(_get_settings(hass).get("followed_addrs") or [])
+            tb_store.record_frame(_tb_objs, followed_set=_tb_followed)
             await tb_store.async_maybe_save()
     except Exception:
         pass
