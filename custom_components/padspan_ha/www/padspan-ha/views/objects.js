@@ -532,7 +532,24 @@ export function render(ctx){
     el("div",{class:"toolbar"},[objSearchInput, objKindSel, objStatusSel,
       el("div",{style:"display:flex;align-items:center;gap:6px"},
         [el("span",{class:"muted",style:"font-size:12px;white-space:nowrap"}, "History:"), objAgeSlider, objAgeLabel]),
-      objStats]),
+      objStats,
+      (() => {
+        const clrBtn = el("button",{class:"btn inline",style:"font-size:11px;color:#f87171;border-color:#7f1d1d;margin-left:auto;white-space:nowrap"}, "Clear History");
+        clrBtn.title = "Remove all untagged/unfollowed objects from history. Tagged and followed objects are kept.";
+        clrBtn.addEventListener("click", async () => {
+          if (!confirm("Clear all untagged and unfollowed objects from history?\\n\\nTagged and followed objects will be kept. New objects will appear as scanners detect them.")) return;
+          clrBtn.disabled = true;
+          clrBtn.textContent = "Clearing...";
+          try {
+            const res = await ctx.actions.wsCall("padspan_ha/objects_clear_history", {});
+            clrBtn.textContent = `Cleared ${res.removed} (${res.kept} kept)`;
+            setTimeout(() => ctx.actions.renderRooms(), 1500);
+          } catch(e) {
+            clrBtn.textContent = "Error";
+          }
+        });
+        return clrBtn;
+      })()]),
     allObjects.length
       ? objTable
       : el("div",{class:"muted"}, isLive ? "Waiting for scanner data…" : "Switch to Live mode to see real BLE detections."),

@@ -130,6 +130,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_logs_get)
     websocket_api.async_register_command(hass, ws_private_ble_status)
     websocket_api.async_register_command(hass, ws_private_ble_add_irk)
+    websocket_api.async_register_command(hass, ws_objects_clear_history)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -1329,56 +1330,58 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         # ── Aggressive beacon deduplication ──────────────────────────────────
         # Reduces ~700 beacons down by merging devices that are clearly the
         # same physical device broadcasting under different MACs or protocols.
+        # Runs twice: once on current-cycle objects (to purge ghosts from cache),
+        # and again after cache reintroduction (to dedup cached objects too).
         _dedup_absorbed: set[str] = set()
-        try:
 
-            # Helper: merge obj_src into obj_dst (like the iBeacon merge above)
-            def _merge_into(dst: dict, src: dict) -> None:
-                for _mf in ("manufacturer_data", "service_data"):
-                    sd = src.get(_mf) or {}
-                    if sd:
-                        dst.setdefault(_mf, {}).update(sd)
-                for _u in (src.get("service_uuids") or []):
-                    tl = dst.setdefault("service_uuids", [])
-                    if _u not in tl:
-                        tl.append(_u)
-                # Ensure dst's own address is in all_addresses first
-                ea = dst.setdefault("all_addresses", [])
-                if dst.get("address") and dst["address"] not in ea:
-                    ea.append(dst["address"])
-                for _ma in (src.get("all_addresses") or [src.get("address")]):
-                    if _ma and _ma not in ea:
-                        ea.append(_ma)
-                dst["all_addresses"] = sorted(ea)
-                for _le in (src.get("linked_entities") or []):
-                    el = dst.setdefault("linked_entities", [])
-                    if _le not in el:
-                        el.append(_le)
-                es = dst.setdefault("sources", [])
-                es_set = {(s.get("source") if isinstance(s, dict) else str(s)) for s in es}
-                for _s in (src.get("sources") or []):
-                    sk = _s.get("source") if isinstance(_s, dict) else str(_s)
-                    if sk not in es_set:
-                        es.append(_s)
-                        es_set.add(sk)
-                if src.get("rssi") is not None:
-                    if dst.get("rssi") is None or src["rssi"] > dst["rssi"]:
-                        dst["rssi"] = src["rssi"]
-                        dst["age_s"] = src.get("age_s")
-                if src.get("connectable") is True:
-                    dst["connectable"] = True
-                if not dst.get("device") and src.get("device"):
-                    dst["device"] = src["device"]
-                sn = src.get("name") or ""
-                if sn and sn != src.get("address") and not dst.get("ble_name"):
-                    dst["ble_name"] = sn
-                if src.get("identified"):
-                    dst["identified"] = True
-                _mp = dst.setdefault("merged_protocols", [dst.get("kind", "ble")])
-                sk2 = src.get("kind", "ble")
-                if sk2 not in _mp:
-                    _mp.append(sk2)
+        # Helper: merge obj_src into obj_dst (like the iBeacon merge above)
+        def _merge_into(dst: dict, src: dict) -> None:
+            for _mf in ("manufacturer_data", "service_data"):
+                sd = src.get(_mf) or {}
+                if sd:
+                    dst.setdefault(_mf, {}).update(sd)
+            for _u in (src.get("service_uuids") or []):
+                tl = dst.setdefault("service_uuids", [])
+                if _u not in tl:
+                    tl.append(_u)
+            ea = dst.setdefault("all_addresses", [])
+            if dst.get("address") and dst["address"] not in ea:
+                ea.append(dst["address"])
+            for _ma in (src.get("all_addresses") or [src.get("address")]):
+                if _ma and _ma not in ea:
+                    ea.append(_ma)
+            dst["all_addresses"] = sorted(ea)
+            for _le in (src.get("linked_entities") or []):
+                el2 = dst.setdefault("linked_entities", [])
+                if _le not in el2:
+                    el2.append(_le)
+            es = dst.setdefault("sources", [])
+            es_set = {(s.get("source") if isinstance(s, dict) else str(s)) for s in es}
+            for _s in (src.get("sources") or []):
+                sk = _s.get("source") if isinstance(_s, dict) else str(_s)
+                if sk not in es_set:
+                    es.append(_s)
+                    es_set.add(sk)
+            if src.get("rssi") is not None:
+                if dst.get("rssi") is None or src["rssi"] > dst["rssi"]:
+                    dst["rssi"] = src["rssi"]
+                    dst["age_s"] = src.get("age_s")
+            if src.get("connectable") is True:
+                dst["connectable"] = True
+            if not dst.get("device") and src.get("device"):
+                dst["device"] = src["device"]
+            sn = src.get("name") or ""
+            if sn and sn != src.get("address") and not dst.get("ble_name"):
+                dst["ble_name"] = sn
+            if src.get("identified"):
+                dst["identified"] = True
+            _mp = dst.setdefault("merged_protocols", [dst.get("kind", "ble")])
+            sk2 = src.get("kind", "ble")
+            if sk2 not in _mp:
+                _mp.append(sk2)
 
+        def _run_dedup(objects: list, absorbed: set) -> list:
+            """Run D1-D7 dedup strategies. Mutates absorbed set, returns filtered list."""
             # --- (D1) Entity absorbs its BLE counterpart ─────────────────────
             # Entity objects that share a MAC with a ble/private_ble/ibeacon
             # object → absorb the raw BLE object (entity is the richer representation)
@@ -1392,7 +1395,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 obj_addr = (obj.get("address") or "").upper()
                 ent_obj = _ent_macs.get(obj_addr) if obj_addr else None
                 if ent_obj:
-                    _dedup_absorbed.add(obj.get("key", ""))
+                    absorbed.add(obj.get("key", ""))
                     # Copy BLE metadata into the entity object
                     for _mf in ("manufacturer_data", "service_data", "service_uuids",
                                 "company_name", "device_type", "service_names"):
@@ -1413,7 +1416,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             # Group by namespace+instance (like iBeacon UUID/major/minor).
             _eddystone_groups: dict[str, list[dict[str, Any]]] = {}  # "eddy:ns:inst" → [objs]
             for obj in objects:
-                if obj.get("key", "") in _dedup_absorbed:
+                if obj.get("key", "") in absorbed:
                     continue
                 if obj.get("kind") not in ("ble", "private_ble"):
                     continue
@@ -1447,7 +1450,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 primary = group[0]
                 primary["eddystone_uid"] = eddy_key
                 for secondary in group[1:]:
-                    _dedup_absorbed.add(secondary.get("key", ""))
+                    absorbed.add(secondary.get("key", ""))
                     _merge_into(primary, secondary)
 
             # --- (D3) Same BLE name merging ──────────────────────────────────
@@ -1459,7 +1462,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             )
             _name_groups: dict[str, list[dict[str, Any]]] = {}
             for obj in objects:
-                if obj.get("key", "") in _dedup_absorbed:
+                if obj.get("key", "") in absorbed:
                     continue
                 if obj.get("kind") not in ("ble",):
                     continue
@@ -1485,7 +1488,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 group.sort(key=lambda o: o.get("rssi") or -999, reverse=True)
                 primary = group[0]
                 for secondary in group[1:]:
-                    _dedup_absorbed.add(secondary.get("key", ""))
+                    absorbed.add(secondary.get("key", ""))
                     _merge_into(primary, secondary)
                 primary.setdefault("merged_protocols", [primary.get("kind", "ble")])
                 primary["_dedup_reason"] = f"same_name:{name}"
@@ -1496,7 +1499,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             # Exclude Apple (76) continuity data which changes frequently.
             _manuf_groups: dict[str, list[dict[str, Any]]] = {}
             for obj in objects:
-                if obj.get("key", "") in _dedup_absorbed:
+                if obj.get("key", "") in absorbed:
                     continue
                 if obj.get("kind") not in ("ble",):
                     continue
@@ -1529,7 +1532,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 group.sort(key=lambda o: o.get("rssi") or -999, reverse=True)
                 primary = group[0]
                 for secondary in group[1:]:
-                    _dedup_absorbed.add(secondary.get("key", ""))
+                    absorbed.add(secondary.get("key", ""))
                     _merge_into(primary, secondary)
                 primary["_dedup_reason"] = "same_manuf_data"
 
@@ -1539,7 +1542,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             # from the same scanners with the same subtype are grouped.
             _apple_groups: dict[str, list[dict[str, Any]]] = {}
             for obj in objects:
-                if obj.get("key", "") in _dedup_absorbed:
+                if obj.get("key", "") in absorbed:
                     continue
                 if obj.get("kind") not in ("ble",):
                     continue
@@ -1589,7 +1592,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 group.sort(key=lambda o: o.get("rssi") or -999, reverse=True)
                 primary = group[0]
                 for secondary in group[1:]:
-                    _dedup_absorbed.add(secondary.get("key", ""))
+                    absorbed.add(secondary.get("key", ""))
                     _merge_into(primary, secondary)
                 primary["_dedup_reason"] = f"apple_continuity:{apple_key}"
 
@@ -1598,7 +1601,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             # same set of scanners are very likely the same rotating device.
             _svcuuid_groups: dict[str, list[dict[str, Any]]] = {}
             for obj in objects:
-                if obj.get("key", "") in _dedup_absorbed:
+                if obj.get("key", "") in absorbed:
                     continue
                 if obj.get("kind") not in ("ble",):
                     continue
@@ -1628,7 +1631,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 group.sort(key=lambda o: o.get("rssi") or -999, reverse=True)
                 primary = group[0]
                 for secondary in group[1:]:
-                    _dedup_absorbed.add(secondary.get("key", ""))
+                    absorbed.add(secondary.get("key", ""))
                     _merge_into(primary, secondary)
                 primary["_dedup_reason"] = "same_svc_uuids_scanners"
 
@@ -1638,7 +1641,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             # These are typically the same device rotating its address.
             _bare_groups: dict[str, list[dict[str, Any]]] = {}
             for obj in objects:
-                if obj.get("key", "") in _dedup_absorbed:
+                if obj.get("key", "") in absorbed:
                     continue
                 if obj.get("kind") not in ("ble",):
                     continue
@@ -1670,18 +1673,22 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 primary = group[0]
                 primary["name"] = f"Unknown BLE ({len(group)} rotations)"
                 for secondary in group[1:]:
-                    _dedup_absorbed.add(secondary.get("key", ""))
+                    absorbed.add(secondary.get("key", ""))
                     _merge_into(primary, secondary)
                 primary["_dedup_reason"] = "bare_random_mac"
 
             # Remove all absorbed objects
-            if _dedup_absorbed:
+            if absorbed:
                 _pre = len(objects)
-                objects = [o for o in objects if o.get("key", "") not in _dedup_absorbed]
+                objects = [o for o in objects if o.get("key", "") not in absorbed]
                 _LOGGER.debug(
                     "Aggressive dedup: %d → %d objects (-%d)",
                     _pre, len(objects), _pre - len(objects),
                 )
+            return objects
+
+        try:
+            objects = _run_dedup(objects, _dedup_absorbed)
         except Exception as _dedup_err:
             _LOGGER.debug("Aggressive dedup error: %s", _dedup_err)
 
@@ -1856,6 +1863,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             obj_copy["age_s"] = base_age + stale_s
             objects.append(obj_copy)
             _cached_added += 1
+
+        # Second dedup pass: catch cached objects that were reintroduced
+        if _cached_added > 0:
+            try:
+                objects = _run_dedup(objects, _dedup_absorbed)
+            except Exception as _dedup2_err:
+                _LOGGER.debug("Post-cache dedup error: %s", _dedup2_err)
 
         # Periodic disk save (at most every 60 s)
         _last_save = _dom.get("_obj_hist_last_save") or 0
@@ -2616,6 +2630,59 @@ async def ws_object_label_list(hass: HomeAssistant, connection, msg) -> None:
         connection.send_result(msg["id"], {"labels": {}})
         return
     connection.send_result(msg["id"], {"labels": obj_store.all()})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/objects_clear_history"})
+@websocket_api.async_response
+async def ws_objects_clear_history(hass: HomeAssistant, connection, msg) -> None:
+    """Clear untagged/unfollowed objects from the history cache.
+
+    Preserves objects that have a user_label (tagged) or are identified.
+    This lets the user start fresh without losing their labelled devices.
+    """
+    _dom = hass.data.get(DOMAIN, {})
+    _cache: dict | None = _dom.get(DATA_OBJECT_HISTORY)
+    if not _cache:
+        connection.send_result(msg["id"], {"ok": True, "removed": 0, "kept": 0})
+        return
+
+    obj_store = _dom.get(DATA_OBJECTS)
+    labelled_keys: set[str] = set()
+    if obj_store:
+        for addr, entry in (obj_store.all() or {}).items():
+            if entry.get("label"):
+                labelled_keys.add(addr)
+
+    removed = 0
+    kept = 0
+    for key in list(_cache.keys()):
+        cached = _cache[key]
+        has_label = cached.get("user_label") or key in labelled_keys
+        addr = (cached.get("address") or "").upper()
+        if addr and addr in labelled_keys:
+            has_label = True
+        if has_label:
+            kept += 1
+        else:
+            del _cache[key]
+            removed += 1
+
+    # Force immediate save
+    from homeassistant.helpers.storage import Store as _Store
+    _hist_store = _dom.get("_obj_hist_store")
+    if _hist_store is None:
+        _hist_store = _Store(hass, 1, OBJECT_HISTORY_STORE_KEY)
+        _dom["_obj_hist_store"] = _hist_store
+    _save_data = {}
+    for _k, _v in _cache.items():
+        _sv = dict(_v)
+        _sv.pop("_smoothed", None)
+        _sv.pop("_stale", None)
+        _save_data[_k] = _sv
+    await _hist_store.async_save(_save_data)
+
+    _LOGGER.info("Object history cleared: removed %d, kept %d tagged", removed, kept)
+    connection.send_result(msg["id"], {"ok": True, "removed": removed, "kept": kept})
 
 
 @websocket_api.websocket_command(

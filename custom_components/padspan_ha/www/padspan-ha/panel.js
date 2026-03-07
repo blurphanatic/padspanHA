@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.23";
+const APP_VERSION = "0.7.24";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260307T180558Z";
+const BUILD_ID = "20260307T183302Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -81,9 +81,9 @@ const MENU = [
 // Tabs shown in Basic (simplified) mode
 const BASIC_TABS = new Set(["follow", "overview", "maps", "settings", "training"]);
 // Tabs shown in Advanced mode by default (user can add more via Settings → UI Structure)
-const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration"]);
+const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration","traceback"]);
 // Tabs that only appear in Development mode unless opted into Advanced
-const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","traceback","qa","sandbox"];
+const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox"];
 
 const MENU_COLORS = {
   follow: "#5eead4",
