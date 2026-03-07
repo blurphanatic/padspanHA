@@ -1517,12 +1517,57 @@ export function render(ctx){
     ]);
     if(mapEl) mapCard.appendChild(mapEl);
 
+    // Companion phone discovery (basic mode)
+    const basicCompanionCard = el("div",{class:"card",style:"border-color:#2563eb;display:none"});
+    if (dataMode === "live") {
+      (async () => {
+        try {
+          const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
+          const phones = res.phones || [];
+          if (!phones.length) return;
+          const unfollowed = phones.filter(p => !p.is_followed);
+          if (!unfollowed.length) return;
+
+          basicCompanionCard.style.display = "";
+          basicCompanionCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#60a5fa;margin-bottom:6px"}, "Phones detected"));
+          basicCompanionCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"}, "These phones have the HA Companion App. Tap to start tracking."));
+
+          for (const phone of unfollowed) {
+            const btn = document.createElement("button");
+            btn.className = "btn";
+            btn.style.cssText = "width:100%;text-align:left;padding:10px 14px;margin-bottom:6px;color:#e2e8f0;border-color:#2563eb;font-size:13px";
+            btn.textContent = `Track ${phone.device_name || "Phone"}`;
+            btn.addEventListener("click", async () => {
+              btn.disabled = true;
+              btn.textContent = "Setting up...";
+              try {
+                await ctx.actions.wsCall("padspan_ha/companion_follow", {
+                  ibeacon_key: phone.ibeacon_key,
+                  device_name: phone.device_name,
+                });
+                btn.textContent = `${phone.device_name} is now tracked!`;
+                btn.style.color = "#34d399";
+                btn.style.borderColor = "#065f46";
+                setTimeout(() => ctx.actions.renderRooms(), 2000);
+              } catch (e) {
+                btn.textContent = "Error — try again";
+                btn.style.color = "#f87171";
+                btn.disabled = false;
+              }
+            });
+            basicCompanionCard.appendChild(btn);
+          }
+        } catch (e) { /* optional feature */ }
+      })();
+    }
+
     const section = el("section",{},[
       el("div",{class:"row",style:"align-items:center;gap:8px;margin-bottom:10px"},[
         el("h2",{}, "Overview"),
         helpBtn("overview_grid"),
       ]),
       summary,
+      basicCompanionCard,
       mapCard,
     ]);
     return section;
@@ -1561,11 +1606,99 @@ export function render(ctx){
     ]),
   ]);
 
+  // ---------- Companion App Phone Discovery ----------
+  const companionCard = el("div",{class:"card",style:"border-color:#2563eb;display:none"});
+  if (dataMode === "live") {
+    (async () => {
+      try {
+        const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
+        const phones = res.phones || [];
+        if (!phones.length) return;
+
+        companionCard.style.display = "";
+        const hdr = el("div",{class:"card-head"},[
+          el("div",{class:"h2",style:"color:#60a5fa"}, "Companion App Phones"),
+        ]);
+        const desc = el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
+          "Phones running the HA Companion App with BLE Transmitter enabled. Click to track.");
+        companionCard.appendChild(hdr);
+        companionCard.appendChild(desc);
+
+        for (const phone of phones) {
+          const row = document.createElement("div");
+          row.style.cssText = "display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px;background:#0f172a;margin-bottom:6px";
+
+          // Phone icon + name
+          const info = document.createElement("div");
+          info.style.cssText = "flex:1;min-width:0";
+          const nameEl = document.createElement("div");
+          nameEl.style.cssText = "font-weight:600;font-size:14px;color:#e2e8f0";
+          nameEl.textContent = phone.device_name || "Phone";
+          info.appendChild(nameEl);
+
+          const meta = document.createElement("div");
+          meta.style.cssText = "font-size:11px;color:#64748b;margin-top:2px";
+          const statusParts = [];
+          if (phone.is_transmitting) statusParts.push("BLE active");
+          else statusParts.push("BLE off");
+          if (phone.is_visible) statusParts.push("visible to scanners");
+          else statusParts.push("not seen yet");
+          if (phone.existing_label) statusParts.push(`labelled: ${phone.existing_label}`);
+          meta.textContent = statusParts.join(" · ");
+          info.appendChild(meta);
+          row.appendChild(info);
+
+          // Status badge
+          if (phone.is_followed) {
+            const badge = document.createElement("span");
+            badge.style.cssText = "font-size:11px;color:#34d399;font-weight:600;padding:3px 8px;border:1px solid #065f46;border-radius:4px";
+            badge.textContent = "Tracked";
+            row.appendChild(badge);
+          } else {
+            // Follow button
+            const btn = document.createElement("button");
+            btn.className = "btn inline";
+            btn.style.cssText = "font-size:12px;padding:4px 14px;color:#60a5fa;border-color:#2563eb;font-weight:600";
+            btn.textContent = "Track this phone";
+            btn.addEventListener("click", async () => {
+              btn.disabled = true;
+              btn.textContent = "Setting up...";
+              try {
+                const r = await ctx.actions.wsCall("padspan_ha/companion_follow", {
+                  ibeacon_key: phone.ibeacon_key,
+                  device_name: phone.device_name,
+                });
+                btn.textContent = "Done!";
+                btn.style.cssText = "font-size:12px;padding:4px 14px;color:#34d399;border-color:#065f46;font-weight:600";
+                // Refresh after short delay
+                setTimeout(() => ctx.actions.renderRooms(), 2000);
+              } catch (e) {
+                btn.textContent = "Error";
+                btn.style.color = "#f87171";
+              }
+            });
+            row.appendChild(btn);
+          }
+
+          companionCard.appendChild(row);
+        }
+
+        // Help note
+        const helpNote = el("div",{style:"font-size:11px;color:#475569;margin-top:8px"},
+          "Not seeing your phone? Open Companion App \u2192 Settings \u2192 Companion App \u2192 Manage Sensors \u2192 BLE Transmitter \u2192 Enable. The phone will appear here once the transmitter is active.");
+        companionCard.appendChild(helpNote);
+      } catch (e) {
+        // Silently fail — companion discovery is optional
+      }
+    })();
+  }
+
   const section = el("section",{},[
     el("h2",{}, "Overview"),
     el("div",{style:"color:#94a3b8;margin-top:-6px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
   ]);
   if(mapEl) section.appendChild(mapEl);
   section.appendChild(grid);
+  section.appendChild(companionCard);
   return section;
 }

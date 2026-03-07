@@ -131,6 +131,8 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_private_ble_status)
     websocket_api.async_register_command(hass, ws_private_ble_add_irk)
     websocket_api.async_register_command(hass, ws_objects_clear_history)
+    websocket_api.async_register_command(hass, ws_companion_discover)
+    websocket_api.async_register_command(hass, ws_companion_follow)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -4193,3 +4195,185 @@ async def ws_private_ble_add_irk(hass: HomeAssistant, connection, msg) -> None:
         _LOGGER.warning("private_ble_add_irk failed: %s", err)
         connection.send_error(msg["id"], "add_failed",
             f"Failed to add IRK: {err}. Make sure 'Private BLE Device' integration is available in HA.")
+
+
+# ── Auto-discover Companion App phones via BLE Transmitter ───────────────────
+
+@websocket_api.websocket_command({"type": "padspan_ha/companion_discover"})
+@websocket_api.async_response
+async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
+    """Discover HA Companion App phones that have BLE Transmitter enabled.
+
+    Scans for sensor.*_ble_transmitter entities, reads their transmitting UUID,
+    and matches against detected iBeacon objects in the current snapshot.
+    Returns a list of phones that can be auto-followed.
+    """
+    try:
+        from homeassistant.helpers import entity_registry as er
+
+        ent_reg = er.async_get(hass)
+        phones: list[dict[str, Any]] = []
+
+        # Find all BLE transmitter sensor entities from mobile_app
+        for entity in ent_reg.entities.values():
+            if entity.platform != "mobile_app":
+                continue
+            eid = entity.entity_id
+            if "ble_transmitter" not in eid:
+                continue
+
+            # Read entity state — the state or attributes contain the transmitting UUID
+            state_obj = hass.states.get(eid)
+            if not state_obj:
+                continue
+
+            attrs = state_obj.attributes or {}
+            # Companion App stores UUID-Major-Minor in the 'id' or 'transmitting_id' attribute
+            transmitting_id = (
+                attrs.get("transmitting_id")
+                or attrs.get("id")
+                or attrs.get("uuid")
+                or ""
+            )
+
+            # Also check if the state itself is the UUID (some versions)
+            if not transmitting_id and state_obj.state and len(state_obj.state) > 30:
+                transmitting_id = state_obj.state
+
+            if not transmitting_id:
+                continue
+
+            # Parse UUID-Major-Minor from transmitting_id
+            # Format: "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX-Major-Minor"
+            # or just the UUID portion
+            parts = transmitting_id.rsplit("-", 2)
+            uuid_str = ""
+            major = 0
+            minor = 0
+            if len(parts) >= 3:
+                # Check if last two parts are numeric (major/minor)
+                try:
+                    minor = int(parts[-1])
+                    major = int(parts[-2])
+                    uuid_str = parts[-3] if "-" not in parts[-3] else "-".join(transmitting_id.split("-")[:-2])
+                except (ValueError, IndexError):
+                    uuid_str = transmitting_id
+            if not uuid_str:
+                uuid_str = transmitting_id
+
+            # Normalise UUID to lowercase with dashes
+            uuid_clean = uuid_str.lower().strip()
+            if len(uuid_clean) == 32:
+                uuid_clean = f"{uuid_clean[:8]}-{uuid_clean[8:12]}-{uuid_clean[12:16]}-{uuid_clean[16:20]}-{uuid_clean[20:]}"
+
+            # Get device name from the parent device
+            device_name = ""
+            if entity.device_id:
+                from homeassistant.helpers import device_registry as dr
+                dev_reg = dr.async_get(hass)
+                device = dev_reg.async_get(entity.device_id)
+                if device:
+                    device_name = device.name or device.name_by_user or ""
+
+            if not device_name:
+                device_name = eid.replace("sensor.", "").replace("_ble_transmitter", "").replace("_", " ").title()
+
+            # Build the iBeacon key that PadspanHA would use
+            ibeacon_key = f"ibeacon:{uuid_clean}:{major}:{minor}"
+
+            # Check if this phone is already labelled/followed
+            obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+            existing_label = ""
+            if obj_store:
+                entry = obj_store.get(ibeacon_key)
+                if entry:
+                    existing_label = entry.get("label", "")
+
+            settings = _get_settings(hass)
+            followed = settings.get("followed_addrs") or []
+            is_followed = ibeacon_key in followed or ibeacon_key.upper() in [f.upper() for f in followed]
+
+            # Check if the iBeacon is currently visible in BLE
+            is_visible = False
+            try:
+                ble_live = get_bluetooth_live(hass)
+                snap = ble_live.get_snapshot(max_ads=2000, max_age_s=600)
+                for ad in snap:
+                    mfr = ad.get("manufacturer_data") or {}
+                    from .private_ble_resolver import PrivateBLEResolver
+                    parsed = PrivateBLEResolver.parse_ibeacon(mfr)
+                    if parsed and parsed["uuid"].lower() == uuid_clean and parsed["major"] == major and parsed["minor"] == minor:
+                        is_visible = True
+                        break
+            except Exception:
+                pass
+
+            phones.append({
+                "entity_id": eid,
+                "device_name": device_name,
+                "uuid": uuid_clean,
+                "major": major,
+                "minor": minor,
+                "ibeacon_key": ibeacon_key,
+                "transmitting_id": transmitting_id,
+                "is_transmitting": state_obj.state not in ("unavailable", "unknown", "off", ""),
+                "is_visible": is_visible,
+                "is_followed": is_followed,
+                "existing_label": existing_label,
+                "state": state_obj.state,
+                "attributes": {k: str(v) for k, v in attrs.items()},
+            })
+
+        connection.send_result(msg["id"], {"phones": phones})
+    except Exception as err:
+        _LOGGER.warning("companion_discover failed: %s", err)
+        connection.send_result(msg["id"], {"phones": [], "error": str(err)})
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/companion_follow",
+    vol.Required("ibeacon_key"): str,
+    vol.Required("device_name"): str,
+})
+@websocket_api.async_response
+async def ws_companion_follow(hass: HomeAssistant, connection, msg) -> None:
+    """Auto-label and auto-follow a Companion App phone by its iBeacon key.
+
+    This is the one-click action: labels the iBeacon object with the phone name
+    and adds it to the followed list.
+    """
+    try:
+        ibeacon_key = str(msg["ibeacon_key"])
+        device_name = str(msg["device_name"]).strip()
+
+        if not device_name:
+            device_name = "Phone"
+
+        results: list[str] = []
+
+        # 1) Label the object in ObjectStore
+        obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+        if obj_store:
+            await obj_store.async_set(ibeacon_key, device_name)
+            results.append(f"Labelled as '{device_name}'")
+
+        # 2) Add to followed_addrs in settings
+        st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+        if st:
+            followed = list(st.data.get("followed_addrs") or [])
+            if ibeacon_key not in followed and ibeacon_key.upper() not in [f.upper() for f in followed]:
+                followed.append(ibeacon_key)
+                await st.async_set(followed_addrs=followed)
+                results.append("Added to followed list")
+            else:
+                results.append("Already followed")
+
+        connection.send_result(msg["id"], {
+            "ok": True,
+            "ibeacon_key": ibeacon_key,
+            "device_name": device_name,
+            "actions": results,
+        })
+    except Exception as err:
+        _LOGGER.warning("companion_follow failed: %s", err)
+        connection.send_error(msg["id"], "follow_failed", str(err))
