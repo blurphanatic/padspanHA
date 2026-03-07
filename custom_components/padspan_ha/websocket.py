@@ -4340,38 +4340,61 @@ async def ws_companion_follow(hass: HomeAssistant, connection, msg) -> None:
     """Auto-label and auto-follow a Companion App phone by its iBeacon key.
 
     This is the one-click action: labels the iBeacon object with the phone name
-    and adds it to the followed list.
+    and adds it to the followed list.  Returns verification of what was done.
     """
     try:
         ibeacon_key = str(msg["ibeacon_key"])
+        follow_key = ibeacon_key.upper()  # followed_addrs are always uppercase
         device_name = str(msg["device_name"]).strip()
 
         if not device_name:
             device_name = "Phone"
 
         results: list[str] = []
+        labelled = False
+        followed = False
 
-        # 1) Label the object in ObjectStore
+        # 1) Label the object in ObjectStore (tagged)
         obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
         if obj_store:
             await obj_store.async_set(ibeacon_key, device_name)
+            # Also label the uppercase variant so lookups always match
+            await obj_store.async_set(follow_key, device_name)
+            labelled = True
             results.append(f"Labelled as '{device_name}'")
 
-        # 2) Add to followed_addrs in settings
+        # 2) Add to followed_addrs in settings (always uppercase)
         st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
         if st:
-            followed = list(st.data.get("followed_addrs") or [])
-            if ibeacon_key not in followed and ibeacon_key.upper() not in [f.upper() for f in followed]:
-                followed.append(ibeacon_key)
-                await st.async_set(followed_addrs=followed)
+            followed_list = list(st.data.get("followed_addrs") or [])
+            existing_upper = {f.upper() for f in followed_list}
+            if follow_key not in existing_upper:
+                followed_list.append(follow_key)
+                await st.async_set(followed_addrs=followed_list)
+                followed = True
                 results.append("Added to followed list")
             else:
+                followed = True
                 results.append("Already followed")
+
+        # 3) Verify: re-read to confirm persistence
+        verify_label = ""
+        verify_followed = False
+        if obj_store:
+            entry = obj_store.get(ibeacon_key) or obj_store.get(follow_key)
+            verify_label = (entry or {}).get("label", "")
+        if st:
+            verify_followed = follow_key in {f.upper() for f in (st.data.get("followed_addrs") or [])}
 
         connection.send_result(msg["id"], {
             "ok": True,
             "ibeacon_key": ibeacon_key,
+            "follow_key": follow_key,
             "device_name": device_name,
+            "labelled": labelled,
+            "followed": followed,
+            "verified_label": verify_label,
+            "verified_followed": verify_followed,
             "actions": results,
         })
     except Exception as err:

@@ -1541,14 +1541,22 @@ export function render(ctx){
               btn.disabled = true;
               btn.textContent = "Setting up...";
               try {
-                await ctx.actions.wsCall("padspan_ha/companion_follow", {
+                const r = await ctx.actions.wsCall("padspan_ha/companion_follow", {
                   ibeacon_key: phone.ibeacon_key,
                   device_name: phone.device_name,
                 });
-                btn.textContent = `${phone.device_name} is now tracked!`;
+                if (r.follow_key) {
+                  ctx.state.followedAddrs.add(r.follow_key);
+                  try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
+                }
+                if (r.verified_label && r.verified_followed) {
+                  btn.textContent = `${phone.device_name} is now tracked!`;
+                } else {
+                  btn.textContent = `${phone.device_name} added (verify in Follow tab)`;
+                }
                 btn.style.color = "#34d399";
                 btn.style.borderColor = "#065f46";
-                setTimeout(() => ctx.actions.renderRooms(), 2000);
+                setTimeout(() => ctx.actions.renderRooms(), 1500);
               } catch (e) {
                 btn.textContent = "Error — try again";
                 btn.style.color = "#f87171";
@@ -1668,13 +1676,26 @@ export function render(ctx){
                   ibeacon_key: phone.ibeacon_key,
                   device_name: phone.device_name,
                 });
-                btn.textContent = "Done!";
-                btn.style.cssText = "font-size:12px;padding:4px 14px;color:#34d399;border-color:#065f46;font-weight:600";
-                // Refresh after short delay
-                setTimeout(() => ctx.actions.renderRooms(), 2000);
+                // Sync local followed set so Follow view + overview see it immediately
+                if (r.follow_key) {
+                  ctx.state.followedAddrs.add(r.follow_key);
+                  try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
+                }
+                // Verify
+                if (r.verified_label && r.verified_followed) {
+                  btn.textContent = "Tracked!";
+                  btn.style.cssText = "font-size:12px;padding:4px 14px;color:#34d399;border-color:#065f46;font-weight:600";
+                  meta.textContent = `Tagged as "${r.verified_label}" · followed`;
+                } else {
+                  btn.textContent = "Added (verify in Follow tab)";
+                  btn.style.cssText = "font-size:12px;padding:4px 14px;color:#fbbf24;border-color:#92400e;font-weight:600";
+                }
+                // Refresh to update map + follow view
+                setTimeout(() => ctx.actions.renderRooms(), 1500);
               } catch (e) {
-                btn.textContent = "Error";
+                btn.textContent = "Error — try again";
                 btn.style.color = "#f87171";
+                btn.disabled = false;
               }
             });
             row.appendChild(btn);
