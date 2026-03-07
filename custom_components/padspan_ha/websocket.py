@@ -1341,21 +1341,25 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     tl = dst.setdefault("service_uuids", [])
                     if _u not in tl:
                         tl.append(_u)
+                # Ensure dst's own address is in all_addresses first
+                ea = dst.setdefault("all_addresses", [])
+                if dst.get("address") and dst["address"] not in ea:
+                    ea.append(dst["address"])
                 for _ma in (src.get("all_addresses") or [src.get("address")]):
-                    if _ma:
-                        ea = dst.setdefault("all_addresses", [])
-                        if _ma not in ea:
-                            ea.append(_ma)
-                dst["all_addresses"] = sorted(dst.get("all_addresses") or [])
+                    if _ma and _ma not in ea:
+                        ea.append(_ma)
+                dst["all_addresses"] = sorted(ea)
                 for _le in (src.get("linked_entities") or []):
                     el = dst.setdefault("linked_entities", [])
                     if _le not in el:
                         el.append(_le)
+                es = dst.setdefault("sources", [])
+                es_set = {(s.get("source") if isinstance(s, dict) else str(s)) for s in es}
                 for _s in (src.get("sources") or []):
-                    es = dst.setdefault("sources", [])
                     sk = _s.get("source") if isinstance(_s, dict) else str(_s)
-                    if sk not in {(s.get("source") if isinstance(s, dict) else str(s)) for s in es}:
+                    if sk not in es_set:
                         es.append(_s)
+                        es_set.add(sk)
                 if src.get("rssi") is not None:
                     if dst.get("rssi") is None or src["rssi"] > dst["rssi"]:
                         dst["rssi"] = src["rssi"]

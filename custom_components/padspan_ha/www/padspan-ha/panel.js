@@ -17,10 +17,10 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.20";
+const APP_VERSION = "0.7.21";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260307T165254Z";
-const CHANNEL = "stable";
+const BUILD_ID = "20260307T171156Z";
+const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Using dynamic import() instead of static imports so that a single failing
@@ -290,7 +290,7 @@ class PadSpanHaApp extends HTMLElement {
             <img src="/padspan_ha_static/padspan-ha/assets/padspan-mark.svg?b=${BUILD_ID}" alt="PadSpan" onerror="this.style.display='none'">
             <div>
               <div class="label">PadSpan™ HA</div>
-              <div class="muted" style="margin-top:2px">v${APP_VERSION} <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:${CHANNEL==='stable'?'#2e7d32':'#e65100'};color:#fff;vertical-align:middle">${CHANNEL}</span></div>
+              <div class="muted" style="margin-top:2px">v${APP_VERSION}${CHANNEL==='stable'?` <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#2e7d32;color:#fff;vertical-align:middle">${CHANNEL}</span>`:''}</div>
             </div>
           </div>
 
@@ -1781,6 +1781,8 @@ class PadSpanHaApp extends HTMLElement {
   _renderCurrentView(fromPoll){
     // Skip re-render during active drag to prevent DOM destruction mid-interaction
     if(this.state._calibTune?._dragging || this.state._calibBeacon?._dragging || this.state._calibTune?._confirming || this.state._calibBeacon?._confirming) return;
+    // Skip poll re-renders while traceback playback is active (prevents flicker/reset)
+    if(fromPoll && this.state._traceback?.active) return;
     // Skip poll-triggered re-renders when the user is actively interacting.
     // Checks: (1) a form element has focus, or (2) user interacted within the last 3s.
     // User-initiated renders (tab clicks, saves, etc.) always proceed.
