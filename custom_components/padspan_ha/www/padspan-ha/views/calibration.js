@@ -1239,10 +1239,26 @@ function _findBeaconAds(snap, deviceId) {
     if (r.source) radioNameMap[r.source] = r.area_name || r.area || r.name || r.source;
   }
 
-  // Filter raw advertisements by ANY known address for this device
+  // For private_ble devices, also collect the canonical_id so we can match via _xref
+  let targetCanonical = "";
+  if (targetAddrs.size > 0) {
+    const cObj = objects.find(o => o.kind === "private_ble" && (
+      (o.canonical_id || "") === rawId ||
+      targetAddrs.has((o.address || "").toUpperCase()) ||
+      (o.all_addresses || []).some(a => targetAddrs.has(String(a).toUpperCase()))
+    ));
+    if (cObj && cObj.canonical_id) targetCanonical = cObj.canonical_id;
+  }
+
+  // Filter raw advertisements by ANY known address for this device.
+  // For private_ble (rotating MAC), also match via _xref.canonical_id on the ad
+  // to catch addresses that rotated AFTER the object was built.
   const myAds = (snap?.ble?.advertisements || []).filter(ad => {
     const adAddr = (ad.address || "").toUpperCase();
-    return targetAddrs.size > 0 ? targetAddrs.has(adAddr) : adAddr === upperId;
+    if (targetAddrs.size > 0 && targetAddrs.has(adAddr)) return true;
+    if (targetCanonical && ad._xref && ad._xref.canonical_id === targetCanonical) return true;
+    if (!targetAddrs.size && !targetCanonical && adAddr === upperId) return true;
+    return false;
   });
 
   // Build per-radio map — keep strongest/most recent reading per radio

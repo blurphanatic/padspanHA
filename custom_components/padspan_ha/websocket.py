@@ -4172,16 +4172,63 @@ async def ws_private_ble_add_irk(hass: HomeAssistant, connection, msg) -> None:
             return
 
     # Check if private_ble_device integration is available
-    try:
-        # Create config entry programmatically
+    # Try multiple IRK formats — the integration may expect hex with colons, plain hex, or base64
+    irk_formats = [
+        irk_hex,                                                    # plain hex: aabbccdd...
+        ":".join(irk_hex[i:i+2] for i in range(0, 32, 2)),         # colon-separated: aa:bb:cc:dd:...
+        __import__("base64").b64encode(bytes.fromhex(irk_hex)).decode(),  # base64
+    ]
+
+    async def _try_create_entry(irk_value: str) -> dict | None:
+        """Attempt to create a private_ble_device config entry with the given IRK format.
+        Returns the flow result if successful (create_entry), or None."""
         result = await hass.config_entries.flow.async_init(
             "private_ble_device",
             context={"source": "user"},
-            data={"irk": irk_hex},
+            data={"irk": irk_value},
         )
-        if result.get("type") == "create_entry":
-            # Update the title to the user's chosen name
-            entry = result.get("result")
+        rtype = str(result.get("type", ""))
+        # FlowResultType can be an enum; compare string representation too
+        if rtype in ("create_entry", "FlowResultType.CREATE_ENTRY") or "create_entry" in rtype:
+            return result
+        if "form" in rtype:
+            # Integration showed a form — try to advance it with user_input
+            flow_id = result.get("flow_id")
+            if not flow_id:
+                return None
+            # Try up to 2 form steps (some integrations have confirm steps)
+            for _step in range(2):
+                result2 = await hass.config_entries.flow.async_configure(
+                    flow_id, user_input={"irk": irk_value}
+                )
+                rtype2 = str(result2.get("type", ""))
+                if "create_entry" in rtype2:
+                    return result2
+                if "form" not in rtype2:
+                    # abort or error — stop trying
+                    _LOGGER.debug("private_ble flow step returned %s (errors=%s)",
+                                  rtype2, result2.get("errors"))
+                    break
+                # If form has errors, the IRK format is probably wrong
+                if result2.get("errors"):
+                    _LOGGER.debug("private_ble flow form errors: %s", result2.get("errors"))
+                    break
+        return None
+
+    try:
+        created = None
+        last_err = ""
+        for fmt in irk_formats:
+            try:
+                created = await _try_create_entry(fmt)
+                if created:
+                    break
+            except Exception as _fmt_err:
+                last_err = str(_fmt_err)
+                continue
+
+        if created:
+            entry = created.get("result")
             if entry and device_name:
                 hass.config_entries.async_update_entry(entry, title=device_name)
             # Force resolver refresh
@@ -4195,37 +4242,14 @@ async def ws_private_ble_add_irk(hass: HomeAssistant, connection, msg) -> None:
                 "message": f"IRK registered as '{device_name}'",
                 "entry_id": entry.entry_id if entry else None,
             })
-        elif result.get("type") == "form":
-            # Integration needs a form step — try to configure it
-            flow_id = result.get("flow_id")
-            if flow_id:
-                result2 = await hass.config_entries.flow.async_configure(
-                    flow_id, user_input={"irk": irk_hex}
-                )
-                if result2.get("type") == "create_entry":
-                    entry = result2.get("result")
-                    if entry and device_name:
-                        hass.config_entries.async_update_entry(entry, title=device_name)
-                    try:
-                        resolver = await _get_ble_resolver(hass)
-                        await resolver.async_load()
-                    except Exception:
-                        pass
-                    connection.send_result(msg["id"], {
-                        "ok": True, "duplicate": False,
-                        "message": f"IRK registered as '{device_name}'",
-                        "entry_id": entry.entry_id if entry else None,
-                    })
-                else:
-                    connection.send_error(msg["id"], "flow_failed",
-                        f"Config flow returned: {result2.get('type', 'unknown')}")
-            else:
-                connection.send_error(msg["id"], "flow_failed", "Could not start config flow")
         else:
+            detail = f" ({last_err})" if last_err else ""
             connection.send_error(msg["id"], "flow_failed",
-                f"Unexpected flow result: {result.get('type', 'unknown')}")
+                f"Could not create Private BLE Device entry{detail}. "
+                "Make sure the 'Private BLE Device' integration is available in HA "
+                "(Settings → Devices & Services → Add Integration → search 'Private BLE').")
     except Exception as err:
-        _LOGGER.warning("private_ble_add_irk failed: %s", err)
+        _LOGGER.warning("private_ble_add_irk failed: %s", err, exc_info=True)
         connection.send_error(msg["id"], "add_failed",
             f"Failed to add IRK: {err}. Make sure 'Private BLE Device' integration is available in HA.")
 
