@@ -270,11 +270,14 @@ function _upload(ctx, helpBtn, isBasic){
   cropCanvas.addEventListener("touchend",   ()=>{ _isDragging=false; });
   cropClearBtn.addEventListener("click",    ()=>{ cropRect=null; _drawCropOverlay(); });
 
+  // Capture selected file — the file input DOM element may be lost on re-render,
+  // so we store a reference that survives poll-triggered view rebuilds.
+  let _selectedFile = null;
   file.addEventListener("change", ()=>{
     if(!file.files||!file.files[0]) return;
-    const f2=file.files[0];
-    if(!name.value) name.value=f2.name.replace(/\.[^.]+$/,"");
-    const objUrl=URL.createObjectURL(f2);
+    _selectedFile = file.files[0];
+    if(!name.value) name.value=_selectedFile.name.replace(/\.[^.]+$/,"");
+    const objUrl=URL.createObjectURL(_selectedFile);
     previewImg.onload=()=>{
       URL.revokeObjectURL(objUrl);
       _imgNatW=previewImg.naturalWidth; _imgNatH=previewImg.naturalHeight;
@@ -282,6 +285,12 @@ function _upload(ctx, helpBtn, isBasic){
       cropCanvas.width=Math.round(_imgNatW*cs); cropCanvas.height=Math.round(_imgNatH*cs);
       cropRect=null; _drawCropOverlay();
       previewOuter.style.display="";
+    };
+    previewImg.onerror=()=>{
+      URL.revokeObjectURL(objUrl);
+      _selectedFile = null;
+      status.textContent = "Could not load image. Supported formats: PNG, JPG, GIF, BMP, WebP, SVG.";
+      status.style.color = "#f87171";
     };
     previewImg.src=objUrl;
   });
@@ -295,11 +304,13 @@ function _upload(ctx, helpBtn, isBasic){
   previewOuter.appendChild(cropInfo);
 
   const btn = el("button",{class:"btn inline", onclick: async ()=>{
-    if(!file.files || !file.files[0]){ status.textContent = "Pick an image file first."; return; }
-    const f = file.files[0];
+    // Use captured _selectedFile (survives DOM re-renders) with file input as fallback
+    const f = _selectedFile || (file.files && file.files[0]);
+    if(!f){ status.textContent = "Pick an image file first. Supported: PNG, JPG, GIF, BMP, WebP, SVG."; return; }
     let floor_id = (floorSel.value||"").trim();
     if(!floor_id){ status.textContent = "Choose a floor (from HA) before uploading."; return; }
     status.textContent = "Reading\u2026";
+    status.style.color = "";
     try{
       const max = parseInt((maxw.value||"").trim() || "1600", 10);
       const res = await _preparePng(f, isFinite(max) ? max : 1600, cropRect);
@@ -314,6 +325,7 @@ function _upload(ctx, helpBtn, isBasic){
         floor_id,
       });
       status.textContent = "Uploaded \u2714";
+      _selectedFile = null;
       ctx.state.mapsTab = "edit";
       ctx.actions.renderRooms();
     }catch(e){
