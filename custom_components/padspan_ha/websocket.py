@@ -1935,6 +1935,45 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             obj.pop("_last_seen_ts", None)
             obj.pop("_cache_age_s", None)
 
+        # Create placeholder objects for followed iBeacon keys that have no real
+        # advertisement yet. This ensures phones tracked via companion_follow show up
+        # in the objects list even before their BLE transmitter is seen by scanners.
+        try:
+            _st_ghost = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            _obj_store_ghost = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+            if _st_ghost and _obj_store_ghost:
+                _followed = _st_ghost.data.get("followed_addrs") or []
+                _existing_keys = {(o.get("key") or "").upper() for o in objects}
+                _existing_keys |= {(o.get("address") or "").upper() for o in objects}
+                for _fk in _followed:
+                    _fku = str(_fk).upper()
+                    if not _fku.startswith("IBEACON:"):
+                        continue  # only create ghosts for iBeacon keys
+                    if _fku in _existing_keys:
+                        continue  # already have a real object
+                    _ghost_entry = _obj_store_ghost.get(_fk)
+                    _ghost_label = (_ghost_entry or {}).get("label", "")
+                    if not _ghost_label:
+                        continue  # no label = not from companion_follow
+                    objects.append({
+                        "key": _fk,
+                        "kind": "ibeacon",
+                        "address": _fk,
+                        "all_addresses": [],
+                        "name": _ghost_label,
+                        "user_label": _ghost_label,
+                        "rssi": None,
+                        "age_s": None,
+                        "sources": [],
+                        "identified": True,
+                        "linked_entities": [],
+                        "device": None,
+                        "room": None,
+                        "_ghost": True,  # indicates no live advertisement
+                    })
+        except Exception:
+            pass
+
         unidentified = [o for o in objects if o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified")]
         identified = [o for o in objects if not (o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified"))]
         common_prefixes = {p: c for p, c in prefix_counts.items() if c >= 3}

@@ -360,13 +360,17 @@ export function render(ctx){
             ].filter(Boolean))
           : null),
       ].filter(Boolean)),
-      el("td",{}, rssi && !isAway ? el("span",{class:"badge"}, rssi) : "—"),
-      el("td",{}, isAway
-        ? [
-            el("span",{class:"badge",style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d;font-size:10px"}, "Away"),
-            age ? el("div",{class:"muted",style:"font-size:10px;margin-top:2px"}, age) : null,
-          ].filter(Boolean)
-        : (age || "—")),
+      el("td",{}, o._ghost
+        ? el("span",{class:"badge",style:"background:#2a1a00;color:#f59e0b;border-color:#92400e;font-size:10px"}, "No signal")
+        : (rssi && !isAway ? el("span",{class:"badge"}, rssi) : "—")),
+      el("td",{}, o._ghost
+        ? el("span",{class:"badge",style:"background:#2a1a00;color:#f59e0b;border-color:#92400e;font-size:10px"}, "Waiting")
+        : (isAway
+          ? [
+              el("span",{class:"badge",style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d;font-size:10px"}, "Away"),
+              age ? el("div",{class:"muted",style:"font-size:10px;margin-top:2px"}, age) : null,
+            ].filter(Boolean)
+          : (age || "—"))),
       el("td",{class:"muted",style:"font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis"},
         o.knn_confidence > 0
           ? [scanner || "—", el("div",{style:"font-size:10px;color:#52b788;margin-top:1px"}, `Calibrated ${Math.round(o.knn_confidence*100)}%`)]
@@ -486,11 +490,14 @@ export function render(ctx){
         el("div",{},[
           el("div",{class:"basic-obj-name",style:"display:flex;align-items:center;gap:6px"},[
             el("span",{}, name),
-            isObjAway ? el("span",{class:"badge",style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d;font-size:9px"}, "Away") : null,
+            o._ghost ? el("span",{class:"badge",style:"background:#2a1a00;color:#f59e0b;border-color:#92400e;font-size:9px"}, "Waiting for signal") : null,
+            isObjAway && !o._ghost ? el("span",{class:"badge",style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d;font-size:9px"}, "Away") : null,
           ].filter(Boolean)),
-          el("div",{class:"basic-obj-room"}, isObjAway
-            ? (room && room !== "—" ? `Last: ${room}` : "—")
-            : room),
+          el("div",{class:"basic-obj-room"}, o._ghost
+            ? "Enable BLE Transmitter in Companion App"
+            : (isObjAway
+              ? (room && room !== "—" ? `Last: ${room}` : "—")
+              : room)),
           el("div",{class:"basic-obj-sub"}, [kind, o.company_name, o.device_type, isObjAway ? null : rssi].filter(Boolean).join(" · ")),
         ]),
         actions,

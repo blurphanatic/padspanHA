@@ -1551,12 +1551,22 @@ export function render(ctx){
                   try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
                 }
                 if (r.verified_label && r.verified_followed) {
-                  btn.textContent = `${phone.device_name} is now tracked!`;
+                  if (phone.is_visible) {
+                    btn.textContent = `${phone.device_name} is now tracked!`;
+                    btn.style.color = "#34d399"; btn.style.borderColor = "#065f46";
+                  } else if (phone.is_transmitting) {
+                    btn.textContent = `${phone.device_name} registered — walk near a scanner`;
+                    btn.style.color = "#fbbf24"; btn.style.borderColor = "#92400e";
+                  } else {
+                    btn.textContent = `${phone.device_name} registered — enable BLE Transmitter in Companion App`;
+                    btn.style.color = "#f59e0b"; btn.style.borderColor = "#92400e";
+                  }
                 } else {
-                  btn.textContent = `${phone.device_name} added (verify in Follow tab)`;
+                  btn.textContent = "Error saving — try again";
+                  btn.style.color = "#f87171"; btn.style.borderColor = "#7f1d1d";
+                  btn.disabled = false;
+                  return;
                 }
-                btn.style.color = "#34d399";
-                btn.style.borderColor = "#065f46";
                 setTimeout(() => ctx.actions.renderRooms(), 1500);
               } catch (e) {
                 btn.textContent = "Error — try again";
@@ -1691,10 +1701,18 @@ export function render(ctx){
           // Status badge + untrack
           if (phone.is_followed) {
             const btnWrap = document.createElement("div");
-            btnWrap.style.cssText = "display:flex;align-items:center;gap:6px";
+            btnWrap.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap";
             const badge = document.createElement("span");
-            badge.style.cssText = "font-size:11px;color:#34d399;font-weight:600;padding:3px 8px;border:1px solid #065f46;border-radius:4px";
-            badge.textContent = "Tracked";
+            if (phone.is_visible) {
+              badge.style.cssText = "font-size:11px;color:#34d399;font-weight:600;padding:3px 8px;border:1px solid #065f46;border-radius:4px";
+              badge.textContent = "Tracked";
+            } else if (phone.is_transmitting) {
+              badge.style.cssText = "font-size:11px;color:#fbbf24;font-weight:600;padding:3px 8px;border:1px solid #92400e;border-radius:4px";
+              badge.textContent = "Waiting for signal";
+            } else {
+              badge.style.cssText = "font-size:11px;color:#f87171;font-weight:600;padding:3px 8px;border:1px solid #7f1d1d;border-radius:4px";
+              badge.textContent = "BLE off";
+            }
             btnWrap.appendChild(badge);
             const unBtn = document.createElement("button");
             unBtn.className = "btn inline";
@@ -1743,14 +1761,25 @@ export function render(ctx){
                   ctx.state.followedAddrs.add(r.follow_key);
                   try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
                 }
-                // Verify
+                // Show status based on actual phone state
                 if (r.verified_label && r.verified_followed) {
-                  btn.textContent = "Tracked!";
-                  btn.style.cssText = "font-size:12px;padding:4px 14px;color:#34d399;border-color:#065f46;font-weight:600";
-                  meta.textContent = `Tagged as "${r.verified_label}" · followed`;
+                  if (phone.is_visible) {
+                    btn.textContent = "Tracked!";
+                    btn.style.cssText = "font-size:12px;padding:4px 14px;color:#34d399;border-color:#065f46;font-weight:600";
+                    meta.textContent = `Tagged as "${r.verified_label}" · visible to scanners`;
+                  } else if (phone.is_transmitting) {
+                    btn.textContent = "Registered — waiting for signal";
+                    btn.style.cssText = "font-size:12px;padding:4px 14px;color:#fbbf24;border-color:#92400e;font-weight:600";
+                    meta.textContent = `Tagged as "${r.verified_label}" · BLE active but not yet seen by scanners. Walk near a scanner.`;
+                  } else {
+                    btn.textContent = "Registered — enable BLE";
+                    btn.style.cssText = "font-size:12px;padding:4px 14px;color:#f59e0b;border-color:#92400e;font-weight:600";
+                    meta.textContent = `Tagged as "${r.verified_label}" · BLE transmitter is OFF. Enable it in Companion App → Settings → Manage Sensors → BLE Transmitter.`;
+                  }
                 } else {
-                  btn.textContent = "Added (verify in Follow tab)";
-                  btn.style.cssText = "font-size:12px;padding:4px 14px;color:#fbbf24;border-color:#92400e;font-weight:600";
+                  btn.textContent = "Error saving — retry";
+                  btn.style.cssText = "font-size:12px;padding:4px 14px;color:#f87171;border-color:#7f1d1d;font-weight:600";
+                  btn.disabled = false;
                 }
                 // Refresh to update map + follow view
                 setTimeout(() => ctx.actions.renderRooms(), 1500);
