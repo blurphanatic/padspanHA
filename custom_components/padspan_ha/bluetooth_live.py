@@ -145,6 +145,7 @@ class BluetoothLive:
         # Per-radio "last heard" timestamp — updated on every callback, independent of filtering.
         # Used by the frontend to show a radio as "listening" even when its ads are old/filtered.
         self._radio_last_heard: Dict[str, dt.datetime] = {}  # source → datetime
+        self._last_reseed: Optional[dt.datetime] = None  # periodic reseed for proxy scanners
 
     def unload(self) -> None:
         for u in self._unsubs:
@@ -175,7 +176,13 @@ class BluetoothLive:
             _LOGGER.debug("BLE adv parse failed: %s", e)
 
     def _seed_from_discovered(self) -> None:
-        """Populate cache from HA's discovered service-info list (best-effort)."""
+        """Populate cache from HA's discovered service-info list (best-effort).
+
+        This is critical for scanners like Shelly BLE relays that report
+        advertisements through HA's discovered-service-info API but NOT through
+        the async_register_callback mechanism.  Without periodic reseeding,
+        these scanners appear in the radios list but show zero advertisements.
+        """
         try:
             from homeassistant.components import bluetooth  # type: ignore
 
@@ -183,6 +190,7 @@ class BluetoothLive:
                 infos = bluetooth.async_discovered_service_info(self.hass)
                 for si in infos:
                     self._on_adv(si)
+                self._last_reseed = _now()
         except Exception as e:
             _LOGGER.debug("BLE seed failed: %s", e)
 
@@ -282,8 +290,17 @@ class BluetoothLive:
                 diag["errors"].append(f"scanner_list_failed: {e!s}")
                 radios = []
 
-            # If callbacks haven't filled anything yet, try seeding from HA.
-            if not self._seen_by_source:
+            # Periodically reseed from HA's discovered-service-info API.
+            # This is essential for proxy scanners (Shelly, etc.) whose
+            # advertisements arrive via HA's scanner infrastructure but NOT
+            # through async_register_callback.  Reseed every ~30s.
+            _RESEED_INTERVAL_S = 30
+            _needs_reseed = (
+                not self._seen_by_source
+                or self._last_reseed is None
+                or (now - self._last_reseed).total_seconds() > _RESEED_INTERVAL_S
+            )
+            if _needs_reseed:
                 try:
                     self._seed_from_discovered()
                     diag["seeded"] = True

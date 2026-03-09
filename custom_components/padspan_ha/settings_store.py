@@ -62,6 +62,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tags_room_events_enabled": False,     # emit tag_scanned on room changes
     "tags_nfc_identify_enabled": False,    # NFC tap-to-identify BLE objects
     "tags_phone_autolink_enabled": False,  # auto-track phone on NFC scan
+    # Quiet mode — hide unidentified objects everywhere
+    "quiet_mode": False,
 }
 
 

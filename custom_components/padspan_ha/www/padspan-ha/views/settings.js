@@ -496,6 +496,35 @@ function _settingsPresence(ctx, el){
   const rowStyle = "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px";
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
 
+  // ── Quiet Mode ────────────────────────────────────────────────────────────
+  {
+    const quietOn = settings.quiet_mode === true;
+    const quietToggle = el("input",{type:"checkbox",id:"quietModeToggle",style:"width:16px;height:16px;accent-color:#52b788;cursor:pointer"});
+    quietToggle.checked = quietOn;
+    quietToggle.addEventListener("change", async()=>{
+      try {
+        await ctx.actions.settingsSet({ quiet_mode: quietToggle.checked });
+        ctx.toast(quietToggle.checked ? "Quiet mode on — only tracked objects visible" : "Quiet mode off — all objects visible");
+        ctx.actions.renderRooms();
+      } catch(e){ ctx.toast("Failed to save", true); }
+    });
+    wrap.appendChild(el("div",{class:"card",style:"border-color:" + (quietOn ? "#52b788" : "#334155")},[
+      el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
+        el("div",{class:"h2",style:"margin:0;color:#52b788"}, "Quiet Mode"),
+      ]),
+      el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
+        quietToggle,
+        el("label",{for:"quietModeToggle",style:"font-size:13px;color:#e2e8f0;cursor:pointer;font-weight:600"},
+          "Only show identified & followed objects"),
+      ]),
+      el("div",{class:"muted",style:"font-size:12px"},
+        "Hides all unidentified BLE devices from the Objects list, overview counts, and dropdowns. " +
+        "Scanning continues in the background so tracked objects still work. " +
+        "Ideal for busy environments (condos, offices) where you only care about your own devices. " +
+        "Turn off when you need to discover and tag new objects."),
+    ]));
+  }
+
   // ── Room change delay ──────────────────────────────────────────────────────
   const currentDelay = (settings.room_change_delay_s != null ? Number(settings.room_change_delay_s) : 20);
   const polls = Math.max(1, Math.round(currentDelay / 10));

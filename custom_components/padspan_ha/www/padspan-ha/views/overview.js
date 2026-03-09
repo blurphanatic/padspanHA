@@ -53,8 +53,9 @@ export function render(ctx){
   })();
 
   const objSummary = (liveSnap && liveSnap.objects && liveSnap.objects.summary) ? liveSnap.objects.summary : null;
-  const objectsTotal = objSummary ? objSummary.total : tagsCount;
-  const unidentifiedCount = objSummary ? objSummary.unidentified : 0;
+  const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
+  const objectsTotal = objSummary ? (_quietMode ? objSummary.identified : objSummary.total) : tagsCount;
+  const unidentifiedCount = _quietMode ? 0 : (objSummary ? objSummary.unidentified : 0);
 
   const radios = (liveSnap && liveSnap.ble && Array.isArray(liveSnap.ble.radios)) ? liveSnap.ble.radios : [];
   const radiosCount = radios.length;
@@ -1598,9 +1599,9 @@ export function render(ctx){
         el("div",{class:"v"}, liveLoading ? "--" : String(objectsTotal)),
       ]),
       el("div",{class:"row"},[
-        el("button",{class:"btn", onclick: ()=>openObjectsList("all")}, "All objects"),
-        el("button",{class:"btn", onclick: ()=>openObjectsList("unidentified")}, `Unidentified (${liveLoading ? "--" : unidentifiedCount})`),
-      ])
+        el("button",{class:"btn", onclick: ()=>openObjectsList("all")}, _quietMode ? "Tracked objects" : "All objects"),
+        _quietMode ? null : el("button",{class:"btn", onclick: ()=>openObjectsList("unidentified")}, `Unidentified (${liveLoading ? "--" : unidentifiedCount})`),
+      ].filter(Boolean))
     ]),
     el("div",{class:"card"},[
       el("div",{class:"kpi"},[

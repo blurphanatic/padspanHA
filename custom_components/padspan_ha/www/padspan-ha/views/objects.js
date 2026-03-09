@@ -160,7 +160,21 @@ export function render(ctx){
   };
 
   // --- Inline objects list (BLE scanner detections + entities) ---
-  const allObjects = objModel && Array.isArray(objModel.list) ? objModel.list : [];
+  const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
+  const _followedAddrs = ctx.state.followedAddrs || new Set();
+  const _rawObjects = objModel && Array.isArray(objModel.list) ? objModel.list : [];
+  // Quiet mode: only show identified or followed objects
+  const allObjects = _quietMode
+    ? _rawObjects.filter(o => {
+        if (o.identified || o.user_label) return true;
+        // Check if followed
+        const fk = (o.kind === "ibeacon" ? (o.key || "") : (o.address || o.entity_id || "")).toUpperCase();
+        if (fk && _followedAddrs.has(fk)) return true;
+        // Always keep HA entities
+        if (o.kind === "entity") return true;
+        return false;
+      })
+    : _rawObjects;
   const summary = objModel && objModel.summary ? objModel.summary : null;
 
   // Dedup: suppress entity rows whose physical device already has a BLE/iBeacon/private_ble row.
@@ -520,11 +534,14 @@ export function render(ctx){
   const awayCount = allObjects.filter(_isAway).length;
   const inventorySection = el("div",{class:"card"},[
     el("div",{class:"row",style:"margin-bottom:8px"},[
-      el("div",{class:"h2",style:"flex:1"},"BLE Scanner Detections"),
-      summary ? el("span",{class:"badge"}, `${summary.ble||0} BLE`) : null,
-      summary && summary.ibeacon ? el("span",{class:"badge",style:"background:#2a1a00;color:#fbbf24;border-color:#92400e"}, `${summary.ibeacon} iBeacon`) : null,
-      summary && summary.private_ble ? el("span",{class:"badge",style:"background:#0a1a3a;color:#93c5fd;border-color:#1e4976"}, `${summary.private_ble} Private BLE`) : null,
-      summary ? el("span",{class:"badge warn"}, `${summary.unidentified||0} unidentified`) : null,
+      el("div",{class:"h2",style:"flex:1"}, _quietMode ? "Tracked Objects" : "BLE Scanner Detections"),
+      _quietMode
+        ? el("span",{class:"badge",style:"background:#0a2a1a;color:#52b788;border-color:#166534;font-weight:700"}, "Quiet Mode")
+        : null,
+      _quietMode ? null : (summary ? el("span",{class:"badge"}, `${summary.ble||0} BLE`) : null),
+      _quietMode ? null : (summary && summary.ibeacon ? el("span",{class:"badge",style:"background:#2a1a00;color:#fbbf24;border-color:#92400e"}, `${summary.ibeacon} iBeacon`) : null),
+      _quietMode ? null : (summary && summary.private_ble ? el("span",{class:"badge",style:"background:#0a1a3a;color:#93c5fd;border-color:#1e4976"}, `${summary.private_ble} Private BLE`) : null),
+      _quietMode ? null : (summary ? el("span",{class:"badge warn"}, `${summary.unidentified||0} unidentified`) : null),
       summary ? el("span",{class:"badge"}, `${summary.entities||0} entities`) : null,
       awayCount ? el("span",{class:"badge",style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d"}, `${awayCount} away`) : null,
     ].filter(Boolean)),
