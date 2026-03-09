@@ -7,6 +7,7 @@
     "http",
     "mqtt",
     "panel_custom",
+    "tag",
     "websocket_api"
   ],
   "codeowners": [
@@ -19,5 +20,5 @@
   "issue_tracker": "https://github.com/gbroeckling/padspanHA/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.7.44"
+  "version": "0.7.45"
 }
