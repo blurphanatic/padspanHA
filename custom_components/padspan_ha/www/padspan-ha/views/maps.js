@@ -270,14 +270,14 @@ function _upload(ctx, helpBtn, isBasic){
   cropCanvas.addEventListener("touchend",   ()=>{ _isDragging=false; });
   cropClearBtn.addEventListener("click",    ()=>{ cropRect=null; _drawCropOverlay(); });
 
-  // Capture selected file — the file input DOM element may be lost on re-render,
-  // so we store a reference that survives poll-triggered view rebuilds.
-  let _selectedFile = null;
+  // Capture selected file on ctx.state so it survives poll-triggered DOM rebuilds.
+  // The file input DOM element gets destroyed on re-render, losing the selected file.
+  // Also set _mapsUploadFile flag to block re-renders while file is selected.
   file.addEventListener("change", ()=>{
     if(!file.files||!file.files[0]) return;
-    _selectedFile = file.files[0];
-    if(!name.value) name.value=_selectedFile.name.replace(/\.[^.]+$/,"");
-    const objUrl=URL.createObjectURL(_selectedFile);
+    ctx.state._mapsUploadFile = file.files[0];
+    if(!name.value) name.value=ctx.state._mapsUploadFile.name.replace(/\.[^.]+$/,"");
+    const objUrl=URL.createObjectURL(ctx.state._mapsUploadFile);
     previewImg.onload=()=>{
       URL.revokeObjectURL(objUrl);
       _imgNatW=previewImg.naturalWidth; _imgNatH=previewImg.naturalHeight;
@@ -288,7 +288,7 @@ function _upload(ctx, helpBtn, isBasic){
     };
     previewImg.onerror=()=>{
       URL.revokeObjectURL(objUrl);
-      _selectedFile = null;
+      ctx.state._mapsUploadFile = null;
       status.textContent = "Could not load image. Supported formats: PNG, JPG, GIF, BMP, WebP, SVG.";
       status.style.color = "#f87171";
     };
@@ -304,8 +304,8 @@ function _upload(ctx, helpBtn, isBasic){
   previewOuter.appendChild(cropInfo);
 
   const btn = el("button",{class:"btn inline", onclick: async ()=>{
-    // Use captured _selectedFile (survives DOM re-renders) with file input as fallback
-    const f = _selectedFile || (file.files && file.files[0]);
+    // Use file from ctx.state (survives re-renders), with file input as fallback
+    const f = ctx.state._mapsUploadFile || (file.files && file.files[0]);
     if(!f){ status.textContent = "Pick an image file first. Supported: PNG, JPG, GIF, BMP, WebP, SVG."; return; }
     let floor_id = (floorSel.value||"").trim();
     if(!floor_id){ status.textContent = "Choose a floor (from HA) before uploading."; return; }
@@ -325,7 +325,7 @@ function _upload(ctx, helpBtn, isBasic){
         floor_id,
       });
       status.textContent = "Uploaded \u2714";
-      _selectedFile = null;
+      ctx.state._mapsUploadFile = null;
       ctx.state.mapsTab = "edit";
       ctx.actions.renderRooms();
     }catch(e){
@@ -344,6 +344,23 @@ function _upload(ctx, helpBtn, isBasic){
   card.appendChild(previewOuter);
   card.appendChild(btn);
   card.appendChild(status);
+
+  // Restore preview if a file was already selected from a previous render cycle
+  if(ctx.state._mapsUploadFile && !previewImg.src){
+    const f = ctx.state._mapsUploadFile;
+    if(!name.value) name.value = f.name.replace(/\.[^.]+$/,"");
+    const objUrl = URL.createObjectURL(f);
+    previewImg.onload = ()=>{
+      URL.revokeObjectURL(objUrl);
+      _imgNatW=previewImg.naturalWidth; _imgNatH=previewImg.naturalHeight;
+      const cs=Math.min(1,1600/Math.max(_imgNatW,_imgNatH));
+      cropCanvas.width=Math.round(_imgNatW*cs); cropCanvas.height=Math.round(_imgNatH*cs);
+      cropRect=null; _drawCropOverlay();
+      previewOuter.style.display="";
+    };
+    previewImg.src = objUrl;
+    status.textContent = `File selected: ${f.name} (${Math.round(f.size/1024)} KB)`;
+  }
 
   card.appendChild(el("div",{class:"muted", style:"margin-top:12px;font-size:12px"},
     "Best practice: upload one map per floor. Floors let you keep room placement clean and avoid mixing levels."

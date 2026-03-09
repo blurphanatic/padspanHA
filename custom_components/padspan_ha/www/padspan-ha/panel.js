@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.36";
+const APP_VERSION = "0.7.37";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260309T192742Z";
+const BUILD_ID = "20260309T193250Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1897,6 +1897,8 @@ class PadSpanHaApp extends HTMLElement {
     if(this.state._calibTune?._dragging || this.state._calibBeacon?._dragging || this.state._calibTune?._confirming || this.state._calibBeacon?._confirming) return;
     // Skip ALL re-renders while traceback tab is active (prevents flicker/DOM destruction)
     if(this.state._traceback?.active && this.state.view === "traceback") return;
+    // Skip re-renders while on the maps upload tab (file input loses selected file on DOM rebuild)
+    if(this.state.view === "maps" && this.state.mapsTab === "upload" && this.state._mapsUploadFile) return;
     // Skip poll-triggered re-renders when the user is actively interacting.
     // Checks: (1) a form element has focus, or (2) user interacted within the last 3s.
     // User-initiated renders (tab clicks, saves, etc.) always proceed.
