@@ -95,7 +95,7 @@ export function render(ctx){
 
         const devRow = d => {
           const o = objIndex.get(d.addr);
-          const label = (o && o.user_label) || (o && o.name!==d.addr && o.name) || d.name || d.addr;
+          const label = (o && o.user_label) || (o && o.name) || d.name || d.addr;
           const rssiStr = d.rssi!=null ? `RSSI ${d.rssi}` : "";
 
           const tagBtn = el("button",{class:"btn tiny"}, o&&o.user_label ? "Relabel" : "Tag");

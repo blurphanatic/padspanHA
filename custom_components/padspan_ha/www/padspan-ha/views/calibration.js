@@ -2608,11 +2608,11 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           const [px, py] = iso(wx, wy, z);
           const isSel = bs.selectedBk && bs.selectedBk.mapId === m.id && bs.selectedBk.bkId === bk.id;
           const bx = Math.round(px), by = Math.round(py);
-          const lbl = (bk.label || bk.key || "B").substring(0, 8);
+          const lbl = (liveObj?.user_label || liveObj?.name || bk.label || bk.key || "B").substring(0, 8);
           const detectedRoom = isLive && liveObj?.room ? liveObj.room : _detectRoom(useX, useY, m);
           const fillColor = isLive && !isTimerActive ? "#52b788" : "#5eead4";
           const confidence = liveObj?.knn_confidence;
-          const tipParts = [bk.label || bk.key || "Beacon"];
+          const tipParts = [liveObj?.user_label || liveObj?.name || bk.label || bk.key || "Beacon"];
           if (detectedRoom) tipParts.push("Room: " + detectedRoom);
           tipParts.push(`x: ${(useX * 100).toFixed(1)}% y: ${(useY * 100).toFixed(1)}%`);
           if (isLive && confidence != null) tipParts.push(`Confidence: ${(confidence * 100).toFixed(0)}%`);
@@ -2707,7 +2707,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     const opt = document.createElement("option");
     opt.value = o.key;
     const kindBadge = o.kind === "ibeacon" ? " [iBeacon]" : o.kind === "private_ble" ? " [Private BLE]" : " [BLE]";
-    opt.textContent = (o.user_label || o.name || o.key) + kindBadge;
+    opt.textContent = (o.user_label || o.name || o.key) + (o.rssi ? ` (${o.rssi} dBm)` : "") + kindBadge;
     bkSel.appendChild(opt);
   }
 
@@ -3642,8 +3642,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       nameRow.appendChild(icon);
       const nameEl = document.createElement("span");
       nameEl.style.cssText = "font-size:12px;font-weight:600;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
-      nameEl.textContent = bk.label || bk.key;
-      nameEl.title = bk.label || bk.key;
+      nameEl.textContent = obj?.user_label || obj?.name || bk.label || bk.key;
+      nameEl.title = obj?.user_label || obj?.name || bk.label || bk.key;
       nameRow.appendChild(nameEl);
       leftCol.appendChild(nameRow);
 
