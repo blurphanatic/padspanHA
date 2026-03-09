@@ -4342,41 +4342,53 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                 continue
 
             attrs = state_obj.attributes or {}
-            # Companion App stores UUID-Major-Minor in the 'id' or 'transmitting_id' attribute
-            transmitting_id = (
-                attrs.get("transmitting_id")
-                or attrs.get("id")
-                or attrs.get("uuid")
-                or ""
+            _LOGGER.debug(
+                "companion_discover: %s state=%r attrs=%s",
+                eid, state_obj.state, {k: str(v)[:80] for k, v in attrs.items()},
             )
 
-            # Also check if the state itself is the UUID (some versions)
-            if not transmitting_id and state_obj.state and len(state_obj.state) > 30:
-                transmitting_id = state_obj.state
-
-            if not transmitting_id:
-                continue
-
-            # Parse UUID-Major-Minor from transmitting_id
-            # Format: "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX-Major-Minor"
-            # or just the UUID portion
-            parts = transmitting_id.rsplit("-", 2)
-            uuid_str = ""
+            # Companion App stores UUID, Major, Minor in separate attributes
+            # or as a combined "transmitting_id" / "id" / the state itself.
+            uuid_attr = ""
             major = 0
             minor = 0
-            if len(parts) >= 3:
-                # Check if last two parts are numeric (major/minor)
-                try:
-                    minor = int(parts[-1])
-                    major = int(parts[-2])
-                    uuid_str = parts[-3] if "-" not in parts[-3] else "-".join(transmitting_id.split("-")[:-2])
-                except (ValueError, IndexError):
-                    uuid_str = transmitting_id
-            if not uuid_str:
-                uuid_str = transmitting_id
+
+            # Try separate UUID / Major / Minor attributes first (most reliable)
+            if attrs.get("UUID") or attrs.get("uuid"):
+                uuid_attr = str(attrs.get("UUID") or attrs.get("uuid") or "")
+                major = int(attrs.get("Major", attrs.get("major", 0)))
+                minor = int(attrs.get("Minor", attrs.get("minor", 0)))
+            else:
+                # Fall back to combined transmitting_id / id attribute or state
+                transmitting_id = (
+                    attrs.get("transmitting_id")
+                    or attrs.get("id")
+                    or ""
+                )
+                # Also check if the state itself is a UUID-like string
+                if not transmitting_id and state_obj.state and len(state_obj.state) > 30:
+                    transmitting_id = state_obj.state
+
+                if transmitting_id:
+                    # Parse UUID-Major-Minor from transmitting_id
+                    # Format: "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX-Major-Minor"
+                    parts = transmitting_id.rsplit("-", 2)
+                    if len(parts) >= 3:
+                        try:
+                            minor = int(parts[-1])
+                            major = int(parts[-2])
+                            uuid_attr = "-".join(transmitting_id.split("-")[:-2])
+                        except (ValueError, IndexError):
+                            uuid_attr = transmitting_id
+                    if not uuid_attr:
+                        uuid_attr = transmitting_id
+
+            if not uuid_attr:
+                _LOGGER.debug("companion_discover: %s — no UUID found, skipping", eid)
+                continue
 
             # Normalise UUID to lowercase with dashes
-            uuid_clean = uuid_str.lower().strip()
+            uuid_clean = uuid_attr.lower().strip().replace(" ", "")
             if len(uuid_clean) == 32:
                 uuid_clean = f"{uuid_clean[:8]}-{uuid_clean[8:12]}-{uuid_clean[12:16]}-{uuid_clean[16:20]}-{uuid_clean[20:]}"
 
@@ -4495,31 +4507,70 @@ async def ws_companion_follow(hass: HomeAssistant, connection, msg) -> None:
                 followed = True
                 results.append("Already followed")
 
-        # 3) Enable BLE Transmitter sensor in entity registry so the
-        #    Companion App starts broadcasting automatically.
+        # 3) Enable BLE Transmitter: entity registry + notify command to app.
         if transmitter_eid:
+            # 3a) Enable in entity registry (un-disable if disabled)
             try:
                 from homeassistant.helpers import entity_registry as er
 
                 ent_reg = er.async_get(hass)
-                entry = ent_reg.async_get(transmitter_eid)
-                if entry and entry.disabled_by is not None:
+                ent_entry = ent_reg.async_get(transmitter_eid)
+                if ent_entry and ent_entry.disabled_by is not None:
                     ent_reg.async_update_entity(
                         transmitter_eid, disabled_by=None
                     )
                     transmitter_enabled = True
-                    results.append("BLE Transmitter enabled")
-                elif entry:
-                    results.append("BLE Transmitter already enabled")
-                else:
-                    results.append("BLE Transmitter entity not found")
+                    results.append("BLE Transmitter entity enabled")
+            except Exception as te:
+                _LOGGER.debug("Entity registry enable for %s: %s", transmitter_eid, te)
+
+            # 3b) Send notification command to Companion App to turn on the
+            #     BLE transmitter sensor.  The Companion App (Android + iOS)
+            #     supports command_ble_transmitter via the notify service.
+            try:
+                from homeassistant.helpers import entity_registry as er, device_registry as dr
+
+                ent_reg = er.async_get(hass)
+                ent_entry = ent_reg.async_get(transmitter_eid)
+                if ent_entry and ent_entry.device_id:
+                    dev_reg = dr.async_get(hass)
+                    device = dev_reg.async_get(ent_entry.device_id)
+                    if device:
+                        # Find the notify service for this mobile_app device.
+                        # Convention: notify.mobile_app_<device_name_slug>
+                        notify_target = None
+                        for ident in device.identifiers:
+                            if ident[0] == "mobile_app":
+                                notify_target = f"mobile_app_{ident[1]}"
+                                break
+                        if not notify_target:
+                            # Fallback: derive from device name
+                            dname = (device.name or "").lower().replace(" ", "_").replace("-", "_")
+                            if dname:
+                                notify_target = f"mobile_app_{dname}"
+                        if notify_target:
+                            await hass.services.async_call(
+                                "notify",
+                                notify_target,
+                                {
+                                    "message": "command_ble_transmitter",
+                                    "data": {"command": "turn_on"},
+                                },
+                                blocking=True,
+                            )
+                            transmitter_enabled = True
+                            results.append("BLE Transmitter command sent to phone")
+                            _LOGGER.info(
+                                "Sent command_ble_transmitter turn_on via notify.%s",
+                                notify_target,
+                            )
             except Exception as te:
                 _LOGGER.warning(
-                    "Failed to enable BLE Transmitter %s: %s",
+                    "Failed to send BLE Transmitter command for %s: %s",
                     transmitter_eid,
                     te,
                 )
-                results.append(f"BLE Transmitter enable failed: {te}")
+                results.append(f"BLE command send failed: {te}")
 
         # 4) Verify: re-read to confirm persistence
         verify_label = ""
