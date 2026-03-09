@@ -1209,10 +1209,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "service_data": _ib_svcdata,
                 "service_uuids": _ib_svcuuids,
                 "connectable": _ib_connectable,
-                "identified": bool(identified_ib),
+                "identified": bool(identified_ib) or bool(_ib_label),
                 "linked_entities": all_linked,
                 "device": _ib_device,
             }
+            if _ib_label:
+                obj_ib["user_label"] = _ib_label
             objects.append(obj_ib)
 
         # ── Cross-link MAC ↔ iBeacon ↔ entity for the same physical device ──
@@ -1711,6 +1713,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
                     if kind == "private_ble":
                         lookup_key = obj.get("canonical_id") or addr
+                    elif kind == "ibeacon":
+                        lookup_key = obj.get("key") or addr
                     else:
                         lookup_key = addr
 
@@ -1752,6 +1756,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
                     if kind == "private_ble":
                         lookup_key = obj.get("canonical_id") or addr
+                    elif kind == "ibeacon":
+                        lookup_key = obj.get("key") or addr
                     else:
                         lookup_key = addr
 
@@ -2689,6 +2695,13 @@ async def ws_objects_clear_history(hass: HomeAssistant, connection, msg) -> None
             if entry.get("label"):
                 labelled_keys.add(addr)
 
+    # Also preserve followed objects
+    followed_set: set[str] = set()
+    st = _dom.get(DATA_SETTINGS)
+    if st:
+        for fa in (st.data.get("followed_addrs") or []):
+            followed_set.add(str(fa).upper())
+
     removed = 0
     kept = 0
     for key in list(_cache.keys()):
@@ -2697,6 +2710,11 @@ async def ws_objects_clear_history(hass: HomeAssistant, connection, msg) -> None
         addr = (cached.get("address") or "").upper()
         if addr and addr in labelled_keys:
             has_label = True
+        # Also keep if followed
+        if not has_label:
+            ck = key.upper()
+            if ck in followed_set or addr in followed_set:
+                has_label = True
         if has_label:
             kept += 1
         else:

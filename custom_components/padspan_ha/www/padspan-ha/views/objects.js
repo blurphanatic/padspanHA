@@ -509,9 +509,22 @@ export function render(ctx){
     root.appendChild(identCard);
 
     if(unidentified.length){
+      const clearUnidentBtn = el("button",{class:"btn inline",style:"font-size:11px;color:#f87171;border-color:#7f1d1d"}, "Clear unidentified");
+      clearUnidentBtn.title = "Remove all unidentified objects. Tagged and followed devices are kept.";
+      clearUnidentBtn.addEventListener("click", async()=>{
+        if(!confirm("Clear all unidentified objects?\n\nTagged and followed devices will be kept.")) return;
+        clearUnidentBtn.disabled = true; clearUnidentBtn.textContent = "Clearing...";
+        try {
+          const res = await ctx.actions.wsCall("padspan_ha/objects_clear_history", {});
+          ctx.toast(`Cleared ${res.removed} object${res.removed!==1?"s":""}, kept ${res.kept} tagged/followed`);
+          ctx.actions.renderRooms();
+        } catch(e){ ctx.toast("Failed: " + (e.message||e), true); clearUnidentBtn.textContent = "Clear unidentified"; }
+        clearUnidentBtn.disabled = false;
+      });
       const unCard = el("div",{class:"card"},[
         el("div",{class:"card-head"},[
           el("div",{class:"h2"}, `Unidentified (${unidentified.length})`),
+          clearUnidentBtn,
           helpBtn("objects_tag"),
         ]),
         el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
@@ -550,19 +563,21 @@ export function render(ctx){
         [el("span",{class:"muted",style:"font-size:12px;white-space:nowrap"}, "History:"), objAgeSlider, objAgeLabel]),
       objStats,
       (() => {
-        const clrBtn = el("button",{class:"btn inline",style:"font-size:11px;color:#f87171;border-color:#7f1d1d;margin-left:auto;white-space:nowrap"}, "Clear History");
-        clrBtn.title = "Remove all untagged/unfollowed objects from history. Tagged and followed objects are kept.";
+        const clrBtn = el("button",{class:"btn inline",style:"font-size:11px;color:#f87171;border-color:#7f1d1d;margin-left:auto;white-space:nowrap"}, "Clear unidentified");
+        clrBtn.title = "Remove all unidentified objects. Tagged and followed devices are kept.";
         clrBtn.addEventListener("click", async () => {
-          if (!confirm("Clear all untagged and unfollowed objects from history?\\n\\nTagged and followed objects will be kept. New objects will appear as scanners detect them.")) return;
+          if (!confirm("Clear all unidentified objects?\n\nTagged and followed devices will be kept.")) return;
           clrBtn.disabled = true;
           clrBtn.textContent = "Clearing...";
           try {
             const res = await ctx.actions.wsCall("padspan_ha/objects_clear_history", {});
-            clrBtn.textContent = `Cleared ${res.removed} (${res.kept} kept)`;
-            setTimeout(() => ctx.actions.renderRooms(), 1500);
+            ctx.toast(`Cleared ${res.removed} object${res.removed!==1?"s":""}, kept ${res.kept} tagged/followed`);
+            ctx.actions.renderRooms();
           } catch(e) {
             clrBtn.textContent = "Error";
+            ctx.toast("Failed: " + (e.message||e), true);
           }
+          clrBtn.disabled = false; clrBtn.textContent = "Clear unidentified";
         });
         return clrBtn;
       })()]),

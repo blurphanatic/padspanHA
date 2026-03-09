@@ -1620,7 +1620,19 @@ export function render(ctx){
       el("div",{class:"row"},[
         el("button",{class:"btn", onclick: ()=>openObjectsList("all")}, _quietMode ? "Tracked objects" : "All objects"),
         _quietMode ? null : el("button",{class:"btn", onclick: ()=>openObjectsList("unidentified")}, `Unidentified (${liveLoading ? "--" : unidentifiedCount})`),
-      ].filter(Boolean))
+      ].filter(Boolean)),
+      unidentifiedCount > 0 ? el("div",{style:"margin-top:6px"},[
+        el("button",{class:"btn inline",style:"font-size:11px;color:#f87171;border-color:#7f1d1d", onclick: async function(){
+          if(!confirm("Clear all unidentified objects? Tagged and followed devices will be kept.")) return;
+          this.disabled = true; this.textContent = "Clearing...";
+          try {
+            const r = await ctx.actions.wsCall("padspan_ha/objects_clear_history",{});
+            ctx.toast(`Cleared ${r.removed} object${r.removed!==1?"s":""}, kept ${r.kept} tagged/followed`);
+            await ctx.actions.refreshSnapshot();
+          } catch(e){ ctx.toast("Failed: " + (e.message||e), true); }
+          this.disabled = false; this.textContent = "Clear unidentified";
+        }}, "Clear unidentified"),
+      ]) : null,
     ]),
     el("div",{class:"card"},[
       el("div",{class:"kpi"},[
