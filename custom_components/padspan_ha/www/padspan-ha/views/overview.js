@@ -1545,6 +1545,7 @@ export function render(ctx){
                 const r = await ctx.actions.wsCall("padspan_ha/companion_follow", {
                   ibeacon_key: phone.ibeacon_key,
                   device_name: phone.device_name,
+                  entity_id: phone.entity_id,
                 });
                 if (r.follow_key) {
                   ctx.state.followedAddrs.add(r.follow_key);
@@ -1554,7 +1555,7 @@ export function render(ctx){
                   if (phone.is_visible) {
                     btn.textContent = `${phone.device_name} is now tracked!`;
                     btn.style.color = "#34d399"; btn.style.borderColor = "#065f46";
-                  } else if (phone.is_transmitting) {
+                  } else if (phone.is_transmitting || r.transmitter_enabled) {
                     btn.textContent = `${phone.device_name} registered — walk near a scanner`;
                     btn.style.color = "#fbbf24"; btn.style.borderColor = "#92400e";
                   } else {
@@ -1755,6 +1756,7 @@ export function render(ctx){
                 const r = await ctx.actions.wsCall("padspan_ha/companion_follow", {
                   ibeacon_key: phone.ibeacon_key,
                   device_name: phone.device_name,
+                  entity_id: phone.entity_id,
                 });
                 // Sync local followed set so Follow view + overview see it immediately
                 if (r.follow_key) {
@@ -1767,7 +1769,7 @@ export function render(ctx){
                     btn.textContent = "Tracked!";
                     btn.style.cssText = "font-size:12px;padding:4px 14px;color:#34d399;border-color:#065f46;font-weight:600";
                     meta.textContent = `Tagged as "${r.verified_label}" · visible to scanners`;
-                  } else if (phone.is_transmitting) {
+                  } else if (phone.is_transmitting || r.transmitter_enabled) {
                     btn.textContent = "Registered — waiting for signal";
                     btn.style.cssText = "font-size:12px;padding:4px 14px;color:#fbbf24;border-color:#92400e;font-weight:600";
                     meta.textContent = `Tagged as "${r.verified_label}" · BLE active but not yet seen by scanners. Walk near a scanner.`;

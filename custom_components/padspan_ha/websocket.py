@@ -4448,18 +4448,21 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
     "type": "padspan_ha/companion_follow",
     vol.Required("ibeacon_key"): str,
     vol.Required("device_name"): str,
+    vol.Optional("entity_id"): str,
 })
 @websocket_api.async_response
 async def ws_companion_follow(hass: HomeAssistant, connection, msg) -> None:
     """Auto-label and auto-follow a Companion App phone by its iBeacon key.
 
-    This is the one-click action: labels the iBeacon object with the phone name
-    and adds it to the followed list.  Returns verification of what was done.
+    This is the one-click action: labels the iBeacon object with the phone name,
+    adds it to the followed list, and enables the BLE Transmitter sensor so the
+    Companion App starts broadcasting.  Returns verification of what was done.
     """
     try:
         ibeacon_key = str(msg["ibeacon_key"])
         follow_key = ibeacon_key.upper()  # followed_addrs are always uppercase
         device_name = str(msg["device_name"]).strip()
+        transmitter_eid = str(msg.get("entity_id") or "").strip()
 
         if not device_name:
             device_name = "Phone"
@@ -4467,6 +4470,7 @@ async def ws_companion_follow(hass: HomeAssistant, connection, msg) -> None:
         results: list[str] = []
         labelled = False
         followed = False
+        transmitter_enabled = False
 
         # 1) Label the object in ObjectStore (tagged)
         obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
@@ -4491,7 +4495,33 @@ async def ws_companion_follow(hass: HomeAssistant, connection, msg) -> None:
                 followed = True
                 results.append("Already followed")
 
-        # 3) Verify: re-read to confirm persistence
+        # 3) Enable BLE Transmitter sensor in entity registry so the
+        #    Companion App starts broadcasting automatically.
+        if transmitter_eid:
+            try:
+                from homeassistant.helpers import entity_registry as er
+
+                ent_reg = er.async_get(hass)
+                entry = ent_reg.async_get(transmitter_eid)
+                if entry and entry.disabled_by is not None:
+                    ent_reg.async_update_entity(
+                        transmitter_eid, disabled_by=None
+                    )
+                    transmitter_enabled = True
+                    results.append("BLE Transmitter enabled")
+                elif entry:
+                    results.append("BLE Transmitter already enabled")
+                else:
+                    results.append("BLE Transmitter entity not found")
+            except Exception as te:
+                _LOGGER.warning(
+                    "Failed to enable BLE Transmitter %s: %s",
+                    transmitter_eid,
+                    te,
+                )
+                results.append(f"BLE Transmitter enable failed: {te}")
+
+        # 4) Verify: re-read to confirm persistence
         verify_label = ""
         verify_followed = False
         if obj_store:
@@ -4507,6 +4537,7 @@ async def ws_companion_follow(hass: HomeAssistant, connection, msg) -> None:
             "device_name": device_name,
             "labelled": labelled,
             "followed": followed,
+            "transmitter_enabled": transmitter_enabled,
             "verified_label": verify_label,
             "verified_followed": verify_followed,
             "actions": results,
