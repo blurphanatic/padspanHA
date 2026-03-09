@@ -1875,6 +1875,31 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             except Exception as _dedup2_err:
                 _LOGGER.debug("Post-cache dedup error: %s", _dedup2_err)
 
+        # Re-apply user labels to any cached objects that were merged back
+        # without labels (e.g. labelled via companion_follow after initial cache)
+        try:
+            _obj_store2 = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+            if _obj_store2:
+                for obj in objects:
+                    if obj.get("user_label"):
+                        continue  # already labelled
+                    kind = obj.get("kind", "")
+                    if kind not in ("ble", "private_ble", "ibeacon"):
+                        continue
+                    # Try the object's key, address, canonical_id
+                    _lbl = None
+                    for _try_key in (obj.get("key"), obj.get("address"), obj.get("canonical_id")):
+                        if _try_key:
+                            _e = _obj_store2.get(_try_key)
+                            if _e and _e.get("label"):
+                                _lbl = _e["label"]
+                                break
+                    if _lbl:
+                        obj["user_label"] = _lbl
+                        obj["identified"] = True
+        except Exception:
+            pass
+
         # Periodic disk save (at most every 60 s)
         _last_save = _dom.get("_obj_hist_last_save") or 0
         if _now_ts - _last_save >= _SAVE_INTERVAL:
