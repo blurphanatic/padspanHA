@@ -121,11 +121,16 @@ class PrivateBLEResolver:
                         "entry_id": entry.entry_id,
                     })
 
-            _LOGGER.debug(
-                "PrivateBLEResolver loaded %d private device(s)", len(self._devices)
-            )
+            if self._devices:
+                _LOGGER.info(
+                    "PrivateBLEResolver loaded %d private device(s): %s",
+                    len(self._devices),
+                    ", ".join(d["name"] for d in self._devices),
+                )
+            else:
+                _LOGGER.debug("PrivateBLEResolver: no private BLE devices found")
         except Exception as err:
-            _LOGGER.debug("PrivateBLEResolver load failed: %s", err)
+            _LOGGER.warning("PrivateBLEResolver load failed: %s", err)
         self._loaded_at = time.monotonic()
 
     def resolve_address(self, address: str) -> dict[str, Any] | None:
@@ -159,9 +164,16 @@ class PrivateBLEResolver:
 
         # Try each registered IRK
         for dev in self._devices:
-            if _address_matches_irk(addr_upper, dev["irk_bytes"]):
-                self._cache[addr_upper] = (dev["canonical_id"], now + _CACHE_TTL_S)
-                return {"canonical_id": dev["canonical_id"], "name": dev["name"], "kind": "private_ble"}
+            try:
+                if _address_matches_irk(addr_upper, dev["irk_bytes"]):
+                    _LOGGER.debug(
+                        "Resolved RPA %s → %s (%s)",
+                        addr_upper, dev["canonical_id"], dev["name"],
+                    )
+                    self._cache[addr_upper] = (dev["canonical_id"], now + _CACHE_TTL_S)
+                    return {"canonical_id": dev["canonical_id"], "name": dev["name"], "kind": "private_ble"}
+            except Exception as err:
+                _LOGGER.warning("IRK match error for %s: %s", addr_upper, err)
 
         self._cache[addr_upper] = (None, now + _CACHE_TTL_S)
         return None

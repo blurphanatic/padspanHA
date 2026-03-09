@@ -746,7 +746,7 @@ function _settingsPresence(ctx, el){
 
     // Brief help
     irkCard.appendChild(el("div", { class: "muted", style: "font-size:11px;margin-top:12px;line-height:1.6" },
-      "Paste your device's IRK above and PadSpan handles the rest. Click below for step-by-step instructions for every device type."
+      "Paste your device's IRK above and PadSpan handles the rest. Important: the device must be actively broadcasting (awake, Bluetooth on) and in range of a scanner when adding its IRK. Click below for step-by-step instructions for every device type."
     ));
 
     // Detailed guide toggle

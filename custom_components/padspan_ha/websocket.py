@@ -914,6 +914,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 _resolver_diag["resolved"] = len(canonical_by_addr)
         except Exception as _res_err:
             _resolver_diag["errors"].append(f"resolver: {_res_err}")
+            _LOGGER.warning("Private BLE resolver error: %s", _res_err)
 
         # Parse iBeacon from every advertisement; group by stable UUID/major/minor key.
         # This is deliberately OUTSIDE the resolver try/except so iBeacon detection
@@ -4197,16 +4198,20 @@ async def ws_private_ble_add_irk(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "invalid_irk", "IRK is required")
         return
 
-    # Normalise IRK: accept hex (with/without colons/spaces) or base64
+    # Normalise IRK: accept hex (with/without colons/spaces), base64, or irk:-prefixed base64
     irk_hex = ""
+    irk_stripped = irk_input
+    # Strip "irk:" prefix if present (HA format)
+    if irk_stripped.lower().startswith("irk:"):
+        irk_stripped = irk_stripped[4:]
     try:
         # Try hex first — strip separators
-        cleaned = _re.sub(r"[:\-\s]", "", irk_input)
+        cleaned = _re.sub(r"[:\-\s]", "", irk_stripped)
         if _re.fullmatch(r"[0-9a-fA-F]{32}", cleaned):
             irk_hex = cleaned.lower()
         else:
             # Try base64
-            decoded = _b64.b64decode(irk_input)
+            decoded = _b64.b64decode(irk_stripped)
             if len(decoded) == 16:
                 irk_hex = decoded.hex()
     except Exception:
@@ -4214,10 +4219,10 @@ async def ws_private_ble_add_irk(hass: HomeAssistant, connection, msg) -> None:
 
     if not irk_hex or len(irk_hex) != 32:
         connection.send_error(msg["id"], "invalid_irk",
-            "IRK must be 32 hex characters or 24-char base64 (16 bytes)")
+            "IRK must be 32 hex characters, 24-char base64 (16 bytes), or irk:-prefixed base64")
         return
 
-    # Check for duplicates
+    # Check for duplicates (HA stores IRK as plain hex in config entry data)
     for entry in hass.config_entries.async_entries("private_ble_device"):
         existing_irk = (entry.data or {}).get("irk", "")
         existing_clean = _re.sub(r"[:\-\s]", "", str(existing_irk)).lower()
@@ -4228,61 +4233,69 @@ async def ws_private_ble_add_irk(hass: HomeAssistant, connection, msg) -> None:
             })
             return
 
-    # Check if private_ble_device integration is available
-    # Try multiple IRK formats — the integration may expect hex with colons, plain hex, or base64
+    # HA's private_ble_device config flow accepts:
+    #   1) Plain hex: "aabbccdd..." (32 chars)
+    #   2) "irk:"-prefixed base64: "irk:AAAA...==" (bytes are REVERSED by HA)
+    # The flow also requires the device to be actively broadcasting in range.
+    irk_bytes = bytes.fromhex(irk_hex)
+    irk_bytes_reversed = irk_bytes[::-1]
     irk_formats = [
-        irk_hex,                                                    # plain hex: aabbccdd...
-        ":".join(irk_hex[i:i+2] for i in range(0, 32, 2)),         # colon-separated: aa:bb:cc:dd:...
-        __import__("base64").b64encode(bytes.fromhex(irk_hex)).decode(),  # base64
+        irk_hex,                                                         # plain hex
+        "irk:" + _b64.b64encode(irk_bytes_reversed).decode(),           # irk:-prefixed base64 (HA reverses)
+        "irk:" + _b64.b64encode(irk_bytes).decode(),                    # irk:-prefixed base64 (no reversal)
+        irk_bytes_reversed.hex(),                                        # reversed hex
     ]
 
-    async def _try_create_entry(irk_value: str) -> dict | None:
+    async def _try_create_entry(irk_value: str) -> tuple[dict | None, str]:
         """Attempt to create a private_ble_device config entry with the given IRK format.
-        Returns the flow result if successful (create_entry), or None."""
-        result = await hass.config_entries.flow.async_init(
-            "private_ble_device",
-            context={"source": "user"},
-            data={"irk": irk_value},
-        )
-        rtype = str(result.get("type", ""))
-        # FlowResultType can be an enum; compare string representation too
-        if rtype in ("create_entry", "FlowResultType.CREATE_ENTRY") or "create_entry" in rtype:
-            return result
-        if "form" in rtype:
-            # Integration showed a form — try to advance it with user_input
+        Returns (flow_result, error_detail) tuple."""
+        try:
+            result = await hass.config_entries.flow.async_init(
+                "private_ble_device",
+                context={"source": "user"},
+            )
+            rtype = str(result.get("type", ""))
+
+            if "create_entry" in rtype:
+                return result, ""
+
+            if "form" not in rtype:
+                return None, f"flow init returned {rtype}"
+
             flow_id = result.get("flow_id")
             if not flow_id:
-                return None
-            # Try up to 2 form steps (some integrations have confirm steps)
-            for _step in range(2):
-                result2 = await hass.config_entries.flow.async_configure(
-                    flow_id, user_input={"irk": irk_value}
-                )
-                rtype2 = str(result2.get("type", ""))
-                if "create_entry" in rtype2:
-                    return result2
-                if "form" not in rtype2:
-                    # abort or error — stop trying
-                    _LOGGER.debug("private_ble flow step returned %s (errors=%s)",
-                                  rtype2, result2.get("errors"))
-                    break
-                # If form has errors, the IRK format is probably wrong
-                if result2.get("errors"):
-                    _LOGGER.debug("private_ble flow form errors: %s", result2.get("errors"))
-                    break
-        return None
+                return None, "no flow_id"
+
+            # Submit the IRK to the form
+            result2 = await hass.config_entries.flow.async_configure(
+                flow_id, user_input={"irk": irk_value}
+            )
+            rtype2 = str(result2.get("type", ""))
+
+            if "create_entry" in rtype2:
+                return result2, ""
+
+            errors = result2.get("errors") or {}
+            if errors:
+                err_detail = ", ".join(f"{k}: {v}" for k, v in errors.items())
+                _LOGGER.debug("private_ble flow errors for format %s: %s",
+                              irk_value[:20], err_detail)
+                return None, err_detail
+
+            return None, f"flow returned {rtype2}"
+        except Exception as e:
+            return None, str(e)
 
     try:
         created = None
-        last_err = ""
+        all_errors: list[str] = []
         for fmt in irk_formats:
-            try:
-                created = await _try_create_entry(fmt)
-                if created:
-                    break
-            except Exception as _fmt_err:
-                last_err = str(_fmt_err)
-                continue
+            result, err_detail = await _try_create_entry(fmt)
+            if result:
+                created = result
+                break
+            if err_detail:
+                all_errors.append(err_detail)
 
         if created:
             entry = created.get("result")
@@ -4300,11 +4313,23 @@ async def ws_private_ble_add_irk(hass: HomeAssistant, connection, msg) -> None:
                 "entry_id": entry.entry_id if entry else None,
             })
         else:
-            detail = f" ({last_err})" if last_err else ""
-            connection.send_error(msg["id"], "flow_failed",
-                f"Could not create Private BLE Device entry{detail}. "
-                "Make sure the 'Private BLE Device' integration is available in HA "
-                "(Settings → Devices & Services → Add Integration → search 'Private BLE').")
+            # Determine the most helpful error message
+            unique_errors = list(dict.fromkeys(all_errors))  # deduplicate preserving order
+            if any("irk_not_found" in e for e in unique_errors):
+                connection.send_error(msg["id"], "irk_not_found",
+                    "IRK is valid but no matching device was detected. "
+                    "The device must be actively broadcasting nearby (Bluetooth on, in range of a scanner). "
+                    "Make sure the device is awake and near a scanner, then try again.")
+            elif any("irk_not_valid" in e for e in unique_errors):
+                connection.send_error(msg["id"], "irk_not_valid",
+                    "IRK format not recognised by HA. Try plain hex (32 chars), "
+                    "base64, or irk:-prefixed base64 from Apple Keychain.")
+            else:
+                detail = "; ".join(unique_errors) if unique_errors else "unknown"
+                connection.send_error(msg["id"], "flow_failed",
+                    f"Could not create Private BLE Device entry ({detail}). "
+                    "Make sure the 'Private BLE Device' integration is available in HA "
+                    "(Settings → Devices & Services → Add Integration → search 'Private BLE').")
     except Exception as err:
         _LOGGER.warning("private_ble_add_irk failed: %s", err, exc_info=True)
         connection.send_error(msg["id"], "add_failed",
