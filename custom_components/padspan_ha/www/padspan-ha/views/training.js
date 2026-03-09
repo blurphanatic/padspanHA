@@ -655,6 +655,111 @@ function _svgAwayBadge() {
 </svg>`;
 }
 
+function _svgQuietMode() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes fadeOut{0%{opacity:1}40%{opacity:1}60%{opacity:0.1}100%{opacity:0.1}}
+@keyframes fadeStay{0%,100%{opacity:1}}
+.fadeItem{animation:fadeOut 3s ease-in-out infinite}
+.stayItem{animation:fadeStay 3s ease-in-out infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#52b788" font-size="11" font-weight="600" font-family="system-ui">Quiet Mode hides unidentified clutter</text>
+<rect x="20" y="28" width="160" height="170" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1.5"/>
+<text x="100" y="48" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600" font-family="system-ui">Normal Mode</text>
+<text x="100" y="68" text-anchor="middle" fill="#52b788" font-size="9" font-family="system-ui">Alice's Phone</text>
+<text x="100" y="84" text-anchor="middle" fill="#52b788" font-size="9" font-family="system-ui">Car Keys</text>
+<text x="100" y="100" text-anchor="middle" fill="#f59e0b" font-size="9" font-family="system-ui">AA:BB:CC:11:22:33</text>
+<text x="100" y="116" text-anchor="middle" fill="#f59e0b" font-size="9" font-family="system-ui">DD:EE:FF:44:55:66</text>
+<text x="100" y="132" text-anchor="middle" fill="#f59e0b" font-size="9" font-family="system-ui">11:22:33:AA:BB:CC</text>
+<text x="100" y="148" text-anchor="middle" fill="#f59e0b" font-size="9" font-family="system-ui">77:88:99:DD:EE:FF</text>
+<text x="100" y="170" text-anchor="middle" fill="#64748b" font-size="9" font-family="system-ui">2 tagged · 4 unknown</text>
+<rect x="220" y="28" width="160" height="170" rx="8" fill="#0a150e" stroke="#52b788" stroke-width="2"/>
+<text x="300" y="48" text-anchor="middle" fill="#52b788" font-size="10" font-weight="600" font-family="system-ui">Quiet Mode</text>
+<text x="300" y="72" text-anchor="middle" fill="#52b788" font-size="10" font-family="system-ui">Alice's Phone</text>
+<text x="300" y="92" text-anchor="middle" fill="#52b788" font-size="10" font-family="system-ui">Car Keys</text>
+<text x="300" y="130" text-anchor="middle" fill="#64748b" font-size="9" font-family="system-ui">Only tracked devices shown</text>
+<rect x="338" y="36" width="28" height="14" rx="7" fill="#1a3a2a" stroke="#52b788" stroke-width="1"/>
+<circle cx="358" cy="43" r="5" fill="#52b788"/>
+<text x="300" y="208" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Toggle in top-right of Overview</text>
+</svg>`;
+}
+
+function _svgCompanionTrack() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.pBtn{animation:pulse 2s ease-in-out infinite}
+@keyframes check{0%,60%{opacity:0}70%{opacity:1}100%{opacity:1}}
+.chk{animation:check 3s ease-in-out infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="600" font-family="system-ui">One-click phone tracking from Overview</text>
+<rect x="40" y="30" width="320" height="60" rx="8" fill="#0f172a" stroke="#2563eb" stroke-width="1.5"/>
+<text x="60" y="52" fill="#e2e8f0" font-size="12" font-weight="600" font-family="system-ui">Garry's iPhone</text>
+<text x="60" y="68" fill="#64748b" font-size="9" font-family="system-ui">BLE active · visible to scanners</text>
+<rect class="pBtn" x="260" y="42" width="80" height="28" rx="6" fill="none" stroke="#2563eb" stroke-width="1.5"/>
+<text x="300" y="60" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="600" font-family="system-ui">Track</text>
+<path class="chk" d="M 180 140 l 10 10 l 20 -20" fill="none" stroke="#34d399" stroke-width="3" stroke-linecap="round"/>
+<text class="chk" x="200" y="175" text-anchor="middle" fill="#34d399" font-size="11" font-weight="600" font-family="system-ui">Tracked! Labels, follows, and enables BLE</text>
+<text x="200" y="200" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Auto-enables BLE Transmitter on the phone</text>
+</svg>`;
+}
+
+function _svgClearUnidentified() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes sweep{0%{x:20}30%{x:20}70%{x:380}100%{x:380}}
+@keyframes fadeClean{0%,30%{opacity:1}70%,100%{opacity:0}}
+@keyframes stayClean{0%,100%{opacity:1}}
+.sweepLine{animation:sweep 4s ease-in-out infinite}
+.cleanFade{animation:fadeClean 4s ease-in-out infinite}
+.cleanStay{animation:stayClean 4s ease-in-out infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#f87171" font-size="11" font-weight="600" font-family="system-ui">Clear unidentified — keep tagged &amp; followed</text>
+<text class="cleanStay" x="40" y="50" fill="#52b788" font-size="10" font-family="system-ui">Alice's Phone</text>
+<rect class="cleanStay" x="160" y="38" width="50" height="16" rx="4" fill="#1a3a2a" stroke="#52b788" stroke-width="1"/>
+<text class="cleanStay" x="185" y="50" text-anchor="middle" fill="#52b788" font-size="8" font-family="system-ui">Tagged</text>
+<text class="cleanFade" x="40" y="75" fill="#f59e0b" font-size="10" font-family="system-ui">AA:BB:CC:11:22:33</text>
+<text class="cleanStay" x="40" y="100" fill="#52b788" font-size="10" font-family="system-ui">Car Keys</text>
+<rect class="cleanStay" x="120" y="88" width="60" height="16" rx="4" fill="#1a3a2a" stroke="#52b788" stroke-width="1"/>
+<text class="cleanStay" x="150" y="100" text-anchor="middle" fill="#52b788" font-size="8" font-family="system-ui">Following</text>
+<text class="cleanFade" x="40" y="125" fill="#f59e0b" font-size="10" font-family="system-ui">DD:EE:FF:44:55:66</text>
+<text class="cleanFade" x="40" y="150" fill="#f59e0b" font-size="10" font-family="system-ui">77:88:99:AA:BB:CC</text>
+<line class="sweepLine" x1="20" y1="30" x2="20" y2="165" stroke="#f87171" stroke-width="2" opacity="0.6"/>
+<text x="200" y="190" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="system-ui">Tagged and followed devices are preserved</text>
+<text x="200" y="208" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Available in Overview and Objects tabs</text>
+</svg>`;
+}
+
+function _svgPrivateBle() {
+  return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
+<style>
+@keyframes rotate{0%{opacity:1}25%{opacity:0}50%{opacity:0}75%{opacity:1}100%{opacity:1}}
+@keyframes rotateB{0%{opacity:0}25%{opacity:1}50%{opacity:0}75%{opacity:0}100%{opacity:0}}
+@keyframes rotateC{0%{opacity:0}25%{opacity:0}50%{opacity:1}75%{opacity:0}100%{opacity:0}}
+.macA{animation:rotate 4s ease-in-out infinite}
+.macB{animation:rotateB 4s ease-in-out infinite}
+.macC{animation:rotateC 4s ease-in-out infinite}
+</style>
+<text x="200" y="16" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="600" font-family="system-ui">Private BLE: IRK resolves rotating MACs</text>
+<rect x="20" y="30" width="160" height="120" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1.5"/>
+<text x="100" y="50" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600" font-family="system-ui">iPhone broadcasts</text>
+<text class="macA" x="100" y="75" text-anchor="middle" fill="#f59e0b" font-size="10" font-family="monospace">4A:1B:2C:3D:4E:5F</text>
+<text class="macB" x="100" y="75" text-anchor="middle" fill="#f59e0b" font-size="10" font-family="monospace">7C:8D:9E:AF:B0:C1</text>
+<text class="macC" x="100" y="75" text-anchor="middle" fill="#f59e0b" font-size="10" font-family="monospace">D2:E3:F4:05:16:27</text>
+<text x="100" y="95" text-anchor="middle" fill="#64748b" font-size="9" font-family="system-ui">MAC rotates every ~15 min</text>
+<text x="100" y="130" text-anchor="middle" fill="#f87171" font-size="9" font-family="system-ui">Without IRK: 3 unknown devices</text>
+<text x="200" y="90" text-anchor="middle" fill="#60a5fa" font-size="16" font-family="system-ui">→</text>
+<rect x="220" y="30" width="160" height="120" rx="8" fill="#0a150e" stroke="#60a5fa" stroke-width="2"/>
+<text x="300" y="50" text-anchor="middle" fill="#60a5fa" font-size="10" font-weight="600" font-family="system-ui">With IRK</text>
+<rect x="250" y="60" width="100" height="24" rx="6" fill="#1a2744" stroke="#60a5fa" stroke-width="1"/>
+<text x="300" y="76" text-anchor="middle" fill="#60a5fa" font-size="10" font-family="system-ui">Garry's iPhone</text>
+<text x="300" y="100" text-anchor="middle" fill="#34d399" font-size="9" font-family="system-ui">1 stable identity</text>
+<text x="300" y="130" text-anchor="middle" fill="#64748b" font-size="9" font-family="system-ui">Blue badge in all views</text>
+<text x="200" y="175" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="system-ui">Settings → Private BLE → Add IRK</text>
+<text x="200" y="195" text-anchor="middle" fill="#4a6052" font-size="9" font-family="system-ui">Works with iPhones, Apple Watches, and Android phones</text>
+</svg>`;
+}
+
 function _svgPresenceSettings() {
   return `<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;background:#071008;border-radius:8px;display:block">
 <style>
@@ -1162,6 +1267,42 @@ const WALKTHROUGHS = [
     ],
   },
   {
+    id: "phone_tracking",
+    title: "Track Your Phone",
+    icon: "📱",
+    summary: "Use the HA Companion App to track phones via BLE iBeacon. One-click setup with automatic transmitter enablement.",
+    steps: [
+      { title: "Install the HA Companion App",            text: "Install the Home Assistant Companion App on any phone you want to track (Android or iOS). The app includes a BLE Transmitter feature that broadcasts an iBeacon signal — a stable identifier that PadSpan can track even as the phone's Bluetooth MAC address rotates for privacy.", svg: _svgCompanionTrack },
+      { title: "One-Click Track in Overview",              text: "Open Overview in PadSpan. If the Companion App is installed and registered with your HA instance, a blue 'Phones detected' card appears automatically. Click 'Track this phone' — PadSpan labels the phone, adds it to your followed list, and sends a command to enable the BLE Transmitter on the phone. All in one click.", svg: _svgCompanionTrack },
+      { title: "What Happens Behind the Scenes",           text: "When you click Track, PadSpan: (1) stores a label for the phone's iBeacon key in the object store, (2) adds the key to your followed devices list, (3) enables the BLE Transmitter entity in HA's entity registry, and (4) sends a notification command to the Companion App to turn on BLE transmission. The phone starts broadcasting and appears on your map once a scanner picks it up.", svg: _svgIbeacon },
+      { title: "Status Feedback",                         text: "After tracking, the button shows real status: green 'Tracked!' means the phone is visible to scanners. Yellow 'Waiting for signal' means the transmitter is on but no scanner has seen it yet — walk near a scanner. Amber 'Enable BLE Transmitter' means the command couldn't reach the app — open Companion App → Settings → Manage Sensors → BLE Transmitter and enable it manually.", svg: _svgCompanionTrack },
+      { title: "Untrack a Phone",                         text: "In Advanced mode, already-tracked phones show their current status (Tracked / Waiting / BLE off) with an Untrack button. Clicking Untrack removes the label and unfollows the phone — it will revert to an anonymous BLE signal.", svg: _svgAwayBadge },
+    ],
+  },
+  {
+    id: "private_ble",
+    title: "Private BLE (Apple Devices)",
+    icon: "🔒",
+    summary: "Track iPhones and Apple Watches that rotate their MAC address using Identity Resolving Keys (IRK).",
+    steps: [
+      { title: "The MAC Rotation Problem",                text: "Modern phones — especially iPhones and Apple Watches — rotate their Bluetooth MAC address every 15 minutes for privacy. Without special handling, each rotation creates a new 'unknown device' in your scanner list. Your iPhone might show up as dozens of different unidentified entries.", svg: _svgPrivateBle },
+      { title: "IRK — Identity Resolving Key",            text: "Every Bluetooth device that uses private addressing has an IRK — a cryptographic key that can resolve the rotating addresses back to one stable identity. Home Assistant's Private BLE Device integration stores these IRKs and matches them to incoming advertisements. PadSpan reads the resolved identities and groups all the rotating MACs into a single blue-badged object.", svg: _svgPrivateBle },
+      { title: "Adding an IRK in PadSpan",                text: "Go to Settings → Private BLE Devices and click Add IRK. Enter the IRK in any format — plain hex, colon-separated, or base64. PadSpan tries all three formats automatically. Once added, the device appears with a blue badge in Objects, and its advertisements are matched across all scanners regardless of which MAC address happens to be active.", svg: _svgPrivateBle },
+      { title: "Calibration with Private BLE Devices",    text: "Private BLE devices work in calibration just like any other tracked device. The calibration system matches advertisements by canonical identity (not by MAC address), so fingerprints collected while the MAC was one value still match when it rotates to another. You can use your iPhone as the calibration device without worrying about address changes.", svg: _svgCalibSetup },
+    ],
+  },
+  {
+    id: "quiet_clear",
+    title: "Quiet Mode & Cleanup",
+    icon: "🧹",
+    summary: "Reduce visual clutter with Quiet Mode and clean up unidentified devices while keeping your tagged items.",
+    steps: [
+      { title: "Quiet Mode",                             text: "Toggle Quiet Mode from the top-right corner of Overview (both Basic and Advanced modes). When enabled, the overview and room grid hide unidentified devices and show only your tagged and followed objects. The room dots switch from showing everything to showing just the devices you care about. Great for everyday use once your initial setup is done.", svg: _svgQuietMode },
+      { title: "Clear Unidentified",                     text: "The 'Clear unidentified' button removes all untagged, unfollowed BLE objects from PadSpan's history cache. Available in the Overview Objects card (Advanced mode) and the Objects tab. Tagged devices (those you've named) and followed devices (those you're tracking) are always preserved — only anonymous hardware addresses are cleared.", svg: _svgClearUnidentified },
+      { title: "When to Clear",                           text: "Clear unidentified after tagging your important devices, if you have dozens of unknown Bluetooth signals cluttering the list (neighbours' phones, passing cars, etc.). The devices will reappear on the next scan cycle if they're still in range, but old stale entries are gone. Use Quiet Mode to hide them without deleting — Clear to actually remove them.", svg: _svgClearUnidentified },
+    ],
+  },
+  {
     id: "manage",
     title: "Manage Your Setup",
     icon: "⚙️",
@@ -1198,10 +1339,13 @@ const MANUAL_SECTIONS = [
       "RSSI (Received Signal Strength Indicator) — measured in dBm (e.g. −55 dBm). More negative = weaker signal = further away. PadSpan uses RSSI from multiple scanners to determine which room a device is in.",
       "Scanner / Radio — a Bluetooth receiver placed in a room. ESPresense on an ESP32 or a Bermuda-tracked device are common choices. Multiple scanners per floor give better accuracy.",
       "Area — a room defined in Home Assistant's Areas & Zones. PadSpan uses your HA areas as its room list. Create and rename rooms in HA Settings → Areas & Zones.",
-      "Object — anything PadSpan is tracking. Could be a phone (via HA companion app), an AirTag, a Tile tracker, a key fob, or any unnamed BLE signal.",
+      "Object — anything PadSpan is tracking. Could be a phone (via HA Companion App), an AirTag, a Tile tracker, a key fob, or any unnamed BLE signal.",
       "iBeacon — a BLE advertising format used by Apple AirTags, Tile trackers, and the HA Companion App. Contains a stable UUID/Major/Minor identifier that doesn't change even as the MAC address rotates. PadSpan groups all rotating MACs for the same iBeacon into one amber-badged object.",
-      "Private BLE — phones (especially iPhones) rotate their MAC address for privacy. PadSpan resolves these using IRK (Identity Resolving Key) so they appear as a single stable blue-badged object rather than many unknowns.",
+      "Private BLE — phones (especially iPhones and Apple Watches) rotate their MAC address for privacy. PadSpan resolves these using IRK (Identity Resolving Key) so they appear as a single stable blue-badged object rather than many unknowns. Add IRKs via Settings → Private BLE Devices.",
+      "Companion Phone Tracking — one-click phone tracking from the Overview tab. PadSpan detects phones with the HA Companion App installed, labels them, follows them, and sends a command to enable BLE transmission automatically.",
       "Tag — a friendly name you assign to an unidentified BLE device. Tagged devices show up with their name everywhere in PadSpan. PadSpan also creates HA entities (device_tracker and area sensor) for each tagged device.",
+      "Follow — mark a device to track it. Followed devices appear in the Follow tab with live location, are preserved when clearing unidentified objects, and create ghost placeholders if not yet visible to scanners.",
+      "Quiet Mode — toggle in Overview top-right. Hides unidentified devices from the overview and room grid, showing only tagged and followed objects. Default off.",
       "Home/Away — if a device hasn't been seen for longer than the away timeout (configurable, default 5 min), its device_tracker state changes to not_home and a red Away badge appears in the Objects tab.",
       "Sample Mode — a demo mode using fictional data (the Smith Residence). Great for exploring PadSpan without live hardware. Toggle between Sample and Live in the top bar.",
     ],
@@ -1215,8 +1359,10 @@ const MANUAL_SECTIONS = [
       "2. Make sure your Bluetooth scanners are set up and reporting to Home Assistant. ESPresense and Bermuda are the most popular options and work out of the box with PadSpan.",
       "3. Create your rooms in HA Settings → Areas & Zones. PadSpan reads your areas directly — no separate room setup needed.",
       "4. Open PadSpan HA from the sidebar. Use Sample mode first to familiarise yourself with the interface, then switch to Live mode to see your real devices.",
-      "5. Go to Objects and tag your key devices with friendly names. Then switch to Follow to track them in real time.",
-      "Tip: If the Bluetooth tab shows 'No live data', make sure HA was fully restarted after install — not just reloaded.",
+      "5. Track phones: if you have the HA Companion App installed, open Overview — detected phones appear in a blue card. Click 'Track this phone' for one-click setup. PadSpan labels the phone, follows it, and enables BLE transmission automatically.",
+      "6. Tag other devices in the Objects tab with friendly names. Then switch to Follow to track them in real time.",
+      "7. For Apple devices (iPhones, Apple Watches), add their IRK via Settings → Private BLE Devices so PadSpan can resolve their rotating MAC addresses into a single stable identity.",
+      "Tip: If the Bluetooth tab shows 'No live data', make sure HA was fully restarted after install — not just reloaded. Use Quiet Mode (Overview top-right toggle) to hide unidentified clutter once your devices are tagged.",
     ],
   },
   {
@@ -1238,6 +1384,32 @@ const MANUAL_SECTIONS = [
     helpKeys: ["objects", "objects_tag"],
   },
   {
+    id: "phone_tracking_section",
+    title: "Phone Tracking (Companion App)",
+    icon: "📱",
+    paragraphs: [
+      "PadSpan can automatically detect and track phones running the HA Companion App. This works on both Android and iOS.",
+      "How it works: The Companion App includes a BLE Transmitter sensor that broadcasts an iBeacon signal. PadSpan reads the transmitter entity's UUID, Major, and Minor values and constructs a stable iBeacon key. This key survives MAC address rotation — the phone always shows as one object.",
+      "One-click setup: In Overview, detected Companion App phones appear in a blue card. Click 'Track this phone' to: (1) label the phone with its device name, (2) add it to your followed list, (3) enable the BLE Transmitter entity in HA, and (4) send a notification command to the Companion App to start BLE transmission.",
+      "Status indicators: After tracking, the system shows real status — green 'Tracked!' means visible to scanners, yellow 'Waiting for signal' means transmitting but not yet seen (walk near a scanner), amber 'Enable BLE Transmitter' means the enable command didn't reach the app (enable manually in Companion App → Settings → Manage Sensors → BLE Transmitter).",
+      "Ghost objects: If you track a phone but it's not yet visible to any scanner, PadSpan creates a placeholder (ghost) object so it appears in your Objects list immediately. The ghost disappears once a real BLE signal is received.",
+      "Untracking: In Advanced mode, tracked phones show an Untrack button. This removes the label and unfollows the phone.",
+    ],
+  },
+  {
+    id: "private_ble_section",
+    title: "Private BLE & IRK",
+    icon: "🔒",
+    paragraphs: [
+      "Modern phones (especially Apple devices) rotate their Bluetooth MAC address every 15 minutes for privacy. Without resolution, each rotation creates a new unknown device in your list.",
+      "IRK (Identity Resolving Key) is a cryptographic key that resolves rotating addresses back to one stable identity. Home Assistant's Private BLE Device integration stores IRKs and matches them to incoming BLE advertisements.",
+      "Adding an IRK: Go to Settings → Private BLE Devices → Add IRK. Enter the key in any format: plain hex (32 chars), colon-separated (AA:BB:CC:...), or base64 encoded. PadSpan tries all three formats automatically and handles multi-step config flows.",
+      "Once added, the device appears with a blue badge in Objects, Follow, Presence, and all other views. All rotating MAC addresses are merged into one stable entry.",
+      "Calibration: Private BLE devices work in calibration by matching on canonical identity rather than MAC address. Fingerprints collected with one MAC still match after rotation. You can use your iPhone as a calibration device without issues.",
+      "iBeacon vs Private BLE: These are complementary. iBeacon (amber badge) tracks devices by UUID/Major/Minor — used by AirTags, Tile trackers, and the Companion App transmitter. Private BLE (blue badge) resolves rotating MACs via IRK — used for iPhones and Apple Watches. Some devices can be tracked both ways.",
+    ],
+  },
+  {
     id: "help_maps",
     title: "Mapping",
     icon: "🗺️",
@@ -1257,6 +1429,18 @@ const MANUAL_SECTIONS = [
       "Alignment protection: PadSpan warns before you modify a master's position. If you select a master as the alignment target, a warning banner explains that saving will revoke its master status. In the rare case where both reference and target are masters, PadSpan forces you to choose which one keeps the status before saving.",
       "Tip: Once your master is set and other maps are aligned to it, avoid changing masters. Re-aligning everything is tedious. Get the master right the first time.",
       "Changing masters: PadSpan does offer a Change Master option in Maps \u2192 Library, but it is strongly recommended that you do not use it. There are no guarantees. When you change masters, PadSpan attempts to invert the alignment transform between the old and new master, recompute every map that referenced the old master, and relink the alignment chain \u2014 but floating-point rounding, rotation artifacts, and cascading offsets can cause visible drift. Calibration fingerprint positions, k-NN models, and room boundary precedence all shift to the new master\u2019s coordinate system, which may produce different room assignments even if the maps appear aligned. Tie-in history is cleared on both maps. If you still need to change masters (for example, the original floor plan was badly scaled or you replaced it with a better image), first go to Alignment and align the old and new master maps as perfectly as possible. The wizard checks for this alignment before allowing the swap. Afterward, verify every map in the 3D Stack and Alignment tabs and re-align anything that drifted.",
+    ],
+  },
+  {
+    id: "quiet_cleanup_section",
+    title: "Quiet Mode & Cleanup",
+    icon: "🧹",
+    paragraphs: [
+      "Quiet Mode: Toggle from the top-right corner of Overview (both Basic and Advanced modes). When on, the overview and room grid hide unidentified BLE signals and show only tagged and followed devices. Default is off.",
+      "Quiet Mode affects: the Objects card count (shows only tracked objects), the room grid dots (only tracked devices shown), and the Objects button label (changes to 'Tracked objects'). The underlying data is unchanged — toggle off to see everything again.",
+      "Clear Unidentified: Removes all untagged, unfollowed BLE objects from PadSpan's history cache. Available in the Overview Objects card (Advanced mode) and the Objects tab.",
+      "What's preserved: Any device with a user-assigned label (tagged) or in your followed list is kept. Ghost objects (phone placeholders) are also preserved. Only anonymous hardware addresses are removed.",
+      "When to use: After initial setup when you've tagged your important devices and want to clean out the clutter. Cleared devices reappear if still in scanner range — this removes historical entries, not live data.",
     ],
   },
   {
@@ -1352,9 +1536,10 @@ const MANUAL_SECTIONS = [
     icon: "🤖",
     paragraphs: [
       "PadSpan creates two HA entities for every tagged BLE device:",
-      "device_tracker.{label} — location_name = current room while home, not_home when away. Link this to a Person in HA Settings → People to get a combined home/away status.",
+      "device_tracker.{label} — location_name = current room while home, not_home when away. Link this to a Person in HA Settings → People to get a combined home/away status. This works for manually tagged devices, Companion App phones, iBeacon trackers, and Private BLE devices alike.",
       "sensor.{label}_area — state = current room name, or not_home when the device has been away for longer than the configured timeout. Use this in automations: trigger when sensor.car_keys_area changes to 'Kitchen'.",
-      "Extra attributes on both entities: address (MAC or UUID key), rssi, age_s, kind, and for iBeacon devices: ibeacon_uuid, ibeacon_major, ibeacon_minor, all_addresses.",
+      "Extra attributes on both entities: address (MAC or UUID key), rssi, age_s, kind, and for iBeacon devices: ibeacon_uuid, ibeacon_major, ibeacon_minor, all_addresses. For Private BLE devices: canonical_id.",
+      "Companion App phones: when tracked via the one-click button, PadSpan stores the phone's iBeacon key (ibeacon:{uuid}:{major}:{minor}). Both entities are created using the phone's device name as the label.",
       "padspan_ha.dump_devices service — call this from HA Developer Tools → Services to get a full JSON snapshot of all tracked devices and their current state. Useful for debugging and building advanced templates. Returns response data compatible with scripts and automations.",
       "Both entities persist across restarts — not_home is a permanent valid state, not an error. Entities never go 'unavailable' just because a device is away.",
     ],
@@ -1386,8 +1571,13 @@ const MANUAL_SECTIONS = [
       "device_tracker shows not_home too slowly — lower the timeout. The minimum is 1 minute.",
       "AirTag/iBeacon not appearing or keeps splitting into multiple objects — make sure your BLE scanner integration is forwarding the full manufacturer data for Apple devices. PadSpan looks for Apple company ID 0x004C with iBeacon payload. ESPresense and Bermuda both support this.",
       "iBeacon tag name disappeared after MAC rotation — this should not happen (the UUID key is stable). If it does, check that the UUID in the new advertisement matches the original — some third-party trackers change their UUID.",
+      "Phone tracking says 'Waiting for signal' — the Companion App's BLE Transmitter may not be enabled. Open the Companion App → Settings → Manage Sensors → BLE Transmitter and ensure it's toggled on. Walk near a Bluetooth scanner to be detected. Check that the phone's Bluetooth is turned on.",
+      "Phone tracked but shows 'BLE off' — the command to enable the transmitter didn't reach the app. Open the Companion App manually and enable BLE Transmitter in Settings → Manage Sensors. The phone must have an active connection to your HA instance for the notification command to work.",
+      "iPhone not appearing despite being added as Private BLE — check your IRK format. PadSpan accepts plain hex (32 chars), colon-separated, and base64. If the config flow returns 'form', the IRK format may need adjustment. Check HA logs for details.",
+      "iPhone shows as many unknown devices — add the device's IRK via Settings → Private BLE Devices. Without the IRK, each MAC rotation creates a new entry. With the IRK, all rotations merge into one blue-badged object.",
       "UI changes not showing — hard refresh your browser (Ctrl+F5 or Cmd+Shift+R). Check the build stamp in Diagnostics to confirm the installed version.",
       "Email alerts not sending — email is sent via HA's notify service. Confirm a notification integration (Gmail, SMTP, etc.) is configured in HA Settings → Integrations.",
+      "Too many unknown devices cluttering the view — use Quiet Mode (toggle in Overview top-right) to hide unidentified devices, or use 'Clear unidentified' to remove them from history. Tagged and followed devices are always kept.",
       "Sample data lingering in Settings → Manage — use Untag in BLE Tags, or use the Orphan Polygons cleaner in Manage sidebar → Data to remove sample-mode leftovers.",
       "3D floor alignment looks wrong — after setting alignment in Maps → 3D Stack, click Save Alignment. The 3D preview will then use the correct reference aspect ratio. Re-open and re-save if alignment was set in an older version.",
     ],
@@ -1549,7 +1739,10 @@ const QUICKSTART_SECTIONS = [
       "2. Open PadSpan HA from the sidebar. Use Sample mode first to explore the interface with demo data.",
       "3. Switch to Live mode to see your real Bluetooth scanners and devices.",
       "4. Create rooms in HA Settings → Areas & Zones — PadSpan reads your areas directly.",
-      "5. Tag your key devices in the Objects tab (visible in Development mode or if added via Settings → UI Structure).",
+      "5. Track phones: if the HA Companion App is installed, detected phones appear in Overview. Click 'Track this phone' for automatic setup.",
+      "6. Tag other key devices in the Objects tab with friendly names.",
+      "7. For iPhones / Apple Watches: add their IRK in Settings → Private BLE Devices to resolve rotating MAC addresses.",
+      "Tip: Use Quiet Mode (Overview top-right) to hide unidentified devices once your setup is complete.",
     ],
   },
   {
@@ -1578,6 +1771,8 @@ const QUICKSTART_SECTIONS = [
       "Appearance — assign rooms to floors, pick room colours for the Follow map and Overview grid.",
       "Scanner Map — view and manage calibration points per map. Clear calibration for a specific map if you need to start fresh.",
       "Presence — adjust Room Change Delay (how long before PadSpan confirms a room switch) and Home/Away Timeout (how long before a missing device is marked away).",
+      "Private BLE Devices — add IRKs for iPhones and Apple Watches so PadSpan resolves their rotating MAC addresses into stable identities.",
+      "Quiet Mode — toggle in Overview top-right. Hides unidentified devices to reduce clutter. Only shows tagged and followed objects.",
       "UI Structure — choose which extra tabs appear in Advanced mode. All tabs are always visible in Development mode.",
     ],
   },
@@ -1619,8 +1814,8 @@ const QUICKSTART_SECTIONS = [
     icon: "⚡",
     paragraphs: [
       "PadSpan has three UI modes, cycled by the toggle button in the top-right corner:",
-      "Basic — 5 tabs (Follow, Overview, Maps, Settings, Training). Best for everyday use after initial setup.",
-      "Advanced — 7 tabs by default (adds Manage and Calibration). You can opt extra tabs into Advanced via Settings → UI Structure.",
+      "Basic — 5 tabs (Follow, Overview, Maps, Settings, Training). Best for everyday use after initial setup. Includes one-click phone tracking and Quiet Mode.",
+      "Advanced — 7 tabs by default (adds Manage and Calibration). Adds Clear Unidentified, detailed phone tracking status, and more diagnostic info. You can opt extra tabs into Advanced via Settings → UI Structure.",
       "Development — all 14 tabs visible. Includes Objects, Devices, Bluetooth, Presence, Monitor, QA, and Sandbox for debugging and development.",
     ],
   },
