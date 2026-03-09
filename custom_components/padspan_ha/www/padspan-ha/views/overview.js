@@ -1570,10 +1570,29 @@ export function render(ctx){
       })();
     }
 
+    // Basic mode quiet toggle
+    const bQuietToggle = el("input",{type:"checkbox",style:"width:14px;height:14px;accent-color:#52b788;cursor:pointer;margin:0"});
+    bQuietToggle.checked = _quietMode;
+    bQuietToggle.addEventListener("change", async()=>{
+      try {
+        await ctx.actions.settingsSet({ quiet_mode: bQuietToggle.checked });
+        ctx.toast(bQuietToggle.checked ? "Quiet mode on" : "Quiet mode off");
+        ctx.actions.renderRooms();
+      } catch(e){ ctx.toast("Failed to save", true); }
+    });
+    const bQuietRow = el("div",{style:"display:flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;color:" + (_quietMode ? "#52b788" : "#64748b")},[
+      bQuietToggle,
+      el("span",{style:"user-select:none"}, "Quiet"),
+    ]);
+    bQuietRow.addEventListener("click", (e)=>{ if(e.target !== bQuietToggle){ bQuietToggle.checked = !bQuietToggle.checked; bQuietToggle.dispatchEvent(new Event("change")); } });
+
     const section = el("section",{},[
-      el("div",{class:"row",style:"align-items:center;gap:8px;margin-bottom:10px"},[
-        el("h2",{}, "Overview"),
-        helpBtn("overview_grid"),
+      el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"},[
+        el("div",{class:"row",style:"align-items:center;gap:8px"},[
+          el("h2",{style:"margin:0"}, "Overview"),
+          helpBtn("overview_grid"),
+        ]),
+        bQuietRow,
       ]),
       summary,
       basicCompanionCard,
@@ -1745,9 +1764,28 @@ export function render(ctx){
     })();
   }
 
+  // Quiet Mode toggle for top-right
+  const quietToggle = el("input",{type:"checkbox",style:"width:14px;height:14px;accent-color:#52b788;cursor:pointer;margin:0"});
+  quietToggle.checked = _quietMode;
+  quietToggle.addEventListener("change", async()=>{
+    try {
+      await ctx.actions.settingsSet({ quiet_mode: quietToggle.checked });
+      ctx.toast(quietToggle.checked ? "Quiet mode on" : "Quiet mode off");
+      ctx.actions.renderRooms();
+    } catch(e){ ctx.toast("Failed to save", true); }
+  });
+  const quietRow = el("div",{style:"display:flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;color:" + (_quietMode ? "#52b788" : "#64748b")},[
+    quietToggle,
+    el("span",{style:"user-select:none"}, "Quiet"),
+  ]);
+  quietRow.addEventListener("click", (e)=>{ if(e.target !== quietToggle){ quietToggle.checked = !quietToggle.checked; quietToggle.dispatchEvent(new Event("change")); } });
+
   const section = el("section",{},[
-    el("h2",{}, "Overview"),
-    el("div",{style:"color:#94a3b8;margin-top:-6px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
+    el("div",{style:"display:flex;align-items:center;justify-content:space-between"},[
+      el("h2",{style:"margin:0"}, "Overview"),
+      quietRow,
+    ]),
+    el("div",{style:"color:#94a3b8;margin-top:2px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
   ]);
   if(mapEl) section.appendChild(mapEl);
   section.appendChild(grid);
