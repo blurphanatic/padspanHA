@@ -584,20 +584,32 @@ export function render(ctx){
     const pts = cs=>cs.map(pt).join(" ");
 
     const _allObjRaw = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
-    // Dedup: suppress entity rows whose physical device already has a BLE/iBeacon/private_ble row
+    // Dedup: suppress entity rows whose physical device already has a BLE/iBeacon/private_ble row.
+    // Inherit room/position from suppressed entities into their BLE counterpart so
+    // followed objects don't vanish when the BLE row is stale but the entity has a room.
     const _isoAddrSet = new Set();
+    const _bleByAddr = {};  // uppercase addr → BLE object ref
     for (const o of _allObjRaw) {
       if (o.kind !== "ble" && o.kind !== "private_ble" && o.kind !== "ibeacon") continue;
-      if (o.address) _isoAddrSet.add(String(o.address).toUpperCase());
-      if (Array.isArray(o.all_addresses)) for (const a of o.all_addresses) _isoAddrSet.add(String(a).toUpperCase());
+      if (o.address) { _isoAddrSet.add(String(o.address).toUpperCase()); _bleByAddr[String(o.address).toUpperCase()] = o; }
+      if (Array.isArray(o.all_addresses)) for (const a of o.all_addresses) { _isoAddrSet.add(String(a).toUpperCase()); _bleByAddr[String(a).toUpperCase()] = o; }
     }
     const _isoLinkedSet = new Set(_allObjRaw.flatMap(o => Array.isArray(o.linked_entities) ? o.linked_entities : []));
     const allObjects = _allObjRaw.filter(o => {
-      // Skip entity duplicates
+      // Skip entity duplicates — but inherit their room into the surviving BLE object
       if (o.kind === "entity" && (
         (o.address && _isoAddrSet.has(String(o.address).toUpperCase())) ||
         (o.entity_id && _isoLinkedSet.has(o.entity_id))
-      )) return false;
+      )) {
+        // Inherit room from entity into its BLE counterpart if the BLE row lacks one
+        if (o.room && o.room !== "unknown" && o.room !== "not_home") {
+          const bleObj = (o.address && _bleByAddr[String(o.address).toUpperCase()]) || null;
+          if (bleObj && (!bleObj.room || bleObj.room === "unknown" || bleObj.room === "not_home")) {
+            bleObj.room = o.room;
+          }
+        }
+        return false;
+      }
       return true;
     });
     const allRadios_live = radios;
@@ -644,26 +656,29 @@ export function render(ctx){
 
     // Build room centroid + receiver iso positions for live data overlay
     // _rebuildPositions() is called initially and whenever iso params change (slider)
+    // Uses mapTransforms for correct rotation/ref_ar/scale_x_adj alignment.
     const roomIsoPos = {}, receiverIsoByRoom = {};
     function _rebuildPositions(){
       for(const k of Object.keys(roomIsoPos)) delete roomIsoPos[k];
       for(const k of Object.keys(receiverIsoByRoom)) delete receiverIsoByRoom[k];
       for(const m of sorted){
-        const stk=m.stack||{}, z=stk.z_level||0, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
-        const ar=(m.image?.height||600)/(m.image?.width||800);
+        const tf = mapTransforms[m.id]; if(!tf) continue;
+        const z = tf.z;
         for(const [room,b] of Object.entries(m.room_bounds||{})){
           if(!b||b.type!=="poly"||!Array.isArray(b.points)||b.points.length<3) continue;
           const cx=b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
           const cy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
-          roomIsoPos[room] = iso(ox+cx*sc, oy_+cy*sc*ar, z);
+          const [wx,wy]=tf.mapPt(cx,cy);
+          roomIsoPos[room] = iso(wx, wy, z);
         }
         for(const r of (m.receivers||[])){
-          if(r.room && !receiverIsoByRoom[r.room])
-            receiverIsoByRoom[r.room] = iso(ox+(r.x||0)*sc, oy_+(r.y||0)*sc*ar, z);
+          if(r.room && !receiverIsoByRoom[r.room]){
+            const [wx,wy]=tf.mapPt(r.x||0, r.y||0);
+            receiverIsoByRoom[r.room] = iso(wx, wy, z);
+          }
         }
       }
     }
-    _rebuildPositions();
 
     if(ctx.state._overviewIsoFocusIdx === undefined)
       ctx.state._overviewIsoFocusIdx = Math.max(0, Math.min(ctx.state.settings?.overview_iso_focus ?? 0, _isoPos.length-1));
@@ -681,8 +696,9 @@ export function render(ctx){
 
     // Per-map coord transform: image-fraction (0-1) → ISO screen pixel
     // Uses the same mapPt formula as the room-polygon renderer so positions align exactly.
+    // Built from ALL maps (not just visible) so objects on hidden maps can still be positioned.
     const mapTransforms = {};
-    for(const m of sorted){
+    for(const m of maps_list){
       const stk=m.stack||{}, z=stk.z_level||0, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
       const arRefT=stk.ref_ar||ar, sxAdjT=stk.scale_x_adj||1.0;
@@ -694,6 +710,7 @@ export function render(ctx){
         return[(0.5+ox)+rx, arRefT*(0.5+oy_)+ry];
       }};
     }
+    _rebuildPositions();
 
     // Collect per-source RSSI for an object from the live advertisement stream.
     // obj.sources in the snapshot is a string array; the actual RSSI values are in
