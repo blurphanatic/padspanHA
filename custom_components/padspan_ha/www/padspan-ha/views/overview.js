@@ -585,32 +585,37 @@ export function render(ctx){
 
     const _allObjRaw = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
     // Dedup: suppress entity rows whose physical device already has a BLE/iBeacon/private_ble row.
-    // Inherit room/position from suppressed entities into their BLE counterpart so
-    // followed objects don't vanish when the BLE row is stale but the entity has a room.
+    // Build a room-inheritance map (entity room → BLE key) WITHOUT mutating shared snapshot objects.
     const _isoAddrSet = new Set();
-    const _bleByAddr = {};  // uppercase addr → BLE object ref
+    const _entityRoomByAddr = {};  // uppercase addr → entity's room (for inheritance)
     for (const o of _allObjRaw) {
       if (o.kind !== "ble" && o.kind !== "private_ble" && o.kind !== "ibeacon") continue;
-      if (o.address) { _isoAddrSet.add(String(o.address).toUpperCase()); _bleByAddr[String(o.address).toUpperCase()] = o; }
-      if (Array.isArray(o.all_addresses)) for (const a of o.all_addresses) { _isoAddrSet.add(String(a).toUpperCase()); _bleByAddr[String(a).toUpperCase()] = o; }
+      if (o.address) _isoAddrSet.add(String(o.address).toUpperCase());
+      if (Array.isArray(o.all_addresses)) for (const a of o.all_addresses) _isoAddrSet.add(String(a).toUpperCase());
     }
     const _isoLinkedSet = new Set(_allObjRaw.flatMap(o => Array.isArray(o.linked_entities) ? o.linked_entities : []));
+    // Collect entity rooms for inheritance (never mutate snapshot objects)
+    for (const o of _allObjRaw) {
+      if (o.kind !== "entity") continue;
+      if (o.room && o.room !== "unknown" && o.room !== "not_home" && o.address) {
+        _entityRoomByAddr[String(o.address).toUpperCase()] = o.room;
+      }
+    }
     const allObjects = _allObjRaw.filter(o => {
-      // Skip entity duplicates — but inherit their room into the surviving BLE object
       if (o.kind === "entity" && (
         (o.address && _isoAddrSet.has(String(o.address).toUpperCase())) ||
         (o.entity_id && _isoLinkedSet.has(o.entity_id))
-      )) {
-        // Inherit room from entity into its BLE counterpart if the BLE row lacks one
-        if (o.room && o.room !== "unknown" && o.room !== "not_home") {
-          const bleObj = (o.address && _bleByAddr[String(o.address).toUpperCase()]) || null;
-          if (bleObj && (!bleObj.room || bleObj.room === "unknown" || bleObj.room === "not_home")) {
-            bleObj.room = o.room;
-          }
-        }
-        return false;
-      }
+      )) return false;
       return true;
+    }).map(o => {
+      // For BLE objects missing a room, inherit from their suppressed entity counterpart
+      // Return a shallow copy to avoid mutating shared snapshot state
+      if ((o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon") &&
+          (!o.room || o.room === "unknown" || o.room === "not_home") && o.address) {
+        const eRoom = _entityRoomByAddr[String(o.address).toUpperCase()];
+        if (eRoom) return Object.assign({}, o, { room: eRoom });
+      }
+      return o;
     });
     const allRadios_live = radios;
 

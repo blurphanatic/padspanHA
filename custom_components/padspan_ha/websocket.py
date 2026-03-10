@@ -1862,6 +1862,18 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             if key in _dedup_absorbed:
                 del _cache[key]  # purge absorbed ghost from cache
                 continue
+            # When bermuda_ignore is on, purge cached entity objects from Bermuda
+            # so they don't keep resurrecting after being filtered out
+            if _bermuda_ignore and _all_bermuda_entry_ids and cached_obj.get("kind") == "entity":
+                _cached_eid = cached_obj.get("entity_id") or ""
+                if _cached_eid:
+                    try:
+                        _cached_ent = er.async_get(_cached_eid)
+                        if _cached_ent and _cached_ent.config_entry_id in _all_bermuda_entry_ids:
+                            del _cache[key]
+                            continue
+                    except Exception:
+                        pass
             stale_s = _now_ts - (cached_obj.get("_last_seen_ts") or _now_ts)
             is_identified = cached_obj.get("identified") or cached_obj.get("user_label")
             # Tagged/identified objects never expire from history
