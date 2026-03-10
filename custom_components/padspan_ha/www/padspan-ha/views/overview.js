@@ -119,8 +119,9 @@ export function render(ctx){
         areaCell.appendChild(el("span",{class:"badge warn",style:"background:rgba(245,158,11,.18);color:#f59e0b;margin-right:4px"},"⚠ Lost"));
       }
       areaCell.appendChild(document.createTextNode(x.area_name || (x.disabled||x.lost ? "" : "—")));
+      const _ovRn = ctx.helpers.radioName(x.source);
       const tr = el("tr",{},[
-        el("td",{style:"font-family:monospace;font-weight:700;font-size:12px;letter-spacing:.04em"}, _sid(x.source)),
+        el("td",{style:"font-family:monospace;font-weight:700;font-size:12px;letter-spacing:.04em",title:(_ovRn?_ovRn+" \u00b7 ":"")+(x.source||"")}, _sid(x.source)),
         el("td",{}, x.name || ""),
         el("td",{}, x.source || ""),
         el("td",{}, (x.adapter!=null?String(x.adapter):"")),
@@ -461,7 +462,7 @@ export function render(ctx){
           (userLabel && (o.name && o.name !== userLabel) ? el("div",{style:"color:#94a3b8"}, `raw: ${o.name}`) : null),
           (o.entity_id ? el("div",{style:"color:#94a3b8"}, o.entity_id) : null),
           (Array.isArray(o.linked_entities) && o.linked_entities.length ? el("div",{style:"color:#94a3b8"}, `Linked: ${o.linked_entities.join(", ")}`) : null),
-          (kind==="ble" && Array.isArray(o.sources) && o.sources.length ? el("div",{style:"color:#94a3b8"}, `Seen by: ${o.sources.map(s=>{const id=_sid(typeof s==="object"?(s.source||""):String(s));return id?id+" "+(typeof s==="object"?(s.source||""):String(s)):(typeof s==="object"?(s.source||""):String(s));}).join(", ")}`) : null),
+          (kind==="ble" && Array.isArray(o.sources) && o.sources.length ? el("div",{style:"color:#94a3b8"}, `Seen by: ${o.sources.map(s=>{const _src=typeof s==="object"?(s.source||""):String(s);const id=_sid(_src);const _fn=ctx.helpers.radioName(_src);return id?id+" "+(_fn||_src):(_fn||_src);}).join(", ")}`) : null),
           ((o.company_name || o.device_type || (o.service_names && o.service_names.length))
             ? el("div",{style:"display:flex;flex-wrap:wrap;gap:4px;margin-top:2px"}, [
                 o.company_name ? el("span",{style:"font-size:10px;padding:1px 5px;border-radius:4px;background:#1a2a3a;color:#7dd3fc;border:1px solid #1e4976"}, o.company_name) : null,

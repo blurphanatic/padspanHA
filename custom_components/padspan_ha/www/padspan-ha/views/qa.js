@@ -715,7 +715,7 @@ export function render(ctx){
         rankBadge,
         medal ? el("span",{style:"font-size:14px;flex-shrink:0"}, medal) : null,
         el("span",{style:"flex-shrink:0;font-size:14px"}, a.healthIcon),
-        el("span",{class:"pill",style:"font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px;flex-shrink:0"}, _sid(a.src)),
+        el("span",{class:"pill",style:"font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px;flex-shrink:0",title:(ctx.helpers.radioName(a.src)||"")?ctx.helpers.radioName(a.src)+" \u00b7 "+a.src:a.src}, _sid(a.src)),
         scoreBadge,
       ].filter(Boolean)));
 

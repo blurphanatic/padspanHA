@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.74";
+const APP_VERSION = "0.7.75";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260310T185143Z";
+const BUILD_ID = "20260310T185532Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1088,6 +1088,13 @@ class PadSpanHaApp extends HTMLElement {
         el, esc, pill,
         HELP,
         radioShortId,
+        /** Map source → friendly name from live radios. Returns "" if no name or same as source. */
+        radioName: (source)=>{
+          const s = String(source || "");
+          const radios = (self.state.live?.snapshot?.ble?.radios) || [];
+          const r = radios.find(r => String(r.source || "") === s);
+          return (r && r.name && r.name !== s) ? r.name : "";
+        },
         scannerStatus,
         roomColor: (n)=>roomColor(n, this.state.model),
         helpBtn: (key)=>{
@@ -1843,7 +1850,7 @@ class PadSpanHaApp extends HTMLElement {
 
     // Status badges (include short ID and lost status)
     const statusRow = el("div", {style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center"});
-    statusRow.appendChild(el("span", {class:"pill", style:"font-family:monospace;font-weight:700;font-size:13px;letter-spacing:.04em"}, sid));
+    statusRow.appendChild(el("span", {class:"pill", style:"font-family:monospace;font-weight:700;font-size:13px;letter-spacing:.04em", title: name + " \u00b7 " + (scanner.source||"")}, sid));
     if(scanner.lost)     statusRow.appendChild(el("span", {class:"badge warn", style:"background:rgba(245,158,11,.18)"}, "⚠ Lost"));
     if(scanner.disabled) statusRow.appendChild(el("span", {class:"badge warn", style:"background:rgba(148,100,220,.18);color:#c084fc"}, "⊘ Disabled"));
     { const ss = scannerStatus(scanner, snap?.ble?.advertisements); const b = el("span",{class:ss.cls,title:ss.title},ss.label); if(ss.style) b.style.cssText+=ss.style; statusRow.appendChild(b); }

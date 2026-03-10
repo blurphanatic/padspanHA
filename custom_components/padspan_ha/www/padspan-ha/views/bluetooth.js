@@ -260,7 +260,7 @@ function renderScanners(ctx, radios, sources, adsAll) {
     if (r.connectable != null) meta.push(`connectable: ${r.connectable ? "yes" : "no"}`);
 
     const nameRow = el("div", { style: "display:flex;align-items:center;gap:6px;flex-wrap:wrap" }, [
-      sid ? el("span", { class: "pill", style: "font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px" }, sid) : null,
+      sid ? el("span", { class: "pill", style: "font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px", title: (name ? name + " \u00b7 " : "") + src }, sid) : null,
       el("div", { class: "bt-scanner-name" }, name || src || "Scanner"),
       r.lost     ? el("span", { class: "badge warn", style: "font-size:10px;background:rgba(245,158,11,.18);color:#f59e0b" }, "⚠ Lost") : null,
       r.disabled ? el("span", { class: "badge warn", style: "font-size:10px;background:rgba(148,100,220,.18);color:#c084fc" }, "⊘ Disabled") : null,

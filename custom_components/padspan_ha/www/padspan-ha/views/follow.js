@@ -239,7 +239,7 @@ function _buildStatus(ctx, el, helpBtn, chosen, haAreas, haFloors, ads, dataMode
   const radiosEl = seenBy.length
     ? el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
         seenBy.map(a => el("span", { class: rssiClass(a.rssi || -999) },
-          `${_sid(a.source||"")}${_sid(a.source||"")?" ":""}${a.source || "?"} ${a.rssi != null ? a.rssi + " dBm" : ""}`
+          `${_sid(a.source||"")}${_sid(a.source||"")?" ":""}${ctx.helpers.radioName(a.source||"")||(a.source||"?")} ${a.rssi != null ? a.rssi + " dBm" : ""}`
         ))
       )
     : el("div", { class: "muted", style: "margin-top:4px;font-size:12px" }, "No active detections");

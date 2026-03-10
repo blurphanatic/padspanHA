@@ -136,7 +136,8 @@ export function render(ctx){
       tr.addEventListener("click", ()=>{
         if(st.radio) ctx.actions.showScannerDetail(st.radio);
       });
-      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, _sid(src)));
+      const _rn1 = ctx.helpers.radioName(src);
+      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",title:(_rn1?_rn1+" \u00b7 ":"")+src}, _sid(src)));
       tr.appendChild(el("td",{style:"padding:4px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, st.name));
       tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right"}, String(st.devs)));
       tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "\u2014"));
@@ -447,7 +448,8 @@ function _insights(ctx, el, _sid){
       tr.addEventListener("click", ()=>{
         if(radio) ctx.actions.showScannerDetail(radio);
       });
-      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em"}, _sid(src)));
+      const _rn2 = ctx.helpers.radioName(src);
+      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em",title:(_rn2?_rn2+" \u00b7 ":"")+src}, _sid(src)));
       tr.appendChild(el("td",{style:"padding:4px 6px;max-width:120px;overflow:hidden;text-overflow:ellipsis"}, name));
       tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right"}, String(st.total)));
       tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "\u2014"));
