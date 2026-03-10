@@ -1474,6 +1474,32 @@ function renderEsphomeConfigs(ctx) {
 
   const { el } = ctx.helpers;
 
+  // Floating copy-to-clipboard icon for code blocks (industry-standard top-right placement)
+  function _makeCodeCopyIcon(text) {
+    const btn = document.createElement("button");
+    btn.title = "Copy to clipboard";
+    btn.style.cssText = "position:absolute;top:8px;right:8px;background:#1a2e22;border:1px solid #2d5a3d;border-radius:6px;padding:5px 6px;cursor:pointer;opacity:0.6;transition:opacity 0.15s;display:flex;align-items:center;justify-content:center;z-index:1";
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    btn.addEventListener("mouseenter", () => { btn.style.opacity = "1"; });
+    btn.addEventListener("mouseleave", () => { if (btn.dataset.copied !== "1") btn.style.opacity = "0.6"; });
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(text).then(() => {
+        btn.dataset.copied = "1";
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#52b788" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        btn.style.opacity = "1";
+        btn.style.borderColor = "#52b788";
+        setTimeout(() => {
+          btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+          btn.style.opacity = "0.6";
+          btn.style.borderColor = "#2d5a3d";
+          delete btn.dataset.copied;
+        }, 1500);
+      }).catch(() => {});
+    });
+    return btn;
+  }
+
   // Intro card
   const intro = el("div", { class: "card", style: "border:1px solid #2d5a3d" }, [
     el("div", { style: "font-weight:700;font-size:15px;margin-bottom:6px" }, "ESPHome Config Library"),
@@ -1600,10 +1626,19 @@ button:
     yamlPre.style.cssText = "margin-top:10px;font-size:11px;max-height:500px;overflow:auto;white-space:pre;tab-size:2;display:none";
     yamlPre.textContent = _recYaml;
 
+    // Wrap pre in container with floating copy icon
+    const _recPreWrap = document.createElement("div");
+    _recPreWrap.style.cssText = "position:relative;display:none";
+    const _recCopyIcon = _makeCodeCopyIcon(_recYaml);
+    _recPreWrap.appendChild(yamlPre);
+    _recPreWrap.appendChild(_recCopyIcon);
+    yamlPre.style.display = "block"; // always visible inside wrapper
+    yamlPre.style.marginTop = "0";
+
     const showBtn = el("button", { class: "btn tiny", style: "font-size:11px" }, "Show YAML");
     showBtn.addEventListener("click", () => {
-      const show = yamlPre.style.display === "none";
-      yamlPre.style.display = show ? "block" : "none";
+      const show = _recPreWrap.style.display === "none";
+      _recPreWrap.style.display = show ? "block" : "none";
       showBtn.textContent = show ? "Hide YAML" : "Show YAML";
     });
     const copyBtn = el("button", { class: "btn tiny", style: "font-size:11px" }, "Copy");
@@ -1612,7 +1647,7 @@ button:
         copyBtn.textContent = "Copied!";
         setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
       }).catch(() => {
-        yamlPre.style.display = "block";
+        _recPreWrap.style.display = "block";
         showBtn.textContent = "Hide YAML";
         copyBtn.textContent = "Copy manually";
         setTimeout(() => { copyBtn.textContent = "Copy"; }, 2000);
@@ -1655,7 +1690,7 @@ button:
           document.createTextNode("Replace API key and OTA password with your own values before flashing"),
         ]),
       ]),
-      yamlPre,
+      _recPreWrap,
     ]);
   })() : null;
 
@@ -1716,14 +1751,27 @@ button:
 
     const yamlPre = document.createElement("pre");
     yamlPre.className = "pre";
-    yamlPre.style.cssText = "margin-top:10px;font-size:11px;max-height:500px;overflow:auto;white-space:pre;tab-size:2;display:" + (expandedFull ? "block" : "none");
+    yamlPre.style.cssText = "font-size:11px;max-height:500px;overflow:auto;white-space:pre;tab-size:2";
     yamlPre.textContent = cfg.yaml;
 
+    // Wrap full YAML pre with floating copy icon
+    const yamlWrap = document.createElement("div");
+    yamlWrap.style.cssText = "position:relative;margin-top:10px;display:" + (expandedFull ? "block" : "none");
+    yamlWrap.appendChild(yamlPre);
+    yamlWrap.appendChild(_makeCodeCopyIcon(cfg.yaml));
+
     const minPre = document.createElement("pre");
+    let minWrap = null;
     if (cfg.minimal) {
       minPre.className = "pre";
-      minPre.style.cssText = "margin-top:10px;font-size:11px;max-height:500px;overflow:auto;white-space:pre;tab-size:2;border:1px solid #52b78830;display:" + (expandedMin ? "block" : "none");
+      minPre.style.cssText = "font-size:11px;max-height:500px;overflow:auto;white-space:pre;tab-size:2;border:1px solid #52b78830";
       minPre.textContent = cfg.minimal;
+
+      // Wrap minimal pre with floating copy icon
+      minWrap = document.createElement("div");
+      minWrap.style.cssText = "position:relative;margin-top:10px;display:" + (expandedMin ? "block" : "none");
+      minWrap.appendChild(minPre);
+      minWrap.appendChild(_makeCodeCopyIcon(cfg.minimal));
     }
 
     // Only one can be open at a time
@@ -1731,8 +1779,8 @@ button:
       const show = !ctx.state[`_cfgExpand_${cfg.id}`];
       ctx.state[`_cfgExpand_${cfg.id}`] = show;
       ctx.state[`_cfgMinimal_${cfg.id}`] = false;
-      yamlPre.style.display = show ? "block" : "none";
-      minPre.style.display = "none";
+      yamlWrap.style.display = show ? "block" : "none";
+      if (minWrap) minWrap.style.display = "none";
       toggleBtn.textContent = show ? "Hide YAML" : "Full YAML";
       if (minimalBtn) minimalBtn.textContent = "Add to Existing";
     });
@@ -1742,8 +1790,8 @@ button:
         const show = !ctx.state[`_cfgMinimal_${cfg.id}`];
         ctx.state[`_cfgMinimal_${cfg.id}`] = show;
         ctx.state[`_cfgExpand_${cfg.id}`] = false;
-        minPre.style.display = show ? "block" : "none";
-        yamlPre.style.display = "none";
+        if (minWrap) minWrap.style.display = show ? "block" : "none";
+        yamlWrap.style.display = "none";
         minimalBtn.textContent = show ? "Hide Minimal" : "Add to Existing";
         toggleBtn.textContent = "Full YAML";
       });
@@ -1756,10 +1804,11 @@ button:
         copyBtn.textContent = "Copied!";
         setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
       }).catch(() => {
-        const target = ctx.state[`_cfgMinimal_${cfg.id}`] ? minPre : yamlPre;
+        const target = ctx.state[`_cfgMinimal_${cfg.id}`] ? (minWrap || yamlWrap) : yamlWrap;
         target.style.display = "block";
+        const pre = target.querySelector("pre");
         const range = document.createRange();
-        range.selectNodeContents(target);
+        range.selectNodeContents(pre);
         const sel = window.getSelection();
         sel.removeAllRanges();
         sel.addRange(range);
@@ -1768,7 +1817,7 @@ button:
       });
     });
 
-    return el("div", { class: "card", style: "border:1px solid #1a2e22" }, [headerRow, notesList, minPre, yamlPre]);
+    return el("div", { class: "card", style: "border:1px solid #1a2e22" }, [headerRow, notesList, minWrap, yamlWrap].filter(Boolean));
   });
 
   // Tips card at the bottom
