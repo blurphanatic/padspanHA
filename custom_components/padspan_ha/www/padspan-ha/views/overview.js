@@ -1537,6 +1537,29 @@ export function render(ctx){
             const btn = document.createElement("button");
             btn.className = "btn";
             btn.style.cssText = "width:100%;text-align:left;padding:10px 14px;margin-bottom:6px;color:#e2e8f0;border-color:#2563eb;font-size:13px";
+            if (phone.is_disabled) {
+              btn.textContent = `${phone.device_name || "Phone"} — BLE entity disabled`;
+              btn.style.color = "#f59e0b";
+              btn.style.borderColor = "#92400e";
+              btn.addEventListener("click", async () => {
+                btn.disabled = true;
+                btn.textContent = "Enabling...";
+                try {
+                  await ctx.actions.wsCall("config/entity_registry/update", {
+                    entity_id: phone.entity_id,
+                    disabled_by: null,
+                  });
+                  btn.textContent = `${phone.device_name} — entity enabled, restart HA`;
+                  btn.style.color = "#34d399"; btn.style.borderColor = "#065f46";
+                } catch (e) {
+                  btn.textContent = `Enable manually: HA → Settings → Devices → ${phone.device_name} → BLE Transmitter → Enable`;
+                  btn.style.color = "#f59e0b";
+                  btn.disabled = false;
+                }
+              });
+              basicCompanionCard.appendChild(btn);
+              continue;
+            }
             btn.textContent = `Track ${phone.device_name || "Phone"}`;
             btn.addEventListener("click", async () => {
               btn.disabled = true;
@@ -1690,14 +1713,47 @@ export function render(ctx){
           const meta = document.createElement("div");
           meta.style.cssText = "font-size:11px;color:#64748b;margin-top:2px";
           const statusParts = [];
-          if (phone.is_transmitting) statusParts.push("BLE active");
+          if (phone.is_disabled) statusParts.push("Entity disabled in HA");
+          else if (phone.is_transmitting) statusParts.push("BLE active");
           else statusParts.push("BLE off");
-          if (phone.is_visible) statusParts.push("visible to scanners");
-          else statusParts.push("not seen yet");
+          if (!phone.is_disabled) {
+            if (phone.is_visible) statusParts.push("visible to scanners");
+            else statusParts.push("not seen yet");
+          }
           if (phone.existing_label) statusParts.push(`labelled: ${phone.existing_label}`);
           meta.textContent = statusParts.join(" · ");
           info.appendChild(meta);
           row.appendChild(info);
+
+          // Disabled entity — show enable instructions
+          if (phone.is_disabled) {
+            const enableBtn = document.createElement("button");
+            enableBtn.className = "btn inline";
+            enableBtn.style.cssText = "font-size:12px;padding:4px 14px;color:#f59e0b;border-color:#92400e;font-weight:600;white-space:nowrap";
+            enableBtn.textContent = "Enable entity";
+            enableBtn.addEventListener("click", async () => {
+              enableBtn.disabled = true;
+              enableBtn.textContent = "Enabling...";
+              try {
+                // Enable the entity via HA entity registry
+                await ctx.actions.wsCall("config/entity_registry/update", {
+                  entity_id: phone.entity_id,
+                  disabled_by: null,
+                });
+                enableBtn.textContent = "Enabled — restart HA";
+                enableBtn.style.color = "#34d399";
+                enableBtn.style.borderColor = "#065f46";
+                meta.textContent = "Entity enabled. Restart Home Assistant, then open the Companion App on the phone to start BLE Transmitter.";
+              } catch (e) {
+                enableBtn.textContent = "Enable manually";
+                enableBtn.disabled = false;
+                meta.textContent = `Go to HA → Settings → Devices → ${phone.device_name} → Entities → BLE Transmitter → Enable`;
+              }
+            });
+            row.appendChild(enableBtn);
+            companionCard.appendChild(row);
+            continue;
+          }
 
           // Status badge + untrack
           if (phone.is_followed) {

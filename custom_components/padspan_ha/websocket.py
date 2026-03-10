@@ -4363,13 +4363,19 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
 
             # Read entity state — the state or attributes contain the transmitting UUID
             state_obj = hass.states.get(eid)
-            if not state_obj:
+            is_disabled = entity.disabled_by is not None
+
+            # Disabled entities have no state in HA.  Still show them in the
+            # discovery list so the UI can prompt the user to enable them
+            # (common on iOS where BLE Transmitter is disabled by default).
+            if not state_obj and not is_disabled:
                 continue
 
-            attrs = state_obj.attributes or {}
+            attrs = (state_obj.attributes or {}) if state_obj else {}
             _LOGGER.debug(
-                "companion_discover: %s state=%r attrs=%s",
-                eid, state_obj.state, {k: str(v)[:80] for k, v in attrs.items()},
+                "companion_discover: %s state=%r disabled=%s attrs=%s",
+                eid, state_obj.state if state_obj else "(no state)", is_disabled,
+                {k: str(v)[:80] for k, v in attrs.items()},
             )
 
             # Companion App stores UUID, Major, Minor in separate attributes
@@ -4377,6 +4383,7 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
             uuid_attr = ""
             major = 0
             minor = 0
+            transmitting_id = ""
 
             # Try separate UUID / Major / Minor attributes first (most reliable)
             if attrs.get("UUID") or attrs.get("uuid"):
@@ -4424,6 +4431,35 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                             uuid_attr = _tid
                     else:
                         uuid_attr = _tid
+
+            # Disabled entities (common on iOS) — show in list so user can enable
+            if is_disabled:
+                device_name = ""
+                if entity.device_id:
+                    from homeassistant.helpers import device_registry as dr
+                    dev_reg = dr.async_get(hass)
+                    device = dev_reg.async_get(entity.device_id)
+                    if device:
+                        device_name = device.name or device.name_by_user or ""
+                if not device_name:
+                    device_name = eid.replace("sensor.", "").replace("_ble_transmitter", "").replace("_", " ").title()
+                phones.append({
+                    "entity_id": eid,
+                    "device_name": device_name,
+                    "uuid": "",
+                    "major": 0,
+                    "minor": 0,
+                    "ibeacon_key": "",
+                    "transmitting_id": "",
+                    "is_transmitting": False,
+                    "is_visible": False,
+                    "is_followed": False,
+                    "is_disabled": True,
+                    "existing_label": "",
+                    "state": "disabled",
+                    "attributes": {},
+                })
+                continue
 
             if not uuid_attr:
                 _LOGGER.debug("companion_discover: %s — no UUID found, skipping", eid)
@@ -4487,6 +4523,7 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                 "is_transmitting": state_obj.state not in ("unavailable", "unknown", "off", ""),
                 "is_visible": is_visible,
                 "is_followed": is_followed,
+                "is_disabled": False,
                 "existing_label": existing_label,
                 "state": state_obj.state,
                 "attributes": {k: str(v) for k, v in attrs.items()},
