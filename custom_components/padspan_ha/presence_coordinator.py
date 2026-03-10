@@ -641,7 +641,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # Hysteresis: stick with current room unless new room's score
                 # exceeds current room's score by a margin.  Prevents flipping
                 # when two scanners are nearly equal (boundary device).
-                _HYSTERESIS_MARGIN = 0.12
+                # Read configurable hysteresis margin from settings (default 0.06)
+                try:
+                    _st_hyst = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+                    _HYSTERESIS_MARGIN = float(((_st_hyst.data if _st_hyst else {}).get("hysteresis_margin") or 0.06))
+                    _HYSTERESIS_MARGIN = max(0.0, min(0.3, _HYSTERESIS_MARGIN))
+                except Exception:
+                    _HYSTERESIS_MARGIN = 0.06
                 if _cur_room and _cur_room in room_scores and _best_room != _cur_room:
                     if room_scores[_best_room] - room_scores[_cur_room] < _HYSTERESIS_MARGIN:
                         # Within hysteresis — prefer master map rooms as tie-breaker
@@ -672,17 +678,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _ad_store = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
                 if _ad_store and _ad_store.maturity() > 0.05:
                     _ad_scores = _ad_store.score_rooms(dict(ema), source_to_area)
-                    _blend = min(0.4, _ad_store.maturity() * 0.5)
+                    # Cap blend at 25% (was 40%) — adaptive should assist, not dominate
+                    _blend = min(0.25, _ad_store.maturity() * 0.3)
                     for _ar in room_scores:
                         if _ar in _ad_scores:
                             room_scores[_ar] = (1.0 - _blend) * room_scores[_ar] + _blend * _ad_scores[_ar]
 
-                    # Transition prior — boost rooms that are commonly transitioned to
+                    # Transition prior — reduced from 15% to 8% max to prevent
+                    # positive feedback loops that trap devices in rooms
                     _cur = self._confirmed_room.get(key)
                     if _cur:
                         _priors = _ad_store.transition_prior(_cur, room_scores.keys())
                         if _priors:
-                            _prior_blend = min(0.15, _ad_store.maturity() * 0.2)
+                            _prior_blend = min(0.08, _ad_store.maturity() * 0.1)
                             for _ar in room_scores:
                                 room_scores[_ar] *= (1.0 + _prior_blend * _priors.get(_ar, 0.0))
 
@@ -691,7 +699,6 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _cand_floor = None
                         _cur_floor = None
                         _src_to_fl = source_to_floor or {}
-                        # Derive candidate floor from area→floor (via source_to_area→source_to_floor)
                         for _src, _area in source_to_area.items():
                             if _area == candidate and _src in _src_to_fl:
                                 _cand_floor = _src_to_fl[_src]
@@ -706,17 +713,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             if _fl_conf < 0.3:
                                 room_scores[candidate] *= 0.5
 
-                    # Recompute best room after blending
+                    # Recompute best room after blending — NO second hysteresis.
+                    # Hysteresis was already applied above; applying it again
+                    # made room changes require ~2x the margin to overcome.
                     _best_room = max(room_scores, key=lambda r: room_scores[r])
-                    _cur_room = self._confirmed_room.get(key)
-                    _HYSTERESIS_MARGIN = 0.12
-                    if _cur_room and _cur_room in room_scores and _best_room != _cur_room:
-                        if room_scores[_best_room] - room_scores[_cur_room] < _HYSTERESIS_MARGIN:
-                            candidate = _cur_room
-                        else:
-                            candidate = _best_room
-                    else:
-                        candidate = _best_room
+                    candidate = _best_room
             except Exception:
                 pass  # adaptive scoring is best-effort
 
