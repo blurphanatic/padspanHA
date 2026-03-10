@@ -758,9 +758,22 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     const startY = base.y - blockH / 2;
     for (let i = 0; i < list.length; i++) {
       const a = list[i];
+      const addr = String(a.address || a.name || `${src}-${i}`);
+      const obj = objIndex.get(addr.toUpperCase());
+      // Build a rich label: prefer user_label > object name > ad name > address
+      let devLabel = "";
+      if (obj) {
+        devLabel = obj.user_label || obj.name || a.name || addr;
+        const room = obj.room || a.area_name || "";
+        if (room) devLabel += ` · ${room}`;
+      } else {
+        devLabel = a.name || addr;
+        if (a.area_name) devLabel += ` · ${a.area_name}`;
+      }
+      if (a.rssi != null) devLabel += ` (${a.rssi})`;
       deviceNodes.push({
-        id: String(a.address || a.name || `${src}-${i}`),
-        label: String(a.name || a.address || "Unknown"),
+        id: addr,
+        label: devLabel,
         x: deviceNodeX,
         y: startY + i * DEV_ROW_H,
         src,
