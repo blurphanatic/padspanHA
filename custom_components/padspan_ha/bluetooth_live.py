@@ -182,14 +182,29 @@ class BluetoothLive:
         advertisements through HA's discovered-service-info API but NOT through
         the async_register_callback mechanism.  Without periodic reseeding,
         these scanners appear in the radios list but show zero advertisements.
+
+        We call async_discovered_service_info twice — once with connectable=True
+        (default, connectable scanners) and once with connectable=False (passive/
+        non-connectable scanners like Shelly BLE proxies).  The HA API defaults
+        to connectable=True which would exclude Shelly-relayed advertisements.
         """
         try:
             from homeassistant.components import bluetooth  # type: ignore
 
             if hasattr(bluetooth, "async_discovered_service_info"):
+                # Connectable scanners (ESPHome, RPi, etc.)
                 infos = bluetooth.async_discovered_service_info(self.hass)
                 for si in infos:
                     self._on_adv(si)
+                # Non-connectable scanners (Shelly BLE proxies, etc.)
+                try:
+                    infos_nc = bluetooth.async_discovered_service_info(
+                        self.hass, connectable=False
+                    )
+                    for si in infos_nc:
+                        self._on_adv(si)
+                except TypeError:
+                    pass  # Older HA without connectable param
                 self._last_reseed = _now()
         except Exception as e:
             _LOGGER.debug("BLE seed failed: %s", e)
@@ -374,31 +389,39 @@ async def async_setup_bluetooth_live(hass: HomeAssistant) -> BluetoothLive:
     try:
         from homeassistant.components import bluetooth  # type: ignore
 
-        # Register a single callback without filters to capture all advertisements.
-        # Prefer ACTIVE scanning when the enum exists (newer HA), but stay compatible.
+        # Register callbacks without filters to capture all advertisements.
+        # We need BOTH ACTIVE (connectable scanners) and PASSIVE (non-connectable
+        # scanners like Shelly BLE proxies) to see ads from all scanner types.
         mode_enum = getattr(bluetooth, "BluetoothScanningMode", None)
-        scan_mode = mode_enum.ACTIVE if mode_enum is not None else None
+        active_mode = mode_enum.ACTIVE if mode_enum is not None else None
+        passive_mode = getattr(mode_enum, "PASSIVE", None) if mode_enum is not None else None
 
-        unsub = None
-        # Newer HA signature (per docs): async_register_callback(hass, callback, match_dict, mode)
-        try:
-            if scan_mode is not None:
-                unsub = bluetooth.async_register_callback(hass, bl._on_adv, {}, scan_mode)
-            else:
-                unsub = bluetooth.async_register_callback(hass, bl._on_adv, {})
-        except TypeError:
-            # Older HA signature(s)
+        def _register_cb(mode):
             try:
-                unsub = bluetooth.async_register_callback(hass, bl._on_adv)
+                if mode is not None:
+                    return bluetooth.async_register_callback(hass, bl._on_adv, {}, mode)
+                else:
+                    return bluetooth.async_register_callback(hass, bl._on_adv, {})
             except TypeError:
-                # Last-ditch: try keyword variants that have appeared in some releases
                 try:
-                    unsub = bluetooth.async_register_callback(hass, bl._on_adv, matcher={})
-                except Exception:
-                    unsub = None
+                    return bluetooth.async_register_callback(hass, bl._on_adv)
+                except TypeError:
+                    try:
+                        return bluetooth.async_register_callback(hass, bl._on_adv, matcher={})
+                    except Exception:
+                        return None
 
+        # Register for connectable (ACTIVE) scanner advertisements
+        unsub = _register_cb(active_mode)
         if unsub:
             bl._unsubs.append(unsub)
+
+        # Register for non-connectable (PASSIVE) scanner advertisements
+        # (Shelly BLE proxies, other passive relay scanners)
+        if passive_mode is not None:
+            unsub2 = _register_cb(passive_mode)
+            if unsub2:
+                bl._unsubs.append(unsub2)
 
         # Seed once on startup so UI isn't empty while we wait for callbacks.
         bl._seed_from_discovered()
