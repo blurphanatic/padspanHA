@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.71";
+const APP_VERSION = "0.7.72";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260310T183419Z";
+const BUILD_ID = "20260310T183755Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1678,6 +1678,34 @@ class PadSpanHaApp extends HTMLElement {
           ? "width:auto;margin-top:0;background:#1a3a2a;border-color:#52b788;color:#52b788" : "width:auto;margin-top:0";
       });
       actionsRow.appendChild(followBtn);
+    }
+    // Delete button — unfollow + remove label + purge from view
+    if(_followKey || canRename){
+      const deleteBtn = el("button",{
+        class:"btn inline",
+        style:"background:#3b1219;border-color:#f87171;color:#f87171",
+      }, "Delete");
+      deleteBtn.addEventListener("click", async()=>{
+        // Unfollow
+        if(_followKey && this.state.followedAddrs.has(_followKey)){
+          this.state.followedAddrs.delete(_followKey);
+          this._callWS({
+            type: "padspan_ha/settings_set",
+            data_mode: this.state.dataMode,
+            followed_addrs: [...this.state.followedAddrs],
+          }).catch(()=>{});
+          try { localStorage.setItem("padspan_followed", JSON.stringify([...this.state.followedAddrs])); } catch(e){}
+        }
+        // Remove label
+        if(canRename && tagAddr){
+          try { await this._callWS({ type:"padspan_ha/object_label_delete", address: tagAddr }); } catch(e){}
+        }
+        this._closeModal();
+        this._toast("Deleted: " + (userLabel || name));
+        await this._getLiveSnapshot();
+        this._renderCurrentView();
+      });
+      actionsRow.appendChild(deleteBtn);
     }
     actionsRow.appendChild(el("button",{class:"btn inline",onclick:()=>this._closeModal()}, "Close"));
     body.appendChild(actionsRow);
