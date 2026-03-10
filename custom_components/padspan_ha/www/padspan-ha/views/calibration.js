@@ -100,8 +100,13 @@ function _setup(ctx, el, cs, calData) {
   ]));
 
   // Device selector — merge objects.list + raw advertisements so the user can pick ANY BLE device
+  const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   const bleObjs = (snap?.objects?.list || [])
-    .filter(o => o.kind === "ble" || o.kind === "entity" || o.kind === "private_ble" || o.kind === "ibeacon")
+    .filter(o => {
+      if (o.kind !== "ble" && o.kind !== "entity" && o.kind !== "private_ble" && o.kind !== "ibeacon") return false;
+      if (_quietMode && !o.user_label && !o.identified && !ctx.actions.followedHas(o.address || o.key || "")) return false;
+      return true;
+    })
     .sort((a, b) => (b.rssi || -100) - (a.rssi || -100));
 
   // Build unique-address map from raw advertisements (one entry per MAC)
@@ -150,8 +155,8 @@ function _setup(ctx, el, cs, calData) {
       if (stableId === cs.deviceId) opt.selected = true;
       sel.appendChild(opt);
     }
-    // Raw advertisement devices not already in objects.list
-    if (adOnlyDevices.length) {
+    // Raw advertisement devices not already in objects.list (hidden in quiet mode)
+    if (adOnlyDevices.length && !_quietMode) {
       const grp = document.createElement("optgroup");
       grp.label = "── Raw BLE advertisements ──";
       for (const d of adOnlyDevices) {

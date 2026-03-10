@@ -90,8 +90,9 @@ export function render(ctx){
           .sort((a,b)=>(b.rssi||(-Infinity))-(a.rssi||(-Infinity)))
           .slice(0, 50);
 
+        const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
         const tagged = devs.filter(d=>{ const o=objIndex.get(d.addr); return o && (o.user_label||o.identified); });
-        const untagged = devs.filter(d=>{ const o=objIndex.get(d.addr); return !o || (!o.user_label && !o.identified); });
+        const untagged = _quietMode ? [] : devs.filter(d=>{ const o=objIndex.get(d.addr); return !o || (!o.user_label && !o.identified); });
 
         const devRow = d => {
           const o = objIndex.get(d.addr);
@@ -141,7 +142,7 @@ export function render(ctx){
               areaName ? el("div",{class:"muted",style:"font-size:12px;margin-top:2px"}, areaName) : null,
             ].filter(Boolean)),
             el("span",{class:"badge"}, `${tagged.length} tagged`),
-            el("span",{class:"badge warn"}, `${untagged.length} untagged`),
+            _quietMode ? null : el("span",{class:"badge warn"}, `${untagged.length} untagged`),
           ]),
           el("div",{class:"muted"}, src),
           tagged.length ? el("div",{},[

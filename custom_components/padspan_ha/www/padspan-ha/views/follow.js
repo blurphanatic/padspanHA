@@ -118,9 +118,12 @@ function _buildSelector(ctx, el, helpBtn, allObjects, currentAddr, isBasic) {
     return na.localeCompare(nb);
   });
 
+  const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   for (const o of sorted) {
     const id  = o.address || o.entity_id || "";
     if (!id) continue;
+    // Quiet mode: only show identified/labeled/followed objects
+    if (_quietMode && !o.user_label && !o.identified && !ctx.actions.followedHas(id)) continue;
     const opt = document.createElement("option");
     opt.value = id;
     const name = o.user_label || o.name || o.entity_id || id;

@@ -238,13 +238,16 @@ function _zones(ctx, el){
   const floors = (model.floors || []);
   const areas = (model.areas || []);
 
-  // Build room → objects map
+  // Build room → objects map (quiet mode filters unidentified)
+  const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   const roomObjs = {};
   for(const r of rooms) roomObjs[r] = [];
   for(const o of objects){
     const r = o.room || "";
-    if(r && roomObjs[r]) roomObjs[r].push(o);
-    else if(r) roomObjs[r] = [o];
+    if(!r) continue;
+    if(_quietMode && !o.user_label && !o.identified && !(ctx.actions.followedHas && ctx.actions.followedHas(o.address || o.key || ""))) continue;
+    if(roomObjs[r]) roomObjs[r].push(o);
+    else roomObjs[r] = [o];
   }
 
   const occupied = Object.values(roomObjs).filter(v=>v.length>0).length;
