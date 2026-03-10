@@ -1936,9 +1936,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             obj.pop("_last_seen_ts", None)
             obj.pop("_cache_age_s", None)
 
-        # Create placeholder objects for followed iBeacon keys that have no real
-        # advertisement yet. This ensures phones tracked via companion_follow show up
-        # in the objects list even before their BLE transmitter is seen by scanners.
+        # Create placeholder objects for followed keys that have no real
+        # advertisement yet. This ensures followed objects show up in the
+        # objects list even when their BLE address has rotated or the
+        # transmitter hasn't been seen by scanners yet.
         try:
             _st_ghost = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
             _obj_store_ghost = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
@@ -1946,21 +1947,30 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 _followed = _st_ghost.data.get("followed_addrs") or []
                 _existing_keys = {(o.get("key") or "").upper() for o in objects}
                 _existing_keys |= {(o.get("address") or "").upper() for o in objects}
+                # Also index by all_addresses so we don't create duplicates
+                for _eo in objects:
+                    for _ea in (_eo.get("all_addresses") or []):
+                        _existing_keys.add(str(_ea).upper())
                 for _fk in _followed:
                     _fku = str(_fk).upper()
-                    if not _fku.startswith("IBEACON:"):
-                        continue  # only create ghosts for iBeacon keys
                     if _fku in _existing_keys:
                         continue  # already have a real object
                     _ghost_entry = _obj_store_ghost.get(_fk)
                     _ghost_label = (_ghost_entry or {}).get("label", "")
                     if not _ghost_label:
-                        continue  # no label = not from companion_follow
+                        continue  # no label = not tagged
+                    # Determine kind from key format
+                    if _fku.startswith("IBEACON:"):
+                        _ghost_kind = "ibeacon"
+                    elif ":" in _fku and len(_fku) == 17:
+                        _ghost_kind = "ble"
+                    else:
+                        _ghost_kind = "private_ble"
                     objects.append({
                         "key": _fk,
-                        "kind": "ibeacon",
+                        "kind": _ghost_kind,
                         "address": _fk,
-                        "all_addresses": [],
+                        "all_addresses": list((_ghost_entry or {}).get("all_addresses", [])),
                         "name": _ghost_label,
                         "user_label": _ghost_label,
                         "rssi": None,
@@ -2421,6 +2431,58 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                         obj[mk] = val
     except Exception:
         pass  # non-fatal — UI still works without smoothed data
+
+    # Inject stale presence-coordinator objects for followed keys that are
+    # missing from the snapshot. The presence coordinator carries forward
+    # objects after they vanish from BLE, but the overlay above only updates
+    # EXISTING objects — it doesn't add new ones. This ensures followed
+    # objects remain visible even after MAC rotation or temporary signal loss.
+    try:
+        _pc2 = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+        _st2 = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+        _os2 = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+        if _pc2 and _pc2.data and _st2:
+            _obj_list2 = (snap.get("objects") or {}).get("list") or []
+            _existing2 = {(o.get("key") or "").upper() for o in _obj_list2}
+            _followed2 = {str(f).upper() for f in (_st2.data.get("followed_addrs") or [])}
+            for _pk, _pv in _pc2.data.items():
+                _pku = str(_pk).upper()
+                if _pku not in _followed2 or _pku in _existing2:
+                    continue
+                # This is a followed object with presence data but missing from snapshot
+                _olabel = ""
+                if _os2:
+                    _oe = _os2.get(_pk)
+                    _olabel = (_oe or {}).get("label", "")
+                if not _olabel:
+                    continue
+                _inj = {
+                    "key": _pk,
+                    "kind": "ibeacon" if _pku.startswith("IBEACON:") else "ble",
+                    "address": _pk,
+                    "all_addresses": list((_oe or {}).get("all_addresses", [])) if _os2 and _oe else [],
+                    "name": _olabel,
+                    "user_label": _olabel,
+                    "rssi": None,
+                    "age_s": None,
+                    "sources": [],
+                    "identified": True,
+                    "linked_entities": [],
+                    "device": None,
+                    "room": _pv.get("room"),
+                    "_ghost": True,
+                    "_stale": True,
+                }
+                # Also overlay presence data
+                for _mk2 in ("x_frac", "y_frac", "knn_confidence",
+                              "room_confidence", "rssi_margin_confidence"):
+                    _v2 = _pv.get(_mk2)
+                    if _v2 is not None:
+                        _inj[_mk2] = _v2
+                _obj_list2.append(_inj)
+                _existing2.add(_pku)
+    except Exception:
+        pass
 
     connection.send_result(msg["id"], {"snapshot": snap})
 

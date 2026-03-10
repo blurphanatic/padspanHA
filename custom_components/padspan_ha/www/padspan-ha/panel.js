@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.52";
+const APP_VERSION = "0.7.49";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260310T043247Z";
+const BUILD_ID = "20260310T044037Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1499,12 +1499,19 @@ class PadSpanHaApp extends HTMLElement {
 
     // Detection sources table
     const sources = obj.sources || [];
+    // Build source→name lookup from live radios so we show friendly names
+    const _radioMap = {};
+    const _radios = this.state.live?.snapshot?.ble?.radios || [];
+    for(const r of _radios){
+      if(r.source) _radioMap[r.source] = r.name || r.source;
+    }
+    const _friendlySource = (src) => _radioMap[src] || src || "—";
     const makeSourceRow = (srcName, rssi, age_s) => {
       const pct = Math.max(0, Math.min(100, ((rssi ?? -100) + 100) / 60 * 100));
       const bar = el("div", {style:`width:${pct.toFixed(0)}%;height:6px;background:#52b788;border-radius:3px;min-width:2px`});
       const barWrap = el("div", {style:"width:80px;background:#1a2e1e;border-radius:3px"}, bar);
       return el("tr", {}, [
-        el("td", {class:"muted", style:"font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis"}, srcName || "—"),
+        el("td", {style:"font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis"}, _friendlySource(srcName)),
         el("td", {}, barWrap),
         el("td", {}, rssi != null ? `${rssi}` : "—"),
         el("td", {class:"muted", style:"font-size:11px"}, fmtAgo(age_s)),
