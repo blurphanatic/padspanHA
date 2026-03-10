@@ -1489,6 +1489,163 @@ function renderEsphomeConfigs(ctx) {
     ]),
   ]);
 
+  // Hardware recommendation — auto-expires July 10, 2026
+  const _recExpiry = new Date("2026-07-10T00:00:00Z").getTime();
+  const recCard = Date.now() < _recExpiry ? (() => {
+    const _recYaml = `esphome:
+  name: ble-white3dprintedbox
+  friendly_name: BLE-white3dprintedBOX
+  min_version: 2025.11.0
+  name_add_mac_suffix: false
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+# ── Ethernet (W5500 over SPI) ──────────────────────────────
+ethernet:
+  type: W5500
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+  miso_pin: GPIO8
+  cs_pin: GPIO2
+  interrupt_pin: GPIO10
+
+# ── Home Assistant API ─────────────────────────────────────
+api:
+  encryption:
+    key: "YOUR_KEY_HERE"
+
+# ── OTA Updates ────────────────────────────────────────────
+ota:
+  - platform: esphome
+    password: "YOUR_PASSWORD_HERE"
+
+# ── Logging ────────────────────────────────────────────────
+logger:
+  level: WARN
+
+# ── BLE Configuration ─────────────────────────────────────
+esp32_ble:
+  max_connections: 4
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 1100ms
+    window: 1100ms
+    active: true
+
+# ── Bluetooth Proxy ───────────────────────────────────────
+bluetooth_proxy:
+  active: true
+  connection_slots: 4
+
+# ── Diagnostic Sensors ─────────────────────────────────────
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+    entity_category: diagnostic
+
+  - platform: internal_temperature
+    name: "ESP32 Temperature"
+    update_interval: 60s
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: ethernet_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+
+  - platform: version
+    name: "ESPHome Version"
+    entity_category: diagnostic
+
+binary_sensor:
+  - platform: status
+    name: "Status"
+    entity_category: diagnostic
+
+# ── Control Buttons ────────────────────────────────────────
+button:
+  - platform: restart
+    name: "Restart"
+    entity_category: config
+
+  - platform: safe_mode
+    name: "Safe Mode Boot"
+    entity_category: config
+
+  - platform: factory_reset
+    name: "Factory Reset"
+    entity_category: config`;
+
+    const yamlPre = document.createElement("pre");
+    yamlPre.className = "pre";
+    yamlPre.style.cssText = "margin-top:10px;font-size:11px;max-height:500px;overflow:auto;white-space:pre;tab-size:2;display:none";
+    yamlPre.textContent = _recYaml;
+
+    const showBtn = el("button", { class: "btn tiny", style: "font-size:11px" }, "Show YAML");
+    showBtn.addEventListener("click", () => {
+      const show = yamlPre.style.display === "none";
+      yamlPre.style.display = show ? "block" : "none";
+      showBtn.textContent = show ? "Hide YAML" : "Show YAML";
+    });
+    const copyBtn = el("button", { class: "btn tiny", style: "font-size:11px" }, "Copy");
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(_recYaml).then(() => {
+        copyBtn.textContent = "Copied!";
+        setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+      }).catch(() => {
+        yamlPre.style.display = "block";
+        showBtn.textContent = "Hide YAML";
+        copyBtn.textContent = "Copy manually";
+        setTimeout(() => { copyBtn.textContent = "Copy"; }, 2000);
+      });
+    });
+
+    const linkBtn = document.createElement("a");
+    linkBtn.href = "https://www.aliexpress.com/item/1005009310322353.html";
+    linkBtn.target = "_blank";
+    linkBtn.rel = "noopener noreferrer";
+    linkBtn.className = "btn tiny";
+    linkBtn.style.cssText = "font-size:11px;text-decoration:none;display:inline-flex;align-items:center;gap:4px;background:#1a2e0e;border-color:#52b788;color:#52b788";
+    linkBtn.textContent = "View on AliExpress";
+
+    return el("div", { class: "card", style: "border:1px solid #52b78855;background:#0a1a10" }, [
+      el("div", { style: "display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap" }, [
+        el("div", {}, [
+          el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px" }, [
+            el("span", { style: "font-weight:700;font-size:14px;color:#52b788" }, "Recommended: ESP32-S3 Ethernet Board"),
+            el("span", { class: "badge", style: "font-size:10px;background:#10b98122;color:#10b981" }, "Tested & Working"),
+          ]),
+          el("div", { class: "muted", style: "font-size:12px;line-height:1.6;max-width:600px" },
+            "ESP32-S3 with W5500 Ethernet in a compact 3D-printed case. Wired connection means zero WiFi contention — the BLE radio runs at full duty. " +
+            "Affordable, reliable, and field-tested with PadSpan. Just flash the config below and plug in."
+          ),
+        ]),
+        el("div", { style: "display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap" }, [linkBtn, showBtn, copyBtn]),
+      ]),
+      el("div", { style: "margin-top:8px;display:flex;flex-direction:column;gap:3px" }, [
+        el("div", { style: "font-size:11px;color:#94a3b8;padding-left:12px;position:relative" }, [
+          el("span", { style: "position:absolute;left:0;color:#52b788" }, "\u2022"),
+          document.createTextNode("ESP32-S3 + W5500 Ethernet — no WiFi needed, maximum BLE scan duty"),
+        ]),
+        el("div", { style: "font-size:11px;color:#94a3b8;padding-left:12px;position:relative" }, [
+          el("span", { style: "position:absolute;left:0;color:#52b788" }, "\u2022"),
+          document.createTextNode("Active scanning with Bluetooth Proxy enabled (4 connection slots)"),
+        ]),
+        el("div", { style: "font-size:11px;color:#94a3b8;padding-left:12px;position:relative" }, [
+          el("span", { style: "position:absolute;left:0;color:#52b788" }, "\u2022"),
+          document.createTextNode("Replace API key and OTA password with your own values before flashing"),
+        ]),
+      ]),
+      yamlPre,
+    ]);
+  })() : null;
+
   // Chip comparison table
   const chipTable = el("div", { class: "card" }, [
     el("div", { style: "font-weight:700;margin-bottom:8px" }, "Chip Comparison"),
@@ -1614,7 +1771,7 @@ function renderEsphomeConfigs(ctx) {
     ]),
   ]);
 
-  const result = el("div", {}, [intro, chipTable, ...configCards, tips]);
+  const result = el("div", {}, [intro, recCard, chipTable, ...configCards, tips].filter(Boolean));
   ctx.state._esphomeConfigsDom = result;
   return result;
 }
