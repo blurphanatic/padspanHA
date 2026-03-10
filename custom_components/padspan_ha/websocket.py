@@ -1951,14 +1951,20 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 for _eo in objects:
                     for _ea in (_eo.get("all_addresses") or []):
                         _existing_keys.add(str(_ea).upper())
+                # Also check object history cache for names of non-labeled objects
+                _obj_hist_cache = hass.data.get(DOMAIN, {}).get(DATA_OBJECT_HISTORY) or {}
                 for _fk in _followed:
                     _fku = str(_fk).upper()
                     if _fku in _existing_keys:
                         continue  # already have a real object
                     _ghost_entry = _obj_store_ghost.get(_fk)
                     _ghost_label = (_ghost_entry or {}).get("label", "")
+                    # Fall back to name from object history cache or the key itself
                     if not _ghost_label:
-                        continue  # no label = not tagged
+                        _hist = _obj_hist_cache.get(_fku) or _obj_hist_cache.get(_fk) or {}
+                        _ghost_label = _hist.get("user_label") or _hist.get("name") or ""
+                    if not _ghost_label:
+                        _ghost_label = _fk  # last resort: use the key as the name
                     # Determine kind from key format
                     if _fku.startswith("IBEACON:"):
                         _ghost_kind = "ibeacon"
@@ -1966,17 +1972,20 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         _ghost_kind = "ble"
                     else:
                         _ghost_kind = "private_ble"
+                    _ghost_all_addrs = list((_ghost_entry or {}).get("all_addresses", []))
+                    if not _ghost_all_addrs:
+                        _ghost_all_addrs = list((_obj_hist_cache.get(_fku) or _obj_hist_cache.get(_fk) or {}).get("all_addresses", []))
                     objects.append({
                         "key": _fk,
                         "kind": _ghost_kind,
                         "address": _fk,
-                        "all_addresses": list((_ghost_entry or {}).get("all_addresses", [])),
+                        "all_addresses": _ghost_all_addrs,
                         "name": _ghost_label,
-                        "user_label": _ghost_label,
+                        "user_label": (_ghost_entry or {}).get("label", ""),
                         "rssi": None,
                         "age_s": None,
                         "sources": [],
-                        "identified": True,
+                        "identified": bool((_ghost_entry or {}).get("label")),
                         "linked_entities": [],
                         "device": None,
                         "room": None,
@@ -2450,23 +2459,20 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                 if _pku not in _followed2 or _pku in _existing2:
                     continue
                 # This is a followed object with presence data but missing from snapshot
-                _olabel = ""
-                if _os2:
-                    _oe = _os2.get(_pk)
-                    _olabel = (_oe or {}).get("label", "")
-                if not _olabel:
-                    continue
+                _oe = _os2.get(_pk) if _os2 else None
+                _olabel = (_oe or {}).get("label", "")
+                _oname = _olabel or _pv.get("user_label") or _pv.get("name") or _pk
                 _inj = {
                     "key": _pk,
                     "kind": "ibeacon" if _pku.startswith("IBEACON:") else "ble",
                     "address": _pk,
-                    "all_addresses": list((_oe or {}).get("all_addresses", [])) if _os2 and _oe else [],
-                    "name": _olabel,
+                    "all_addresses": list((_oe or {}).get("all_addresses", [])) if _oe else list(_pv.get("all_addresses") or []),
+                    "name": _oname,
                     "user_label": _olabel,
                     "rssi": None,
                     "age_s": None,
                     "sources": [],
-                    "identified": True,
+                    "identified": bool(_olabel),
                     "linked_entities": [],
                     "device": None,
                     "room": _pv.get("room"),
