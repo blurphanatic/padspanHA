@@ -2345,11 +2345,11 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   function _autoPinTracked() {
     const pinnedKeys = new Set();
     for (const bks of Object.values(bs.draftBeacons)) {
-      for (const bk of bks) if (bk.key) pinnedKeys.add(bk.key);
+      for (const bk of bks) if (bk.key) pinnedKeys.add(bk.key.toUpperCase());
     }
     for (const obj of (snap?.objects?.list || [])) {
       if (!(obj.user_label || obj.identified || _isFollowed(obj))) continue;
-      if (!obj.room || pinnedKeys.has(obj.key)) continue;
+      if (!obj.room || pinnedKeys.has((obj.key||"").toUpperCase())) continue;
       for (const m of maps_list) {
         const c = _roomCentroid(obj.room, m);
         if (!c) continue;
@@ -2381,6 +2381,17 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     }
     bs._mapsStamp = mapsStamp;
     _autoPinTracked();
+    // Dedup: ensure each beacon key appears on at most ONE map (keep first occurrence)
+    const _seenKeys = new Set();
+    for (const mapId of Object.keys(bs.draftBeacons)) {
+      bs.draftBeacons[mapId] = bs.draftBeacons[mapId].filter(bk => {
+        if (!bk.key) return true; // keyless beacons always kept
+        const k = bk.key.toUpperCase();
+        if (_seenKeys.has(k)) return false;
+        _seenKeys.add(k);
+        return true;
+      });
+    }
   }
 
   // Auto-enable live tracking for beacons that have snapshot position data
@@ -2775,6 +2786,45 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         warn.textContent = t.warning;
         row.appendChild(warn);
       }
+      // Delete button — removes beacon from draft + stops timer
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn inline";
+      delBtn.style.cssText = "padding:1px 6px;font-size:10px;color:#f87171;border-color:#f87171;margin-left:4px";
+      delBtn.textContent = "\u2716 Delete";
+      delBtn.title = "Remove this beacon from all maps";
+      delBtn.addEventListener("click", async () => {
+        // Stop timer
+        if (t.timer) clearTimeout(t.timer);
+        if (t.pollTimer) clearTimeout(t.pollTimer);
+        delete bs._liveTimers[bkId];
+        bs._liveBeaconKeys.delete(t.bk.key);
+        // Remove beacon from all maps' draftBeacons
+        for (const mid of Object.keys(bs.draftBeacons)) {
+          const before = bs.draftBeacons[mid].length;
+          bs.draftBeacons[mid] = bs.draftBeacons[mid].filter(b => b.id !== bkId);
+          if (bs.draftBeacons[mid].length !== before) bs.dirtyMaps[mid] = true;
+        }
+        // Auto-save the deletion
+        for (const mid of Object.keys(bs.dirtyMaps)) {
+          if (!bs.dirtyMaps[mid]) continue;
+          const origMap = maps_list.find(m => m.id === mid);
+          if (!origMap) continue;
+          try {
+            await ctx.actions.mapsUpdateQuiet({
+              map_id: mid,
+              beacons: bs.draftBeacons[mid] || [],
+              receivers: origMap.receivers || [],
+              calibration: origMap.calibration || {},
+              notes: origMap.notes || "",
+            });
+            bs.dirtyMaps[mid] = false;
+          } catch(_) {}
+        }
+        _refreshTimerRow();
+        _refreshSVG();
+        ctx.toast("Beacon removed");
+      });
+      row.appendChild(delBtn);
       timerArea.appendChild(row);
     }
   }
@@ -2912,6 +2962,17 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     }
     bs.dirtyMaps = {};
     _autoPinTracked();
+    // Dedup: ensure each beacon key appears on at most ONE map
+    const _seenKeysR = new Set();
+    for (const mid of Object.keys(bs.draftBeacons)) {
+      bs.draftBeacons[mid] = bs.draftBeacons[mid].filter(bk => {
+        if (!bk.key) return true;
+        const k = bk.key.toUpperCase();
+        if (_seenKeysR.has(k)) return false;
+        _seenKeysR.add(k);
+        return true;
+      });
+    }
     bs.selectedBk = null;
     bs.fg = ctx.state.settings?.overview_iso_floor_gap ?? 150;
     bs.hg = ctx.state.settings?.overview_iso_horiz_gap ?? 0;
