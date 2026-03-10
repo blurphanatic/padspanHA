@@ -4395,18 +4395,35 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                     transmitting_id = state_obj.state
 
                 if transmitting_id:
-                    # Parse UUID-Major-Minor from transmitting_id
-                    # Format: "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX-Major-Minor"
-                    parts = transmitting_id.rsplit("-", 2)
-                    if len(parts) >= 3:
-                        try:
-                            minor = int(parts[-1])
-                            major = int(parts[-2])
-                            uuid_attr = "-".join(transmitting_id.split("-")[:-2])
-                        except (ValueError, IndexError):
-                            uuid_attr = transmitting_id
-                    if not uuid_attr:
-                        uuid_attr = transmitting_id
+                    # Parse UUID, Major, Minor from transmitting_id.
+                    # Formats seen in the wild:
+                    #   Dashes:      "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX-Major-Minor"
+                    #   Underscores: "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX_Major_Minor"
+                    # A standard UUID is exactly 36 chars (8-4-4-4-12).
+                    # If the string is longer, the suffix holds Major/Minor.
+                    import re as _re
+                    _tid = transmitting_id.strip()
+                    if len(_tid) > 36:
+                        _uuid_part = _tid[:36]
+                        _suffix = _tid[36:]  # e.g. "_100_40004" or "-100-40004"
+                        _nums = _re.findall(r"\d+", _suffix)
+                        if len(_nums) >= 2:
+                            try:
+                                major = int(_nums[0])
+                                minor = int(_nums[1])
+                                uuid_attr = _uuid_part
+                            except (ValueError, IndexError):
+                                uuid_attr = _tid
+                        elif len(_nums) == 1:
+                            try:
+                                major = int(_nums[0])
+                                uuid_attr = _uuid_part
+                            except (ValueError, IndexError):
+                                uuid_attr = _tid
+                        else:
+                            uuid_attr = _tid
+                    else:
+                        uuid_attr = _tid
 
             if not uuid_attr:
                 _LOGGER.debug("companion_discover: %s — no UUID found, skipping", eid)
@@ -4448,8 +4465,8 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
             is_visible = False
             try:
                 ble_live = get_bluetooth_live(hass)
-                snap = ble_live.get_snapshot(max_ads=2000, max_age_s=600)
-                for ad in snap:
+                ble_snap = ble_live.get_snapshot(max_ads=2000, max_age_s=600)
+                for ad in (ble_snap.get("advertisements") or []):
                     mfr = ad.get("manufacturer_data") or {}
                     from .private_ble_resolver import PrivateBLEResolver
                     parsed = PrivateBLEResolver.parse_ibeacon(mfr)
