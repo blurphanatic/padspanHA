@@ -2301,6 +2301,29 @@ function _showPosHelp(ctx) {
       <li>After placing, PadSpan <b>automatically collects calibration data</b> every 10 minutes
         by recording RSSI readings at the pinned position.</li>
     </ol>
+    <p style="margin:0 0 12px;border-top:1px solid #1b3526;padding-top:10px">
+      <b style="color:#a78bfa">RSSI (Received Signal Strength Indicator)</b>
+    </p>
+    <p style="margin:0 0 10px">
+      RSSI is measured in <b>dBm</b> (decibel-milliwatts) and is always a negative number.
+      It tells you how strong the Bluetooth signal is when it reaches a scanner.
+    </p>
+    <ul style="margin:0 0 10px;padding-left:20px">
+      <li><b style="color:#52b788">&minus;50 dBm</b> &mdash; strong signal, device is close to the scanner. <b>This is good.</b></li>
+      <li><b style="color:#f59e0b">&minus;75 dBm</b> &mdash; moderate signal, typical for a device one or two rooms away.</li>
+      <li><b style="color:#f87171">&minus;95 dBm</b> &mdash; weak signal, device is far away or obstructed by walls/floors.</li>
+    </ul>
+    <p style="margin:0 0 10px">
+      <b>Lower numbers (closer to zero) = stronger signal = better.</b>
+      Think of it as a score where &minus;40 is excellent and &minus;100 is barely detectable.
+    </p>
+    <p style="margin:0 0 10px">
+      PadSpan uses RSSI from multiple scanners simultaneously to triangulate a device's position.
+      The pattern of strong vs. weak signals across your scanners creates a unique
+      <em>radio fingerprint</em> for each location in your home. This is why calibration data
+      from accurately placed beacons is so valuable &mdash; it teaches the system what those
+      fingerprints look like at known positions.
+    </p>
     <p style="margin:0;color:#94a3b8;font-size:11px">
       Tip: Place at least 2&ndash;3 beacons per room for best results.
       Beacons near walls or corners are especially useful for triangulation.
