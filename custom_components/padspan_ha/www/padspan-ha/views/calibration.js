@@ -2345,10 +2345,18 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   function _autoPinTracked() {
     const pinnedKeys = new Set();
     const pinnedLabels = new Set();
+    const pinnedAddrs = new Set();  // track MACs to dedup cross-protocol
     for (const bks of Object.values(bs.draftBeacons)) {
       for (const bk of bks) {
         if (bk.key) pinnedKeys.add(bk.key.toUpperCase());
         if (bk.label) pinnedLabels.add(bk.label.toUpperCase());
+      }
+    }
+    // Collect addresses from snapshot objects that are already pinned by key
+    for (const obj of (snap?.objects?.list || [])) {
+      if (pinnedKeys.has((obj.key||"").toUpperCase())) {
+        for (const a of (obj.all_addresses || [])) if (a) pinnedAddrs.add(String(a).toUpperCase());
+        if (obj.address) pinnedAddrs.add(String(obj.address).toUpperCase());
       }
     }
     // Sort: prefer iBeacon > private_ble > ble > entity (avoids pinning
@@ -2363,6 +2371,10 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       // Skip if another object with the same label is already pinned
       const lbl = (obj.user_label || obj.name || "").toUpperCase();
       if (lbl && pinnedLabels.has(lbl)) continue;
+      // Skip if this object shares any MAC address with an already-pinned object
+      const objAddrs = (obj.all_addresses || []).map(a => String(a).toUpperCase());
+      if (obj.address) objAddrs.push(String(obj.address).toUpperCase());
+      if (objAddrs.some(a => pinnedAddrs.has(a))) continue;
       for (const m of maps_list) {
         const c = _roomCentroid(obj.room, m);
         if (!c) continue;
@@ -2375,6 +2387,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         });
         pinnedKeys.add((obj.key||"").toUpperCase());
         if (lbl) pinnedLabels.add(lbl);
+        for (const a of objAddrs) pinnedAddrs.add(a);
         bs.dirtyMaps[m.id] = true;
         break;
       }
@@ -2396,10 +2409,19 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     }
     bs._mapsStamp = mapsStamp;
     _autoPinTracked();
-    // Dedup: ensure each beacon key AND label appears at most once across all maps.
-    // Also auto-save deduped state to backend so duplicates don't persist.
+    // Dedup: ensure each beacon key, label, AND address appears at most once.
+    // Cross-protocol dedup: use snapshot all_addresses to detect same device.
     const _seenKeys = new Set();
     const _seenLabels = new Set();
+    const _seenAddrs = new Set();
+    // Build key→addresses lookup from snapshot
+    const _keyAddrs = {};
+    for (const obj of (snap?.objects?.list || [])) {
+      const addrs = [];
+      for (const a of (obj.all_addresses || [])) if (a) addrs.push(String(a).toUpperCase());
+      if (obj.address) addrs.push(String(obj.address).toUpperCase());
+      if (addrs.length) _keyAddrs[(obj.key||"").toUpperCase()] = addrs;
+    }
     let _dedupRemoved = false;
     for (const mapId of Object.keys(bs.draftBeacons)) {
       const before = bs.draftBeacons[mapId].length;
@@ -2409,8 +2431,12 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         const l = (bk.label || "").toUpperCase();
         if (_seenKeys.has(k)) return false;
         if (l && _seenLabels.has(l)) return false;
+        // Check if this beacon shares any MAC with an already-seen beacon
+        const addrs = _keyAddrs[k] || [];
+        if (addrs.some(a => _seenAddrs.has(a))) return false;
         _seenKeys.add(k);
         if (l) _seenLabels.add(l);
+        for (const a of addrs) _seenAddrs.add(a);
         return true;
       });
       if (bs.draftBeacons[mapId].length !== before) {
@@ -3008,9 +3034,17 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     }
     bs.dirtyMaps = {};
     _autoPinTracked();
-    // Dedup: ensure each beacon key AND label appears at most once
+    // Dedup: ensure each beacon key, label, AND address appears at most once
     const _seenKeysR = new Set();
     const _seenLabelsR = new Set();
+    const _seenAddrsR = new Set();
+    const _kaR = {};
+    for (const obj of (snap?.objects?.list || [])) {
+      const addrs = [];
+      for (const a of (obj.all_addresses || [])) if (a) addrs.push(String(a).toUpperCase());
+      if (obj.address) addrs.push(String(obj.address).toUpperCase());
+      if (addrs.length) _kaR[(obj.key||"").toUpperCase()] = addrs;
+    }
     for (const mid of Object.keys(bs.draftBeacons)) {
       bs.draftBeacons[mid] = bs.draftBeacons[mid].filter(bk => {
         if (!bk.key) return true;
@@ -3018,8 +3052,11 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         const l = (bk.label || "").toUpperCase();
         if (_seenKeysR.has(k)) return false;
         if (l && _seenLabelsR.has(l)) return false;
+        const addrs = _kaR[k] || [];
+        if (addrs.some(a => _seenAddrsR.has(a))) return false;
         _seenKeysR.add(k);
         if (l) _seenLabelsR.add(l);
+        for (const a of addrs) _seenAddrsR.add(a);
         return true;
       });
     }
@@ -3547,7 +3584,25 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   // Only show objects with actual BLE radio presence (not entity-only trackers or Bermuda sensors).
   // An object is "BLE-capable" if it has kind ble/private_ble/ibeacon, or is an entity with an address.
   if (!bs._hiddenObjKeys) bs._hiddenObjKeys = new Set();
-  const _allTracked = (snap?.objects?.list || []).filter(o => o.user_label || o.identified || _isFollowed(o));
+  // Dedup object list: same physical device may appear as ibeacon + private_ble + entity.
+  // Keep highest-priority kind (ibeacon > private_ble > ble > entity).
+  const _kindPri2 = { ibeacon: 0, private_ble: 1, ble: 2, entity: 3 };
+  const _rawTracked = (snap?.objects?.list || [])
+    .filter(o => o.user_label || o.identified || _isFollowed(o))
+    .sort((a, b) => (_kindPri2[a.kind] ?? 9) - (_kindPri2[b.kind] ?? 9));
+  const _dedupAddrs2 = new Set();
+  const _dedupKeys2 = new Set();
+  const _allTracked = _rawTracked.filter(o => {
+    const k = (o.key||"").toUpperCase();
+    if (_dedupKeys2.has(k)) return false;
+    const addrs = [];
+    for (const a of (o.all_addresses || [])) if (a) addrs.push(String(a).toUpperCase());
+    if (o.address) addrs.push(String(o.address).toUpperCase());
+    if (addrs.some(a => _dedupAddrs2.has(a))) return false;
+    _dedupKeys2.add(k);
+    for (const a of addrs) _dedupAddrs2.add(a);
+    return true;
+  });
   const _hasBlePresence = (o) => {
     // Must have BLE advertisements to be useful for calibration
     if (o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon") return true;
