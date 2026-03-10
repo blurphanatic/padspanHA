@@ -837,8 +837,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Auto-inject calibration points from pinned beacons with RSSI data."""
         try:
             _st = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
-            if _st and not _st.data.get("beacon_auto_calibrate", True):
-                return
+            if _st:
+                _auto_cal = _st.data.get("beacon_auto_calibrate", True)
+                _adaptive = _st.data.get("adaptive_learning_enabled", False)
+                # Auto-calibrate if either beacon_auto_calibrate or adaptive_learning is on
+                if not _auto_cal and not _adaptive:
+                    return
         except Exception:
             pass
 
@@ -879,6 +883,64 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await cal_store.async_prune_auto_points(max_per_beacon=50)
             except Exception:
                 _LOGGER.debug("Beacon auto-cal injection failed for %s", key)
+
+    async def inject_immediate_calibration(
+        self, beacons: list[dict], map_id: str, floor_id: str, room_bounds: dict
+    ) -> int:
+        """Immediately inject calibration points for beacons that have live RSSI.
+
+        Called when beacon tune saves positions — bypasses the 10-minute rate limit
+        and uses the presence coordinator's cached EMA RSSI.
+
+        Returns number of calibration points injected.
+        """
+        cal_store = self.hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+        if not cal_store:
+            return 0
+
+        injected = 0
+        now = time.monotonic()
+        for bk in beacons:
+            key = bk.get("key", "")
+            if not key or bk.get("x") is None or bk.get("y") is None:
+                continue
+            # Determine room from room_bounds
+            bx, by = float(bk.get("x", 0)), float(bk.get("y", 0))
+            room = _room_from_bounds(room_bounds or {}, bx, by)
+            # Find RSSI data — try both key directly and known object addresses
+            smoothed_rssi = dict(self._ema_rssi.get(key, {}))
+            if not smoothed_rssi:
+                # For iBeacons, RSSI is stored under the UUID key
+                smoothed_rssi = dict(self._ema_rssi.get(key.upper(), {}))
+            if not smoothed_rssi:
+                # Try known objects cache for the address
+                obj = self._known_objs.get(key) or {}
+                smoothed_rssi = obj.get("_source_rssi") or {}
+            if not smoothed_rssi:
+                continue
+            # Reset rate limit so periodic injection also picks up new position
+            self._beacon_autocal_last[key] = now
+            try:
+                label = (self._known_objs.get(key) or {}).get("user_label") or key
+                await cal_store.async_add_point({
+                    "map_id": map_id,
+                    "x_frac": bx,
+                    "y_frac": by,
+                    "floor_id": floor_id,
+                    "room": room,
+                    "label": f"[auto] {label}",
+                    "device_id": key,
+                    "duration_s": 10,
+                    "scanner_readings": [
+                        {"source": src, "rssi_samples": [rssi]}
+                        for src, rssi in smoothed_rssi.items()
+                    ],
+                })
+                await cal_store.async_prune_auto_points(max_per_beacon=50)
+                injected += 1
+            except Exception:
+                _LOGGER.debug("Immediate beacon cal injection failed for %s", key)
+        return injected
 
     # ── Follow-alert processing ────────────────────────────────────────────
 

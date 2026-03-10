@@ -2674,6 +2674,28 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
     except KeyError:
         connection.send_error(msg["id"], "not_found", "Map not found")
         return
+
+    # ── Immediate calibration injection when beacons are saved ────────────
+    # When beacon tune saves/moves beacons, immediately create calibration
+    # points using cached RSSI data — don't wait for the 10-minute poll cycle.
+    _beacons = msg.get("beacons")
+    if _beacons:
+        try:
+            _coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
+            if _coord:
+                _rb = updated.get("room_bounds") or {}
+                _fid = updated.get("floor_id") or ""
+                _injected = await _coord.inject_immediate_calibration(
+                    _beacons, map_id, _fid, _rb
+                )
+                if _injected:
+                    _LOGGER.debug(
+                        "Immediate beacon calibration: %d points injected for map %s",
+                        _injected, map_id,
+                    )
+        except Exception:
+            pass  # best-effort; don't fail the save
+
     connection.send_result(msg["id"], {"map": updated})
 
 
