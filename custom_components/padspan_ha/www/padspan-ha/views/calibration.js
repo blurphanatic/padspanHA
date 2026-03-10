@@ -3711,6 +3711,56 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       moveRow.appendChild(moveSel);
       infoCard.appendChild(moveRow);
     }
+    // Delete button — remove this beacon from the map
+    const delRow = document.createElement("div");
+    delRow.style.cssText = "margin-top:8px;display:flex;align-items:center;gap:8px";
+    const delBtn = document.createElement("button");
+    delBtn.className = "btn";
+    delBtn.style.cssText = "font-size:11px;padding:3px 10px;background:#3b1219;border-color:#f87171;color:#f87171";
+    delBtn.textContent = "Delete";
+    delBtn.title = "Remove this beacon from the map";
+    delBtn.addEventListener("click", async () => {
+      const mapId = bs.selectedBk.mapId;
+      const bkId = bs.selectedBk.bkId;
+      // Stop any running timer for this beacon
+      if (bs._liveTimers[bkId]) {
+        const old = bs._liveTimers[bkId];
+        if (old.timer) clearTimeout(old.timer);
+        if (old.pollTimer) clearTimeout(old.pollTimer);
+        delete bs._liveTimers[bkId];
+      }
+      const removedBk = (bs.draftBeacons[mapId] || []).find(b => b.id === bkId);
+      if (removedBk) bs._liveBeaconKeys.delete(removedBk.key);
+      // Remove from draft
+      bs.draftBeacons[mapId] = (bs.draftBeacons[mapId] || []).filter(b => b.id !== bkId);
+      bs.selectedBk = null;
+      // Auto-save to backend
+      const origMap = maps_list.find(m => m.id === mapId);
+      if (origMap) {
+        try {
+          await ctx.actions.mapsUpdateQuiet({
+            map_id: mapId,
+            beacons: bs.draftBeacons[mapId] || [],
+            receivers: origMap.receivers || [],
+            calibration: origMap.calibration || {},
+            notes: origMap.notes || "",
+          });
+          bs.dirtyMaps[mapId] = false;
+        } catch (e) { console.warn("[PadSpan] delete beacon save failed:", e); }
+      }
+      _refreshSVG();
+      _refreshInfo();
+      _refreshDirtyLabel();
+      _refreshBeaconList();
+      _refreshAvailable();
+      _refreshTimerRow();
+    });
+    delRow.appendChild(delBtn);
+    const delHint = document.createElement("span");
+    delHint.style.cssText = "font-size:11px;color:#94a3b8";
+    delHint.textContent = "Remove this beacon placement from the map";
+    delRow.appendChild(delHint);
+    infoCard.appendChild(delRow);
   }
   _refreshInfo();
 

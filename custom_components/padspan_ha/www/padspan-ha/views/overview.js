@@ -1010,10 +1010,13 @@ export function render(ctx){
         // For dots on the map: show active objects (within away timeout) + followed items when persistent is on
         // Skip very stale objects (>1hr unless followed) to prevent "army of dots" from 7-day history
         const _mapMaxAge = Math.max(_mapAwayM * 2, 3600); // show up to 2x away timeout or 1hr, whichever is larger
+        const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
         const _mapObjs = allObjects.filter(o => {
           if (!o.room || o.room === "unknown" || o.room === "not_home" || !roomIsoPos[o.room]) return false;
           if (_renderedObjKeys.has(o.key || o.address || o.entity_id || "")) return false;
           const isFol = _isFollowed(o);
+          // Quiet mode: only show followed or labeled/identified objects
+          if (_quietMode && !isFol && !o.user_label && !o.identified) return false;
           // Persistent pins mode: only show followed items
           if (ctx.state._overviewPersistentPins && !isFol) return false;
           // Non-persistent: skip stale objects from history (keeps map clean)
