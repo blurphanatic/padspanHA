@@ -3565,58 +3565,61 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         const snap3 = (ctx.state.live && ctx.state.live.snapshot) || null;
         const deviceId = _resolveBeaconAddr(entry.bk.key, snap3);
 
-        // ── Hard relocation: track consecutive round positions ──────────────
-        // After 3 rounds at the same new position, purge old calibration
-        // points for this device that are far away.  This prevents stale
-        // fingerprints from pulling the beacon back to its old location.
+        // ── Hard relocation (faulty data correction) ─────────────────────────
+        // After 3 consecutive rounds, DELETE ALL old calibration points for
+        // this device across ALL maps.  This is a nuclear reset — stale data
+        // on wrong maps / wrong positions can never outvote the new location.
+        // The 3 new rounds at the correct position become the only truth.
         if (!bs._relocHistory) bs._relocHistory = {};
         if (!bs._relocHistory[bkKey]) bs._relocHistory[bkKey] = [];
-        bs._relocHistory[bkKey].push({ x: entry.bk.x, y: entry.bk.y, mapId: entry.mapId });
-        // Keep only last 3
-        if (bs._relocHistory[bkKey].length > 3) bs._relocHistory[bkKey].shift();
+        bs._relocHistory[bkKey].push({
+          x: entry.bk.x, y: entry.bk.y, mapId: entry.mapId, ts: Date.now(),
+        });
 
         const hist = bs._relocHistory[bkKey];
         const RELOC_ROUNDS = 3;
-        const RELOC_NEAR = 0.10;  // positions within 10% are "same spot"
-        const RELOC_FAR  = 0.15;  // old points >15% away get purged
         let doRelocation = false;
+        // Trigger on 3+ rounds completed within 6 minutes (allows for the three 60s timers + drag time)
         if (hist.length >= RELOC_ROUNDS) {
-          // Check if last 3 rounds are all near each other (same new position)
-          const ref = hist[hist.length - 1];
-          doRelocation = hist.slice(-RELOC_ROUNDS).every(h =>
-            h.mapId === ref.mapId &&
-            Math.hypot(h.x - ref.x, h.y - ref.y) < RELOC_NEAR
-          );
+          const recent = hist.slice(-RELOC_ROUNDS);
+          const timespanMs = recent[recent.length - 1].ts - recent[0].ts;
+          doRelocation = timespanMs < 360000;  // 6 minutes
         }
 
+        // Collect IDs of points saved during THIS relocation session (protect from deletion)
+        if (!bs._relocSavedIds) bs._relocSavedIds = {};
+        if (!bs._relocSavedIds[bkKey]) bs._relocSavedIds[bkKey] = [];
+
         if (doRelocation) {
-          // Purge old calibration points for this device that are far from the new position
+          // ── PURGE: delete ALL old calibration points for this device ──
+          // Match broadly: device_id, label, or beacon key (any case variant).
+          // Protect only the points saved during these relocation rounds.
+          const protectedIds = new Set(bs._relocSavedIds[bkKey] || []);
           try {
             const calData = await ctx.actions.calibrationGet();
             const allPts = calData?.points || [];
-            const newX = entry.bk.x, newY = entry.bk.y;
+            const myDev = (deviceId || "").toUpperCase();
+            const myLbl = (entry.bk.label || "").toUpperCase();
+            const myKey = bkKey.toUpperCase();
             let purged = 0;
             for (const pt of allPts) {
-              // Match by device_id or label (same beacon)
+              if (protectedIds.has(pt.id)) continue;  // don't delete our own rounds
               const ptDev = (pt.device_id || "").toUpperCase();
               const ptLbl = (pt.label || "").toUpperCase();
-              const myDev = (deviceId || "").toUpperCase();
-              const myLbl = (entry.bk.label || entry.bk.key || "").toUpperCase();
-              const isMatch = (ptDev && myDev && ptDev === myDev) ||
-                              (ptLbl && myLbl && ptLbl === myLbl) ||
-                              (ptDev && ptDev === bkKey.toUpperCase());
+              // Broad matching — any of these identifies the same beacon
+              const isMatch =
+                (ptDev && myDev && ptDev === myDev) ||
+                (ptDev && myKey && ptDev === myKey) ||
+                (ptLbl && myLbl && ptLbl === myLbl) ||
+                (ptLbl && myKey && ptLbl === myKey);
               if (!isMatch) continue;
-              // Only purge points that are far from the new position
-              const dist = Math.hypot(pt.x_frac - newX, pt.y_frac - newY);
-              if (dist > RELOC_FAR) {
-                try {
-                  await ctx.actions.calibrationDeletePoint(pt.id);
-                  purged++;
-                } catch (_) { /**/ }
-              }
+              try {
+                await ctx.actions.calibrationDeletePoint(pt.id);
+                purged++;
+              } catch (_) { /**/ }
             }
             if (purged > 0) {
-              ctx.toast(`\u{1F4CD} Relocated: purged ${purged} old point${purged > 1 ? "s" : ""} for ${entry.bk.label || bkKey}`);
+              console.log(`[PadSpan] Hard relocation: purged ${purged} old point(s) for ${bkKey}`);
             }
           } catch (e) {
             console.warn("[PadSpan] relocation purge failed:", e);
@@ -3634,9 +3637,15 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           weight: doRelocation ? 5.0 : weight,
         };
         try {
-          await ctx.actions.calibrationSavePoint(point);
+          const saved = await ctx.actions.calibrationSavePoint(point);
+          // Track the point ID so we protect it from purge
+          if (saved?.point?.id) {
+            bs._relocSavedIds[bkKey].push(saved.point.id);
+          } else if (saved?.id) {
+            bs._relocSavedIds[bkKey].push(saved.id);
+          }
           if (doRelocation) {
-            ctx.toast(`\u2705 ${entry.bk.label || bkKey} HARD RELOCATED \u2014 new position locked (5.0\u00d7 weight)`);
+            ctx.toast(`\u26A0\uFE0F HARD RELOCATION: all old calibration data for ${entry.bk.label || bkKey} has been purged. New position locked at 5.0\u00d7 weight.`);
           } else {
             const weightLabel = round > 1 ? ` (round ${round}, weight ${weight.toFixed(1)}\u00d7)` : "";
             ctx.toast(`\u2713 ${entry.bk.label || entry.bk.key} calibration saved${weightLabel}`);
@@ -3644,11 +3653,28 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         } catch (e) {
           console.warn("[PadSpan] live timer save failed:", e);
         }
-        // After hard relocation, refresh calibration data in state so k-NN uses updated points
+        // After hard relocation, refresh calibration data so k-NN uses cleaned points
         if (doRelocation) {
           try {
             ctx.state.calibration = await ctx.actions.calibrationGet();
           } catch (_) { /**/ }
+          // Evict coordinator cache so the beacon recalculates immediately
+          // (otherwise stale k-NN position lingers for up to 5s)
+          try { await ctx.actions.objectEvict(bkKey); } catch (_) { /**/ }
+          if (deviceId && deviceId !== bkKey) {
+            try { await ctx.actions.objectEvict(deviceId); } catch (_) { /**/ }
+          }
+          // Show persistent warning banner on the info card
+          bs._lastRelocation = {
+            key: bkKey,
+            label: entry.bk.label || bkKey,
+            time: Date.now(),
+          };
+          _refreshInfo();
+          // Reset round counter and history after successful relocation
+          bs._calibRounds[bkKey] = 0;
+          bs._relocHistory[bkKey] = [];
+          bs._relocSavedIds[bkKey] = [];
         }
       }
       // Mark beacon as live — switches to estimated position rendering
@@ -3784,6 +3810,17 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       });
       moveRow.appendChild(moveSel);
       infoCard.appendChild(moveRow);
+    }
+    // Hard relocation warning banner
+    if (bs._lastRelocation && bs._lastRelocation.key === bk.key) {
+      const elapsed = Date.now() - bs._lastRelocation.time;
+      if (elapsed < 300000) {  // show for 5 minutes
+        const relocBanner = document.createElement("div");
+        relocBanner.style.cssText = "margin-top:8px;background:#3b1219;border:2px solid #f87171;border-radius:8px;padding:8px 12px;font-size:12px;color:#fecaca";
+        const ago = elapsed < 60000 ? "just now" : `${Math.floor(elapsed / 60000)}m ago`;
+        relocBanner.innerHTML = `<b style="color:#f87171">HARD RELOCATION</b> &mdash; All previous calibration data for <b style="color:#5eead4">${_esc(bs._lastRelocation.label)}</b> was purged (${ago}). The new position is locked at 5.0\u00d7 weight. If the beacon still appears in the wrong location, wait 10\u201315 seconds for the server to recalculate.`;
+        infoCard.appendChild(relocBanner);
+      }
     }
     // Delete button — remove this beacon from the map
     const delRow = document.createElement("div");

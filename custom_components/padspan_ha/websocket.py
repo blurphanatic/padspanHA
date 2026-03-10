@@ -110,6 +110,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_calibration_delete_point)
     websocket_api.async_register_command(hass, ws_calibration_clear)
     websocket_api.async_register_command(hass, ws_calibration_clear_map)
+    websocket_api.async_register_command(hass, ws_object_evict)
     websocket_api.async_register_command(hass, ws_calibration_compute_model)
     websocket_api.async_register_command(hass, ws_calibration_swap_radio)
     websocket_api.async_register_command(hass, ws_calibration_health_check)
@@ -3364,6 +3365,30 @@ async def ws_calibration_clear_map(hass: HomeAssistant, connection, msg) -> None
     cal = await _get_cal_store(hass)
     count = await cal.async_clear_map(map_id)
     connection.send_result(msg["id"], {"ok": True, "map_id": map_id, "deleted": count})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/object_evict",
+        "key": str,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_object_evict(hass: HomeAssistant, connection, msg) -> None:
+    """Clear coordinator cached state for a single object key.
+
+    Used after hard relocation to force immediate k-NN recalculation
+    instead of waiting for the next poll cycle.
+    """
+    key = str(msg.get("key") or "").strip()
+    if not key:
+        connection.send_error(msg["id"], "invalid_key", "key is required")
+        return
+    _coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
+    if _coord:
+        _coord.clear_object_state(key)
+    connection.send_result(msg["id"], {"ok": True, "key": key})
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/calibration_compute_model"})
