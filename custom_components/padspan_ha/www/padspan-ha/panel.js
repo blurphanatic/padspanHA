@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.79";
+const APP_VERSION = "0.7.80";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260310T190807Z";
+const BUILD_ID = "20260310T201856Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -2073,9 +2073,13 @@ class PadSpanHaApp extends HTMLElement {
       const node = mod.render(this._ctx());
 
       // If the view returned a cached DOM node already displayed in $content,
-      // skip the destructive swap on poll renders to preserve scroll positions
-      // (e.g. ESPHome Configs YAML blocks). User-initiated renders always swap.
-      if(fromPoll && node && node.parentNode === this.$content){
+      // skip the destructive swap on poll renders to preserve scroll positions.
+      // ONLY for views with 100% static content (ESPHome Configs YAML blocks).
+      // Dynamic views (overview, follow, objects, etc.) MUST always swap so
+      // updated object positions, RSSI values, and live data are displayed.
+      const _staticViews = new Set(["esphome_configs"]);
+      const _isStaticTab = v === "bluetooth" && this.state.btTab === "esphome_configs";
+      if(fromPoll && _isStaticTab && node && node.parentNode === this.$content){
         this._lastGoodRender = performance.now();
         this._renderFailCount = 0;
         return;

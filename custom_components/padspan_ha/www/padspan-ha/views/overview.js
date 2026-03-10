@@ -720,6 +720,49 @@ export function render(ctx){
     }
     _rebuildPositions();
 
+    // ── Scanner position map for RSSI trilateration ──────────────────────────
+    // Maps scanner source → ISO screen coordinates so we can estimate object
+    // positions from live RSSI without requiring calibration data.
+    const _scannerIsoPos = {};
+    for(const m of maps_list){
+      const tf = mapTransforms[m.id]; if(!tf) continue;
+      for(const r of (m.receivers||[])){
+        const liveRadio = allRadios_live.find(rd=>rd.name===(r.label||"")||rd.source===(r.id||"")||rd.source===(r.source||"")||rd.name===(r.id||""));
+        const src = (liveRadio ? liveRadio.source : null) || r.source || r.id || "";
+        if(!src) continue;
+        const [wx,wy] = tf.mapPt(r.x||0, r.y||0);
+        const [sx,sy] = iso(wx, wy, tf.z);
+        _scannerIsoPos[src] = {sx, sy, z: tf.z};
+      }
+    }
+
+    // Trilateration: weighted centroid of scanner positions based on RSSI.
+    // Returns {sx, sy, confidence} or null.  Works without calibration data.
+    function _trilateratePos(obj){
+      const readings = _getObjReadings(obj);
+      const sources = Object.keys(readings);
+      if(sources.length < 1) return null;
+      let wx=0, wy=0, wTotal=0, matched=0;
+      for(const src of sources){
+        const pos = _scannerIsoPos[src];
+        if(!pos) continue;
+        const rssi = readings[src].rssi;
+        const age = readings[src].age_s || 0;
+        if(age > 60) continue;
+        // Weight: exponential on RSSI (stronger signal = heavier weight).
+        // Shift by +100 so typical range (-40 to -95) maps to positive exponents.
+        const w = Math.pow(10, (rssi + 100) / 20) * Math.exp(-age / 45);
+        wx += pos.sx * w;
+        wy += pos.sy * w;
+        wTotal += w;
+        matched++;
+      }
+      if(matched < 1 || wTotal < 1e-10) return null;
+      // Confidence scales with number of matched scanners (≥3 = full)
+      const confidence = Math.min(1.0, matched / 3) * 0.35;
+      return {sx: wx / wTotal, sy: wy / wTotal, confidence};
+    }
+
     // Collect per-source RSSI for an object from the live advertisement stream.
     // obj.sources in the snapshot is a string array; the actual RSSI values are in
     // snap.ble.advertisements (one row per {address, source}).
@@ -971,6 +1014,11 @@ export function render(ctx){
             posConf = match.confidence;
           }
         }
+        // Priority 2.5: Scanner trilateration — RSSI-weighted centroid of known scanner positions
+        if(bx == null){
+          const tri = _trilateratePos(o);
+          if(tri){ bx=tri.sx; by=tri.sy; posConf=tri.confidence; }
+        }
         // Priority 3: Room centroid
         if(bx == null && o.room && roomIsoPos[o.room]){
           [bx,by] = roomIsoPos[o.room];
@@ -1052,13 +1100,20 @@ export function render(ctx){
               px = Math.round(fpMatch.sx);
               py = Math.round(fpMatch.sy);
             } else {
-              const pos = roomIsoPos[obj.room];
-              const idx = (_roomObjCount[obj.room] || 0);
-              _roomObjCount[obj.room] = idx + 1;
-              const angle = idx * 2.4;
-              const radius = 8 + idx * 6;
-              px = Math.round(pos[0] + Math.cos(angle) * Math.min(radius, 40));
-              py = Math.round(pos[1] + Math.sin(angle) * Math.min(radius, 25));
+              // Scanner trilateration — RSSI-weighted centroid (no calibration needed)
+              const tri = _trilateratePos(obj);
+              if(tri){
+                px = Math.round(tri.sx);
+                py = Math.round(tri.sy);
+              } else {
+                const pos = roomIsoPos[obj.room];
+                const idx = (_roomObjCount[obj.room] || 0);
+                _roomObjCount[obj.room] = idx + 1;
+                const angle = idx * 2.4;
+                const radius = 8 + idx * 6;
+                px = Math.round(pos[0] + Math.cos(angle) * Math.min(radius, 40));
+                py = Math.round(pos[1] + Math.sin(angle) * Math.min(radius, 25));
+              }
             }
           }
 
