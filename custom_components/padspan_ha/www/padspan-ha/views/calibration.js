@@ -3563,22 +3563,92 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         const mapObj = maps_list.find(m => m.id === entry.mapId);
         const room = mapObj ? _detectRoom(entry.bk.x, entry.bk.y, mapObj) : "";
         const snap3 = (ctx.state.live && ctx.state.live.snapshot) || null;
+        const deviceId = _resolveBeaconAddr(entry.bk.key, snap3);
+
+        // ── Hard relocation: track consecutive round positions ──────────────
+        // After 3 rounds at the same new position, purge old calibration
+        // points for this device that are far away.  This prevents stale
+        // fingerprints from pulling the beacon back to its old location.
+        if (!bs._relocHistory) bs._relocHistory = {};
+        if (!bs._relocHistory[bkKey]) bs._relocHistory[bkKey] = [];
+        bs._relocHistory[bkKey].push({ x: entry.bk.x, y: entry.bk.y, mapId: entry.mapId });
+        // Keep only last 3
+        if (bs._relocHistory[bkKey].length > 3) bs._relocHistory[bkKey].shift();
+
+        const hist = bs._relocHistory[bkKey];
+        const RELOC_ROUNDS = 3;
+        const RELOC_NEAR = 0.10;  // positions within 10% are "same spot"
+        const RELOC_FAR  = 0.15;  // old points >15% away get purged
+        let doRelocation = false;
+        if (hist.length >= RELOC_ROUNDS) {
+          // Check if last 3 rounds are all near each other (same new position)
+          const ref = hist[hist.length - 1];
+          doRelocation = hist.slice(-RELOC_ROUNDS).every(h =>
+            h.mapId === ref.mapId &&
+            Math.hypot(h.x - ref.x, h.y - ref.y) < RELOC_NEAR
+          );
+        }
+
+        if (doRelocation) {
+          // Purge old calibration points for this device that are far from the new position
+          try {
+            const calData = await ctx.actions.calibrationGet();
+            const allPts = calData?.points || [];
+            const newX = entry.bk.x, newY = entry.bk.y;
+            let purged = 0;
+            for (const pt of allPts) {
+              // Match by device_id or label (same beacon)
+              const ptDev = (pt.device_id || "").toUpperCase();
+              const ptLbl = (pt.label || "").toUpperCase();
+              const myDev = (deviceId || "").toUpperCase();
+              const myLbl = (entry.bk.label || entry.bk.key || "").toUpperCase();
+              const isMatch = (ptDev && myDev && ptDev === myDev) ||
+                              (ptLbl && myLbl && ptLbl === myLbl) ||
+                              (ptDev && ptDev === bkKey.toUpperCase());
+              if (!isMatch) continue;
+              // Only purge points that are far from the new position
+              const dist = Math.hypot(pt.x_frac - newX, pt.y_frac - newY);
+              if (dist > RELOC_FAR) {
+                try {
+                  await ctx.actions.calibrationDeletePoint(pt.id);
+                  purged++;
+                } catch (_) { /**/ }
+              }
+            }
+            if (purged > 0) {
+              ctx.toast(`\u{1F4CD} Relocated: purged ${purged} old point${purged > 1 ? "s" : ""} for ${entry.bk.label || bkKey}`);
+            }
+          } catch (e) {
+            console.warn("[PadSpan] relocation purge failed:", e);
+          }
+        }
+
         const point = {
           map_id: entry.mapId,
           x_frac: entry.bk.x,
           y_frac: entry.bk.y,
           room: room,
-          device_id: _resolveBeaconAddr(entry.bk.key, snap3),
+          device_id: deviceId,
           label: entry.bk.label || entry.bk.key || "",
           readings: entry.readings,
-          weight: weight,
+          weight: doRelocation ? 5.0 : weight,
         };
         try {
           await ctx.actions.calibrationSavePoint(point);
-          const weightLabel = round > 1 ? ` (round ${round}, weight ${weight.toFixed(1)}×)` : "";
-          ctx.toast(`\u2713 ${entry.bk.label || entry.bk.key} calibration saved${weightLabel}`);
+          if (doRelocation) {
+            ctx.toast(`\u2705 ${entry.bk.label || bkKey} HARD RELOCATED \u2014 new position locked (5.0\u00d7 weight)`);
+          } else {
+            const weightLabel = round > 1 ? ` (round ${round}, weight ${weight.toFixed(1)}\u00d7)` : "";
+            ctx.toast(`\u2713 ${entry.bk.label || entry.bk.key} calibration saved${weightLabel}`);
+          }
         } catch (e) {
           console.warn("[PadSpan] live timer save failed:", e);
+        }
+        // After hard relocation, refresh calibration data in state so k-NN uses updated points
+        if (doRelocation) {
+          try {
+            ctx.state.calibration = await ctx.actions.calibrationGet();
+          } catch (_) { /**/ }
         }
       }
       // Mark beacon as live — switches to estimated position rendering
