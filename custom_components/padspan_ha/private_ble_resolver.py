@@ -205,9 +205,20 @@ class PrivateBLEResolver:
         except Exception:
             pass
 
+        # Merge source_info into device entries for unified UI display
+        _si = {s["name"]: s for s in getattr(self, "_source_info", [])}
+        devs = []
+        for d in self._devices:
+            si = _si.get(d["name"], {})
+            devs.append({
+                "name": d["name"],
+                "canonical_id": d["canonical_id"],
+                "source": si.get("source", ""),
+                "entry_id": si.get("entry_id", ""),
+            })
         return {
             "irk_count": len(self._devices),
-            "devices": [{"name": d["name"], "canonical_id": d["canonical_id"]} for d in self._devices],
+            "devices": devs,
             "source_info": getattr(self, "_source_info", []),
             "has_private_ble_integration": has_integration,
             "mobile_apps": mobile_apps,

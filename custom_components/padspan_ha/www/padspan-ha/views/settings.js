@@ -663,29 +663,52 @@ function _settingsPresence(ctx, el){
     // Status: load current IRKs
     const irkStatus = el("div", { style: "margin-bottom:12px" });
     irkStatus.textContent = "Loading...";
-    (async () => {
+    async function _refreshIrkStatus() {
       try {
         const st = await ctx.actions.wsCall("padspan_ha/private_ble_status", {});
         const devices = st.devices || [];
+        const sourceInfo = st.source_info || [];
         const rpas = st.rpa_count || 0;
         if (devices.length) {
           irkStatus.innerHTML = "";
           const tbl = el("table", { class: "table", style: "font-size:12px;margin-bottom:8px" });
-          const thead = el("thead", {}, el("tr", {}, [el("th",{},"Name"), el("th",{},"Source")]));
+          const thead = el("thead", {}, el("tr", {}, [el("th",{},"Name"), el("th",{},"Canonical ID"), el("th",{},"Source"), el("th",{},"")]));
           tbl.appendChild(thead);
           const tbody = el("tbody", {});
           for (const d of devices) {
+            const shortId = (d.canonical_id || "").replace(/^irk:/, "").substring(0, 12) + "...";
+            const delBtn = el("button", {
+              class: "btn inline",
+              style: "font-size:10px;padding:1px 6px;color:#f87171;border-color:#5c2020;background:none",
+            }, "Delete");
+            if (d.entry_id) {
+              delBtn.addEventListener("click", async () => {
+                if (!confirm(`Remove IRK for "${d.name || "device"}"? This will stop tracking this device's rotating MAC.`)) return;
+                delBtn.disabled = true;
+                delBtn.textContent = "...";
+                try {
+                  await ctx.actions.wsCall("padspan_ha/private_ble_delete_irk", { entry_id: d.entry_id });
+                  await _refreshIrkStatus();
+                } catch(e) {
+                  delBtn.textContent = "Error";
+                  setTimeout(() => { delBtn.textContent = "Delete"; delBtn.disabled = false; }, 2000);
+                }
+              });
+            } else {
+              delBtn.disabled = true;
+              delBtn.title = "Managed by HA — delete from Settings → Devices & Services";
+            }
             tbody.appendChild(el("tr", {}, [
               el("td", {}, d.name || "—"),
-              el("td", { class: "muted" }, d.source || "—"),
+              el("td", { class: "muted", style: "font-family:monospace;font-size:11px" }, shortId),
+              el("td", { class: "muted" }, d.source || "private_ble_device"),
+              el("td", {}, delBtn),
             ]));
           }
           tbl.appendChild(tbody);
           irkStatus.appendChild(tbl);
-          if (rpas > 0) {
-            irkStatus.appendChild(el("div", { class: "muted", style: "font-size:11px" },
-              `${devices.length} IRK(s) registered · ${rpas} rotating address(es) detected`));
-          }
+          irkStatus.appendChild(el("div", { class: "muted", style: "font-size:11px" },
+            `${devices.length} IRK(s) registered` + (rpas > 0 ? ` · ${rpas} rotating address(es) detected` : "")));
         } else {
           irkStatus.innerHTML = "";
           irkStatus.appendChild(el("div", { style: "color:#fbbf24;font-size:12px;margin-bottom:4px" },
@@ -697,7 +720,8 @@ function _settingsPresence(ctx, el){
       } catch(e) {
         irkStatus.textContent = "Could not load status";
       }
-    })();
+    }
+    _refreshIrkStatus();
     irkCard.appendChild(irkStatus);
 
     // Add IRK form
@@ -730,8 +754,8 @@ function _settingsPresence(ctx, el){
           irkInp.value = "";
           nameInp.value = "";
         }
-        // Refresh status
-        ctx.actions.renderRooms();
+        // Refresh IRK status table inline (don't re-render entire view)
+        await _refreshIrkStatus();
       } catch(e) {
         irkMsg.style.color = "#f87171";
         irkMsg.textContent = e.message || "Failed to add IRK";

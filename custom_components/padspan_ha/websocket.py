@@ -131,6 +131,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_logs_get)
     websocket_api.async_register_command(hass, ws_private_ble_status)
     websocket_api.async_register_command(hass, ws_private_ble_add_irk)
+    websocket_api.async_register_command(hass, ws_private_ble_delete_irk)
     websocket_api.async_register_command(hass, ws_objects_clear_history)
     websocket_api.async_register_command(hass, ws_companion_discover)
     websocket_api.async_register_command(hass, ws_companion_follow)
@@ -4508,6 +4509,35 @@ async def ws_private_ble_add_irk(hass: HomeAssistant, connection, msg) -> None:
         _LOGGER.warning("private_ble_add_irk failed: %s", err, exc_info=True)
         connection.send_error(msg["id"], "add_failed",
             f"Failed to add IRK: {err}. Make sure 'Private BLE Device' integration is available in HA.")
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/private_ble_delete_irk",
+    vol.Required("entry_id"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_private_ble_delete_irk(hass: HomeAssistant, connection, msg) -> None:
+    """Delete a Private BLE Device config entry by entry_id."""
+    entry_id = str(msg.get("entry_id", "")).strip()
+    if not entry_id:
+        connection.send_error(msg["id"], "invalid_entry", "entry_id is required")
+        return
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if not entry or entry.domain != "private_ble_device":
+        connection.send_error(msg["id"], "not_found", "Config entry not found")
+        return
+    try:
+        await hass.config_entries.async_remove(entry_id)
+        # Refresh resolver so status reflects the deletion
+        try:
+            resolver = await _get_ble_resolver(hass)
+            await resolver.async_load()
+        except Exception:
+            pass
+        connection.send_result(msg["id"], {"ok": True, "removed": entry.title or entry_id})
+    except Exception as err:
+        connection.send_error(msg["id"], "remove_failed", str(err))
 
 
 # ── Auto-discover Companion App phones via BLE Transmitter ───────────────────
