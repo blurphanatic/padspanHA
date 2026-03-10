@@ -931,7 +931,8 @@ export function render(ctx){
       // Track which object keys are rendered (to avoid duplicate dots for unlabeled layer)
       const _renderedObjKeys = new Set();
 
-      // Followed beacons — fingerprint-positioned using all live RSSI data
+      // Followed beacons — positioned using server k-NN first (same as calibration
+      // beacon tune), with client-side fingerprint as high-confidence enhancement only.
       const followedObjects = allObjects.filter(o =>
         ctx.actions.followedHas(o.address || "") || ctx.actions.followedHas(o.entity_id || "") || ctx.actions.followedHas(o.key || "")
       );
@@ -939,32 +940,45 @@ export function render(ctx){
       const _awayTimeoutS2 = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null) ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
       for(const o of followedObjects){
         _renderedObjKeys.add(o.key || o.address || o.entity_id || "");
-        // Skip pure ghost objects with no position data at all
         const isGhost = o._ghost || o._stale;
         const ageS = typeof o.age_s === "number" ? o.age_s : 0;
         const isAway = isGhost && (o.rssi == null) && (ageS > _awayTimeoutS2);
-        // If away and no position source, skip entirely
-        if(isAway && !o.room && typeof o.x_frac !== "number") continue;
-        const readings = _getObjReadings(o);
-        const match    = _matchFingerprint(readings);
         const lbl = (o.user_label||o.name||"?").substring(0,14);
         let bx, by;
-        if(match){
-          bx=match.sx; by=match.sy;
-          const cr = Math.round(10 + (1-match.confidence)*24);
-          const op = (0.3 + match.confidence*0.55).toFixed(2);
-          s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
-        } else if(typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id && mapTransforms[o.knn_map_id]){
+        let posConf = 0;  // confidence for dashed circle
+
+        // Priority 1: Server k-NN position (x_frac/y_frac) — same source calibration uses
+        if(typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id && mapTransforms[o.knn_map_id]){
           const tf=mapTransforms[o.knn_map_id];
           const [lwx,lwy]=tf.mapPt(o.x_frac, o.y_frac);
           [bx,by]=iso(lwx, lwy, tf.z);
-          const conf = o.knn_confidence || 0;
-          const cr = Math.round(10 + (1-conf)*24);
-          const op = (0.3 + conf*0.55).toFixed(2);
-          s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
-        } else if(o.room && roomIsoPos[o.room]){
+          posConf = o.knn_confidence || 0;
+        }
+        // Priority 2: Client-side fingerprint — only if no server k-NN AND confidence > 40%
+        if(bx == null){
+          const readings = _getObjReadings(o);
+          const match = _matchFingerprint(readings);
+          if(match && match.confidence > 0.4){
+            bx=match.sx; by=match.sy;
+            posConf = match.confidence;
+          }
+        }
+        // Priority 3: Room centroid
+        if(bx == null && o.room && roomIsoPos[o.room]){
           [bx,by] = roomIsoPos[o.room];
-        } else { continue; }
+        }
+        // Never skip followed objects — show at map center as last resort
+        if(bx == null){
+          bx = CX; by = CY;
+        }
+
+        // Confidence circle (only when we have a real positioned match)
+        if(posConf > 0){
+          const cr = Math.round(10 + (1-posConf)*24);
+          const op = (0.3 + posConf*0.55).toFixed(2);
+          s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
+        }
+
         const _ok = _esc(o.key||o.address||o.entity_id||"");
         // Dim away/ghost objects
         const dotOp = isAway ? "0.35" : "0.97";
@@ -1014,25 +1028,27 @@ export function render(ctx){
           const isAway = typeof obj.age_s === "number" && obj.age_s > _awayThresh;
           const objLabel = obj.user_label || obj.name || "";
 
-          // Position: try fingerprint triangulation first, fall back to room centroid + stagger
+          // Position: server k-NN first, then high-confidence fingerprint, then room centroid + stagger
           let px, py;
-          const readings = _getObjReadings(obj);
-          const fpMatch = _matchFingerprint(readings);
-          if (fpMatch) {
-            px = Math.round(fpMatch.sx);
-            py = Math.round(fpMatch.sy);
-          } else if(typeof obj.x_frac === "number" && typeof obj.y_frac === "number" && obj.knn_map_id && mapTransforms[obj.knn_map_id]){
+          if(typeof obj.x_frac === "number" && typeof obj.y_frac === "number" && obj.knn_map_id && mapTransforms[obj.knn_map_id]){
             const tf=mapTransforms[obj.knn_map_id];
             const [lwx,lwy]=tf.mapPt(obj.x_frac, obj.y_frac);
             [px,py]=[Math.round(iso(lwx,lwy,tf.z)[0]), Math.round(iso(lwx,lwy,tf.z)[1])];
           } else {
-            const pos = roomIsoPos[obj.room];
-            const idx = (_roomObjCount[obj.room] || 0);
-            _roomObjCount[obj.room] = idx + 1;
-            const angle = idx * 2.4;
-            const radius = 8 + idx * 6;
-            px = Math.round(pos[0] + Math.cos(angle) * Math.min(radius, 40));
-            py = Math.round(pos[1] + Math.sin(angle) * Math.min(radius, 25));
+            const readings = _getObjReadings(obj);
+            const fpMatch = _matchFingerprint(readings);
+            if (fpMatch && fpMatch.confidence > 0.4) {
+              px = Math.round(fpMatch.sx);
+              py = Math.round(fpMatch.sy);
+            } else {
+              const pos = roomIsoPos[obj.room];
+              const idx = (_roomObjCount[obj.room] || 0);
+              _roomObjCount[obj.room] = idx + 1;
+              const angle = idx * 2.4;
+              const radius = 8 + idx * 6;
+              px = Math.round(pos[0] + Math.cos(angle) * Math.min(radius, 40));
+              py = Math.round(pos[1] + Math.sin(angle) * Math.min(radius, 25));
+            }
           }
 
           if(ctx.state._overviewPersistentPins){
