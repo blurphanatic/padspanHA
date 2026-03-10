@@ -930,6 +930,15 @@ export function render(ctx){
           const cr = Math.round(10 + (1-match.confidence)*24);
           const op = (0.3 + match.confidence*0.55).toFixed(2);
           s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
+        } else if(typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id && mapTransforms[o.knn_map_id]){
+          // Use presence coordinator's k-NN position (Kalman-smoothed RSSI)
+          const tf=mapTransforms[o.knn_map_id];
+          const [lwx,lwy]=tf.mapPt(o.x_frac, o.y_frac);
+          [bx,by]=iso(lwx, lwy, tf.z);
+          const conf = o.knn_confidence || 0;
+          const cr = Math.round(10 + (1-conf)*24);
+          const op = (0.3 + conf*0.55).toFixed(2);
+          s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
         } else if(o.room && roomIsoPos[o.room]){
           [bx,by] = roomIsoPos[o.room];
         } else { continue; }
@@ -983,6 +992,10 @@ export function render(ctx){
           if (fpMatch) {
             px = Math.round(fpMatch.sx);
             py = Math.round(fpMatch.sy);
+          } else if(typeof obj.x_frac === "number" && typeof obj.y_frac === "number" && obj.knn_map_id && mapTransforms[obj.knn_map_id]){
+            const tf=mapTransforms[obj.knn_map_id];
+            const [lwx,lwy]=tf.mapPt(obj.x_frac, obj.y_frac);
+            [px,py]=[Math.round(iso(lwx,lwy,tf.z)[0]), Math.round(iso(lwx,lwy,tf.z)[1])];
           } else {
             const pos = roomIsoPos[obj.room];
             const idx = (_roomObjCount[obj.room] || 0);

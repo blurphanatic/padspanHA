@@ -385,11 +385,22 @@ class CalibrationStore:
         if total_w < 1e-10:
             return None
 
+        # Determine dominant map_id among top-k points (highest total weight)
+        map_weights: dict[str, float] = {}
+        for dist_sq, pt in top_k:
+            pw = float(pt.get("weight") or 1.0)
+            w = pw / (math.sqrt(dist_sq) + 1e-3)
+            mid = pt.get("map_id", "")
+            if mid:
+                map_weights[mid] = map_weights.get(mid, 0.0) + w
+        best_map = max(map_weights, key=lambda m: map_weights[m]) if map_weights else ""
+
         return {
             "x_frac": round(wx / total_w, 4),
             "y_frac": round(wy / total_w, 4),
             "confidence": round(1.0 / (1.0 + scored[0][0]), 3),
             "nearest_room": scored[0][1].get("room", ""),
+            "map_id": best_map,
             "k_used": len(top_k),
         }
 

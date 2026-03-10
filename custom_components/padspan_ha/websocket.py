@@ -2423,7 +2423,7 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
     try:
         pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
         if pc and pc.data:
-            _MERGE_KEYS = ("x_frac", "y_frac", "knn_confidence",
+            _MERGE_KEYS = ("x_frac", "y_frac", "knn_confidence", "knn_map_id",
                            "room", "room_confidence", "rssi_margin_confidence",
                            "_smoothed", "_stale")
             obj_list = (snap.get("objects") or {}).get("list") or []
