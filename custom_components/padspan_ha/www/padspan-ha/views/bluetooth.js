@@ -755,7 +755,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     const y = pad + 20 + (i + 1) * ((h - pad * 2 - 20) / (srcs.length + 1));
     const sid = _vizSid(src);
     const name = radios.find(r => String(r.source || "") === src)?.name || src;
-    return { id: src, label: (sid ? sid + " " : "") + name, x: scannerNodeX, y };
+    return { id: src, label: (sid ? "[" + sid + "] " : "") + name, x: scannerNodeX, y };
   });
 
   // Place devices near their source scanner, then resolve overlaps
