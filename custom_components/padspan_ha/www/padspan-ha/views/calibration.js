@@ -2255,6 +2255,62 @@ function _tuneTab(ctx, el, cs, calData) {
   return wrap;
 }
 
+function _showPosHelp(ctx) {
+  const body = document.createElement("div");
+  body.style.cssText = "font-size:13px;line-height:1.7;color:#d1d5db;max-width:520px";
+  body.innerHTML = `
+    <p style="margin:0 0 12px"><b style="color:#5eead4">Position Percentages (x%, y%)</b></p>
+    <p style="margin:0 0 10px">
+      The two percentages represent this beacon's location on the floor plan image
+      as a fraction of the image's width and height:
+    </p>
+    <ul style="margin:0 0 12px;padding-left:20px">
+      <li><b style="color:#a7f3d0">x %</b> &mdash; how far across the image from the <b>left edge</b>.
+        0% is the left edge, 100% is the right edge.</li>
+      <li><b style="color:#a7f3d0">y %</b> &mdash; how far down the image from the <b>top edge</b>.
+        0% is the top edge, 100% is the bottom edge.</li>
+    </ul>
+    <p style="margin:0 0 10px">
+      For example, <span style="color:#5eead4">x 50.0%, y 25.0%</span> means the beacon is
+      centered horizontally and one-quarter of the way down from the top of the map image.
+    </p>
+    <p style="margin:0 0 12px;border-top:1px solid #1b3526;padding-top:10px">
+      <b style="color:#f59e0b">Why this matters:</b>
+    </p>
+    <ul style="margin:0 0 12px;padding-left:20px">
+      <li><b>Calibration reference</b> &mdash; PadSpan records which Bluetooth scanners can see this
+        beacon at this position, and how strong the signal is. Over time, this builds a
+        <em>radio fingerprint database</em> that maps signal strengths to physical locations.</li>
+      <li><b>k-NN positioning</b> &mdash; When PadSpan sees a device with similar signal readings
+        to a known calibration point, it estimates the device's position using k-Nearest Neighbors
+        (k-NN). More pinned beacons at accurate positions = better positioning accuracy.</li>
+      <li><b>Sub-room tracking</b> &mdash; Unlike room-level presence which only knows "Kitchen" or
+        "Living Room", these positions enable <em>within-room</em> tracking on the 3D map &mdash;
+        showing exactly where in the room a device is, not just which room.</li>
+    </ul>
+    <p style="margin:0 0 12px;border-top:1px solid #1b3526;padding-top:10px">
+      <b style="color:#60a5fa">How to set accurate positions:</b>
+    </p>
+    <ol style="margin:0 0 12px;padding-left:20px">
+      <li><b>Drag the beacon diamond</b> on the 3D map to where the physical device
+        actually is in your home.</li>
+      <li><b>Use room boundaries</b> as visual guides &mdash; the detected room updates
+        in real time as you drag.</li>
+      <li><b>Multiple beacons</b> spread across different rooms and positions give PadSpan
+        more reference points, dramatically improving positioning accuracy.</li>
+      <li>After placing, PadSpan <b>automatically collects calibration data</b> every 10 minutes
+        by recording RSSI readings at the pinned position.</li>
+    </ol>
+    <p style="margin:0;color:#94a3b8;font-size:11px">
+      Tip: Place at least 2&ndash;3 beacons per room for best results.
+      Beacons near walls or corners are especially useful for triangulation.
+    </p>
+  `;
+  if (ctx?.actions?.openModal) {
+    ctx.actions.openModal("Position Percentages", body, "Beacon Tune \u00b7 Place Beacons");
+  }
+}
+
 function _detectRoom(x, y, mapData) {
   const bounds = mapData?.room_bounds || {};
   for (const [room, b] of Object.entries(bounds)) {
@@ -3537,6 +3593,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     const lastRssi = obj?.rssi != null ? `${obj.rssi} dBm` : "\u2014";
     infoCard.innerHTML = "";
     const infoLine = document.createElement("div");
+    infoLine.style.cssText = "display:flex;align-items:center;gap:0;flex-wrap:wrap";
     const lines = [
       `<b style="color:#5eead4">${_esc(bk.label || bk.key)}</b>`,
       `Map: ${_esc(mapObj?.name || bs.selectedBk.mapId)}`,
@@ -3545,7 +3602,16 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       `RSSI: ${lastRssi}`,
       `Kind: ${_esc(bk.kind || "ble")}`,
     ];
-    infoLine.innerHTML = lines.join(" &nbsp;\u00b7&nbsp; ");
+    infoLine.innerHTML = `<span>${lines.join(" &nbsp;\u00b7&nbsp; ")}</span>`;
+    const posHelp = document.createElement("button");
+    posHelp.style.cssText = "background:none;border:1px solid #4a6052;color:#94a3b8;cursor:pointer;font-size:11px;font-weight:700;width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-left:6px;padding:0;flex-shrink:0;line-height:1";
+    posHelp.textContent = "?";
+    posHelp.title = "What do these percentages mean?";
+    posHelp.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      _showPosHelp(ctx);
+    });
+    infoLine.appendChild(posHelp);
     infoCard.appendChild(infoLine);
     // Move-to-map control
     const otherMaps = maps_list.filter(m => m.id !== bs.selectedBk.mapId);
@@ -3917,7 +3983,17 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         m.innerHTML = `<span style="color:#64748b">${label}</span> <span style="color:${color || "#d1d5db"}">${_esc(String(value))}</span>`;
         metricsRow.appendChild(m);
       };
-      addMetric("Pos:", `${(bk.x*100).toFixed(1)}%, ${(bk.y*100).toFixed(1)}%`);
+      // Position metric with help button
+      const posMetric = document.createElement("span");
+      posMetric.style.cssText = "white-space:nowrap;display:inline-flex;align-items:center;gap:3px";
+      posMetric.innerHTML = `<span style="color:#64748b">Pos:</span> <span style="color:#d1d5db">${_esc(`${(bk.x*100).toFixed(1)}%, ${(bk.y*100).toFixed(1)}%`)}</span>`;
+      const posHelp2 = document.createElement("button");
+      posHelp2.style.cssText = "background:none;border:1px solid #4a6052;color:#94a3b8;cursor:pointer;font-size:9px;font-weight:700;width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;padding:0;flex-shrink:0;line-height:1";
+      posHelp2.textContent = "?";
+      posHelp2.title = "What do these percentages mean?";
+      posHelp2.addEventListener("click", (ev) => { ev.stopPropagation(); _showPosHelp(ctx); });
+      posMetric.appendChild(posHelp2);
+      metricsRow.appendChild(posMetric);
       if (obj?.rssi != null) addMetric("RSSI:", `${obj.rssi} dBm`, obj.rssi > -70 ? "#52b788" : obj.rssi > -85 ? "#f59e0b" : "#f87171");
       if (obj?.age_s != null) addMetric("Seen:", `${Math.round(obj.age_s)}s ago`, obj.age_s < 30 ? "#52b788" : obj.age_s < 120 ? "#f59e0b" : "#f87171");
       if (obj?.knn_confidence != null) addMetric("Conf:", `${(obj.knn_confidence*100).toFixed(0)}%`, obj.knn_confidence > 0.7 ? "#52b788" : "#f59e0b");
