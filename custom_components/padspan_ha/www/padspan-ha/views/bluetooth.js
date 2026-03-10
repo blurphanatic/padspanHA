@@ -1741,8 +1741,9 @@ button:
     ]);
   })() : null;
 
-  // Chip comparison table
-  const chipTable = el("div", { class: "card" }, [
+  // Chip comparison table — auto-expires March 10, 2028 (hardware recs go stale)
+  const _chipExpiry = new Date("2028-03-10T00:00:00Z").getTime();
+  const chipTable = Date.now() < _chipExpiry ? el("div", { class: "card" }, [
     el("div", { style: "font-weight:700;margin-bottom:8px" }, "Chip Comparison"),
     (() => {
       const wrap = document.createElement("div");
@@ -1765,7 +1766,7 @@ button:
       </table>`;
       return wrap;
     })(),
-  ]);
+  ]) : null;
 
   // Config cards
   const configCards = ESPHOME_CONFIGS.map(cfg => {
