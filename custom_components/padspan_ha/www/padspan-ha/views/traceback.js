@@ -313,7 +313,7 @@ export function render(ctx) {
   }
 
   function _updateScrubber() {
-    const scrubber = ctrlCard.querySelector('input[type="range"]');
+    const scrubber = ctrlCard.querySelector('#tb-scrubber');
     if (scrubber) scrubber.value = String(tb.frameIdx);
     _updateTimeLbl();
   }
@@ -575,6 +575,7 @@ export function render(ctx) {
     scrubberWrap.style.cssText = "position:relative;margin-bottom:6px";
 
     const scrubber = document.createElement("input");
+    scrubber.id = "tb-scrubber";
     scrubber.type = "range";
     scrubber.min = "0";
     scrubber.max = String(Math.max(0, tb.frames.length - 1));
