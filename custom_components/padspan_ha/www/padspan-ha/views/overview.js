@@ -701,9 +701,16 @@ export function render(ctx){
     function _getObjReadings(obj){
       const addr = obj.address||"";
       if(!addr) return {};
+      // For iBeacon objects, match by all rotating MAC addresses (not the
+      // stable ibeacon:uuid:major:minor key which never appears in raw ads).
+      const matchAddrs = new Set();
+      matchAddrs.add(addr);
+      if(Array.isArray(obj.all_addresses)){
+        for(const a of obj.all_addresses) matchAddrs.add(String(a));
+      }
       const readings={};
       for(const ad of (liveSnap?.ble?.advertisements||[])){
-        if(ad.address!==addr || !ad.source || ad.rssi==null) continue;
+        if(!matchAddrs.has(ad.address) || !ad.source || ad.rssi==null) continue;
         if(!readings[ad.source] || (ad.age_s||0) < readings[ad.source].age_s)
           readings[ad.source]={rssi:ad.rssi, age_s:ad.age_s||0};
       }

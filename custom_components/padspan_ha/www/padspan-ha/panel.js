@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.50";
+const APP_VERSION = "0.7.51";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260310T012958Z";
+const BUILD_ID = "20260310T040457Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -704,7 +704,7 @@ class PadSpanHaApp extends HTMLElement {
       this._updateBadges();
 
       // Re-render views that show live data.
-      const liveViews = new Set(["overview","follow","objects","devices","bluetooth","presence","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage","calibration"]);
+      const liveViews = new Set(["overview","follow","objects","devices","bluetooth","presence","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage","calibration","maps"]);
       // Render with poll guard (skips if user is interacting).
       // But if no successful render in 10s, force it regardless.
       const stale = this._lastGoodRender && (performance.now() - this._lastGoodRender > 10_000);
