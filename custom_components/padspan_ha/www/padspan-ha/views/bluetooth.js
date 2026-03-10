@@ -1528,6 +1528,53 @@ function renderEsphomeConfigs(ctx) {
     ]),
   ]);
 
+  // External antenna recommendation — auto-expires September 10, 2026
+  const _antExpiry = new Date("2026-09-10T00:00:00Z").getTime();
+  const antennaCard = Date.now() < _antExpiry ? el("div", { class: "card", style: "border:1px solid #f59e0b55;background:#1a1500" }, [
+    el("div", { style: "display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap" }, [
+      el("div", {}, [
+        el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px" }, [
+          el("span", { style: "font-weight:700;font-size:15px;color:#f59e0b" }, "The Single Biggest Improvement: External Antenna"),
+          el("span", { class: "badge", style: "font-size:10px;background:#f59e0b22;color:#f59e0b" }, "#1 Upgrade"),
+        ]),
+        el("div", { class: "muted", style: "font-size:12px;line-height:1.7;max-width:650px" },
+          "Adding an external antenna to your ESP32 scanner is the most impactful upgrade you can make. " +
+          "The tiny PCB antennas on most boards have limited range and are easily blocked by enclosures. " +
+          "An external antenna dramatically improves RSSI consistency, range, and positioning accuracy — " +
+          "often doubling effective coverage per scanner."
+        ),
+      ]),
+      (() => {
+        const linkBtn = document.createElement("a");
+        linkBtn.href = "https://www.aliexpress.com/item/1005003443721023.html";
+        linkBtn.target = "_blank";
+        linkBtn.rel = "noopener noreferrer";
+        linkBtn.className = "btn tiny";
+        linkBtn.style.cssText = "font-size:11px;text-decoration:none;display:inline-flex;align-items:center;gap:4px;background:#1a1a0e;border-color:#f59e0b;color:#f59e0b;flex-shrink:0";
+        linkBtn.textContent = "Example on AliExpress";
+        return linkBtn;
+      })(),
+    ]),
+    el("div", { style: "margin-top:8px;display:flex;flex-direction:column;gap:3px" }, [
+      el("div", { style: "font-size:11px;color:#94a3b8;padding-left:12px;position:relative" }, [
+        el("span", { style: "position:absolute;left:0;color:#f59e0b" }, "\u2022"),
+        document.createTextNode("Look for boards with an IPEX/U.FL connector (most ESP32-S3 and ESP32 boards have one)"),
+      ]),
+      el("div", { style: "font-size:11px;color:#94a3b8;padding-left:12px;position:relative" }, [
+        el("span", { style: "position:absolute;left:0;color:#f59e0b" }, "\u2022"),
+        document.createTextNode("A simple 2.4 GHz antenna with IPEX connector is all you need — no soldering required"),
+      ]),
+      el("div", { style: "font-size:11px;color:#fbbf24;padding-left:12px;position:relative;font-weight:600" }, [
+        el("span", { style: "position:absolute;left:0;color:#f59e0b" }, "\u26A0"),
+        document.createTextNode("Connector types (IPEX, U.FL) vary between boards — verify your board's connector before ordering"),
+      ]),
+      el("div", { style: "font-size:11px;color:#94a3b8;padding-left:12px;position:relative" }, [
+        el("span", { style: "position:absolute;left:0;color:#f59e0b" }, "\u2022"),
+        document.createTextNode("Tested and working, but this is a third-party link provided as an example only"),
+      ]),
+    ]),
+  ]) : null;
+
   // Hardware recommendation — auto-expires July 10, 2026
   const _recExpiry = new Date("2026-07-10T00:00:00Z").getTime();
   const recCard = Date.now() < _recExpiry ? (() => {
@@ -1833,7 +1880,7 @@ button:
     ]),
   ]);
 
-  const result = el("div", {}, [intro, recCard, chipTable, ...configCards, tips].filter(Boolean));
+  const result = el("div", {}, [intro, antennaCard, recCard, chipTable, ...configCards, tips].filter(Boolean));
   ctx.state._esphomeConfigsDom = result;
   return result;
 }
