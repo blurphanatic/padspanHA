@@ -452,7 +452,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _linger_polls = max(2, round(_linger_s / _SCAN_INTERVAL.total_seconds()))
 
         # ── Carry forward stale objects (home/away persistence) ──────────────
-        for key, last_obj in self._known_objs.items():
+        # Objects persist through the grace period (signal_loss_linger_s) and
+        # then as stale for up to _STALE_EVICT_S, after which they are evicted
+        # from all coordinator caches.
+        _STALE_EVICT_S = max(float(_linger_s) * 3, 600.0)  # 3× linger or 10min
+        _evict_keys: list[str] = []
+        for key, last_obj in list(self._known_objs.items()):
             if key in result:
                 continue
             # Grace period: don't start aging until enough consecutive misses.
@@ -470,6 +475,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 result[key] = grace
                 continue
             elapsed = now - self._last_seen.get(key, now)
+            # Evict objects that have been stale too long
+            if elapsed > _STALE_EVICT_S:
+                _evict_keys.append(key)
+                continue
             stale = dict(last_obj)
             stale["age_s"]  = elapsed
             stale["_stale"] = True
@@ -477,6 +486,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if stale.get("kind") in ("ble", "private_ble", "ibeacon") and self._confirmed_room.get(key):
                 stale["room"] = self._confirmed_room[key]
             result[key] = stale
+        # Clean up evicted objects from all caches
+        for key in _evict_keys:
+            self._evict_object(key)
 
         # ── Fire follow-alerts for room changes ────────────────────────────────
         if self._pending_room_changes:
@@ -828,6 +840,36 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 pass  # adaptive learning is best-effort
 
         return confirmed
+
+    # ── Object state cleanup ─────────────────────────────────────────────
+
+    def _evict_object(self, key: str) -> None:
+        """Remove all cached state for a single object key (internal)."""
+        self._known_objs.pop(key, None)
+        self._last_seen.pop(key, None)
+        self._away_miss.pop(key, None)
+        self._room_votes.pop(key, None)
+        self._confirmed_room.pop(key, None)
+        self._room_confidence.pop(key, None)
+        self._rssi_margin_confidence.pop(key, None)
+        self._knn_position.pop(key, None)
+        self._beacon_autocal_last.pop(key, None)
+        self._adaptive_last_obs.pop(key, None)
+        self._ema_rssi.pop(key, None)
+        self._kalman_p.pop(key, None)
+
+    def clear_object_state(self, key: str) -> None:
+        """Public API: clear all coordinator state for an object.
+
+        Called when a beacon is removed from beacon tune or an object
+        is unfollowed — ensures the object won't linger as stale.
+        """
+        self._evict_object(key)
+        # Also try uppercase variant (keys may differ in case)
+        ku = key.upper()
+        if ku != key:
+            self._evict_object(ku)
+        _LOGGER.debug("Cleared coordinator state for %s", key)
 
     # ── Beacon auto-calibration ────────────────────────────────────────────
 

@@ -919,8 +919,15 @@ export function render(ctx){
         ctx.actions.followedHas(o.address || "") || ctx.actions.followedHas(o.entity_id || "") || ctx.actions.followedHas(o.key || "")
       );
       const BEACON_CLR = "#fbbf24";
+      const _awayTimeoutS2 = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null) ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
       for(const o of followedObjects){
         _renderedObjKeys.add(o.key || o.address || o.entity_id || "");
+        // Skip pure ghost objects with no position data at all
+        const isGhost = o._ghost || o._stale;
+        const ageS = typeof o.age_s === "number" ? o.age_s : 0;
+        const isAway = isGhost && (o.rssi == null) && (ageS > _awayTimeoutS2);
+        // If away and no position source, skip entirely
+        if(isAway && !o.room && typeof o.x_frac !== "number") continue;
         const readings = _getObjReadings(o);
         const match    = _matchFingerprint(readings);
         const lbl = (o.user_label||o.name||"?").substring(0,14);
@@ -931,7 +938,6 @@ export function render(ctx){
           const op = (0.3 + match.confidence*0.55).toFixed(2);
           s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
         } else if(typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id && mapTransforms[o.knn_map_id]){
-          // Use presence coordinator's k-NN position (Kalman-smoothed RSSI)
           const tf=mapTransforms[o.knn_map_id];
           const [lwx,lwy]=tf.mapPt(o.x_frac, o.y_frac);
           [bx,by]=iso(lwx, lwy, tf.z);
@@ -943,13 +949,19 @@ export function render(ctx){
           [bx,by] = roomIsoPos[o.room];
         } else { continue; }
         const _ok = _esc(o.key||o.address||o.entity_id||"");
+        // Dim away/ghost objects
+        const dotOp = isAway ? "0.35" : "0.97";
+        const glowOp = isAway ? "0.08" : "0.18";
+        const lblColor = isAway ? "#a0845c" : BEACON_CLR;
         s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(o))}" style="cursor:pointer">`;
-        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="14" fill="${BEACON_CLR}" opacity="0.18"/>`;
-        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="10" fill="${BEACON_CLR}" stroke="#071008" stroke-width="1.5" opacity="0.97"/>`;
+        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="14" fill="${BEACON_CLR}" opacity="${glowOp}"/>`;
+        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="10" fill="${BEACON_CLR}" stroke="#071008" stroke-width="1.5" opacity="${dotOp}"/>`;
         s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="3" fill="#071008" opacity="0.7"/>`;
-        const lblW = Math.min(lbl.length * 7 + 10, 110);
+        const awayTag = isAway ? " (Away)" : "";
+        const fullLbl = lbl + awayTag;
+        const lblW = Math.min(fullLbl.length * 7 + 10, 130);
         s += `<rect x="${Math.round(bx)-lblW/2}" y="${Math.round(by)-30}" width="${lblW}" height="14" rx="3" fill="#071008" opacity="0.7"/>`;
-        s += `<text x="${Math.round(bx)}" y="${Math.round(by)-19}" text-anchor="middle" fill="${BEACON_CLR}" font-size="11" font-weight="700">${_esc(lbl)}</text>`;
+        s += `<text x="${Math.round(bx)}" y="${Math.round(by)-19}" text-anchor="middle" fill="${lblColor}" font-size="11" font-weight="700">${_esc(fullLbl)}</text>`;
         s += `</g>`;
       }
 

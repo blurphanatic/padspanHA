@@ -3915,11 +3915,25 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       rmBtn.className = "btn inline";
       rmBtn.style.cssText = "font-size:10px;padding:1px 6px;color:#f87171;border-color:#7f1d1d";
       rmBtn.textContent = "Remove";
-      rmBtn.addEventListener("click", (ev) => {
+      rmBtn.addEventListener("click", async (ev) => {
         ev.stopPropagation();
         bs.draftBeacons[map.id] = (bs.draftBeacons[map.id] || []).filter(b => b.id !== bk.id);
         bs.dirtyMaps[map.id] = true;
         if (bs.selectedBk?.bkId === bk.id) bs.selectedBk = null;
+        // Auto-save removal so coordinator state gets cleaned immediately
+        try {
+          const origMap = maps_list.find(m => m.id === map.id);
+          if (origMap) {
+            await ctx.actions.mapsUpdateQuiet({
+              map_id: map.id,
+              beacons: bs.draftBeacons[map.id] || [],
+              receivers: origMap.receivers || [],
+              calibration: origMap.calibration || {},
+              notes: origMap.notes || "",
+            });
+            bs.dirtyMaps[map.id] = false;
+          }
+        } catch(_) {}
         _refreshSVG();
         _refreshInfo();
         _refreshDirtyLabel();

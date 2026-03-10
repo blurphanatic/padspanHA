@@ -2223,7 +2223,20 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["hidden_map_ids"] = [str(x) for x in ids if isinstance(x, str)] if isinstance(ids, list) else []
         if "followed_addrs" in msg:
             addrs = msg["followed_addrs"]
-            payload["followed_addrs"] = [str(x).upper() for x in addrs if isinstance(x, str)] if isinstance(addrs, list) else []
+            _new_followed = [str(x).upper() for x in addrs if isinstance(x, str)] if isinstance(addrs, list) else []
+            payload["followed_addrs"] = _new_followed
+            # Clear coordinator state for unfollowed objects so they don't
+            # linger on the overview 3D map as stale ghosts.
+            try:
+                _old_followed = set(str(x).upper() for x in (st.data.get("followed_addrs") or []))
+                _removed_f = _old_followed - set(x.upper() for x in _new_followed)
+                if _removed_f:
+                    _coord_f = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
+                    if _coord_f:
+                        for _rf in _removed_f:
+                            _coord_f.clear_object_state(_rf)
+            except Exception:
+                pass
         if "health_reminder_enabled" in msg:
             payload["health_reminder_enabled"] = bool(msg["health_reminder_enabled"])
         if "health_reminder_last_ts" in msg:
@@ -2660,11 +2673,25 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "no_maps_store", "Maps store not initialized")
         return
     map_id = msg.get("map_id")
+
+    # ── Capture old beacon keys BEFORE update (to detect removals) ────────
+    _old_beacon_keys: set[str] = set()
+    _beacons = msg.get("beacons")
+    if _beacons is not None:
+        try:
+            _old_map = ms.get_map(map_id)
+            if _old_map:
+                for _bk in (_old_map.get("beacons") or []):
+                    if _bk.get("key"):
+                        _old_beacon_keys.add(_bk["key"])
+        except Exception:
+            pass
+
     try:
         updated = await ms.async_update_map(
             map_id,
             receivers=msg.get("receivers"),
-            beacons=msg.get("beacons"),
+            beacons=_beacons,
             calibration=msg.get("calibration"),
             notes=msg.get("notes"),
             floor_id=msg.get("floor_id"),
@@ -2675,10 +2702,30 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "not_found", "Map not found")
         return
 
+    # ── Clear coordinator state for removed beacons ───────────────────────
+    # When beacons are removed from beacon tune, their stale coordinator
+    # state (room lock, k-NN position, etc.) must be cleared so they don't
+    # linger on the overview 3D map.
+    if _beacons is not None and _old_beacon_keys:
+        _new_beacon_keys = {bk.get("key", "") for bk in _beacons}
+        _removed = _old_beacon_keys - _new_beacon_keys
+        if _removed:
+            try:
+                _coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
+                if _coord:
+                    # Check if removed key still exists on another map
+                    _all_map_keys: set[str] = set()
+                    for _m in (ms.data.get("maps") or []):
+                        for _bk in (_m.get("beacons") or []):
+                            if _bk.get("key"):
+                                _all_map_keys.add(_bk["key"])
+                    for _rk in _removed:
+                        if _rk not in _all_map_keys:
+                            _coord.clear_object_state(_rk)
+            except Exception:
+                pass
+
     # ── Immediate calibration injection when beacons are saved ────────────
-    # When beacon tune saves/moves beacons, immediately create calibration
-    # points using cached RSSI data — don't wait for the 10-minute poll cycle.
-    _beacons = msg.get("beacons")
     if _beacons:
         try:
             _coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
@@ -4794,6 +4841,14 @@ async def ws_companion_unfollow(hass: HomeAssistant, connection, msg) -> None:
             if len(new_list) < len(followed_list):
                 await st.async_set(followed_addrs=new_list)
                 results.append("Removed from followed list")
+
+        # 3) Clear coordinator state so object doesn't linger as stale
+        try:
+            _coord_uf = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
+            if _coord_uf:
+                _coord_uf.clear_object_state(ibeacon_key)
+        except Exception:
+            pass
 
         connection.send_result(msg["id"], {
             "ok": True,
