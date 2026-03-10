@@ -878,8 +878,10 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const trunc = (s) => s.length > MAX_LABEL ? s.slice(0, MAX_LABEL - 1) + "…" : s;
 
   // Scanner nodes + labels (left-aligned, growing rightward toward node) — clickable
+  // Invisible hit-area rect behind each row so clicks land reliably on the <g>
   for (const sn of scannerNodes) {
     s += `<g class="bt-viz-click" data-type="scanner" data-id="${_escSvg(sn.id)}" style="cursor:pointer">`;
+    s += `<rect x="${scannerLabelX - 4}" y="${sn.y - 10}" width="${sn.x - scannerLabelX + 18}" height="20" fill="transparent"/>`;
     s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner"/>`;
     s += `<text x="${scannerLabelX}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(sn.label))}</text>`;
     s += `</g>`;
@@ -889,6 +891,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   for (const d of deviceNodes) {
     const rc = rssiClass(d.rssi);
     s += `<g class="bt-viz-click" data-type="device" data-id="${_escSvg(d.id)}" style="cursor:pointer">`;
+    s += `<rect x="${d.x - 8}" y="${d.y - 9}" width="${deviceLabelX - d.x + 18}" height="18" fill="transparent"/>`;
     s += `<circle cx="${d.x}" cy="${d.y}" r="5" class="bt-viz-node device ${rc}"/>`;
     s += `<text x="${d.x + 10}" y="${d.y}" class="bt-viz-label" font-size="11" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(d.label))}</text>`;
     s += `</g>`;
