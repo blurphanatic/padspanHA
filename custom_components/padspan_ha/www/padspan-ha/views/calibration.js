@@ -101,19 +101,23 @@ function _setup(ctx, el, cs, calData) {
 
   // Device selector — merge objects.list + raw advertisements so the user can pick ANY BLE device
   const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
+  const _setupIsScanner = ctx.helpers.isScanner;
   const bleObjs = (snap?.objects?.list || [])
     .filter(o => {
       if (o.kind !== "ble" && o.kind !== "entity" && o.kind !== "private_ble" && o.kind !== "ibeacon") return false;
+      if (_setupIsScanner(o)) return false;
       if (_quietMode && !o.user_label && !o.identified && !ctx.actions.followedHas(o.address || o.key || "")) return false;
       return true;
     })
     .sort((a, b) => (b.rssi || -100) - (a.rssi || -100));
 
   // Build unique-address map from raw advertisements (one entry per MAC)
+  const _setupScannerAddrs = ctx.helpers.scannerAddrs();
   const adAddrMap = {};
   for (const ad of (snap?.ble?.advertisements || [])) {
     const addr = (ad.address || "").toUpperCase();
     if (!addr) continue;
+    if (_setupScannerAddrs.has(addr)) continue;
     if (!adAddrMap[addr]) {
       adAddrMap[addr] = { address: addr, name: ad.name || addr, rssi: ad.rssi };
     } else if ((ad.rssi || -200) > (adAddrMap[addr].rssi || -200)) {
@@ -3771,7 +3775,9 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   // Dedup object list: same physical device may appear as ibeacon + private_ble + entity.
   // Keep highest-priority kind (ibeacon > private_ble > ble > entity).
   const _kindPri2 = { ibeacon: 0, private_ble: 1, ble: 2, entity: 3 };
+  const _calIsScanner = ctx.helpers.isScanner;
   const _rawTracked = (snap?.objects?.list || [])
+    .filter(o => !_calIsScanner(o))
     .filter(o => o.user_label || o.identified || _isFollowed(o))
     .sort((a, b) => (_kindPri2[a.kind] ?? 9) - (_kindPri2[b.kind] ?? 9));
   const _dedupAddrs2 = new Set();

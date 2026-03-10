@@ -728,9 +728,16 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const srcs = Array.from(new Set(radios.map(r => String(r.source || "")).filter(Boolean))).sort();
   const srcIndex = new Map(srcs.map((s, i) => [s, i]));
 
+  // Filter out scanner-to-scanner detections (scanners are infrastructure, not devices)
+  const _scannerSrcSet = new Set(srcs.map(s => s.toUpperCase()));
+  const filteredAds = ads.filter(a => {
+    const addr = String(a.address || "").toUpperCase();
+    return !_scannerSrcSet.has(addr);
+  });
+
   // Group devices by source
   const bySrc = {};
-  for (const a of ads) {
+  for (const a of filteredAds) {
     const src = String(a.source || "");
     if (!bySrc[src]) bySrc[src] = [];
     bySrc[src].push(a);

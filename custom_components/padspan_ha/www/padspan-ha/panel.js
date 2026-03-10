@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.7.72";
+const APP_VERSION = "0.7.73";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260310T183755Z";
+const BUILD_ID = "20260310T184727Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1097,6 +1097,35 @@ class PadSpanHaApp extends HTMLElement {
           b.textContent = "?";
           b.addEventListener("click", (e)=>{ e.stopPropagation(); self._showHelp(key); });
           return b;
+        },
+        /** Set of uppercase addresses/sources belonging to known BLE scanners.
+         *  Use to filter scanners out of object/tracking views. */
+        scannerAddrs: ()=>{
+          const s = new Set();
+          const radios = (self.state.live?.snapshot?.ble?.radios) || [];
+          for(const r of radios){
+            if(r.source) s.add(String(r.source).toUpperCase());
+            if(r.name) s.add(String(r.name).toUpperCase());
+          }
+          return s;
+        },
+        /** Returns true if this object is a known scanner (not a trackable device). */
+        isScanner: (obj)=>{
+          const radios = (self.state.live?.snapshot?.ble?.radios) || [];
+          const addr = (obj.address || "").toUpperCase();
+          const name = (obj.name || "").toUpperCase();
+          const eid = (obj.entity_id || "").toUpperCase();
+          for(const r of radios){
+            const rs = (r.source || "").toUpperCase();
+            const rn = (r.name || "").toUpperCase();
+            if(rs && (rs === addr || rs === eid || rs === name)) return true;
+            if(rn && (rn === addr || rn === name)) return true;
+            // Match by MAC in source against any of the object's addresses
+            if(rs && Array.isArray(obj.all_addresses)){
+              for(const a of obj.all_addresses){ if(a && String(a).toUpperCase() === rs) return true; }
+            }
+          }
+          return false;
         },
       },
       actions: {

@@ -228,7 +228,8 @@ export function render(ctx) {
     // Overlay: playback objects at this frame
     if (tb.frames.length && frameIdx >= 0 && frameIdx < tb.frames.length) {
       const frame = tb.frames[frameIdx];
-      const objs = frame.o || [];
+      const _scannerSrcSet = new Set(((ctx.state.live?.snapshot?.ble?.radios) || []).map(r => String(r.source || "").toUpperCase()).filter(Boolean));
+      const objs = (frame.o || []).filter(o => !_scannerSrcSet.has(String(o.k || "").toUpperCase()));
       const _roomCount = {};
       const TB_COLORS = ["#fbbf24", "#60a5fa", "#f87171", "#34d399", "#c4b5fd", "#fb923c", "#5eead4", "#f472b6", "#a3e635", "#818cf8"];
       const _colorMap = {};
@@ -243,6 +244,7 @@ export function render(ctx) {
         const trailFrame = tb.frames[ti];
         const fade = 0.08 + 0.12 * ((ti - (frameIdx - trailLen)) / trailLen);
         for (const to of (trailFrame.o || [])) {
+          if (_scannerSrcSet.has(String(to.k || "").toUpperCase())) continue;
           if (!to.r || !roomIsoPos[to.r]) continue;
           const tpos = roomIsoPos[to.r];
           const col = _colorMap[to.k] || "#fbbf24";
@@ -416,8 +418,11 @@ export function render(ctx) {
     if (!tb.filterKey) allOpt.selected = true;
     filterSelect.appendChild(allOpt);
 
+    const _tbScannerSet = new Set(((ctx.state.live?.snapshot?.ble?.radios) || []).map(r => String(r.source || "").toUpperCase()).filter(Boolean));
     const byKind = {};
     for (const obj of tb.objKeys) {
+      // Hide scanners — they're infrastructure, not trackable devices
+      if (_tbScannerSet.has(String(obj.key || "").toUpperCase())) continue;
       const kind = obj.kind || "other";
       if (!byKind[kind]) byKind[kind] = [];
       byKind[kind].push(obj);

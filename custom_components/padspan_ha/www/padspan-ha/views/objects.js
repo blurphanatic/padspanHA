@@ -162,7 +162,9 @@ export function render(ctx){
   // --- Inline objects list (BLE scanner detections + entities) ---
   const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   const _followedAddrs = ctx.state.followedAddrs || new Set();
-  const _rawObjects = objModel && Array.isArray(objModel.list) ? objModel.list : [];
+  const _isScanner = ctx.helpers.isScanner;
+  const _rawObjects = (objModel && Array.isArray(objModel.list) ? objModel.list : [])
+    .filter(o => !_isScanner(o));  // Never show scanners as tracked objects
   // Quiet mode: only show identified or followed objects
   const allObjects = _quietMode
     ? _rawObjects.filter(o => {

@@ -64,12 +64,20 @@ export function render(ctx){
       }
     }
 
+    // Build set of known scanner addresses to filter them from device lists
+    const _scannerSources = new Set();
+    for(const r of radios){
+      if(r.source) _scannerSources.add(String(r.source).toUpperCase());
+    }
+
     // Group advertisements by scanner source, keep best RSSI per address
     const scannerDevices = {};
     for(const ad of bleAds){
       const src = String(ad.source || "unknown");
       const addr = String(ad.address || "").toUpperCase();
       if(!addr) continue;
+      // Skip advertisements FROM scanner devices (they're infrastructure, not trackable)
+      if(_scannerSources.has(addr)) continue;
       if(!scannerDevices[src]) scannerDevices[src] = {};
       const existing = scannerDevices[src][addr];
       const rssi = Number(ad.rssi);

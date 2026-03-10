@@ -583,7 +583,9 @@ export function render(ctx){
     const pt  = c=>`${Math.round(c[0])},${Math.round(c[1])}`;
     const pts = cs=>cs.map(pt).join(" ");
 
-    const _allObjRaw = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
+    const _isScanner = ctx.helpers.isScanner;
+    const _allObjRaw = ((liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [])
+      .filter(o => !_isScanner(o));
     // Dedup: suppress entity rows whose physical device already has a BLE/iBeacon/private_ble row.
     // Build a room-inheritance map (entity room → BLE key) WITHOUT mutating shared snapshot objects.
     const _isoAddrSet = new Set();
@@ -1392,7 +1394,9 @@ export function render(ctx){
     const haFloors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
 
     const allRadios  = (liveSnap && liveSnap.ble && Array.isArray(liveSnap.ble.radios)) ? liveSnap.ble.radios : [];
-    const _rgRaw = (liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
+    const _rgIsScanner = ctx.helpers.isScanner;
+    const _rgRaw = ((liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [])
+      .filter(o => !_rgIsScanner(o));
     // Dedup entity rows + filter stale history for room grid
     const _rgAddrSet = new Set();
     for (const o of _rgRaw) {

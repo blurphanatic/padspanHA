@@ -119,9 +119,12 @@ function _buildSelector(ctx, el, helpBtn, allObjects, currentAddr, isBasic) {
   });
 
   const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
+  const _isScanner = ctx.helpers.isScanner;
   for (const o of sorted) {
     const id  = o.address || o.entity_id || "";
     if (!id) continue;
+    // Hide scanners — they're infrastructure, not trackable devices
+    if (_isScanner(o)) continue;
     // Quiet mode: only show identified/labeled/followed objects
     if (_quietMode && !o.user_label && !o.identified && !ctx.actions.followedHas(id)) continue;
     const opt = document.createElement("option");

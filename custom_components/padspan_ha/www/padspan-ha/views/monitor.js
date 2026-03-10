@@ -233,7 +233,8 @@ function _zones(ctx, el){
   }
 
   const rooms = snap.rooms_discovered || [];
-  const objects = (snap.objects && snap.objects.list) || [];
+  const _isScanner = ctx.helpers.isScanner;
+  const objects = ((snap.objects && snap.objects.list) || []).filter(o => !_isScanner(o));
   const model = ctx.state.model || {};
   const floors = (model.floors || []);
   const areas = (model.areas || []);
