@@ -3435,6 +3435,20 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     }
     // Remove from live tracking — back to calibrating
     bs._liveBeaconKeys.delete(bk.key);
+    // Resolve the beacon address + all known addresses ONCE at timer start.
+    // This avoids re-resolution failures if the object temporarily drops out of a
+    // refreshed snapshot (dedup, cache timing, iBeacon MAC rotation, etc.).
+    const _initSnap = (ctx.state.live && ctx.state.live.snapshot) || null;
+    const _initAddr = _resolveBeaconAddr(bk.key, _initSnap);
+    const _initObj = (_initSnap?.objects?.list || []).find(o => o.key === bk.key);
+    const _allKnownAddrs = new Set();
+    if (_initAddr) _allKnownAddrs.add(_initAddr.toUpperCase());
+    if (_initObj) {
+      if (_initObj.address) _allKnownAddrs.add(_initObj.address.toUpperCase());
+      for (const a of (_initObj.all_addresses || [])) { if (a) _allKnownAddrs.add(String(a).toUpperCase()); }
+    }
+    const _initCanonical = _initObj?.canonical_id || "";
+
     const entry = {
       endTime: Date.now() + 60000,
       startTime: Date.now(),
@@ -3442,6 +3456,9 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       bk: { ...bk },
       readings: {},
       warning: "",  // inline warning text (updated on each poll)
+      _resolvedAddr: _initAddr,        // stable address for the entire capture
+      _allAddrs: _allKnownAddrs,       // all known MACs (handles rotation)
+      _canonical: _initCanonical,      // for private_ble matching
     };
     bs._liveTimers[bkId] = entry;
     _refreshTimerRow();
@@ -3452,9 +3469,32 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       if (!bs._liveTimers[bkId]) return;
       try { await ctx.actions.refreshSnapshotQuiet(); } catch (_) { /**/ }
       const snap2 = (ctx.state.live && ctx.state.live.snapshot) || null;
-      const addr = _resolveBeaconAddr(entry.bk.key, snap2);
+
+      // Try to update known addresses from refreshed snapshot (picks up rotated MACs)
+      const freshObj = snap2 ? (snap2.objects?.list || []).find(o => o.key === entry.bk.key) : null;
+      if (freshObj) {
+        if (freshObj.address) entry._allAddrs.add(freshObj.address.toUpperCase());
+        for (const a of (freshObj.all_addresses || [])) { if (a) entry._allAddrs.add(String(a).toUpperCase()); }
+      }
+
+      // Use the stable resolved address, falling back to fresh resolution
+      const addr = entry._resolvedAddr || _resolveBeaconAddr(entry.bk.key, snap2);
       if (addr) {
         const { perRadio } = _findBeaconAds(snap2, addr);
+        // Also directly scan advertisements for any of our known addresses
+        // (handles cases where _findBeaconAds resolution path fails)
+        if (entry._allAddrs.size > 0) {
+          for (const ad of (snap2?.ble?.advertisements || [])) {
+            const adAddr = (ad.address || "").toUpperCase();
+            const src = String(ad.source || "");
+            if (!src || typeof ad.rssi !== "number") continue;
+            if (entry._allAddrs.has(adAddr) || (entry._canonical && ad._xref && ad._xref.canonical_id === entry._canonical)) {
+              if (!perRadio[src] || ad.rssi > (perRadio[src].rssi || -200)) {
+                perRadio[src] = { name: perRadio[src]?.name || src, rssi: ad.rssi, age_s: ad.age_s };
+              }
+            }
+          }
+        }
         for (const [src, info] of Object.entries(perRadio)) {
           if (typeof info.rssi !== "number") continue;
           if (!entry.readings[src]) {
