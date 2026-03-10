@@ -123,6 +123,7 @@ export function render(ctx) {
       tb.frames = res.frames || [];
       tb.range = res.range || { start: 0, end: 0, count: 0 };
       tb.frameIdx = 0;
+      tb._staticKeys = null;  // recompute on next render
 
       // If filtering by object and no frames found, auto-expand to full data range
       if (tb.filterKey && !tb.frames.length && tb.range && tb.range.start > 0) {
@@ -133,6 +134,7 @@ export function render(ctx) {
           max_frames: 4000,
         });
         tb.frames = fullRes.frames || [];
+        tb._staticKeys = null;  // recompute on next render
         if (tb.frames.length) {
           tb._autoExpanded = true;
         }
@@ -229,7 +231,35 @@ export function render(ctx) {
     if (tb.frames.length && frameIdx >= 0 && frameIdx < tb.frames.length) {
       const frame = tb.frames[frameIdx];
       const _scannerSrcSet = new Set(((ctx.state.live?.snapshot?.ble?.radios) || []).map(r => String(r.source || "").toUpperCase()).filter(Boolean));
-      const objs = (frame.o || []).filter(o => !_scannerSrcSet.has(String(o.k || "").toUpperCase()));
+      // Also match scanner names (source key might not match traceback object key)
+      for (const r of ((ctx.state.live?.snapshot?.ble?.radios) || [])) {
+        if (r.name) _scannerSrcSet.add(String(r.name).toUpperCase());
+      }
+      // Build set of objects that never change rooms (static — useless in movement playback).
+      // Only compute once and cache on tb.
+      if (!tb._staticKeys) {
+        const _roomByKey = {};
+        for (const f of tb.frames) {
+          for (const o of (f.o || [])) {
+            if (!o.k || !o.r) continue;
+            if (!_roomByKey[o.k]) _roomByKey[o.k] = new Set();
+            _roomByKey[o.k].add(o.r);
+          }
+        }
+        tb._staticKeys = new Set();
+        for (const [k, rooms] of Object.entries(_roomByKey)) {
+          if (rooms.size <= 1) tb._staticKeys.add(k);
+        }
+      }
+      const objs = (frame.o || []).filter(o => {
+        const ku = String(o.k || "").toUpperCase();
+        if (_scannerSrcSet.has(ku)) return false;
+        // Keep the specifically filtered object even if static
+        if (tb.filterKey && o.k === tb.filterKey) return true;
+        // Hide objects that never move throughout the entire playback
+        if (tb._staticKeys.has(o.k)) return false;
+        return true;
+      });
       const _roomCount = {};
       const TB_COLORS = ["#fbbf24", "#60a5fa", "#f87171", "#34d399", "#c4b5fd", "#fb923c", "#5eead4", "#f472b6", "#a3e635", "#818cf8"];
       const _colorMap = {};
@@ -245,6 +275,7 @@ export function render(ctx) {
         const fade = 0.08 + 0.12 * ((ti - (frameIdx - trailLen)) / trailLen);
         for (const to of (trailFrame.o || [])) {
           if (_scannerSrcSet.has(String(to.k || "").toUpperCase())) continue;
+          if (tb._staticKeys && tb._staticKeys.has(to.k) && to.k !== tb.filterKey) continue;
           if (!to.r || !roomIsoPos[to.r]) continue;
           const tpos = roomIsoPos[to.r];
           const col = _colorMap[to.k] || "#fbbf24";
