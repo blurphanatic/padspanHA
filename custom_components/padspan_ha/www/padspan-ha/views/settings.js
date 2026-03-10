@@ -1129,11 +1129,16 @@ function _settingsPresence(ctx, el){
         const v = Math.max(-20, Math.min(20, parseFloat(offInp.value)||0));
         try {
           await ctx.actions.scannerOffsetSet(src, v);
-          ctx.toast(`${src}: offset set to ${v>0?"+":""}${v} dB`);
+          const _toastName = friendlyName || src;
+          ctx.toast(`${_toastName}: offset set to ${v>0?"+":""}${v} dB`);
         } catch(e){ ctx.toast("Failed to save offset", true); }
       });
+      const friendlyName = radio.name && radio.name !== src ? radio.name : "";
       offsetRows.appendChild(el("div",{style:rowStyle},[
-        el("div",{style:"font-size:12px;color:#a7f3d0;min-width:180px;font-family:monospace;overflow:hidden;text-overflow:ellipsis"},src),
+        el("div",{style:"min-width:180px;overflow:hidden;text-overflow:ellipsis"},[
+          friendlyName ? el("div",{style:"font-size:12px;color:#a7f3d0;font-weight:600"},friendlyName) : null,
+          el("div",{style:"font-size:11px;color:#94a3b8;font-family:monospace"},src),
+        ].filter(Boolean)),
         offInp,
         el("div",{class:"muted",style:"font-size:12px"},"dB"),
         offSaveBtn,
