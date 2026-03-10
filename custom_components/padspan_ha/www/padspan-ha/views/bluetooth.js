@@ -750,9 +750,12 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   let h = Math.max(460, totalDevCount * DEV_ROW_H + pad * 3 + 30, scannerMinH);
 
   // Place scanners evenly along the left (initial pass, repositioned after devices)
+  const _vizSid = ctx.helpers.radioShortId || (() => "");
   const scannerNodes = srcs.map((src, i) => {
     const y = pad + 20 + (i + 1) * ((h - pad * 2 - 20) / (srcs.length + 1));
-    return { id: src, label: (radios.find(r => String(r.source || "") === src)?.name || src), x: scannerNodeX, y };
+    const sid = _vizSid(src);
+    const name = radios.find(r => String(r.source || "") === src)?.name || src;
+    return { id: src, label: (sid ? sid + " " : "") + name, x: scannerNodeX, y };
   });
 
   // Place devices near their source scanner, then resolve overlaps
