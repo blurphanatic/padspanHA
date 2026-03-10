@@ -2344,22 +2344,37 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   const _isFollowed = (obj) => ctx.actions.followedHas(obj.address || obj.entity_id || "");
   function _autoPinTracked() {
     const pinnedKeys = new Set();
+    const pinnedLabels = new Set();
     for (const bks of Object.values(bs.draftBeacons)) {
-      for (const bk of bks) if (bk.key) pinnedKeys.add(bk.key.toUpperCase());
+      for (const bk of bks) {
+        if (bk.key) pinnedKeys.add(bk.key.toUpperCase());
+        if (bk.label) pinnedLabels.add(bk.label.toUpperCase());
+      }
     }
-    for (const obj of (snap?.objects?.list || [])) {
+    // Sort: prefer iBeacon > private_ble > ble > entity (avoids pinning
+    // the entity duplicate when the BLE version is already tracked)
+    const kindPri = { ibeacon: 0, private_ble: 1, ble: 2, entity: 3 };
+    const sortedObjs = [...(snap?.objects?.list || [])].sort((a, b) =>
+      (kindPri[a.kind] ?? 9) - (kindPri[b.kind] ?? 9)
+    );
+    for (const obj of sortedObjs) {
       if (!(obj.user_label || obj.identified || _isFollowed(obj))) continue;
       if (!obj.room || pinnedKeys.has((obj.key||"").toUpperCase())) continue;
+      // Skip if another object with the same label is already pinned
+      const lbl = (obj.user_label || obj.name || "").toUpperCase();
+      if (lbl && pinnedLabels.has(lbl)) continue;
       for (const m of maps_list) {
         const c = _roomCentroid(obj.room, m);
         if (!c) continue;
         if (!bs.draftBeacons[m.id]) bs.draftBeacons[m.id] = [];
+        const bkLabel = obj.user_label || obj.name || obj.key;
         bs.draftBeacons[m.id].push({
           id: "bk_" + Math.random().toString(16).slice(2, 10),
-          label: obj.user_label || obj.name || obj.key,
-          key: obj.key, kind: obj.kind || "ble",
+          label: bkLabel, key: obj.key, kind: obj.kind || "ble",
           x: c[0], y: c[1],
         });
+        pinnedKeys.add((obj.key||"").toUpperCase());
+        if (lbl) pinnedLabels.add(lbl);
         bs.dirtyMaps[m.id] = true;
         break;
       }
@@ -2381,16 +2396,47 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     }
     bs._mapsStamp = mapsStamp;
     _autoPinTracked();
-    // Dedup: ensure each beacon key appears on at most ONE map (keep first occurrence)
+    // Dedup: ensure each beacon key AND label appears at most once across all maps.
+    // Also auto-save deduped state to backend so duplicates don't persist.
     const _seenKeys = new Set();
+    const _seenLabels = new Set();
+    let _dedupRemoved = false;
     for (const mapId of Object.keys(bs.draftBeacons)) {
+      const before = bs.draftBeacons[mapId].length;
       bs.draftBeacons[mapId] = bs.draftBeacons[mapId].filter(bk => {
-        if (!bk.key) return true; // keyless beacons always kept
+        if (!bk.key) return true;
         const k = bk.key.toUpperCase();
+        const l = (bk.label || "").toUpperCase();
         if (_seenKeys.has(k)) return false;
+        if (l && _seenLabels.has(l)) return false;
         _seenKeys.add(k);
+        if (l) _seenLabels.add(l);
         return true;
       });
+      if (bs.draftBeacons[mapId].length !== before) {
+        bs.dirtyMaps[mapId] = true;
+        _dedupRemoved = true;
+      }
+    }
+    // Auto-save deduped beacons to backend so duplicates are permanently cleaned
+    if (_dedupRemoved) {
+      (async () => {
+        for (const mid of Object.keys(bs.dirtyMaps)) {
+          if (!bs.dirtyMaps[mid]) continue;
+          const origMap = maps_list.find(m => m.id === mid);
+          if (!origMap) continue;
+          try {
+            await ctx.actions.mapsUpdateQuiet({
+              map_id: mid,
+              beacons: bs.draftBeacons[mid] || [],
+              receivers: origMap.receivers || [],
+              calibration: origMap.calibration || {},
+              notes: origMap.notes || "",
+            });
+            bs.dirtyMaps[mid] = false;
+          } catch(_) {}
+        }
+      })();
     }
   }
 
@@ -2962,14 +3008,18 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     }
     bs.dirtyMaps = {};
     _autoPinTracked();
-    // Dedup: ensure each beacon key appears on at most ONE map
+    // Dedup: ensure each beacon key AND label appears at most once
     const _seenKeysR = new Set();
+    const _seenLabelsR = new Set();
     for (const mid of Object.keys(bs.draftBeacons)) {
       bs.draftBeacons[mid] = bs.draftBeacons[mid].filter(bk => {
         if (!bk.key) return true;
         const k = bk.key.toUpperCase();
+        const l = (bk.label || "").toUpperCase();
         if (_seenKeysR.has(k)) return false;
+        if (l && _seenLabelsR.has(l)) return false;
         _seenKeysR.add(k);
+        if (l) _seenLabelsR.add(l);
         return true;
       });
     }
