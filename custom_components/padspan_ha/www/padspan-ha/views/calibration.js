@@ -1253,10 +1253,14 @@ function _findBeaconAds(snap, deviceId) {
     }
   }
 
-  // Build source → display name from snap.ble.radios (prefer area/room over adapter name)
+  // Build source → display name from snap.ble.radios
+  // Include both device name and area for full context
   const radioNameMap = {};
   for (const r of (snap?.ble?.radios || [])) {
-    if (r.source) radioNameMap[r.source] = r.area_name || r.area || r.name || r.source;
+    if (!r.source) continue;
+    const devName = r.name || r.source;
+    const area = r.area_name || r.area || "";
+    radioNameMap[r.source] = area && area !== devName ? `${devName} · ${area}` : devName;
   }
 
   // For private_ble devices, also collect the canonical_id so we can match via _xref
