@@ -367,6 +367,33 @@ class BluetoothLive:
             # Sort: most recently seen first
             ads.sort(key=lambda x: x.get("age_s", 1e9))
 
+            # --- Synthetic radios for orphaned sources ---
+            # Some scanners (e.g. Shelly BLE proxies) relay advertisements
+            # through HA but don't appear in async_current_scanners().  If we
+            # see a source in our advertisement cache that has no matching
+            # radio entry, create a synthetic one so it shows up in the
+            # scanner list, calibration UI, and everywhere else.
+            known_sources = {r["source"] for r in radios if r.get("source")}
+            orphan_sources: Dict[str, dt.datetime] = {}  # source → latest seen
+            for src_map in self._seen_by_source.values():
+                for src, adv_obj in src_map.items():
+                    if src and src != "_unknown" and src not in known_sources:
+                        prev = orphan_sources.get(src)
+                        if prev is None or adv_obj.seen > prev:
+                            orphan_sources[src] = adv_obj.seen
+            for src, last_seen in orphan_sources.items():
+                _lh_s = round((now - last_seen).total_seconds(), 1)
+                radios.append({
+                    "source": src,
+                    "name": src,  # best-effort; enrichment in websocket.py adds device name
+                    "connectable": False,
+                    "scanning": True,
+                    "adapter": "",
+                    "last_heard_s": _lh_s,
+                })
+            if orphan_sources:
+                diag["synthetic_radios"] = len(orphan_sources)
+
             diag["adv_cache_size"] = sum(len(v) for v in self._seen_by_source.values())
             diag["unique_addresses"] = len(addr_best_age)
             diag["unique_after_cap"] = len(kept)
