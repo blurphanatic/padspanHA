@@ -729,10 +729,10 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const srcIndex = new Map(srcs.map((s, i) => [s, i]));
 
   // Filter out scanner-to-scanner detections (scanners are infrastructure, not devices)
-  const _scannerSrcSet = new Set(srcs.map(s => s.toUpperCase()));
+  const _isScanner = ctx.helpers.isScanner || (() => false);
   const filteredAds = ads.filter(a => {
     const addr = String(a.address || "").toUpperCase();
-    return !_scannerSrcSet.has(addr);
+    return !_isScanner({address: addr, name: a.name || ""});
   });
 
   // Group devices by source
@@ -766,10 +766,13 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     const list = bySrc[src].slice(0, 24);
     const blockH = list.length * DEV_ROW_H;
     const startY = base.y - blockH / 2;
+    const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
     for (let i = 0; i < list.length; i++) {
       const a = list[i];
       const addr = String(a.address || a.name || `${src}-${i}`);
       const obj = objIndex.get(addr.toUpperCase());
+      // Quiet mode: only show identified/labeled/followed devices
+      if (_quietMode && (!obj || (!obj.user_label && !obj.identified)) && !(ctx.actions.followedHas && ctx.actions.followedHas(addr))) continue;
       // Build a rich label: prefer user_label > object name > ad name > address
       let devLabel = "";
       if (obj) {

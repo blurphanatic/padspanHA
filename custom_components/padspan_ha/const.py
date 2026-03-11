@@ -4,7 +4,7 @@
 # See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 DOMAIN = "padspan_ha"
 NAME = "PadSpan HA"
-VERSION = "0.7.91"
+VERSION = "0.7.92"
 
 CONF_ENABLE_CLOUD = "enable_cloud"
 CONF_HUB_URL = "hub_url"

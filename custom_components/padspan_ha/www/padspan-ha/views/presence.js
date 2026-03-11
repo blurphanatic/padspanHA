@@ -64,11 +64,8 @@ export function render(ctx){
       }
     }
 
-    // Build set of known scanner addresses to filter them from device lists
-    const _scannerSources = new Set();
-    for(const r of radios){
-      if(r.source) _scannerSources.add(String(r.source).toUpperCase());
-    }
+    // Use isScanner helper to filter scanner self-detections
+    const _isScanner = ctx.helpers.isScanner || (() => false);
 
     // Group advertisements by scanner source, keep best RSSI per address
     const scannerDevices = {};
@@ -77,7 +74,7 @@ export function render(ctx){
       const addr = String(ad.address || "").toUpperCase();
       if(!addr) continue;
       // Skip advertisements FROM scanner devices (they're infrastructure, not trackable)
-      if(_scannerSources.has(addr)) continue;
+      if(_isScanner({address: addr, name: ad.name || ""})) continue;
       if(!scannerDevices[src]) scannerDevices[src] = {};
       const existing = scannerDevices[src][addr];
       const rssi = Number(ad.rssi);
