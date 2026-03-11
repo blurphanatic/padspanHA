@@ -306,34 +306,33 @@ def _address_matches_irk(address: str, irk: bytes) -> bool:
     """
     Check if a BLE RPA was generated from the given IRK.
 
-    Algorithm (BLE Core Spec Vol 6, Part B, §2.3.3.1):
-        addr_bytes = reversed address bytes (so LSB is first)
-        local_hash = addr_bytes[0:3]
-        prand      = addr_bytes[3:6]
-        e          = AES-128-ECB(irk, b'\\x00'*13 + prand)
-        match      = (e[0:3] == local_hash)
+    Algorithm (BLE Core Spec Vol 3, Part H, §2.2.2 — ``ah`` function):
+        rpa        = unhexlify(address)       — 6 bytes, MSB-first
+        prand      = rpa[0:3]                 — upper 24 bits (bits 47-46 = "01")
+        hash_value = rpa[3:6]                 — lower 24 bits
+        plaintext  = b'\\x00'*13 + prand      — zero-padded to 128 bits
+        ct         = AES-128-ECB(irk, plaintext)
+        match      = (ct[13:16] == hash_value)  — least-significant 24 bits of ct
 
-    HA MAC string format "AA:BB:CC:DD:EE:FF": AA is MSB (transmitted last in BLE).
-    Reversing gives [FF, EE, DD, CC, BB, AA]:
-        local_hash = [FF, EE, DD]   (lower 24 bits = hash field)
-        prand      = [CC, BB, AA]   (upper 24 bits = prand field, bits 47-46 = "01")
+    Matches the reference implementation in ``bluetooth-data-tools`` (used by HA).
     """
     try:
+        import binascii  # noqa: PLC0415
         from cryptography.hazmat.primitives.ciphers import (  # noqa: PLC0415
             Cipher, algorithms, modes,
         )
         from cryptography.hazmat.backends import default_backend  # noqa: PLC0415
 
-        addr_bytes = bytes(int(b, 16) for b in reversed(address.split(":")))
-        local_hash = addr_bytes[0:3]
-        prand      = addr_bytes[3:6]
+        rpa = binascii.unhexlify(address.replace(":", "").replace("-", ""))
+        prand = rpa[:3]
+        hash_value = rpa[3:]
 
         plaintext = b"\x00" * 13 + prand
         cipher = Cipher(algorithms.AES(irk), modes.ECB(), backend=default_backend())
         enc = cipher.encryptor()
-        e = enc.update(plaintext) + enc.finalize()
+        ct = enc.update(plaintext) + enc.finalize()
 
-        return e[0:3] == local_hash
+        return ct[13:] == hash_value
     except Exception:
         return False
 
@@ -367,11 +366,12 @@ def _parse_irk(raw: Any) -> bytes | None:
                         return b
             except ValueError:
                 pass
-            # Try base64
+            # Try base64 — Apple/Android IRKs are little-endian; reverse to
+            # big-endian for AES (matches HA's private_ble_device coordinator).
             try:
                 b = base64.b64decode(s)
                 if len(b) == 16:
-                    return b
+                    return bytes(reversed(b))
             except Exception:
                 pass
     except Exception:
