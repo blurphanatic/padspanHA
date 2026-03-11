@@ -1791,6 +1791,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     if not entry and lookup_key != addr:
                         entry = obj_store.get(addr)
 
+                    # Entity objects linked to private BLE — also check canonical_id
+                    if not entry and kind == "entity":
+                        _ent_cid = obj.get("canonical_id")
+                        if _ent_cid:
+                            entry = obj_store.get(_ent_cid)
+
                     # Also check via iBeacon cross-reference
                     if not entry and kind == "entity":
                         ib_key = obj.get("ibeacon_key")
@@ -1814,6 +1820,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                                     _device_labels[mac] = label
                             elif addr in _mac_to_ibeacon_key:
                                 _device_labels[_mac_to_ibeacon_key[addr]] = label
+                            # Propagate to canonical_id for entity→private_ble cross-ref
+                            _ent_cid = obj.get("canonical_id")
+                            if _ent_cid and _ent_cid not in _device_labels:
+                                _device_labels[_ent_cid] = label
 
                 # Second pass: apply labels to all objects
                 for obj in objects:
@@ -1830,6 +1840,11 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     label = _device_labels.get(lookup_key)
                     if not label and addr:
                         label = _device_labels.get(addr)
+                    # Entity objects linked to private BLE — check canonical_id
+                    if not label and kind == "entity":
+                        _ent_cid = obj.get("canonical_id")
+                        if _ent_cid:
+                            label = _device_labels.get(_ent_cid)
                     if not label and kind == "entity":
                         ib_key = obj.get("ibeacon_key")
                         if ib_key:
@@ -2192,7 +2207,24 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                                 best_area_ib = area
                     if best_area_ib:
                         obj["room"] = best_area_ib
-                elif kind in ("ble", "private_ble"):
+                elif kind == "private_ble":
+                    # Check ALL rotating MACs for strongest signal (like iBeacon)
+                    best_rssi_pb: float | None = None
+                    best_area_pb: str | None = None
+                    _pb_addrs = (obj.get("all_addresses") or [])
+                    if not _pb_addrs:
+                        _pb_addr = str(obj.get("address") or "").upper()
+                        if _pb_addr:
+                            _pb_addrs = [_pb_addr]
+                    for a in _pb_addrs:
+                        for src, rssi in addr_src_rssi.get(str(a).upper(), {}).items():
+                            area = source_to_area.get(src)
+                            if area and (best_rssi_pb is None or rssi > best_rssi_pb):
+                                best_rssi_pb = rssi
+                                best_area_pb = area
+                    if best_area_pb:
+                        obj["room"] = best_area_pb
+                elif kind == "ble":
                     addr = str(obj.get("address") or "").upper()
                     if not addr:
                         continue
