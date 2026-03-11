@@ -372,19 +372,6 @@ class CalibrationStore:
         scored.sort(key=lambda t: t[0])
         top_k = scored[: k]
 
-        # Weighted centroid — weight = point_weight / (dist+ε)
-        total_w = 0.0
-        wx, wy = 0.0, 0.0
-        for dist_sq, pt in top_k:
-            pw = float(pt.get("weight") or 1.0)
-            w = pw / (math.sqrt(dist_sq) + 1e-3)
-            wx += w * pt["x_frac"]
-            wy += w * pt["y_frac"]
-            total_w += w
-
-        if total_w < 1e-10:
-            return None
-
         # Determine dominant map_id among top-k points (highest total weight)
         map_weights: dict[str, float] = {}
         for dist_sq, pt in top_k:
@@ -394,6 +381,24 @@ class CalibrationStore:
             if mid:
                 map_weights[mid] = map_weights.get(mid, 0.0) + w
         best_map = max(map_weights, key=lambda m: map_weights[m]) if map_weights else ""
+
+        # Weighted centroid — ONLY from points on the dominant map.
+        # Mixing coordinates from different maps produces nonsensical positions
+        # because each map has its own coordinate space (0-1 normalized) and
+        # its own stack transforms (offset, scale, rotation).
+        total_w = 0.0
+        wx, wy = 0.0, 0.0
+        for dist_sq, pt in top_k:
+            if best_map and pt.get("map_id", "") != best_map:
+                continue
+            pw = float(pt.get("weight") or 1.0)
+            w = pw / (math.sqrt(dist_sq) + 1e-3)
+            wx += w * pt["x_frac"]
+            wy += w * pt["y_frac"]
+            total_w += w
+
+        if total_w < 1e-10:
+            return None
 
         return {
             "x_frac": round(wx / total_w, 4),

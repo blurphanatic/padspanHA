@@ -312,6 +312,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ── Load pinned beacon positions + master map room bounds ────────────
         _pinned: dict[str, dict[str, Any]] = {}  # key → {map_id, x, y, room, floor_id}
         _master_bounds: dict[str, Any] = {}  # room_bounds from the master map (precedence)
+        _master_map_id: str = ""              # master map ID (for k-NN coordinate space check)
         _master_rooms: set[str] = set()       # rooms defined on the master map
         try:
             _maps_store = self.hass.data.get(DOMAIN, {}).get(DATA_MAPS)
@@ -321,6 +322,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # Capture master map's room_bounds for precedence
                     if (_m.get("stack") or {}).get("is_master"):
                         _master_bounds = _rb
+                        _master_map_id = _m.get("id", "")
                         _master_rooms = set(_rb.keys())
                     for _bk in (_m.get("beacons") or []):
                         _bk_key = _bk.get("key")
@@ -750,15 +752,26 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _knn = _calib.knn_locate(dict(ema))
                 if _knn and _knn.get("confidence", 0.0) >= _KNN_LIVE_THRESHOLD:
                     _knn_room = _knn.get("nearest_room")
-                    # Master map room boundary check — geometry overrides k-NN nearest
-                    if _master_bounds and _knn.get("x_frac") is not None:
-                        _geo_room = _room_from_bounds(
-                            _master_bounds,
-                            float(_knn["x_frac"]),
-                            float(_knn["y_frac"]),
-                        )
-                        if _geo_room:
-                            _knn_room = _geo_room
+                    # Room boundary check — use bounds from the map that k-NN
+                    # coordinates belong to (they're in that map's coordinate space).
+                    # Only fall back to master map bounds if k-NN is on the master.
+                    if _knn.get("x_frac") is not None:
+                        _knn_mid = _knn.get("map_id", "")
+                        if _knn_mid == _master_map_id and _master_bounds:
+                            _check_bounds = _master_bounds
+                        elif _knn_mid and _maps_store:
+                            _knn_map = next((m for m in (_maps_store.data.get("maps") or []) if m.get("id") == _knn_mid), None)
+                            _check_bounds = (_knn_map.get("room_bounds") or {}) if _knn_map else _master_bounds
+                        else:
+                            _check_bounds = _master_bounds
+                        if _check_bounds:
+                            _geo_room = _room_from_bounds(
+                                _check_bounds,
+                                float(_knn["x_frac"]),
+                                float(_knn["y_frac"]),
+                            )
+                            if _geo_room:
+                                _knn_room = _geo_room
                     if _knn_room:
                         candidate = _knn_room
                         self._knn_position[key] = _knn
