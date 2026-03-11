@@ -229,8 +229,9 @@ function _setup(ctx, el, cs, calData) {
       if (obj?.room) box.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:6px" }, `Room: ${obj.room}`));
       box.appendChild(el("div", { style: "font-size:11px;color:#78909c;margin-bottom:4px" }, "Per-radio RSSI:"));
       const sorted = Object.entries(perRadio).sort((a, b) => (b[1].rssi || -200) - (a[1].rssi || -200));
+      const _setupTxPower = obj?.tx_power ?? null;
       for (const [src, info] of sorted) {
-        box.appendChild(_rssiRow(el, info.name || src, info.rssi));
+        box.appendChild(_rssiRow(el, info.name || src, info.rssi, null, info.age_s, _setupTxPower));
       }
       deviceCard.appendChild(box);
     } else {
@@ -517,13 +518,18 @@ function _pinAndListen(ctx, el, cs, calData) {
       // Live beacon signal status
       const { perRadio: pinPerRadio } = _findBeaconAds(snap, cs.deviceId);
       const pinRadioCount = Object.keys(pinPerRadio).length;
+      // Resolve TX power from selected object (iBeacon tx_power field) for distance estimate
+      const _pinObj = (snap?.objects?.list || []).find(o =>
+        (o.key || "") === cs.deviceId || (o.address || "").toUpperCase() === (cs.deviceId || "").toUpperCase() ||
+        (o.entity_id || "") === cs.deviceId || (o.canonical_id || "") === cs.deviceId);
+      const _pinTxPower = _pinObj?.tx_power ?? null;
       const signalBox = el("div", { style: `padding:8px 10px;border-radius:8px;margin-bottom:10px;background:#071008;border:1px solid ${pinRadioCount > 0 ? "#1b3526" : "#7d5c2b"}` });
       if (pinRadioCount > 0) {
         signalBox.appendChild(el("div", { style: "font-size:12px;color:#52b788;font-weight:600;margin-bottom:4px" },
           `✓ Beacon visible on ${pinRadioCount} radio${pinRadioCount > 1 ? "s" : ""}`));
         const sorted = Object.entries(pinPerRadio).sort((a, b) => (b[1].rssi || -200) - (a[1].rssi || -200));
         for (const [src, info] of sorted) {
-          signalBox.appendChild(_rssiRow(el, info.name || src, info.rssi));
+          signalBox.appendChild(_rssiRow(el, info.name || src, info.rssi, null, info.age_s, _pinTxPower));
         }
       } else {
         signalBox.appendChild(el("div", { style: "font-size:12px;color:#f59e0b;font-weight:600" },
@@ -579,7 +585,7 @@ function _buildCollectionUI(ctx, el, cs) {
   const { el: elHelper } = ctx.helpers;
   for (const [src, rd] of Object.entries(cs.readings || {})) {
     const mean = rd.samples.length ? rd.samples.reduce((a, b) => a + b, 0) / rd.samples.length : -100;
-    scanDiv.appendChild(_rssiRow(elHelper, rd.name || src, Math.round(mean), rd.samples.length));
+    scanDiv.appendChild(_rssiRow(elHelper, rd.name || src, Math.round(mean), rd.samples.length, null, cs._txPower));
   }
   wrap.appendChild(scanDiv);
 
@@ -605,6 +611,11 @@ function _startCollection(ctx, cs, _snap, _mapData) {
   cs.stopFlag    = false;
   cs.readings    = {};
   cs._pollCount  = 0;
+  // Resolve TX power for distance estimates during/after collection
+  const _csObj = (_snap?.objects?.list || []).find(o =>
+    (o.key || "") === cs.deviceId || (o.address || "").toUpperCase() === (cs.deviceId || "").toUpperCase() ||
+    (o.entity_id || "") === cs.deviceId || (o.canonical_id || "") === cs.deviceId);
+  cs._txPower = _csObj?.tx_power ?? null;
   ctx.actions.renderRooms();
 
   const endTime = Date.now() + cs.duration * 1000;
@@ -650,7 +661,7 @@ function _startCollection(ctx, cs, _snap, _mapData) {
       if (sorted.length) {
         for (const [src, rd] of sorted) {
           const mean = rd.samples.reduce((a, b) => a + b, 0) / rd.samples.length;
-          cs._scanEl.appendChild(_rssiRow(el, rd.name || src, Math.round(mean), rd.samples.length));
+          cs._scanEl.appendChild(_rssiRow(el, rd.name || src, Math.round(mean), rd.samples.length, null, cs._txPower));
         }
       } else {
         cs._scanEl.appendChild(el("div", { style: "font-size:12px;color:#f59e0b;text-align:center;padding:8px" },
@@ -687,7 +698,7 @@ function _buildSavePanel(ctx, el, cs, calData, mapData) {
   if (readingsEntries.length) {
     for (const [src, rd] of readingsEntries) {
       const mean = rd.samples.length ? rd.samples.reduce((a, b) => a + b, 0) / rd.samples.length : -100;
-      wrap.appendChild(_rssiRow(el, rd.name || src, Math.round(mean), rd.samples.length));
+      wrap.appendChild(_rssiRow(el, rd.name || src, Math.round(mean), rd.samples.length, null, cs._txPower));
     }
   } else {
     wrap.appendChild(el("div", { style: "font-size:12px;color:#f59e0b;margin-bottom:8px" },
@@ -1290,18 +1301,38 @@ function _totalSamples(cs) {
   return Object.values(cs.readings || {}).reduce((t, r) => t + r.samples.length, 0);
 }
 
-function _rssiRow(el, name, rssi, samples) {
+function _rssiRow(el, name, rssi, samples, age_s, txPower) {
   const pct = Math.max(0, Math.min(100, ((rssi ?? -100) + 100) / 60 * 100));
   const color = pct >= 66 ? "#52b788" : pct >= 33 ? "#f59e0b" : "#dc2626";
+  // Distance estimate: log-distance path loss  d = 10^((txPower - rssi) / (10 * n))
+  // txPower = measured RSSI at 1m (default -59 dBm), n = path-loss exponent (default 2.5 for indoor)
+  let distStr = null;
+  if (rssi != null) {
+    const tx = (typeof txPower === "number") ? txPower : -59;
+    const n = 2.5;
+    const d = Math.pow(10, (tx - rssi) / (10 * n));
+    distStr = d < 10 ? `~${d.toFixed(1)}m` : `~${Math.round(d)}m`;
+  }
+  // Age label
+  let ageStr = null;
+  if (age_s != null && isFinite(age_s)) {
+    ageStr = age_s < 60 ? `${Math.round(age_s)}s ago` : `${Math.floor(age_s / 60)}m ago`;
+  }
   return el("div", {
     style: "display:flex;align-items:center;gap:8px;padding:4px 0"
   }, [
     el("div", { style: "font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#94a3b8" }, name || "?"),
+    ageStr
+      ? el("div", { style: "font-size:10px;color:#78909c;width:40px;text-align:right;flex-shrink:0" }, ageStr)
+      : null,
     el("div", { style: "width:80px;height:6px;background:#1b3526;border-radius:3px;overflow:hidden;flex-shrink:0" }, [
       el("div", { style: `width:${pct.toFixed(0)}%;height:100%;background:${color}` }),
     ]),
     el("div", { style: "font-family:monospace;font-size:11px;color:#e2e8f0;width:48px;text-align:right;flex-shrink:0" },
       rssi != null ? rssi + " dBm" : "—"),
+    distStr
+      ? el("div", { style: "font-size:10px;color:#78909c;width:38px;text-align:right;flex-shrink:0" }, distStr)
+      : null,
     samples != null
       ? el("div", { style: "font-size:10px;color:#78909c;width:28px;text-align:right;flex-shrink:0" }, "×" + samples)
       : null,
