@@ -974,7 +974,7 @@ export function render(ctx){
           const a = Number(o.age_s);
           parts.push(`Seen: ${a<60 ? Math.round(a)+"s ago" : Math.floor(a/60)+"m ago"}`);
         }
-        if(o.sources && o.sources.length) parts.push(`Scanners: ${o.sources.join(", ")}`);
+        if(o.sources && o.sources.length) parts.push(`Scanners: ${o.sources.map(s => typeof s === "object" ? (s.source || "") : String(s)).join(", ")}`);
         if(!o.user_label) parts.push("Click to tag / view details");
         return parts.join("|");  // pipe-delimited for data attribute, rendered as lines
       };

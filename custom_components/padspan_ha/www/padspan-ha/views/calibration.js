@@ -619,8 +619,8 @@ function _startCollection(ctx, cs, _snap, _mapData) {
     const snap = ctx.state.live?.snapshot;
 
     // ── Collect per-radio RSSI from BLE advertisements (primary source) ──────
-    // snap.objects.list[].sources is just a list of source-ID strings, NOT RSSI data.
-    // The real per-radio RSSI lives in snap.ble.advertisements, one entry per {device,radio}.
+    // snap.objects.list[].sources is a list of {source, rssi, age_s} objects.
+    // The real per-radio RSSI also lives in snap.ble.advertisements, one entry per {device,radio}.
     const { perRadio } = _findBeaconAds(snap, cs.deviceId);
     for (const [src, info] of Object.entries(perRadio)) {
       if (typeof info.rssi !== "number") continue;

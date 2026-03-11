@@ -821,7 +821,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     "rssi": a.get("rssi"),
                     "last_seen": a.get("last_seen"),
                     "age_s": a.get("age_s"),
-                    "sources": set(),
+                    "sources": {},  # source_name → {"rssi": ..., "age_s": ...}
                     "connectable": a.get("connectable"),
                     # Extra fields for identification hints (mirrors HA advertisement monitor)
                     "manufacturer_data": a.get("manufacturer_data") or {},
@@ -832,7 +832,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
             src = a.get("source")
             if src:
-                rec["sources"].add(str(src))
+                src_key = str(src)
+                a_rssi = a.get("rssi")
+                a_age = a.get("age_s")
+                prev = rec["sources"].get(src_key)
+                if prev is None or (a_rssi is not None and (prev.get("rssi") is None or a_rssi > prev["rssi"])):
+                    rec["sources"][src_key] = {"rssi": a_rssi, "age_s": a_age}
 
             # Merge identification hints (keep the richest set we have)
             try:
@@ -940,8 +945,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         }
                     g = ibeacon_groups[uuid_key]
                     g["addrs"].add(addr)
-                    for s in (rec.get("sources") or []):
-                        g["sources"].append(s)
+                    for src_key, src_info in (rec.get("sources") or {}).items():
+                        g["sources"].append({"source": src_key, **(src_info if isinstance(src_info, dict) else {})})
                     rssi = rec.get("rssi")
                     if rssi is not None:
                         g["_rssi_list"].append((rssi, rec.get("age_s")))
@@ -957,13 +962,14 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 else:
                     g["rssi"] = None; g["age_s"] = None
                 g["addrs"] = sorted(g["addrs"])
-                seen_srcs: set[str] = set()
-                dedup: list[Any] = []
+                dedup_map: dict[str, dict] = {}
                 for s in g["sources"]:
                     sk = s.get("source") if isinstance(s, dict) else str(s)
-                    if sk not in seen_srcs:
-                        seen_srcs.add(sk); dedup.append(s)
-                g["sources"] = dedup
+                    prev = dedup_map.get(sk)
+                    s_rssi = s.get("rssi") if isinstance(s, dict) else None
+                    if prev is None or (s_rssi is not None and (prev.get("rssi") is None or s_rssi > prev["rssi"])):
+                        dedup_map[sk] = s if isinstance(s, dict) else {"source": sk}
+                g["sources"] = sorted(dedup_map.values(), key=lambda x: x.get("source", ""))
 
                 # Detect simultaneous MACs → split into per-MAC objects.
                 # If multiple MACs are all recently seen (age < 60s), they are
@@ -979,7 +985,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                             rec = ble_by_addr.get(mac, {})
                             split_key = f"{uuid_key}:{mac}"
                             # Use the sources from this specific MAC's advertisement
-                            mac_sources = rec.get("sources") or []
+                            mac_src_dict = rec.get("sources") or {}
+                            mac_sources = [{"source": k, **(v if isinstance(v, dict) else {})} for k, v in mac_src_dict.items()]
                             _split_groups[split_key] = {
                                 "uuid": g["uuid"],
                                 "major": g["major"],
@@ -1021,7 +1028,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     _private_groups[cid] = {
                         "canonical": canonical,
                         "addrs": [],
-                        "all_sources": set(),
+                        "all_sources": {},  # source_name → {"rssi": ..., "age_s": ...}
                         "all_linked": set(),
                         "best_rssi": -999,
                         "best_rec": rec,
@@ -1033,8 +1040,11 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     }
                 pg = _private_groups[cid]
                 pg["addrs"].append(addr)
-                for s in (rec.get("sources") or []):
-                    pg["all_sources"].add(s if isinstance(s, str) else str(s))
+                for src_key, src_info in (rec.get("sources") or {}).items():
+                    prev = pg["all_sources"].get(src_key)
+                    s_rssi = src_info.get("rssi") if isinstance(src_info, dict) else None
+                    if prev is None or (s_rssi is not None and (prev.get("rssi") is None or s_rssi > prev["rssi"])):
+                        pg["all_sources"][src_key] = src_info if isinstance(src_info, dict) else {"rssi": None, "age_s": None}
                 for e in addr_to_entities.get(addr, []):
                     pg["all_linked"].add(e)
                 rssi = rec.get("rssi")
@@ -1150,7 +1160,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "rssi": rec.get("rssi"),
                 "last_seen": rec.get("last_seen"),
                 "age_s": rec.get("age_s"),
-                "sources": sorted(list(rec.get("sources") or [])),
+                "sources": sorted(
+                    [{"source": k, "rssi": v.get("rssi"), "age_s": v.get("age_s")} for k, v in (rec.get("sources") or {}).items()],
+                    key=lambda x: x["source"],
+                ),
                 "manufacturer_data": rec.get("manufacturer_data") or {},
                 "service_data": rec.get("service_data") or {},
                 "service_uuids": rec.get("service_uuids") or [],
@@ -1181,7 +1194,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "rssi": rec.get("rssi"),
                 "last_seen": rec.get("last_seen"),
                 "age_s": rec.get("age_s"),
-                "sources": sorted(pg["all_sources"]),
+                "sources": sorted(
+                    [{"source": k, "rssi": v.get("rssi"), "age_s": v.get("age_s")} for k, v in pg["all_sources"].items()],
+                    key=lambda x: x["source"],
+                ),
                 "manufacturer_data": pg["manufacturer_data"],
                 "service_data": pg["service_data"],
                 "service_uuids": pg["service_uuids"],
