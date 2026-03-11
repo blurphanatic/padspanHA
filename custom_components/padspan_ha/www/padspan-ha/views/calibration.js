@@ -2760,19 +2760,13 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           const isLive = bs._liveBeaconKeys.has(bk.key);
           const isTimerActive = bs._liveTimers[bk.id] && bs._liveTimers[bk.id].endTime > Date.now();
 
-          // Live beacons: use snapshot estimated position if available
+          // Always render at draft (pinned) position — the user placed it here.
+          // Server k-NN estimates may be stale or on a different map; showing them
+          // would make the beacon appear to jump away and become undraggable.
           let useX = bk.x || 0, useY = bk.y || 0;
           let liveObj = null;
           if (isLive && !isTimerActive) {
             liveObj = (_snap?.objects?.list || []).find(o => o.key === bk.key);
-            if (liveObj && typeof liveObj.x_frac === "number" && typeof liveObj.y_frac === "number") {
-              useX = liveObj.x_frac;
-              useY = liveObj.y_frac;
-            } else if (liveObj && liveObj.room) {
-              // Fallback: room centroid
-              const rc = _roomCentroid(liveObj.room, m);
-              if (rc) { useX = rc[0]; useY = rc[1]; }
-            }
           }
 
           const [wx, wy] = xf.mapPt(useX, useY);
@@ -2785,7 +2779,17 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           const confidence = liveObj?.knn_confidence;
           const tipParts = [liveObj?.user_label || liveObj?.name || bk.label || bk.key || "Beacon"];
           if (detectedRoom) tipParts.push("Room: " + detectedRoom);
-          tipParts.push(`x: ${(useX * 100).toFixed(1)}% y: ${(useY * 100).toFixed(1)}%`);
+          tipParts.push(`Pinned: x ${(useX * 100).toFixed(1)}% y ${(useY * 100).toFixed(1)}%`);
+          // Show server estimate in tooltip if available
+          let serverX = null, serverY = null;
+          if (liveObj && typeof liveObj.x_frac === "number" && typeof liveObj.y_frac === "number") {
+            serverX = liveObj.x_frac; serverY = liveObj.y_frac;
+            tipParts.push(`Server: x ${(serverX * 100).toFixed(1)}% y ${(serverY * 100).toFixed(1)}%`);
+            if (liveObj.knn_map_id && liveObj.knn_map_id !== m.id) {
+              const srvMap = maps_list.find(mm => mm.id === liveObj.knn_map_id);
+              tipParts.push(`Server map: ${srvMap?.name || liveObj.knn_map_id}`);
+            }
+          }
           if (isLive && confidence != null) tipParts.push(`Confidence: ${(confidence * 100).toFixed(0)}%`);
           if (isLive) tipParts.push("LIVE");
           const tip = tipParts.join(" | ");
@@ -2822,6 +2826,24 @@ function _beaconTuneTab(ctx, el, cs, calData) {
             s += `<text x="${bx}" y="${by + 42}" text-anchor="middle" fill="#f59e0b" font-size="10" font-weight="700">${rem}s</text>`;
           }
           s += `</g>`;
+
+          // Ghost marker: show server's k-NN estimated position (if on this map and differs from pinned)
+          if (isLive && !isTimerActive && liveObj && serverX != null && serverY != null) {
+            const sameMap = !liveObj.knn_map_id || liveObj.knn_map_id === m.id;
+            if (sameMap) {
+              const dist = Math.hypot(serverX - useX, serverY - useY);
+              if (dist > 0.03) {  // only show if > 3% away
+                const [gwx, gwy] = xf.mapPt(serverX, serverY);
+                const [gpx, gpy] = iso(gwx, gwy, z);
+                const gx = Math.round(gpx), gy = Math.round(gpy);
+                // Dashed line from pinned to server estimate
+                s += `<line x1="${bx}" y1="${by}" x2="${gx}" y2="${gy}" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>`;
+                // Small ghost diamond at server position
+                s += `<rect x="${gx - 5}" y="${gy - 5}" width="10" height="10" rx="1" transform="rotate(45 ${gx} ${gy})" fill="none" stroke="#f59e0b" stroke-width="1" stroke-dasharray="3,2" opacity="0.5"/>`;
+                s += `<text x="${gx}" y="${gy + 16}" text-anchor="middle" fill="#f59e0b" font-size="7" opacity="0.6">server</text>`;
+              }
+            }
+          }
         }
       }
 
@@ -3781,6 +3803,26 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     });
     infoLine.appendChild(posHelp);
     infoCard.appendChild(infoLine);
+    // Server estimate row (helps user see if calibration is converging)
+    const isLive = bs._liveBeaconKeys.has(bk.key);
+    if (isLive && obj) {
+      const srvParts = [];
+      if (typeof obj.x_frac === "number" && typeof obj.y_frac === "number") {
+        srvParts.push(`x ${(obj.x_frac * 100).toFixed(1)}%, y ${(obj.y_frac * 100).toFixed(1)}%`);
+        if (obj.knn_map_id && obj.knn_map_id !== bs.selectedBk.mapId) {
+          const srvMap = maps_list.find(mm => mm.id === obj.knn_map_id);
+          srvParts.push(`on ${srvMap?.name || obj.knn_map_id}`);
+        }
+        if (obj.knn_confidence != null) srvParts.push(`${(obj.knn_confidence * 100).toFixed(0)}% conf`);
+        if (obj.room) srvParts.push(`room: ${obj.room}`);
+      }
+      if (srvParts.length) {
+        const srvLine = document.createElement("div");
+        srvLine.style.cssText = "font-size:11px;color:#f59e0b;margin-top:4px";
+        srvLine.textContent = `Server estimate: ${srvParts.join(" · ")}`;
+        infoCard.appendChild(srvLine);
+      }
+    }
     // Move-to-map control
     const otherMaps = maps_list.filter(m => m.id !== bs.selectedBk.mapId);
     if (otherMaps.length) {
