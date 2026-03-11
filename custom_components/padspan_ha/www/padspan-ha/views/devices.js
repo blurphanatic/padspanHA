@@ -58,6 +58,10 @@ export function render(ctx) {
       };
     });
 
+  // Quiet mode: hide unidentified/untagged devices
+  const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
+  const _followedAddrs = ctx.state.followedAddrs || new Set();
+
   // Merge: entity trackers + BLE objects, dedup by id
   const seen = new Set();
   const allDevices = [];
@@ -65,7 +69,14 @@ export function render(ctx) {
     if (t.id && !seen.has(t.id)) { seen.add(t.id); allDevices.push(t); }
   }
   for (const b of bleDevices) {
-    if (b.id && !seen.has(b.id)) { seen.add(b.id); allDevices.push(b); }
+    if (b.id && !seen.has(b.id)) {
+      // In quiet mode, skip untagged/unidentified BLE objects (unless followed)
+      if (_quietMode && !b.tagged) {
+        const fk = String(b.id || "").toUpperCase();
+        if (!fk || !_followedAddrs.has(fk)) continue;
+      }
+      seen.add(b.id); allDevices.push(b);
+    }
   }
 
   // ── View state ────────────────────────────────────────────────────────────

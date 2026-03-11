@@ -427,15 +427,27 @@ function renderScanners(ctx, radios, sources, adsAll) {
   detailCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap" }, [
     _sid ? el("span", { class: "pill", style: "font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px" }, _sid) : null,
     el("div", { class: "h2", style: "margin:0" }, selName),
-    el("span", { class: "badge" }, `${uniqueAds.length} devices`),
+    el("span", { class: "badge" }, `${_filteredAds.length} ${_quietMode ? "tracked" : "devices"}`),
   ].filter(Boolean)));
   detailCard.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:10px" }, "All BLE devices heard by this scanner, sorted by signal strength."));
 
-  if (!uniqueAds.length) {
-    detailCard.appendChild(el("div", { class: "muted", style: "padding:12px 0" }, "No devices heard by this scanner yet."));
+  // Quiet mode: filter per-scanner device list
+  const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
+  const _filteredAds = _quietMode
+    ? uniqueAds.filter(a => {
+        const addr = (a.address || "").toUpperCase();
+        const obj = objByAddr.get(addr);
+        if (obj && (obj.user_label || obj.identified)) return true;
+        if (ctx.actions.followedHas && ctx.actions.followedHas(addr)) return true;
+        return false;
+      })
+    : uniqueAds;
+
+  if (!_filteredAds.length) {
+    detailCard.appendChild(el("div", { class: "muted", style: "padding:12px 0" }, _quietMode ? "No tracked devices heard by this scanner." : "No devices heard by this scanner yet."));
   } else {
     const tbody = el("tbody");
-    for (const a of uniqueAds) {
+    for (const a of _filteredAds) {
       const addr = (a.address || "").toUpperCase();
       const obj = objByAddr.get(addr);
       const displayName = obj ? (obj.user_label || obj.name || addr) : (a.name && a.name !== addr ? a.name : addr);
@@ -696,11 +708,26 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     return card;
   })();
 
+  // Quiet mode: filter ad list to only tracked/identified devices
+  const _qm = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
+  const _monitorAds = _qm
+    ? ads.filter(a => {
+        const addr = String(a.address || "").toUpperCase();
+        const xr = a._xref || {};
+        const obj = addr ? objIndex.get(addr) : null;
+        if (xr.label || (obj && (obj.user_label || obj.identified))) return true;
+        if (ctx.actions.followedHas && ctx.actions.followedHas(addr)) return true;
+        return false;
+      })
+    : ads;
+
   return el("div", { class: "grid-2" }, [
     el("div", { class: "card" }, [
       el("div", { class: "h2" }, "Advertisement monitor"),
-      el("div", { class: "muted" }, "Click a row to inspect. Enrichment shows decoded manufacturer, services, and cross-references to tracked objects."),
-      el("div", { class: "bt-list bt-adv-list" }, ads.map(row)),
+      el("div", { class: "muted" }, _qm
+        ? "Showing tracked devices only (quiet mode). Click a row to inspect."
+        : "Click a row to inspect. Enrichment shows decoded manufacturer, services, and cross-references to tracked objects."),
+      el("div", { class: "bt-list bt-adv-list" }, _monitorAds.map(row)),
     ]),
     details || el("div", { class: "card" }, [el("div", { class: "h2" }, "Details"), el("div", { class: "muted" }, "Select an advertisement on the left.")]),
   ]);

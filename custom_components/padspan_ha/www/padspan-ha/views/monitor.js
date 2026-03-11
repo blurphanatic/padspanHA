@@ -38,6 +38,7 @@ export function render(ctx){
   // ═══════════════════════════════════════════════════════════════════════════
   // DIAGNOSTICS TAB (default)
   // ═══════════════════════════════════════════════════════════════════════════
+  const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   const grid = el("div",{class:"grid"});
 
   // ── BLE Diag Errors (top-level warning) ──
@@ -71,13 +72,16 @@ export function render(ctx){
   const objSummary = snap && snap.objects && snap.objects.summary;
   if(objSummary){
     const total = objSummary.total || 0;
+    const identified = objSummary.identified || 0;
     const ble = objSummary.ble || 0;
     const unid = objSummary.unidentified || 0;
 
-    const unidBadge = unid > 0
+    const displayTotal = _quietMode ? identified : total;
+
+    const unidBadge = _quietMode ? null : (unid > 0
       ? el("span",{class:"badge warn",style:"cursor:pointer"}, `${unid} unidentified`)
-      : el("span",{class:"badge"}, "All identified");
-    if(unid > 0){
+      : el("span",{class:"badge"}, "All identified"));
+    if(unidBadge && unid > 0){
       unidBadge.addEventListener("click", ()=>{
         ctx.state.view = "objects";
         ctx.actions.renderRooms();
@@ -88,10 +92,10 @@ export function render(ctx){
     grid.appendChild(el("div",{class:"card"},[
       el("div",{style:"font-weight:700"},"BLE Objects"),
       el("div",{class:"row",style:"gap:8px;flex-wrap:wrap;margin-top:8px"},[
-        el("span",{class:"badge"}, `${total} total`),
-        el("span",{class:"badge"}, `${ble} BLE ads`),
+        el("span",{class:"badge"}, `${displayTotal} ${_quietMode ? "tracked" : "total"}`),
+        _quietMode ? null : el("span",{class:"badge"}, `${ble} BLE ads`),
         unidBadge,
-      ]),
+      ].filter(Boolean)),
     ]));
   } else {
     grid.appendChild(el("div",{class:"card"},[
@@ -368,7 +372,11 @@ function _insights(ctx, el, _sid){
   }
 
   const rooms = snap.rooms_discovered || [];
-  const objects = (snap.objects && snap.objects.list) || [];
+  const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
+  const _allObjects = (snap.objects && snap.objects.list) || [];
+  const objects = _quietMode
+    ? _allObjects.filter(o => o.user_label || o.identified || (ctx.actions.followedHas && ctx.actions.followedHas(o.address || o.key || "")))
+    : _allObjects;
   const radios = (snap.ble && snap.ble.radios) || [];
   const ads = (snap.ble && snap.ble.advertisements) || [];
   const roomTagMap = ctx.state.roomTagMap || {};

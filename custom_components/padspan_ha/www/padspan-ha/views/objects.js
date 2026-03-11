@@ -172,8 +172,6 @@ export function render(ctx){
         // Check if followed
         const fk = (o.kind === "ibeacon" ? (o.key || "") : (o.address || o.entity_id || "")).toUpperCase();
         if (fk && _followedAddrs.has(fk)) return true;
-        // Always keep HA entities
-        if (o.kind === "entity") return true;
         return false;
       })
     : _rawObjects;
