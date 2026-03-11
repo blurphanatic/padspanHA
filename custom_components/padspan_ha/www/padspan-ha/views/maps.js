@@ -77,10 +77,14 @@ function _tabBtn(id,label,active,setTab){
   return b;
 }
 
+const OUTSIDE_FLOOR_ID = "__outside__";
+function _isOutsideMap(m) { return (m.floor_id || "") === OUTSIDE_FLOOR_ID; }
+
 function _floorName(ctx, floor_id){
   const floors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
   const id = String(floor_id || "").trim();
   if(!id) return "—";
+  if(id === OUTSIDE_FLOOR_ID) return "Outside";
   const f = floors.find(x=>String(x.id)===id);
   return f ? (f.name || f.id) : id;
 }
@@ -123,10 +127,11 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
     const isMaster   = !!(m.stack?.is_master);
     const isEligible = !isMaster && _isMasterEligible(m);
 
-    // Name row: master badge inline
+    // Name row: master + outside badges inline
     const nameRow = el("div",{style:"display:flex;align-items:center;gap:6px"},[
       el("div",{style:"font-weight:700"}, m.name || m.id),
       ...(isMaster ? [el("span",{style:"padding:1px 7px;border-radius:10px;background:#1a3a0a;border:1px solid #52b788;font-size:10px;color:#86efac;font-weight:600"},"⭐ Master")] : []),
+      ...(_isOutsideMap(m) ? [el("span",{style:"padding:1px 7px;border-radius:10px;background:#1a2a0a;border:1px solid #6b8e23;font-size:10px;color:#9acd32;font-weight:600"},"Outside")] : []),
     ]);
 
     const left = el("div",{style:"flex:1;min-width:0"},[
@@ -206,6 +211,10 @@ function _upload(ctx, helpBtn, isBasic){
     opt.textContent = f.name || f.id;
     floorSel.appendChild(opt);
   }
+  // Always offer "Outside" option
+  const _outsideOpt = document.createElement("option");
+  _outsideOpt.value = OUTSIDE_FLOOR_ID; _outsideOpt.textContent = "Outside";
+  floorSel.appendChild(_outsideOpt);
   if(!floorSel.value && floors[0]) floorSel.value = floors[0].id;
 
   const name = el("input",{type:"text", placeholder:"Map name (e.g., Main Floor)"});
@@ -308,7 +317,14 @@ function _upload(ctx, helpBtn, isBasic){
     const f = ctx.state._mapsUploadFile || (file.files && file.files[0]);
     if(!f){ status.textContent = "Pick an image file first. Supported: PNG, JPG, GIF, BMP, WebP, SVG."; return; }
     let floor_id = (floorSel.value||"").trim();
-    if(!floor_id){ status.textContent = "Choose a floor (from HA) before uploading."; return; }
+    if(!floor_id){ status.textContent = "Choose a floor before uploading."; return; }
+    if(floor_id === OUTSIDE_FLOOR_ID){
+      const existingMaps = ctx.state.maps?.list || [];
+      if(existingMaps.some(m => m.floor_id === OUTSIDE_FLOOR_ID)){
+        status.textContent = "Only one Outside map is allowed. Delete the existing one first.";
+        return;
+      }
+    }
     status.textContent = "Reading\u2026";
     status.style.color = "";
     try{
@@ -1162,6 +1178,10 @@ function _floorSelect(floors, value, onChange){
     o.value = f.id; o.textContent = f.name || f.id;
     sel.appendChild(o);
   }
+  // Always offer "Outside" as a floor option
+  const oOut = document.createElement("option");
+  oOut.value = OUTSIDE_FLOOR_ID; oOut.textContent = "Outside";
+  sel.appendChild(oOut);
   sel.value = value || (floors[0] && floors[0].id) || "main";
   sel.addEventListener("change", ()=>onChange(sel.value));
   return sel;
@@ -1441,6 +1461,7 @@ function _averageAlignWithTieIns(newX, newY, newScale, newRot, tieIns) {
 
 // Returns true if a map qualifies for master designation (pristine, unmodified).
 function _isMasterEligible(m) {
+  if(_isOutsideMap(m)) return false;  // Outside maps cannot be masters
   const s = m.stack || {};
   return Math.abs(s.x_offset||0)          < 0.05
       && Math.abs(s.y_offset||0)          < 0.05
@@ -2138,11 +2159,12 @@ function _stack(ctx, maps, helpBtn){
   const { el, esc } = ctx.helpers;
   helpBtn = helpBtn || (()=>null);
 
-  // Init alignment state
+  // Init alignment state (exclude outside maps from alignment candidates)
+  const _alignableMaps = maps.filter(m => !_isOutsideMap(m));
   if(!ctx.state.maps._stackAlign){
-    const firstTgt = maps[1] || maps[0] || null;
+    const firstTgt = _alignableMaps[1] || _alignableMaps[0] || null;
     ctx.state.maps._stackAlign = {
-      refId:      maps[0] ? maps[0].id : null,
+      refId:      _alignableMaps[0] ? _alignableMaps[0].id : null,
       targetId:   firstTgt ? firstTgt.id : null,
       x_offset:   firstTgt?.stack?.x_offset   ?? 0.0,
       y_offset:   firstTgt?.stack?.y_offset   ?? 0.0,
@@ -2249,6 +2271,11 @@ function _stack(ctx, maps, helpBtn){
       if(f.id === (m.floor_id||"")) o.selected = true;
       floorSel2.appendChild(o);
     });
+    // Always offer "Outside" option
+    const _oOpt2 = document.createElement("option");
+    _oOpt2.value = OUTSIDE_FLOOR_ID; _oOpt2.textContent = "Outside";
+    if(m.floor_id === OUTSIDE_FLOOR_ID) _oOpt2.selected = true;
+    floorSel2.appendChild(_oOpt2);
     tdFloor.appendChild(floorSel2);
     tr.appendChild(tdFloor);
 
@@ -2326,16 +2353,16 @@ function _stack(ctx, maps, helpBtn){
   const selRow = el("div",{style:"display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-top:10px"});
   const refSel = document.createElement("select"); refSel.className = "select";
   const tgtSel = document.createElement("select"); tgtSel.className = "select";
-  // Reference: masters sorted to top (they are the natural fixed reference)
-  const mapsForRef = [...maps].sort((a,b) => (b.stack?.is_master?1:0) - (a.stack?.is_master?1:0));
+  // Reference: masters sorted to top (they are the natural fixed reference); exclude Outside maps
+  const mapsForRef = [..._alignableMaps].sort((a,b) => (b.stack?.is_master?1:0) - (a.stack?.is_master?1:0));
   for(const m of mapsForRef){
     const oR = document.createElement("option"); oR.value = m.id;
     oR.textContent = (m.stack?.is_master ? "⭐ " : "") + (m.name||m.id);
     if(m.id === alignState.refId) oR.selected = true;
     refSel.appendChild(oR);
   }
-  // Target: show all, flag masters so user is aware
-  for(const m of maps){
+  // Target: show all except Outside maps, flag masters so user is aware
+  for(const m of _alignableMaps){
     const oT = document.createElement("option"); oT.value = m.id;
     oT.textContent = (m.stack?.is_master ? "⭐ " : "") + (m.name||m.id);
     if(m.id === alignState.targetId) oT.selected = true;
@@ -3379,7 +3406,34 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
     byLevel.get(z).push(m);
   }
   const sortedLevels = [...byLevel.keys()].sort((a,b)=>a-b);
-  const levelColor = (z) => LAYER_PAL[sortedLevels.indexOf(z) % LAYER_PAL.length];
+
+  // ── Outside map auto-scale: shrink large outdoor layers so they don't dwarf indoor maps ──
+  const _indoorAreas = [];
+  let _outsideArea = 0;
+  for(const m of visMaps){
+    const stk = m.stack||{}, sc = stk.scale||1.0, sxAdj = stk.scale_x_adj||1.0;
+    const ar = (m.image?.height||600)/(m.image?.width||800);
+    const arRef = stk.ref_ar || ar;
+    const area = sc * sxAdj * sc * arRef;
+    if(_isOutsideMap(m)) _outsideArea = area;
+    else _indoorAreas.push(area);
+  }
+  let _outsideDisplayScale = 1.0, _outsideScaleLabel = "";
+  if(_outsideArea > 0 && _indoorAreas.length){
+    const sa = [..._indoorAreas].sort((a,b)=>a-b);
+    const median = sa[Math.floor(sa.length/2)];
+    _outsideDisplayScale = Math.min(1.0, median / _outsideArea);
+    if(_outsideDisplayScale < 1.0){
+      const ratio = Math.round(1 / _outsideDisplayScale);
+      _outsideScaleLabel = `Outside displayed at 1:${ratio}`;
+    }
+  }
+
+  const levelColor = (z) => {
+    const grp = byLevel.get(z) || [];
+    if(grp.some(m => _isOutsideMap(m))) return "#6b8e23";
+    return LAYER_PAL[sortedLevels.indexOf(z) % LAYER_PAL.length];
+  };
   const LEGEND_H = sortedLevels.length * 30 + 24;
   const HTOTAL = BASE_H + LEGEND_H;
 
@@ -3406,7 +3460,9 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
     // Merged bounding box using correct CSS-aligned world coords for all four corners of each map
     let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
     for(const m of group){
-      const stk=m.stack||{}, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+      const stk=m.stack||{}, ox=stk.x_offset||0, oy_=stk.y_offset||0;
+      const _isOut = _isOutsideMap(m);
+      const sc = (stk.scale||1.0) * (_isOut ? _outsideDisplayScale : 1.0);
       const sxAdj = stk.scale_x_adj || 1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
       const arRef = stk.ref_ar || ar;
@@ -3438,7 +3494,8 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
     const lidx = sortedLevels.indexOf(z);
     for(const m of group){
       const stk = m.stack||{};
-      const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+      const _isOut2 = _isOutsideMap(m);
+      const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=(stk.scale||1.0) * (_isOut2 ? _outsideDisplayScale : 1.0);
       const sxAdj = stk.scale_x_adj || 1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
       const arRef = stk.ref_ar || ar;
@@ -3527,6 +3584,11 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
     s += `<text x="36" y="${ly+15}" fill="${color}" font-size="18" font-weight="500">${_escSVG(groupLabel)}</text>`;
     s += `<text x="${W-10}" y="${ly+15}" text-anchor="end" fill="#94a3b8" font-size="15">${_escSVG(lvlLabel(z))} · ${ceil0}m</text>`;
   });
+
+  // Outside auto-scale label
+  if(_outsideScaleLabel){
+    s += `<text x="${W-10}" y="20" text-anchor="end" fill="#6b8e23" font-size="11" font-weight="500">${_escSVG(_outsideScaleLabel)}</text>`;
+  }
 
   s += `</svg>`;
   return s;

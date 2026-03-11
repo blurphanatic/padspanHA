@@ -23,7 +23,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     DOMAIN, VERSION, DATA_SETTINGS, DATA_MAPS, DATA_MODEL, DATA_OBJECTS,
     DATA_OBJECTS_CACHE, DATA_OBJECT_HISTORY, OBJECT_HISTORY_STORE_KEY,
-    DEFAULT_FLOOR_ID, DATA_COORDINATOR, DATA_CALIBRATION, DATA_ADAPTIVE,
+    DEFAULT_FLOOR_ID, OUTSIDE_FLOOR_ID, DATA_COORDINATOR, DATA_CALIBRATION, DATA_ADAPTIVE,
     DATA_ALERTS, DATA_MOVEMENT, BACKUPS_STORE_KEY,
     SETTINGS_STORE_KEY, CALIBRATION_STORE_KEY, ADAPTIVE_STORE_KEY,
     OBJECT_STORE_KEY, MAPS_STORE_KEY, MODEL_STORE_KEY,
@@ -2714,6 +2714,14 @@ async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
     if not ms:
         connection.send_error(msg["id"], "no_maps_store", "Maps store not initialized")
         return
+    floor_id = msg.get("floor_id") or DEFAULT_FLOOR_ID
+    # Enforce single Outside map
+    if floor_id == OUTSIDE_FLOOR_ID:
+        existing = ms.list_maps()
+        if any(m.get("floor_id") == OUTSIDE_FLOOR_ID for m in existing):
+            connection.send_error(msg["id"], "duplicate_outside",
+                                  "Only one Outside map is allowed. Delete the existing one first.")
+            return
     try:
         info = await ms.async_add_map(
             msg.get("name") or "Untitled Map",
@@ -2722,7 +2730,7 @@ async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
             msg.get("width") or 0,
             msg.get("height") or 0,
             msg.get("png_base64") or "",
-            msg.get("floor_id") or DEFAULT_FLOOR_ID,
+            floor_id,
         )
     except ValueError as exc:
         connection.send_error(msg["id"], "upload_too_large", str(exc))
@@ -2750,6 +2758,16 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "no_maps_store", "Maps store not initialized")
         return
     map_id = msg.get("map_id")
+
+    # Enforce single Outside map when changing floor_id
+    new_floor_id = msg.get("floor_id")
+    if new_floor_id == OUTSIDE_FLOOR_ID:
+        existing = [m for m in ms.list_maps()
+                    if m.get("floor_id") == OUTSIDE_FLOOR_ID and m.get("id") != map_id]
+        if existing:
+            connection.send_error(msg["id"], "duplicate_outside",
+                                  "Only one Outside map is allowed.")
+            return
 
     # ── Capture old beacon keys BEFORE update (to detect removals) ────────
     _old_beacon_keys: set[str] = set()
