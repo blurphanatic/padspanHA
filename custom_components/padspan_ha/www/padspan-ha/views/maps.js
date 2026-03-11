@@ -84,7 +84,7 @@ function _floorName(ctx, floor_id){
   const floors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
   const id = String(floor_id || "").trim();
   if(!id) return "—";
-  if(id === OUTSIDE_FLOOR_ID) return "Outside";
+  if(id === OUTSIDE_FLOOR_ID) return "Outside (Exp.)";
   const f = floors.find(x=>String(x.id)===id);
   return f ? (f.name || f.id) : id;
 }
@@ -131,7 +131,7 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
     const nameRow = el("div",{style:"display:flex;align-items:center;gap:6px"},[
       el("div",{style:"font-weight:700"}, m.name || m.id),
       ...(isMaster ? [el("span",{style:"padding:1px 7px;border-radius:10px;background:#1a3a0a;border:1px solid #52b788;font-size:10px;color:#86efac;font-weight:600"},"⭐ Master")] : []),
-      ...(_isOutsideMap(m) ? [el("span",{style:"padding:1px 7px;border-radius:10px;background:#1a2a0a;border:1px solid #6b8e23;font-size:10px;color:#9acd32;font-weight:600"},"Outside")] : []),
+      ...(_isOutsideMap(m) ? [el("span",{style:"padding:1px 7px;border-radius:10px;background:#1a2a0a;border:1px solid #6b8e23;font-size:10px;color:#9acd32;font-weight:600"},"Outside (Exp.)")] : []),
     ]);
 
     const left = el("div",{style:"flex:1;min-width:0"},[
@@ -213,7 +213,7 @@ function _upload(ctx, helpBtn, isBasic){
   }
   // Always offer "Outside" option
   const _outsideOpt = document.createElement("option");
-  _outsideOpt.value = OUTSIDE_FLOOR_ID; _outsideOpt.textContent = "Outside";
+  _outsideOpt.value = OUTSIDE_FLOOR_ID; _outsideOpt.textContent = "Outside (Experimental)";
   floorSel.appendChild(_outsideOpt);
   if(!floorSel.value && floors[0]) floorSel.value = floors[0].id;
 
@@ -1180,7 +1180,7 @@ function _floorSelect(floors, value, onChange){
   }
   // Always offer "Outside" as a floor option
   const oOut = document.createElement("option");
-  oOut.value = OUTSIDE_FLOOR_ID; oOut.textContent = "Outside";
+  oOut.value = OUTSIDE_FLOOR_ID; oOut.textContent = "Outside (Experimental)";
   sel.appendChild(oOut);
   sel.value = value || (floors[0] && floors[0].id) || "main";
   sel.addEventListener("change", ()=>onChange(sel.value));
@@ -2273,7 +2273,7 @@ function _stack(ctx, maps, helpBtn){
     });
     // Always offer "Outside" option
     const _oOpt2 = document.createElement("option");
-    _oOpt2.value = OUTSIDE_FLOOR_ID; _oOpt2.textContent = "Outside";
+    _oOpt2.value = OUTSIDE_FLOOR_ID; _oOpt2.textContent = "Outside (Experimental)";
     if(m.floor_id === OUTSIDE_FLOOR_ID) _oOpt2.selected = true;
     floorSel2.appendChild(_oOpt2);
     tdFloor.appendChild(floorSel2);
@@ -3425,7 +3425,7 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
     _outsideDisplayScale = Math.min(1.0, median / _outsideArea);
     if(_outsideDisplayScale < 1.0){
       const ratio = Math.round(1 / _outsideDisplayScale);
-      _outsideScaleLabel = `Outside displayed at 1:${ratio}`;
+      _outsideScaleLabel = `Outside (Exp.) displayed at 1:${ratio}`;
     }
   }
 
