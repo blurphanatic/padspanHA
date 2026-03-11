@@ -339,7 +339,7 @@ def _address_matches_irk(address: str, irk: bytes) -> bool:
 
 
 def _parse_irk(raw: Any) -> bytes | None:
-    """Parse IRK from whatever format HA stored it (bytes, hex string, base64 string)."""
+    """Parse IRK from whatever format HA stored it (bytes, hex string, base64 string, irk:-prefixed base64)."""
     try:
         if isinstance(raw, (bytes, bytearray)):
             b = bytes(raw)
@@ -347,6 +347,9 @@ def _parse_irk(raw: Any) -> bytes | None:
                 return b
         if isinstance(raw, str):
             s = raw.strip()
+            # Strip "irk:" prefix (HA's private_ble_device stores IRKs this way)
+            if s.lower().startswith("irk:"):
+                s = s[4:]
             # Try hex (32 hex chars)
             if len(s) == 32:
                 try:

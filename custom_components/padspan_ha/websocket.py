@@ -4400,7 +4400,7 @@ async def ws_private_ble_status(hass: HomeAssistant, connection, msg) -> None:
         ble_live = get_bluetooth_live(hass)
         snap = ble_live.get_snapshot(max_ads=2000, max_age_s=3600)
         all_addrs = set()
-        for ad in snap:
+        for ad in (snap.get("advertisements") or []):
             addr = ad.get("address")
             if addr:
                 all_addrs.add(addr)
