@@ -946,7 +946,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     if rssi is not None:
                         g["_rssi_list"].append((rssi, rec.get("age_s")))
             # Finalise each group: pick best RSSI, sort addrs, deduplicate sources
-            for uuid_key, g in ibeacon_groups.items():
+            # Split groups where multiple MACs are simultaneously active (separate
+            # physical devices sharing factory-default UUID:major:minor, e.g. CP27).
+            _split_groups: dict[str, dict] = {}
+            for uuid_key, g in list(ibeacon_groups.items()):
                 rssi_list = g.pop("_rssi_list")
                 if rssi_list:
                     best = max(rssi_list, key=lambda x: x[0])
@@ -961,6 +964,43 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     if sk not in seen_srcs:
                         seen_srcs.add(sk); dedup.append(s)
                 g["sources"] = dedup
+
+                # Detect simultaneous MACs → split into per-MAC objects.
+                # If multiple MACs are all recently seen (age < 60s), they are
+                # distinct physical devices, not MAC rotation on a single device.
+                if len(g["addrs"]) > 1:
+                    recent_macs = [
+                        a for a in g["addrs"]
+                        if (ble_by_addr.get(a, {}).get("age_s") or 9999) < 60
+                    ]
+                    if len(recent_macs) > 1:
+                        # Multiple distinct devices — split each MAC into its own object
+                        for idx, mac in enumerate(recent_macs):
+                            rec = ble_by_addr.get(mac, {})
+                            split_key = f"{uuid_key}:{mac}"
+                            # Use the sources from this specific MAC's advertisement
+                            mac_sources = rec.get("sources") or []
+                            _split_groups[split_key] = {
+                                "uuid": g["uuid"],
+                                "major": g["major"],
+                                "minor": g["minor"],
+                                "tx_power": g.get("tx_power"),
+                                "addrs": [mac],
+                                "sources": mac_sources,
+                                "rssi": rec.get("rssi"),
+                                "age_s": rec.get("age_s"),
+                                "_split_from": uuid_key,
+                            }
+                        # Also keep stale MACs (age >= 60s) in the original group
+                        stale = [a for a in g["addrs"] if a not in recent_macs]
+                        if stale:
+                            g["addrs"] = stale
+                        else:
+                            # All MACs split out — remove original group
+                            del ibeacon_groups[uuid_key]
+                        continue
+            # Merge split groups into main dict
+            ibeacon_groups.update(_split_groups)
             _resolver_diag["ibeacon_groups"] = len(ibeacon_groups)
         except Exception as _ib_err:
             _resolver_diag["errors"].append(f"ibeacon: {_ib_err}")
@@ -1194,12 +1234,19 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     _ib_connectable = _ib_rec.get("connectable")
                 if not _ib_device and _ib_mac in addr_to_device:
                     _ib_device = addr_to_device[_ib_mac]
+            # For split groups (multiple physical devices sharing same UUID:major:minor),
+            # append the MAC suffix so the user can distinguish them.
+            _is_split = "_split_from" in g
+            _default_name = _ib_ble_name or f"iBeacon {g['uuid'][:8]}"
+            if _is_split and g["addrs"]:
+                _mac_short = g["addrs"][0][-8:]  # last 8 chars of MAC (XX:XX:XX)
+                _default_name = f"{_default_name} ({_mac_short})"
             obj_ib: dict[str, Any] = {
                 "key": uuid_key,
                 "kind": "ibeacon",
                 "address": uuid_key,           # stable key — used by label store & tagging
                 "all_addresses": g["addrs"],   # rotating MACs this beacon was seen from
-                "name": _ib_label or _ib_ble_name or f"iBeacon {g['uuid'][:8]}",
+                "name": _ib_label or _default_name,
                 "ble_name": _ib_ble_name,      # original BLE broadcast name for display
                 "rssi": g.get("rssi"),
                 "age_s": g.get("age_s"),
