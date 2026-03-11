@@ -564,8 +564,307 @@ export function render(ctx){
     for(let n=0;n<conc;n++) runOne();
   }
 
+  // ---------- EXPERIMENTAL: 2D Flat Map (replaces 3D iso when enabled) ----------
+  function render2DMap(){
+    const maps_list = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
+    if(!maps_list.length) return renderRoomGrid();
+
+    const _esc = s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    const roomColorFn = ctx.helpers.roomColor;
+    const _isScanner = ctx.helpers.isScanner;
+    const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
+
+    // Determine which map to show (focused floor or first visible)
+    const hiddenIds = new Set((ctx.state.settings && ctx.state.settings.hidden_map_ids) || []);
+    const visible = maps_list.filter(m => !hiddenIds.has(m.id));
+    if(!visible.length) return renderRoomGrid();
+
+    // Multi-map: use focus index or default to first
+    const multiFloor = visible.length > 1;
+    const focusIdx = ctx.state._2dFocusIdx || 0;
+    const activeMap = visible[Math.min(focusIdx, visible.length - 1)];
+
+    const imgW = activeMap.image?.width || 800;
+    const imgH = activeMap.image?.height || 600;
+    const imgUrl = activeMap.image?.filename ? `/local/padspan_ha/maps/${activeMap.image.filename}` : null;
+
+    // Filter state (persists within session)
+    if(ctx.state._2dFilters === undefined) ctx.state._2dFilters = { scanners: true, tagged: true, unknown: false, rooms: true };
+    const F = ctx.state._2dFilters;
+
+    // Zoom/pan state
+    if(ctx.state._2dZoom === undefined) ctx.state._2dZoom = 1.0;
+    if(ctx.state._2dPanX === undefined) ctx.state._2dPanX = 0;
+    if(ctx.state._2dPanY === undefined) ctx.state._2dPanY = 0;
+
+    // Objects on this map
+    const objects = ((liveSnap && liveSnap.objects && liveSnap.objects.list) || []).filter(o => !_isScanner(o));
+    const receivers = (activeMap.receivers || []);
+
+    // Live radios for scanner status
+    const liveRadios = (liveSnap && liveSnap.ble && liveSnap.ble.radios) || [];
+    const liveRadioMap = {};
+    for(const r of liveRadios) liveRadioMap[r.source] = r;
+
+    // Build SVG content
+    const buildSVG = () => {
+      let s = `<svg viewBox="0 0 ${imgW} ${imgH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" width="100%" height="100%" style="display:block">`;
+
+      // Background image
+      if(imgUrl){
+        s += `<image href="${imgUrl}" x="0" y="0" width="${imgW}" height="${imgH}" opacity="0.75"/>`;
+      } else {
+        s += `<rect x="0" y="0" width="${imgW}" height="${imgH}" fill="#0d1f12"/>`;
+      }
+
+      // Room boundaries
+      if(F.rooms){
+        for(const [room, b] of Object.entries(activeMap.room_bounds || {})){
+          if(!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
+          const color = roomColorFn(room);
+          const pp = b.points.map(p => `${(p[0] * imgW).toFixed(1)},${(p[1] * imgH).toFixed(1)}`).join(" ");
+          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.12" stroke="${color}" stroke-width="2" stroke-opacity="0.7"/>`;
+          // Room label at centroid
+          const cx = b.points.reduce((a,p)=>a+p[0],0) / b.points.length * imgW;
+          const cy = b.points.reduce((a,p)=>a+p[1],0) / b.points.length * imgH;
+          const fontSize = Math.max(10, Math.min(18, imgW / 50));
+          s += `<text x="${cx.toFixed(0)}" y="${cy.toFixed(0)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="${fontSize}" font-weight="600" opacity="0.8">${_esc(room)}</text>`;
+        }
+      }
+
+      // Scanners
+      if(F.scanners){
+        for(const r of receivers){
+          const px = (r.x != null ? r.x : 0.5) * imgW;
+          const py = (r.y != null ? r.y : 0.5) * imgH;
+          const src = r.source || r.id || "";
+          const liveR = liveRadioMap[src];
+          const isOnline = !!liveR;
+          const rxColor = isOnline ? "#52b788" : "#4a6052";
+          const rxName = (r.label || (liveR && liveR.name) || r.source || "radio").substring(0, 16);
+          const markerR = Math.max(6, imgW / 80);
+          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${(markerR*1.8).toFixed(1)}" fill="none" stroke="${rxColor}" stroke-width="1.5" opacity="0.3"/>`;
+          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${markerR.toFixed(1)}" fill="none" stroke="${rxColor}" stroke-width="2" opacity="0.6"/>`;
+          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${(markerR*0.5).toFixed(1)}" fill="${rxColor}" opacity="0.9"/>`;
+          const labelFS = Math.max(8, imgW / 70);
+          s += `<text x="${px.toFixed(1)}" y="${(py - markerR*2.2).toFixed(1)}" text-anchor="middle" fill="${rxColor}" font-size="${labelFS}" font-weight="600">${_esc(rxName)}</text>`;
+        }
+      }
+
+      // Objects positioned on this map (via k-NN or room centroid)
+      const roomCentroids = {};
+      for(const [room, b] of Object.entries(activeMap.room_bounds || {})){
+        if(!b || !b.points || b.points.length < 3) continue;
+        roomCentroids[room] = {
+          x: b.points.reduce((a,p)=>a+p[0],0) / b.points.length * imgW,
+          y: b.points.reduce((a,p)=>a+p[1],0) / b.points.length * imgH,
+        };
+      }
+
+      const _roomObjIdx = {};
+      for(const o of objects){
+        const isTagged = !!(o.user_label || o.identified);
+        const isFollowed = ctx.actions.followedHas && (ctx.actions.followedHas(o.address || "") || ctx.actions.followedHas(o.key || ""));
+        if(!F.tagged && isTagged && !isFollowed) continue;
+        if(!F.unknown && !isTagged && !isFollowed) continue;
+        if(_quietMode && !isTagged && !isFollowed) continue;
+
+        // Position: prefer k-NN on this map, else room centroid on this map
+        let px, py;
+        if(typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id === activeMap.id){
+          px = o.x_frac * imgW;
+          py = o.y_frac * imgH;
+        } else if(o.room && roomCentroids[o.room]){
+          const c = roomCentroids[o.room];
+          const idx = (_roomObjIdx[o.room] || 0);
+          _roomObjIdx[o.room] = idx + 1;
+          const angle = idx * 2.4;
+          const spread = Math.max(8, imgW / 60);
+          px = c.x + Math.cos(angle) * Math.min(spread * (1 + idx * 0.3), spread * 3);
+          py = c.y + Math.sin(angle) * Math.min(spread * (1 + idx * 0.3), spread * 3);
+        } else {
+          continue; // Not positionable on this map
+        }
+
+        const lbl = (o.user_label || o.name || "").substring(0, 14);
+        const dotR = Math.max(4, imgW / 120);
+        const lblFS = Math.max(8, imgW / 80);
+
+        if(isFollowed){
+          // Followed: yellow marker
+          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${(dotR*2).toFixed(1)}" fill="#fbbf24" fill-opacity="0.15"/>`;
+          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${dotR.toFixed(1)}" fill="#fbbf24" stroke="#071008" stroke-width="1.5"/>`;
+          if(lbl) s += `<text x="${px.toFixed(1)}" y="${(py - dotR*2).toFixed(1)}" text-anchor="middle" fill="#fbbf24" font-size="${lblFS}" font-weight="600">${_esc(lbl)}</text>`;
+        } else if(isTagged){
+          // Tagged: teal dot
+          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${dotR.toFixed(1)}" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="0.9"/>`;
+          if(lbl) s += `<text x="${px.toFixed(1)}" y="${(py - dotR*1.8).toFixed(1)}" text-anchor="middle" fill="#5eead4" font-size="${lblFS}" font-weight="600" opacity="0.85">${_esc(lbl)}</text>`;
+        } else {
+          // Unknown: dim amber dot (no label)
+          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${(dotR*0.7).toFixed(1)}" fill="#f59e0b" stroke="#071008" stroke-width="1" opacity="0.5"/>`;
+        }
+      }
+
+      s += `</svg>`;
+      return s;
+    };
+
+    // ── DOM construction ──
+    const outer = document.createElement("div");
+    outer.style.cssText = "margin-bottom:16px";
+
+    // Experimental badge
+    const badge2d = document.createElement("div");
+    badge2d.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px";
+    badge2d.innerHTML = `<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:#422006;color:#fbbf24;border:1px solid #92400e;font-weight:700">EXPERIMENTAL</span><span style="font-size:12px;color:#94a3b8">2D Map Mode</span>`;
+    outer.appendChild(badge2d);
+
+    // Filter toggles
+    const filterBar = document.createElement("div");
+    filterBar.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px";
+
+    const makeFilterBtn = (key, label, color) => {
+      const btn = document.createElement("button");
+      btn.className = "btn inline";
+      const update = () => {
+        btn.style.cssText = F[key]
+          ? `font-size:11px;padding:2px 8px;background:${color}22;border-color:${color};color:${color};font-weight:600`
+          : "font-size:11px;padding:2px 8px;color:#64748b;border-color:#334155";
+        btn.textContent = (F[key] ? "\u25C9 " : "\u25CB ") + label;
+      };
+      update();
+      btn.addEventListener("click", () => {
+        F[key] = !F[key];
+        update();
+        svgDiv.innerHTML = buildSVG();
+      });
+      return btn;
+    };
+
+    filterBar.appendChild(makeFilterBtn("scanners", "Scanners", "#52b788"));
+    filterBar.appendChild(makeFilterBtn("tagged", "Tagged", "#5eead4"));
+    filterBar.appendChild(makeFilterBtn("unknown", "Unknown", "#f59e0b"));
+    filterBar.appendChild(makeFilterBtn("rooms", "Rooms", "#60a5fa"));
+    outer.appendChild(filterBar);
+
+    // Map selector (only if multi-floor)
+    if(multiFloor){
+      const mapBar = document.createElement("div");
+      mapBar.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px";
+      const mapLbl = document.createElement("span");
+      mapLbl.style.cssText = "font-size:12px;color:#94a3b8";
+      mapLbl.textContent = "Map:";
+      mapBar.appendChild(mapLbl);
+
+      for(let mi = 0; mi < visible.length; mi++){
+        const m = visible[mi];
+        const mbtn = document.createElement("button");
+        mbtn.className = "btn inline";
+        mbtn.style.cssText = mi === focusIdx
+          ? "font-size:11px;padding:2px 10px;background:#0a2a1a;border-color:#52b788;color:#52b788;font-weight:700"
+          : "font-size:11px;padding:2px 10px;color:#94a3b8";
+        mbtn.textContent = m.name || m.id || `Map ${mi+1}`;
+        const idx = mi;
+        mbtn.addEventListener("click", () => {
+          ctx.state._2dFocusIdx = idx;
+          ctx.state._2dZoom = 1.0;
+          ctx.state._2dPanX = 0;
+          ctx.state._2dPanY = 0;
+          ctx.actions.renderRooms();
+        });
+        mapBar.appendChild(mbtn);
+      }
+      outer.appendChild(mapBar);
+    }
+
+    // SVG container with zoom/pan
+    const svgWrap = document.createElement("div");
+    svgWrap.style.cssText = "position:relative;overflow:hidden;border-radius:8px;background:#071008;cursor:grab;touch-action:none;width:100%";
+    // Compute aspect-ratio container height: fill width, maintain map aspect ratio
+    const aspectPct = (imgH / imgW * 100).toFixed(2);
+    svgWrap.style.paddingBottom = `${Math.min(75, aspectPct)}%`; // cap at 75% viewport height ratio
+
+    const svgDiv = document.createElement("div");
+    svgDiv.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;transform-origin:0 0`;
+    svgDiv.innerHTML = buildSVG();
+
+    // Zoom/pan logic
+    let zoom = ctx.state._2dZoom;
+    let panX = ctx.state._2dPanX;
+    let panY = ctx.state._2dPanY;
+    let dragging = false, dragStartX = 0, dragStartY = 0, panStartX = 0, panStartY = 0;
+
+    const applyTransform = () => {
+      svgDiv.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+    };
+    applyTransform();
+
+    svgWrap.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const rect = svgWrap.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const oldZoom = zoom;
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      zoom = Math.max(0.5, Math.min(8, zoom * delta));
+      // Zoom toward cursor
+      panX = mx - (mx - panX) * (zoom / oldZoom);
+      panY = my - (my - panY) * (zoom / oldZoom);
+      ctx.state._2dZoom = zoom;
+      ctx.state._2dPanX = panX;
+      ctx.state._2dPanY = panY;
+      applyTransform();
+    }, { passive: false });
+
+    svgWrap.addEventListener("pointerdown", (e) => {
+      if(e.button !== 0) return;
+      dragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      panStartX = panX;
+      panStartY = panY;
+      svgWrap.style.cursor = "grabbing";
+      svgWrap.setPointerCapture(e.pointerId);
+    });
+    svgWrap.addEventListener("pointermove", (e) => {
+      if(!dragging) return;
+      panX = panStartX + (e.clientX - dragStartX);
+      panY = panStartY + (e.clientY - dragStartY);
+      ctx.state._2dPanX = panX;
+      ctx.state._2dPanY = panY;
+      applyTransform();
+    });
+    const endDrag = () => {
+      dragging = false;
+      svgWrap.style.cursor = "grab";
+    };
+    svgWrap.addEventListener("pointerup", endDrag);
+    svgWrap.addEventListener("pointercancel", endDrag);
+
+    // Reset zoom button
+    const resetBtn = document.createElement("button");
+    resetBtn.className = "btn inline";
+    resetBtn.style.cssText = "position:absolute;top:6px;right:6px;z-index:2;font-size:11px;padding:2px 8px;background:#071008cc;color:#94a3b8";
+    resetBtn.textContent = "Reset zoom";
+    resetBtn.addEventListener("click", () => {
+      zoom = 1.0; panX = 0; panY = 0;
+      ctx.state._2dZoom = 1; ctx.state._2dPanX = 0; ctx.state._2dPanY = 0;
+      applyTransform();
+    });
+
+    svgWrap.appendChild(svgDiv);
+    svgWrap.appendChild(resetBtn);
+    outer.appendChild(svgWrap);
+
+    return outer;
+  }
+
   // ---------- 3D Iso Floor Stack (uses uploaded maps data + live presence) ----------
   function renderIsoFloorStack(){
+    // ── Experimental 2D mode gate ──
+    if(ctx.state.settings && ctx.state.settings.overview_2d_mode){
+      return render2DMap();
+    }
     const maps_list = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
     // Fallback: sample floor plan → room grid
     if(!maps_list.length){

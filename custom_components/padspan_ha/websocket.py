@@ -2301,6 +2301,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("tags_nfc_identify_enabled"): bool,
         vol.Optional("tags_phone_autolink_enabled"): bool,
         vol.Optional("quiet_mode"): bool,
+        vol.Optional("overview_2d_mode"): bool,
     }
 )
 @websocket_api.async_response
@@ -2387,7 +2388,8 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
                     "ha_entity_distance_enabled", "ha_entity_scanner_distance_enabled",
                     "mqtt_publish_enabled", "lights_panel_enabled", "bermuda_ignore",
                     "tags_room_events_enabled", "tags_nfc_identify_enabled",
-                    "tags_phone_autolink_enabled", "quiet_mode"):
+                    "tags_phone_autolink_enabled", "quiet_mode",
+                    "overview_2d_mode"):
             if key in msg:
                 payload[key] = bool(msg[key])
         await st.async_set(**payload)

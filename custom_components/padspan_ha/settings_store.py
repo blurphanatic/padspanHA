@@ -64,6 +64,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tags_phone_autolink_enabled": False,  # auto-track phone on NFC scan
     # Quiet mode — hide unidentified objects everywhere
     "quiet_mode": False,
+    # Experimental: 2D flat map mode (replaces 3D isometric view)
+    "overview_2d_mode": False,
 }
 
 
