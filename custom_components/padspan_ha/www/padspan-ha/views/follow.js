@@ -110,8 +110,10 @@ function _buildSelector(ctx, el, helpBtn, allObjects, currentAddr, isBasic) {
   blank.value = ""; blank.textContent = "— Select a tag —";
   sel.appendChild(blank);
 
-  // Sort: identified first, then by display name
+  // Sort: strongest RSSI first (identified objects with no RSSI sort after those with RSSI)
   const sorted = [...allObjects].sort((a, b) => {
+    const ra = a.rssi ?? -999, rb = b.rssi ?? -999;
+    if (ra !== rb) return rb - ra;  // strongest (closest to 0) first
     if (!!a.identified !== !!b.identified) return a.identified ? -1 : 1;
     const na = a.user_label || a.name || a.entity_id || a.address || "";
     const nb = b.user_label || b.name || b.entity_id || b.address || "";
@@ -131,8 +133,9 @@ function _buildSelector(ctx, el, helpBtn, allObjects, currentAddr, isBasic) {
     opt.value = id;
     const name = o.user_label || o.name || o.entity_id || id;
     const room = o.room ? ` · ${o.room}` : "";
+    const rssiStr = o.rssi != null ? ` (${o.rssi} dBm)` : "";
     const kind = o.kind === "entity" ? "[Entity]" : (o.identified ? "[Tagged]" : "[Unidentified]");
-    opt.textContent = `${kind} ${name}${room}`;
+    opt.textContent = `${kind} ${name}${room}${rssiStr}`;
     if (id === currentAddr) opt.selected = true;
     sel.appendChild(opt);
   }
