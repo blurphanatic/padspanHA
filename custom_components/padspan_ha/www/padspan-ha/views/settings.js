@@ -129,6 +129,38 @@ function _settingsAppearance(ctx, el, helpBtn, draft, haFloors, haAreas, roomCol
   saveCard.appendChild(el("div",{class:"muted"},"These settings are stored locally in Home Assistant storage."));
   saveCard.appendChild(el("div",{style:"margin-top:10px"}, saveBtn));
   wrap.appendChild(saveCard);
+
+  // ── 2D Map Mode (Experimental) ────────────────────────────────────────────
+  {
+    const settings = ctx.state.settings || {};
+    const mode2dOn = settings.overview_2d_mode === true;
+    const mode2dToggle = el("input",{type:"checkbox",id:"mode2dToggle",style:"width:16px;height:16px;accent-color:#f59e0b;cursor:pointer"});
+    mode2dToggle.checked = mode2dOn;
+    mode2dToggle.addEventListener("change", async()=>{
+      try {
+        await ctx.actions.settingsSet({ overview_2d_mode: mode2dToggle.checked });
+        ctx.toast(mode2dToggle.checked ? "2D map mode enabled (experimental)" : "3D isometric map restored");
+        ctx.actions.renderRooms();
+      } catch(e){ ctx.toast("Failed to save", true); }
+    });
+    wrap.appendChild(el("div",{class:"card",style:"margin-top:12px;border-color:" + (mode2dOn ? "#f59e0b" : "#334155")},[
+      el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
+        el("div",{class:"h2",style:"margin:0;color:#f59e0b"}, "2D Map Mode"),
+        el("span",{style:"font-size:10px;padding:1px 6px;border-radius:4px;background:#422006;color:#fbbf24;border:1px solid #92400e;font-weight:700"}, "EXPERIMENTAL"),
+      ]),
+      el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
+        mode2dToggle,
+        el("label",{for:"mode2dToggle",style:"font-size:13px;color:#e2e8f0;cursor:pointer;font-weight:600"},
+          "Replace 3D isometric view with flat 2D map"),
+      ]),
+      el("div",{class:"muted",style:"font-size:12px"},
+        "Shows your floor plan image as a flat 2D map with zoom/pan (mouse wheel + drag). " +
+        "Includes toggle filters for scanners, tagged objects, unknown devices, and room boundaries. " +
+        "The map fills more screen space and hides multi-floor controls when only one map is uploaded. " +
+        "This is experimental — the 3D view is still available by toggling this off."),
+    ]));
+  }
+
   return wrap;
 }
 
@@ -522,36 +554,6 @@ function _settingsPresence(ctx, el){
         "Scanning continues in the background so tracked objects still work. " +
         "Ideal for busy environments (condos, offices) where you only care about your own devices. " +
         "Turn off when you need to discover and tag new objects."),
-    ]));
-  }
-
-  // ── 2D Map Mode (Experimental) ────────────────────────────────────────────
-  {
-    const mode2dOn = settings.overview_2d_mode === true;
-    const mode2dToggle = el("input",{type:"checkbox",id:"mode2dToggle",style:"width:16px;height:16px;accent-color:#f59e0b;cursor:pointer"});
-    mode2dToggle.checked = mode2dOn;
-    mode2dToggle.addEventListener("change", async()=>{
-      try {
-        await ctx.actions.settingsSet({ overview_2d_mode: mode2dToggle.checked });
-        ctx.toast(mode2dToggle.checked ? "2D map mode enabled (experimental)" : "3D isometric map restored");
-        ctx.actions.renderRooms();
-      } catch(e){ ctx.toast("Failed to save", true); }
-    });
-    wrap.appendChild(el("div",{class:"card",style:"border-color:" + (mode2dOn ? "#f59e0b" : "#334155")},[
-      el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
-        el("div",{class:"h2",style:"margin:0;color:#f59e0b"}, "2D Map Mode"),
-        el("span",{style:"font-size:10px;padding:1px 6px;border-radius:4px;background:#422006;color:#fbbf24;border:1px solid #92400e;font-weight:700"}, "EXPERIMENTAL"),
-      ]),
-      el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
-        mode2dToggle,
-        el("label",{for:"mode2dToggle",style:"font-size:13px;color:#e2e8f0;cursor:pointer;font-weight:600"},
-          "Replace 3D isometric view with flat 2D map"),
-      ]),
-      el("div",{class:"muted",style:"font-size:12px"},
-        "Shows your floor plan image as a flat 2D map with zoom/pan (mouse wheel + drag). " +
-        "Includes toggle filters for scanners, tagged objects, unknown devices, and room boundaries. " +
-        "The map fills more screen space and hides multi-floor controls when only one map is uploaded. " +
-        "This is experimental — the 3D view is still available by toggling this off."),
     ]));
   }
 
