@@ -2005,7 +2005,18 @@ export function render(ctx){
         try {
           const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
           const phones = res.phones || [];
-          if (!phones.length) { _bLoadMsg.textContent = "No Companion App phones detected. Open Companion App \u2192 Settings \u2192 Manage Sensors \u2192 BLE Transmitter \u2192 Enable."; return; }
+          if (!phones.length) {
+            const d = res.debug || {};
+            const mobileEnts = d.mobile_app_entities || [];
+            const bleCands = d.ble_candidates || [];
+            let msg = "No Companion App phones detected.";
+            if (!mobileEnts.length) msg += " No mobile_app entities found in HA at all.";
+            else msg += ` Found ${mobileEnts.length} mobile_app entities but none with 'ble_transmitter' in ID.`;
+            if (bleCands.length) msg += ` BLE-related: ${bleCands.join(", ")}`;
+            if (mobileEnts.length && mobileEnts.length <= 15) msg += ` | Entities: ${mobileEnts.join(", ")}`;
+            _bLoadMsg.textContent = msg;
+            return;
+          }
 
           _bLoadMsg.textContent = "Phones with the HA Companion App. Track or unfollow below.";
 
@@ -2223,7 +2234,18 @@ export function render(ctx){
       try {
         const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
         const phones = res.phones || [];
-        if (!phones.length) { _aLoadMsg.textContent = "No Companion App phones detected. Open Companion App \u2192 Settings \u2192 Manage Sensors \u2192 BLE Transmitter \u2192 Enable."; return; }
+        if (!phones.length) {
+          const d = res.debug || {};
+          const mobileEnts = d.mobile_app_entities || [];
+          const bleCands = d.ble_candidates || [];
+          let msg = "No Companion App phones detected.";
+          if (!mobileEnts.length) msg += " No mobile_app entities found in HA at all.";
+          else msg += ` Found ${mobileEnts.length} mobile_app entities but none with 'ble_transmitter' in ID.`;
+          if (bleCands.length) msg += ` BLE-related: ${bleCands.join(", ")}`;
+          if (mobileEnts.length && mobileEnts.length <= 15) msg += ` | Entities: ${mobileEnts.join(", ")}`;
+          _aLoadMsg.textContent = msg;
+          return;
+        }
 
         _aLoadMsg.textContent = "Phones running the HA Companion App with BLE Transmitter. Click to track.";
 

@@ -5056,12 +5056,21 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
         ent_reg = er.async_get(hass)
         phones: list[dict[str, Any]] = []
 
+        # Collect debug info about what mobile_app entities exist
+        _debug_mobile_entities: list[str] = []
+        _debug_ble_candidates: list[str] = []
+
         # Find all BLE transmitter sensor entities from mobile_app
         for entity in ent_reg.entities.values():
             if entity.platform != "mobile_app":
                 continue
+            _debug_mobile_entities.append(entity.entity_id)
             eid = entity.entity_id
             if "ble_transmitter" not in eid:
+                # Also check for BLE-related entities with different naming
+                _lower = eid.lower()
+                if "ble" in _lower or "bluetooth" in _lower or "transmit" in _lower or "beacon" in _lower:
+                    _debug_ble_candidates.append(eid)
                 continue
 
             # Read entity state — the state or attributes contain the transmitting UUID
@@ -5232,7 +5241,14 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                 "attributes": {k: str(v) for k, v in attrs.items()},
             })
 
-        connection.send_result(msg["id"], {"phones": phones})
+        connection.send_result(msg["id"], {
+            "phones": phones,
+            "debug": {
+                "mobile_app_entities": _debug_mobile_entities[:50],
+                "ble_candidates": _debug_ble_candidates[:20],
+                "total_entities": len(list(ent_reg.entities.values())),
+            },
+        })
     except Exception as err:
         _LOGGER.warning("companion_discover failed: %s", err)
         connection.send_result(msg["id"], {"phones": [], "error": str(err)})
