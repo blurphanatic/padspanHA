@@ -1242,12 +1242,24 @@ function _edit(ctx, map){
     } else {
       right.appendChild(el("div",{class:"muted", style:"margin-top:10px;font-size:12px"}, "Room boundary tools"));
 
+      // Build lookup: rooms already placed on OTHER maps (for warning in dropdown)
+      const _allMaps = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
+      const _roomPlacedOn = {}; // room name → map name
+      for(const om of _allMaps){
+        if(om.id === map.id) continue;
+        for(const rn of Object.keys(om.room_bounds || {})){
+          _roomPlacedOn[rn] = om.name || om.id;
+        }
+      }
+
       const roomSel = document.createElement("select");
       roomSel.className = "select";
       const opt = document.createElement("option"); opt.value=""; opt.textContent="Choose room…"; roomSel.appendChild(opt);
       for(const r of eligibleRooms){
         const o = document.createElement("option");
-        o.value = r; o.textContent = r;
+        o.value = r;
+        o.textContent = _roomPlacedOn[r] ? `${r}  ⚠ on "${_roomPlacedOn[r]}"` : r;
+        if(_roomPlacedOn[r]) o.style.color = "#fbbf24";
         roomSel.appendChild(o);
       }
       roomSel.value = ctx.state.maps._selectedRoom || "";
@@ -1286,6 +1298,14 @@ function _edit(ctx, map){
       }}, "Clear boundary");
 
       right.appendChild(roomSel);
+
+      // Warning if selected room is already drawn on another map
+      const _selRoom = ctx.state.maps._selectedRoom;
+      if(_selRoom && _roomPlacedOn[_selRoom]){
+        right.appendChild(el("div",{style:"margin-top:6px;padding:6px 10px;border-radius:6px;background:#2a1a0a;border:1px solid #d97706;font-size:11px;color:#fbbf24"},
+          `This room already has a boundary on "${_roomPlacedOn[_selRoom]}". Drawing it here will create a duplicate.`));
+      }
+
       right.appendChild(el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;margin-top:8px"},[
         startBtn, undoPt, finishBtn, clearBtn
       ]));
