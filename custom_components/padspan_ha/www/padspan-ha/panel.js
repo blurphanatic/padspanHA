@@ -19,7 +19,7 @@ If UI changes don't show:
 
 const APP_VERSION = "0.8.7";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260312T003759Z";
+const BUILD_ID = "20260312T004038Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
