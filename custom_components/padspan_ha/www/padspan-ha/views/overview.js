@@ -1967,7 +1967,7 @@ export function render(ctx){
     ]);
     if(mapEl) mapCard.appendChild(mapEl);
 
-    // Companion phone discovery (basic mode)
+    // Companion phone discovery (basic mode) — always show all phones
     const basicCompanionCard = el("div",{class:"card",style:"border-color:#2563eb;display:none"});
     if (dataMode === "live") {
       (async () => {
@@ -1975,19 +1975,42 @@ export function render(ctx){
           const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
           const phones = res.phones || [];
           if (!phones.length) return;
-          const unfollowed = phones.filter(p => !p.is_followed);
-          if (!unfollowed.length) return;
 
           basicCompanionCard.style.display = "";
-          basicCompanionCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#60a5fa;margin-bottom:6px"}, "Phones detected"));
-          basicCompanionCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"}, "These phones have the HA Companion App. Tap to start tracking."));
+          basicCompanionCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#60a5fa;margin-bottom:6px"}, "Companion App Phones"));
+          basicCompanionCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"}, "Phones with the HA Companion App. Track or unfollow below."));
 
-          for (const phone of unfollowed) {
+          for (const phone of phones) {
+            const row = document.createElement("div");
+            row.style.cssText = "display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;background:#0f172a;margin-bottom:6px";
+
+            // Name + status
+            const info = document.createElement("div");
+            info.style.cssText = "flex:1;min-width:0";
+            const nameEl = document.createElement("div");
+            nameEl.style.cssText = "font-weight:600;font-size:13px;color:#e2e8f0";
+            nameEl.textContent = phone.device_name || "Phone";
+            info.appendChild(nameEl);
+            const meta = document.createElement("div");
+            meta.style.cssText = "font-size:11px;color:#64748b;margin-top:2px";
+            const parts = [];
+            if (phone.is_disabled) parts.push("Entity disabled");
+            else if (phone.is_transmitting) parts.push("BLE active");
+            else parts.push("BLE off");
+            if (!phone.is_disabled) parts.push(phone.is_visible ? "visible" : "not seen");
+            if (phone.is_followed) parts.push("tracked");
+            if (phone.existing_label) parts.push(phone.existing_label);
+            meta.textContent = parts.join(" · ");
+            info.appendChild(meta);
+            row.appendChild(info);
+
+            // Action button
             const btn = document.createElement("button");
-            btn.className = "btn";
-            btn.style.cssText = "width:100%;text-align:left;padding:10px 14px;margin-bottom:6px;color:#e2e8f0;border-color:#2563eb;font-size:13px";
+            btn.className = "btn tiny";
+            btn.style.cssText = "white-space:nowrap;font-size:12px;padding:4px 14px";
+
             if (phone.is_disabled) {
-              btn.textContent = `${phone.device_name || "Phone"} — BLE entity disabled`;
+              btn.textContent = "Enable";
               btn.style.color = "#f59e0b";
               btn.style.borderColor = "#92400e";
               btn.addEventListener("click", async () => {
@@ -1998,56 +2021,75 @@ export function render(ctx){
                     entity_id: phone.entity_id,
                     disabled_by: null,
                   });
-                  btn.textContent = `${phone.device_name} — entity enabled, restart HA`;
+                  btn.textContent = "Enabled — restart HA";
                   btn.style.color = "#34d399"; btn.style.borderColor = "#065f46";
                 } catch (e) {
-                  btn.textContent = `Enable manually: HA → Settings → Devices → ${phone.device_name} → BLE Transmitter → Enable`;
+                  btn.textContent = "Enable manually in HA";
                   btn.style.color = "#f59e0b";
                   btn.disabled = false;
                 }
               });
-              basicCompanionCard.appendChild(btn);
-              continue;
-            }
-            btn.textContent = `Track ${phone.device_name || "Phone"}`;
-            btn.addEventListener("click", async () => {
-              btn.disabled = true;
-              btn.textContent = "Setting up...";
-              try {
-                const r = await ctx.actions.wsCall("padspan_ha/companion_follow", {
-                  ibeacon_key: phone.ibeacon_key,
-                  device_name: phone.device_name,
-                  entity_id: phone.entity_id,
-                });
-                if (r.follow_key) {
-                  ctx.state.followedAddrs.add(r.follow_key);
+            } else if (phone.is_followed) {
+              btn.textContent = "Unfollow";
+              btn.style.color = "#f87171";
+              btn.style.borderColor = "#7f1d1d";
+              btn.addEventListener("click", async () => {
+                if (!confirm(`Stop tracking ${phone.device_name || "this phone"} and remove its label?`)) return;
+                btn.disabled = true;
+                btn.textContent = "Removing...";
+                try {
+                  await ctx.actions.wsCall("padspan_ha/companion_unfollow", {
+                    ibeacon_key: phone.ibeacon_key,
+                    device_name: phone.device_name,
+                  });
+                  ctx.state.followedAddrs.delete(phone.ibeacon_key);
+                  ctx.state.followedAddrs.delete(phone.ibeacon_key.toUpperCase());
                   try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
-                }
-                if (r.verified_label && r.verified_followed) {
-                  if (phone.is_visible) {
-                    btn.textContent = `${phone.device_name} is now tracked!`;
-                    btn.style.color = "#34d399"; btn.style.borderColor = "#065f46";
-                  } else if (phone.is_transmitting || r.transmitter_enabled) {
-                    btn.textContent = `${phone.device_name} registered — walk near a scanner`;
-                    btn.style.color = "#fbbf24"; btn.style.borderColor = "#92400e";
-                  } else {
-                    btn.textContent = `${phone.device_name} registered — enable BLE Transmitter in Companion App`;
-                    btn.style.color = "#f59e0b"; btn.style.borderColor = "#92400e";
-                  }
-                } else {
-                  btn.textContent = "Error saving — try again";
-                  btn.style.color = "#f87171"; btn.style.borderColor = "#7f1d1d";
+                  btn.textContent = "Unfollowed";
+                  btn.style.color = "#94a3b8"; btn.style.borderColor = "#334155";
+                  setTimeout(() => ctx.actions.renderRooms(), 1000);
+                } catch (e) {
+                  btn.textContent = "Error";
+                  btn.style.color = "#f87171";
                   btn.disabled = false;
-                  return;
                 }
-                setTimeout(() => ctx.actions.renderRooms(), 1500);
-              } catch (e) {
-                btn.textContent = "Error — try again";
-                btn.style.color = "#f87171";
-                btn.disabled = false;
-              }
-            });
-            basicCompanionCard.appendChild(btn);
+              });
+            } else {
+              btn.textContent = "Track";
+              btn.style.color = "#60a5fa";
+              btn.style.borderColor = "#2563eb";
+              btn.addEventListener("click", async () => {
+                btn.disabled = true;
+                btn.textContent = "Setting up...";
+                try {
+                  const r = await ctx.actions.wsCall("padspan_ha/companion_follow", {
+                    ibeacon_key: phone.ibeacon_key,
+                    device_name: phone.device_name,
+                    entity_id: phone.entity_id,
+                  });
+                  if (r.follow_key) {
+                    ctx.state.followedAddrs.add(r.follow_key);
+                    try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
+                  }
+                  if (r.verified_label && r.verified_followed) {
+                    btn.textContent = "Tracked!";
+                    btn.style.color = "#34d399"; btn.style.borderColor = "#065f46";
+                  } else {
+                    btn.textContent = "Error — retry";
+                    btn.style.color = "#f87171";
+                    btn.disabled = false;
+                    return;
+                  }
+                  setTimeout(() => ctx.actions.renderRooms(), 1500);
+                } catch (e) {
+                  btn.textContent = "Error — retry";
+                  btn.style.color = "#f87171";
+                  btn.disabled = false;
+                }
+              });
+            }
+            row.appendChild(btn);
+            basicCompanionCard.appendChild(row);
           }
         } catch (e) { /* optional feature */ }
       })();
