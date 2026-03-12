@@ -2009,6 +2009,69 @@ export function render(ctx){
             btn.className = "btn tiny";
             btn.style.cssText = "white-space:nowrap;font-size:12px;padding:4px 14px";
 
+            // Helper to wire button as Track or Unfollow (allows toggling)
+            const _setTrack = () => {
+              btn.textContent = "Track";
+              btn.style.color = "#60a5fa";
+              btn.style.borderColor = "#2563eb";
+              btn.disabled = false;
+              btn.onclick = async () => {
+                btn.disabled = true;
+                btn.textContent = "Setting up...";
+                try {
+                  const r = await ctx.actions.wsCall("padspan_ha/companion_follow", {
+                    ibeacon_key: phone.ibeacon_key,
+                    device_name: phone.device_name,
+                    entity_id: phone.entity_id,
+                  });
+                  if (r.follow_key) {
+                    ctx.state.followedAddrs.add(r.follow_key);
+                    try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
+                  }
+                  if (r.verified_label && r.verified_followed) {
+                    phone.is_followed = true;
+                    meta.textContent = meta.textContent.replace("not tracked","tracked");
+                    _setUnfollow();
+                  } else {
+                    btn.textContent = "Error — retry";
+                    btn.style.color = "#f87171";
+                    btn.disabled = false;
+                  }
+                } catch (e) {
+                  btn.textContent = "Error — retry";
+                  btn.style.color = "#f87171";
+                  btn.disabled = false;
+                }
+              };
+            };
+            const _setUnfollow = () => {
+              btn.textContent = "Unfollow";
+              btn.style.color = "#f87171";
+              btn.style.borderColor = "#7f1d1d";
+              btn.disabled = false;
+              btn.onclick = async () => {
+                if (!confirm(`Stop tracking ${phone.device_name || "this phone"} and remove its label?`)) return;
+                btn.disabled = true;
+                btn.textContent = "Removing...";
+                try {
+                  await ctx.actions.wsCall("padspan_ha/companion_unfollow", {
+                    ibeacon_key: phone.ibeacon_key,
+                    device_name: phone.device_name,
+                  });
+                  ctx.state.followedAddrs.delete(phone.ibeacon_key);
+                  ctx.state.followedAddrs.delete(phone.ibeacon_key.toUpperCase());
+                  try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
+                  phone.is_followed = false;
+                  meta.textContent = meta.textContent.replace("tracked","not tracked");
+                  _setTrack();
+                } catch (e) {
+                  btn.textContent = "Error";
+                  btn.style.color = "#f87171";
+                  btn.disabled = false;
+                }
+              };
+            };
+
             if (phone.is_disabled) {
               btn.textContent = "Enable";
               btn.style.color = "#f59e0b";
@@ -2030,63 +2093,9 @@ export function render(ctx){
                 }
               });
             } else if (phone.is_followed) {
-              btn.textContent = "Unfollow";
-              btn.style.color = "#f87171";
-              btn.style.borderColor = "#7f1d1d";
-              btn.addEventListener("click", async () => {
-                if (!confirm(`Stop tracking ${phone.device_name || "this phone"} and remove its label?`)) return;
-                btn.disabled = true;
-                btn.textContent = "Removing...";
-                try {
-                  await ctx.actions.wsCall("padspan_ha/companion_unfollow", {
-                    ibeacon_key: phone.ibeacon_key,
-                    device_name: phone.device_name,
-                  });
-                  ctx.state.followedAddrs.delete(phone.ibeacon_key);
-                  ctx.state.followedAddrs.delete(phone.ibeacon_key.toUpperCase());
-                  try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
-                  btn.textContent = "Unfollowed";
-                  btn.style.color = "#94a3b8"; btn.style.borderColor = "#334155";
-                  setTimeout(() => ctx.actions.renderRooms(), 1000);
-                } catch (e) {
-                  btn.textContent = "Error";
-                  btn.style.color = "#f87171";
-                  btn.disabled = false;
-                }
-              });
+              _setUnfollow();
             } else {
-              btn.textContent = "Track";
-              btn.style.color = "#60a5fa";
-              btn.style.borderColor = "#2563eb";
-              btn.addEventListener("click", async () => {
-                btn.disabled = true;
-                btn.textContent = "Setting up...";
-                try {
-                  const r = await ctx.actions.wsCall("padspan_ha/companion_follow", {
-                    ibeacon_key: phone.ibeacon_key,
-                    device_name: phone.device_name,
-                    entity_id: phone.entity_id,
-                  });
-                  if (r.follow_key) {
-                    ctx.state.followedAddrs.add(r.follow_key);
-                    try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
-                  }
-                  if (r.verified_label && r.verified_followed) {
-                    btn.textContent = "Tracked!";
-                    btn.style.color = "#34d399"; btn.style.borderColor = "#065f46";
-                  } else {
-                    btn.textContent = "Error — retry";
-                    btn.style.color = "#f87171";
-                    btn.disabled = false;
-                    return;
-                  }
-                  setTimeout(() => ctx.actions.renderRooms(), 1500);
-                } catch (e) {
-                  btn.textContent = "Error — retry";
-                  btn.style.color = "#f87171";
-                  btn.disabled = false;
-                }
-              });
+              _setTrack();
             }
             row.appendChild(btn);
             basicCompanionCard.appendChild(row);
