@@ -5303,8 +5303,14 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
         # Sort platforms by count descending, top 20
         _sorted_plats = dict(sorted(_debug_platforms.items(), key=lambda x: -x[1])[:20])
 
+        # Check if mobile_app integration is actually loaded in HA
+        _mobile_app_loaded = "mobile_app" in hass.config.components
+        _mobile_app_entries = len(hass.config_entries.async_entries("mobile_app"))
+
         connection.send_result(msg["id"], {
             "phones": phones,
+            "mobile_app_loaded": _mobile_app_loaded,
+            "mobile_app_entries": _mobile_app_entries,
             "debug": {
                 "mobile_app_entities": _debug_mobile_entities[:50],
                 "ble_candidates": _debug_ble_candidates[:20],

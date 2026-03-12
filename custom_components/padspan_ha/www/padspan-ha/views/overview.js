@@ -2023,19 +2023,25 @@ export function render(ctx){
           const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
           const phones = res.phones || [];
           if (!phones.length) {
-            const d = res.debug || {};
-            const mobileEnts = d.mobile_app_entities || [];
-            const bleCands = d.ble_candidates || [];
-            const platforms = d.platforms || {};
-            const bleAny = d.ble_any_platform || [];
-            let msg = "No Companion App phones detected.";
-            if (!mobileEnts.length) msg += " No mobile_app entities found in HA at all.";
-            else msg += ` Found ${mobileEnts.length} mobile_app entities but none with 'ble_transmitter' in ID.`;
-            if (bleCands.length) msg += ` BLE-related: ${bleCands.join(", ")}`;
-            if (bleAny.length) msg += ` | BLE entities (all platforms): ${bleAny.join(", ")}`;
-            const platKeys = Object.keys(platforms);
-            if (platKeys.length) msg += ` | Platforms: ${platKeys.map(p => p + "(" + platforms[p] + ")").join(", ")}`;
-            _bLoadMsg.textContent = msg;
+            if (!res.mobile_app_loaded) {
+              _bLoadMsg.innerHTML = "";
+              const warnBox = document.createElement("div");
+              warnBox.style.cssText = "background:#1e1b4b;border:1px solid #4338ca;border-radius:8px;padding:12px;margin-top:4px";
+              warnBox.innerHTML = `<div style="font-weight:600;color:#a5b4fc;font-size:13px;margin-bottom:6px">Mobile App integration not set up</div>` +
+                `<div style="font-size:12px;color:#c7d2fe;line-height:1.5">` +
+                `The Companion App on your phone may be connected, but the <b>Mobile App integration</b> is not registered in Home Assistant.<br><br>` +
+                `<b>To fix this:</b><br>` +
+                `1. On your phone, open the HA Companion App<br>` +
+                `2. Go to <b>Settings → Companion App</b><br>` +
+                `3. Tap your HA server name at the top<br>` +
+                `4. Tap <b>"Reset Registration"</b> (or delete and re-add the server)<br>` +
+                `5. Re-open the app — it will re-register with HA<br>` +
+                `6. Then enable <b>BLE Transmitter</b> in Manage Sensors<br><br>` +
+                `<span style="color:#94a3b8">After re-registering, restart Home Assistant and come back here.</span></div>`;
+              basicCompanionCard.appendChild(warnBox);
+            } else {
+              _bLoadMsg.textContent = "No phones found. Open Companion App → Settings → Manage Sensors → BLE Transmitter → Enable, then restart HA.";
+            }
             return;
           }
 
@@ -2273,19 +2279,25 @@ export function render(ctx){
         const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
         const phones = res.phones || [];
         if (!phones.length) {
-          const d = res.debug || {};
-          const mobileEnts = d.mobile_app_entities || [];
-          const bleCands = d.ble_candidates || [];
-          const platforms = d.platforms || {};
-          const bleAny = d.ble_any_platform || [];
-          let msg = "No Companion App phones detected.";
-          if (!mobileEnts.length) msg += " No mobile_app entities found in HA at all.";
-          else msg += ` Found ${mobileEnts.length} mobile_app entities but none with 'ble_transmitter' in ID.`;
-          if (bleCands.length) msg += ` BLE-related: ${bleCands.join(", ")}`;
-          if (bleAny.length) msg += ` | BLE entities (all platforms): ${bleAny.join(", ")}`;
-          const platKeys = Object.keys(platforms);
-          if (platKeys.length) msg += ` | Platforms: ${platKeys.map(p => p + "(" + platforms[p] + ")").join(", ")}`;
-          _aLoadMsg.textContent = msg;
+          if (!res.mobile_app_loaded) {
+            _aLoadMsg.innerHTML = "";
+            const warnBox = document.createElement("div");
+            warnBox.style.cssText = "background:#1e1b4b;border:1px solid #4338ca;border-radius:8px;padding:12px;margin-top:4px";
+            warnBox.innerHTML = `<div style="font-weight:600;color:#a5b4fc;font-size:13px;margin-bottom:6px">Mobile App integration not set up</div>` +
+              `<div style="font-size:12px;color:#c7d2fe;line-height:1.5">` +
+              `The Companion App on your phone may be connected, but the <b>Mobile App integration</b> is not registered in Home Assistant.<br><br>` +
+              `<b>To fix this:</b><br>` +
+              `1. On your phone, open the HA Companion App<br>` +
+              `2. Go to <b>Settings → Companion App</b><br>` +
+              `3. Tap your HA server name at the top<br>` +
+              `4. Tap <b>"Reset Registration"</b> (or delete and re-add the server)<br>` +
+              `5. Re-open the app — it will re-register with HA<br>` +
+              `6. Then enable <b>BLE Transmitter</b> in Manage Sensors<br><br>` +
+              `<span style="color:#94a3b8">After re-registering, restart Home Assistant and come back here.</span></div>`;
+            companionCard.appendChild(warnBox);
+          } else {
+            _aLoadMsg.textContent = "No phones found. Open Companion App → Settings → Manage Sensors → BLE Transmitter → Enable, then restart HA.";
+          }
           return;
         }
 
