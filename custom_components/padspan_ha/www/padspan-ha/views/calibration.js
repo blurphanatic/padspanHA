@@ -1552,7 +1552,7 @@ function _tuneTab(ctx, el, cs, calData) {
       s += `</svg>`; return s;
     }
 
-    // Floor slabs + room polygons + receivers
+    // ── Pass 1: Floor slabs + room polygons (bottom to top) ──
     for (const [z, group] of [...byLevel.entries()].sort((a, b) => a[0] - b[0])) {
       const isFocused = focusZ === null || (Array.isArray(focusZ) ? focusZ.includes(z) : focusZ === z);
       const go = isFocused ? 1.0 : 0.1;
@@ -1602,8 +1602,21 @@ function _tuneTab(ctx, el, cs, calData) {
           const [lix, liy] = iso(lwx, lwy, z);
           s += `<text x="${Math.round(lix)}" y="${Math.round(liy) + lidx * 2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
         }
+      }
 
-        // Receiver markers (draggable)
+      // Layer index dot
+      s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="15" fill="${lyrColor}" opacity="0.95"/>`;
+      s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1]) + 6}" text-anchor="middle" fill="#071008" font-size="14" font-weight="700">${lidx + 1}</text>`;
+      s += `</g>`;
+    }
+
+    // ── Pass 2: Receiver markers ON TOP of all slabs (always interactive) ──
+    for (const [z, group] of [...byLevel.entries()].sort((a, b) => a[0] - b[0])) {
+      const isFocused = focusZ === null || (Array.isArray(focusZ) ? focusZ.includes(z) : focusZ === z);
+      const go = isFocused ? 1.0 : 0.1;
+      s += `<g opacity="${go}">`;
+      for (const m of group) {
+        const xf = mapXforms[m.id]; if (!xf) continue;
         const draft = ts.draftReceivers[m.id] || [];
         for (const r of draft) {
           const [wx, wy] = xf.mapPt(r.x || 0, r.y || 0);
@@ -1631,10 +1644,6 @@ function _tuneTab(ctx, el, cs, calData) {
           s += `</g>`;
         }
       }
-
-      // Layer index dot
-      s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="15" fill="${lyrColor}" opacity="0.95"/>`;
-      s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1]) + 6}" text-anchor="middle" fill="#071008" font-size="14" font-weight="700">${lidx + 1}</text>`;
       s += `</g>`;
     }
 
