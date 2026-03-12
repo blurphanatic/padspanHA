@@ -930,11 +930,24 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         # Parse iBeacon from every advertisement; group by stable UUID/major/minor key.
         # This is deliberately OUTSIDE the resolver try/except so iBeacon detection
         # never gets silently skipped if the private BLE resolver has issues.
+        # IMPORTANT: MACs that resolve to a private_ble device (via IRK) are NOT
+        # absorbed into iBeacon groups — the IRK identity is authoritative.  The
+        # iBeacon metadata (UUID/major/minor) is attached to the private_ble object
+        # later instead.  This prevents the phone from existing as two separate
+        # objects (one iBeacon, one private_ble) and getting "lost" on MAC rotation.
+        _ibeacon_meta_for_private: dict[str, dict[str, Any]] = {}  # canonical_id → iBeacon info
         try:
             _ib_resolver = await _get_ble_resolver(hass)
             for addr, rec in ble_by_addr.items():
                 ib = _ib_resolver.parse_ibeacon(rec.get("manufacturer_data") or {})
                 if ib:
+                    # If this MAC also resolves to a private_ble device, DON'T absorb
+                    # it into the iBeacon group — let private_ble grouping handle it.
+                    canonical = canonical_by_addr.get(addr)
+                    if canonical:
+                        cid = canonical["canonical_id"]
+                        _ibeacon_meta_for_private[cid] = ib
+                        continue
                     uuid_key = f"ibeacon:{ib['uuid']}:{ib['major']}:{ib['minor']}"
                     ibeacon_addrs.add(addr)
                     if uuid_key not in ibeacon_groups:
@@ -1238,6 +1251,15 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "linked_entities": sorted(pg["all_linked"]),
                 "device": pg["device"],
             }
+            # Attach iBeacon metadata if this private_ble device also broadcasts
+            # as an iBeacon (e.g. HA Companion App "Track Phone").
+            _ib_meta = _ibeacon_meta_for_private.get(cid)
+            if _ib_meta:
+                obj_pb["ibeacon_uuid"] = _ib_meta["uuid"]
+                obj_pb["ibeacon_major"] = _ib_meta["major"]
+                obj_pb["ibeacon_minor"] = _ib_meta["minor"]
+                if _ib_meta.get("tx_power") is not None:
+                    obj_pb["tx_power"] = _ib_meta["tx_power"]
             objects.append(obj_pb)
 
         # (C) iBeacon objects — one per UUID/major/minor key, merged from all rotating MACs
