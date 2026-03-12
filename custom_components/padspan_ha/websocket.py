@@ -5727,6 +5727,17 @@ async def ws_factory_reset(hass: HomeAssistant, connection, msg) -> None:
     except Exception:
         pass
 
+    # BluetoothLive advertisement cache — clear so old objects disappear.
+    # The subscription stays active so new ads will repopulate naturally.
+    try:
+        _bl = get_bluetooth_live(hass)
+        if _bl:
+            _bl._seen_by_source.clear()
+            _bl._radio_last_heard.clear()
+            _bl._last_reseed = None
+    except Exception:
+        pass
+
     _LOGGER.warning(
         "FACTORY RESET executed by %s — cleared %d stores",
         connection.user.name if connection.user else "unknown",
