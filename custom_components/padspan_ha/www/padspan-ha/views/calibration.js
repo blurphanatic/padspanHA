@@ -3832,10 +3832,9 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         const deviceId = _resolveBeaconAddr(entry.bk.key, snap3);
 
         // ── Hard relocation (faulty data correction) ─────────────────────────
-        // After 3 consecutive rounds, DELETE ALL old calibration points for
-        // this device across ALL maps.  This is a nuclear reset — stale data
-        // on wrong maps / wrong positions can never outvote the new location.
-        // The 3 new rounds at the correct position become the only truth.
+        // After 3 consecutive rounds within 6 minutes, DELETE ALL old
+        // calibration points for this device.  This is an intentional
+        // correction — the user is signalling the old data is wrong.
         if (!bs._relocHistory) bs._relocHistory = {};
         if (!bs._relocHistory[bkKey]) bs._relocHistory[bkKey] = [];
         bs._relocHistory[bkKey].push({
@@ -3845,21 +3844,26 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         const hist = bs._relocHistory[bkKey];
         const RELOC_ROUNDS = 3;
         let doRelocation = false;
-        // Trigger on 3+ rounds completed within 6 minutes (allows for the three 60s timers + drag time)
         if (hist.length >= RELOC_ROUNDS) {
           const recent = hist.slice(-RELOC_ROUNDS);
           const timespanMs = recent[recent.length - 1].ts - recent[0].ts;
           doRelocation = timespanMs < 360000;  // 6 minutes
         }
 
-        // Collect IDs of points saved during THIS relocation session (protect from deletion)
         if (!bs._relocSavedIds) bs._relocSavedIds = {};
         if (!bs._relocSavedIds[bkKey]) bs._relocSavedIds[bkKey] = [];
 
         if (doRelocation) {
-          // ── PURGE: delete ALL old calibration points for this device ──
-          // Match broadly: device_id, label, or beacon key (any case variant).
-          // Protect only the points saved during these relocation rounds.
+          const confirmPurge = confirm(
+            `This is the 3rd consecutive calibration for "${entry.bk.label || bkKey}" within a few minutes.\n\n` +
+            `This will REPLACE all previous calibration data for this beacon with the new readings.\n\n` +
+            `Choose OK to replace old data (hard relocation).\n` +
+            `Choose Cancel to keep old data and just add this as another data point.`
+          );
+          if (!confirmPurge) doRelocation = false;
+        }
+
+        if (doRelocation) {
           const protectedIds = new Set(bs._relocSavedIds[bkKey] || []);
           try {
             const calData = await ctx.actions.calibrationGet();
@@ -3869,10 +3873,9 @@ function _beaconTuneTab(ctx, el, cs, calData) {
             const myKey = bkKey.toUpperCase();
             let purged = 0;
             for (const pt of allPts) {
-              if (protectedIds.has(pt.id)) continue;  // don't delete our own rounds
+              if (protectedIds.has(pt.id)) continue;
               const ptDev = (pt.device_id || "").toUpperCase();
               const ptLbl = (pt.label || "").toUpperCase();
-              // Broad matching — any of these identifies the same beacon
               const isMatch =
                 (ptDev && myDev && ptDev === myDev) ||
                 (ptDev && myKey && ptDev === myKey) ||
@@ -3904,14 +3907,13 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         };
         try {
           const saved = await ctx.actions.calibrationSavePoint(point);
-          // Track the point ID so we protect it from purge
           if (saved?.point?.id) {
             bs._relocSavedIds[bkKey].push(saved.point.id);
           } else if (saved?.id) {
             bs._relocSavedIds[bkKey].push(saved.id);
           }
           if (doRelocation) {
-            ctx.toast(`\u26A0\uFE0F HARD RELOCATION: all old calibration data for ${entry.bk.label || bkKey} has been purged. New position locked at 5.0\u00d7 weight.`);
+            ctx.toast(`\u26A0\uFE0F HARD RELOCATION: old calibration data for ${entry.bk.label || bkKey} replaced. New position locked at 5.0\u00d7 weight.`);
           } else {
             const weightLabel = round > 1 ? ` (round ${round}, weight ${weight.toFixed(1)}\u00d7)` : "";
             ctx.toast(`\u2713 ${entry.bk.label || entry.bk.key} calibration saved${weightLabel}`);
@@ -3919,25 +3921,20 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         } catch (e) {
           console.warn("[PadSpan] live timer save failed:", e);
         }
-        // After hard relocation, refresh calibration data so k-NN uses cleaned points
         if (doRelocation) {
           try {
             ctx.state.calibration = await ctx.actions.calibrationGet();
           } catch (_) { /**/ }
-          // Evict coordinator cache so the beacon recalculates immediately
-          // (otherwise stale k-NN position lingers for up to 5s)
           try { await ctx.actions.objectEvict(bkKey); } catch (_) { /**/ }
           if (deviceId && deviceId !== bkKey) {
             try { await ctx.actions.objectEvict(deviceId); } catch (_) { /**/ }
           }
-          // Show persistent warning banner on the info card
           bs._lastRelocation = {
             key: bkKey,
             label: entry.bk.label || bkKey,
             time: Date.now(),
           };
           _refreshInfo();
-          // Reset round counter and history after successful relocation
           bs._calibRounds[bkKey] = 0;
           bs._relocHistory[bkKey] = [];
           bs._relocSavedIds[bkKey] = [];
