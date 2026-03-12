@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.8.92";
+const APP_VERSION = "0.8.93";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260312T183724Z";
+const BUILD_ID = "20260312T184604Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1983,6 +1983,8 @@ class PadSpanHaApp extends HTMLElement {
   }
 
   _renderCurrentView(fromPoll){
+    // Block ALL re-renders during factory reset — the progress UI must survive
+    if(this.state._factoryResetInProgress) return;
     // Skip re-render during active drag to prevent DOM destruction mid-interaction
     if(this.state._calibTune?._dragging || this.state._calibBeacon?._dragging || this.state._calibTune?._confirming || this.state._calibBeacon?._confirming) return;
     // Skip re-render during active drag on 3D Stack alignment, Edit tab, or Trim tool

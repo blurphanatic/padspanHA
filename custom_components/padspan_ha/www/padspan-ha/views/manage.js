@@ -1886,6 +1886,7 @@ function _factoryReset(ctx, el){
     stepLog.appendChild(line);
     stepLog.scrollTop = stepLog.scrollHeight;
   };
+  const _pause = (ms=400) => new Promise(r => setTimeout(r, ms));
 
   resetBtn.addEventListener("click", async ()=>{
     if(input.value.trim() !== "FACTORY RESET") return;
@@ -1904,8 +1905,11 @@ function _factoryReset(ctx, el){
     progressWrap.style.display = "block";
     stepLog.innerHTML = "";
 
-    // ── Step 1: Send factory reset to backend (clears all stores) ──
-    _setProgress(10, "Erasing all backend stores…");
+    // Block poll-triggered re-renders from destroying our progress DOM
+    ctx.state._factoryResetInProgress = true;
+
+    // ── Step 1: Send factory reset to backend (clears all 11 stores) ──
+    _setProgress(15, "Erasing all backend stores…");
     let res;
     try {
       res = await ctx.actions.factoryReset();
@@ -1916,16 +1920,33 @@ function _factoryReset(ctx, el){
         _logStep(`Backend: ${res?.cleared || 0}/${res?.total || "?"} stores — errors: ${errs}`, false);
       }
     } catch(err) {
-      _setProgress(10, "Backend reset failed: " + (err.message||err), true);
+      _setProgress(15, "Backend reset failed: " + (err.message||err), true);
       _logStep("Backend reset failed: " + (err.message||err), false);
       resetBtn.textContent = "Erase All Data & Reset";
       resetBtn.disabled = false;
       input.disabled = false;
+      ctx.state._factoryResetInProgress = false;
       return;
     }
 
-    // ── Step 2: Clear browser-side caches ──
-    _setProgress(30, "Clearing browser caches…");
+    await _pause();
+
+    // ── Step 2: Restore data_mode to "live" ──
+    // Factory reset sets DEFAULT_SETTINGS which has data_mode:"sample".
+    // The user was in live mode to reach this page — put them back.
+    _setProgress(30, "Restoring live data mode…");
+    try {
+      await ctx.actions.wsCall("padspan_ha/settings_set", { data_mode: "live" });
+      ctx.state.dataMode = "live";
+      _logStep("Data mode restored to live");
+    } catch(e){
+      _logStep("Could not restore live mode: " + e.message, false);
+    }
+
+    await _pause();
+
+    // ── Step 3: Clear browser-side caches ──
+    _setProgress(45, "Clearing browser caches…");
     try {
       localStorage.removeItem("padspan_followed");
       localStorage.removeItem("padspan_followAddr");
@@ -1935,8 +1956,10 @@ function _factoryReset(ctx, el){
       _logStep("localStorage clear failed: " + e.message, false);
     }
 
-    // ── Step 3: Reset all in-memory frontend state ──
-    _setProgress(45, "Resetting frontend state…");
+    await _pause();
+
+    // ── Step 4: Reset frontend in-memory state ──
+    _setProgress(55, "Resetting frontend state…");
     try {
       ctx.state.followedAddrs = new Set();
       ctx.state.followAddr = "";
@@ -1946,68 +1969,76 @@ function _factoryReset(ctx, el){
       ctx.state.selectedRooms = [];
       ctx.state.tagFilter = "";
       ctx.state.mode = "all";
-      _logStep("Frontend state reset (followed, filters, selections)");
+      _logStep("Cleared: followed list, filters, selections");
     } catch(e){
       _logStep("Frontend state reset error: " + e.message, false);
     }
 
-    // ── Step 4: Reload settings from backend ──
-    _setProgress(55, "Reloading settings from server…");
+    await _pause();
+
+    // ── Step 5: Verify settings on server ──
+    _setProgress(70, "Verifying server state…");
     try {
       const sRes = await ctx.actions.wsCall("padspan_ha/settings_get", {});
       if(sRes?.settings){
         ctx.state.settings = sRes.settings;
-        ctx.state.dataMode = (sRes.settings.data_mode || "sample").toLowerCase() === "live" ? "live" : "sample";
-        // Force overwrite followed from server (now empty after reset)
-        ctx.state.followedAddrs = new Set(sRes.settings.followed_addrs || []);
-        _logStep("Settings reloaded — followed list: " + ctx.state.followedAddrs.size + " items");
+        const serverFollowed = sRes.settings.followed_addrs || [];
+        ctx.state.followedAddrs = new Set(serverFollowed);
+        const dm = (sRes.settings.data_mode || "sample").toLowerCase();
+        ctx.state.dataMode = dm === "live" ? "live" : "sample";
+        _logStep(`Server: data_mode=${dm}, followed=${serverFollowed.length}`);
+        if(serverFollowed.length > 0){
+          _logStep("WARNING: server still has followed addresses", false);
+        }
       } else {
         _logStep("Settings response empty", false);
       }
     } catch(e){
-      _logStep("Settings reload failed: " + e.message, false);
+      _logStep("Settings verify failed: " + e.message, false);
     }
 
-    // ── Step 5: Refresh live snapshot ──
-    _setProgress(70, "Refreshing live snapshot…");
-    try {
-      await ctx.actions.refreshAll();
-      _logStep("Full data refresh complete");
-    } catch(e){
-      _logStep("Data refresh failed: " + e.message, false);
-    }
+    await _pause();
 
-    // ── Step 6: Verify clean state ──
-    _setProgress(90, "Verifying clean state…");
+    // ── Step 6: Fetch fresh snapshot (without re-rendering the page) ──
+    _setProgress(85, "Fetching fresh snapshot…");
     try {
-      const followCount = ctx.state.followedAddrs ? ctx.state.followedAddrs.size : 0;
-      const objList = ctx.state.live?.snapshot?.objects?.list || [];
-      const labelledCount = objList.filter(o => o.user_label).length;
-      const followedInList = objList.filter(o => {
-        const k = (o.kind === "ibeacon" ? (o.key||"") : (o.address||o.entity_id||"")).toUpperCase();
-        return k && ctx.state.followedAddrs.has(k);
-      }).length;
-      _logStep(`Verification: ${followCount} followed, ${labelledCount} labelled, ${followedInList} followed-in-objects`);
-      if(followCount > 0 || labelledCount > 0){
-        _logStep("WARNING: stale data may remain — try Reload Page below", false);
+      const snapRes = await ctx.actions.wsCall("padspan_ha/live_snapshot", {});
+      if(snapRes?.snapshot){
+        ctx.state.live.snapshot = snapRes.snapshot;
+        ctx.state.live.error = null;
+        const objCount = snapRes.snapshot?.objects?.summary?.total ?? 0;
+        const labelCount = (snapRes.snapshot?.objects?.list || []).filter(o => o.user_label).length;
+        _logStep(`Snapshot: ${objCount} objects, ${labelCount} labelled`);
+        if(labelCount > 0){
+          _logStep("WARNING: labelled objects remain in snapshot", false);
+        }
+      } else {
+        _logStep("Snapshot empty (BLE cache was cleared — objects will return as scanners detect them)");
       }
     } catch(e){
-      _logStep("Verification skipped: " + e.message, false);
+      _logStep("Snapshot fetch failed: " + e.message, false);
     }
 
     // ── Done ──
-    _setProgress(100, "Factory reset complete");
+    _setProgress(100, "Factory reset complete — reloading page…");
+    _logStep("All done. Reloading in 2 seconds…");
     resetBtn.textContent = "Reset Complete";
     resetBtn.style.background = "#14532d";
     resetBtn.style.borderColor = "#16a34a";
     resetBtn.style.color = "#4ade80";
 
+    // Auto-reload after a short delay so the user can see the log
     const reloadBtn = el("button",{
       class:"btn",
       style:"background:#1e40af;border-color:#3b82f6;color:#93c5fd;font-weight:700;padding:8px 20px;margin-top:12px",
-    },"Reload Page");
+    },"Reload Now");
     reloadBtn.addEventListener("click",()=>location.reload());
     btnWrap.appendChild(reloadBtn);
+
+    setTimeout(()=>{
+      ctx.state._factoryResetInProgress = false;
+      location.reload();
+    }, 2000);
   });
 
   btnWrap.appendChild(resetBtn);
