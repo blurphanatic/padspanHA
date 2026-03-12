@@ -653,7 +653,7 @@ function _upload(ctx, helpBtn, isBasic){
       const max = parseInt((maxw.value||"").trim() || "1600", 10);
       const res = await _preparePng(f, isFinite(max) ? max : 1600, cropRect);
       status.textContent = `Uploading\u2026 (${res.width}\u00d7${res.height})`;
-      await ctx.actions.mapsUpload({
+      const uploadRes = await ctx.actions.mapsUpload({
         name: (name.value||f.name||"Map"),
         filename: f.name,
         mime: f.type || "image/*",
@@ -664,6 +664,8 @@ function _upload(ctx, helpBtn, isBasic){
       });
       status.textContent = "Uploaded \u2714";
       ctx.state._mapsUploadFile = null;
+      // Open the newly uploaded map in the edit tab
+      if(uploadRes?.map?.id) ctx.state.activeMapId = uploadRes.map.id;
       ctx.state.mapsTab = "edit";
       ctx.actions.renderRooms();
     }catch(e){
