@@ -5249,6 +5249,57 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                 "attributes": {k: str(v) for k, v in attrs.items()},
             })
 
+        # ── Device-registry fallback ──────────────────────────────────────
+        # On Android, disabled sensors are never registered in the entity
+        # registry.  The device registry always has the phone though.
+        # Find mobile_app devices that have NO BLE transmitter entity and
+        # surface them so the UI can tell the user to enable the sensor.
+        _debug_devices: list[dict] = []
+        _phones_entity_ids = {p["entity_id"] for p in phones}
+        try:
+            from homeassistant.helpers import device_registry as dr
+            dev_reg = dr.async_get(hass)
+            for entry in hass.config_entries.async_entries("mobile_app"):
+                for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+                    device_name = device.name or device.name_by_user or ""
+                    _debug_devices.append({
+                        "device_id": device.id,
+                        "name": device_name,
+                        "model": device.model or "",
+                        "manufacturer": device.manufacturer or "",
+                    })
+                    # Check if we already found a BLE transmitter entity for this device
+                    has_ble = False
+                    for p in phones:
+                        if p.get("device_name", "").lower() == device_name.lower():
+                            has_ble = True
+                            break
+                    if has_ble:
+                        continue
+                    # No BLE transmitter entity — phone is registered but sensor
+                    # is not enabled.  Show it so the UI can prompt the user.
+                    phones.append({
+                        "entity_id": "",
+                        "device_name": device_name,
+                        "uuid": "",
+                        "major": 0,
+                        "minor": 0,
+                        "ibeacon_key": "",
+                        "transmitting_id": "",
+                        "is_transmitting": False,
+                        "is_visible": False,
+                        "is_followed": False,
+                        "is_disabled": False,
+                        "existing_label": "",
+                        "state": "sensor_not_registered",
+                        "attributes": {},
+                        "device_id": device.id,
+                        "model": device.model or "",
+                        "manufacturer": device.manufacturer or "",
+                    })
+        except Exception as e:
+            _LOGGER.debug("companion_discover device-registry scan: %s", e)
+
         # Sort platforms by count descending, top 20
         _sorted_plats = dict(sorted(_debug_platforms.items(), key=lambda x: -x[1])[:20])
 
@@ -5260,6 +5311,7 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                 "total_entities": len(list(ent_reg.entities.values())),
                 "platforms": _sorted_plats,
                 "ble_any_platform": _debug_ble_any,
+                "mobile_app_devices": _debug_devices,
             },
         })
     except Exception as err:

@@ -2116,7 +2116,24 @@ export function render(ctx){
               };
             };
 
-            if (phone.is_disabled) {
+            if (phone.state === "sensor_not_registered") {
+              // Phone is registered with HA but BLE Transmitter sensor isn't enabled
+              meta.textContent = (phone.model ? phone.model + " · " : "") + "BLE Transmitter sensor not enabled";
+              btn.textContent = "Setup";
+              btn.style.color = "#f59e0b";
+              btn.style.borderColor = "#92400e";
+              btn.addEventListener("click", () => {
+                alert(
+                  "To enable phone tracking:\n\n" +
+                  "1. Open the HA Companion App on your phone\n" +
+                  "2. Go to Settings > Companion App > Manage Sensors\n" +
+                  "3. Find 'BLE Transmitter' and enable it\n" +
+                  "4. Turn on 'Transmit enabled'\n" +
+                  "5. Restart Home Assistant\n\n" +
+                  "The BLE Transmitter sensor must be registered with HA before PadSpan can track the phone."
+                );
+              });
+            } else if (phone.is_disabled) {
               btn.textContent = "Enable";
               btn.style.color = "#f59e0b";
               btn.style.borderColor = "#92400e";
@@ -2283,6 +2300,29 @@ export function render(ctx){
           meta.textContent = statusParts.join(" · ");
           info.appendChild(meta);
           row.appendChild(info);
+
+          // Phone registered but BLE sensor not enabled (common on Android)
+          if (phone.state === "sensor_not_registered") {
+            meta.textContent = (phone.model ? phone.model + " · " : "") + "BLE Transmitter sensor not enabled in Companion App";
+            const setupBtn = document.createElement("button");
+            setupBtn.className = "btn inline";
+            setupBtn.style.cssText = "font-size:12px;padding:4px 14px;color:#f59e0b;border-color:#92400e;font-weight:600;white-space:nowrap";
+            setupBtn.textContent = "Setup";
+            setupBtn.addEventListener("click", () => {
+              alert(
+                "To enable phone tracking:\n\n" +
+                "1. Open the HA Companion App on your phone\n" +
+                "2. Go to Settings > Companion App > Manage Sensors\n" +
+                "3. Find 'BLE Transmitter' and enable it\n" +
+                "4. Turn on 'Transmit enabled'\n" +
+                "5. Restart Home Assistant\n\n" +
+                "The BLE Transmitter sensor must be registered with HA before PadSpan can track the phone."
+              );
+            });
+            row.appendChild(setupBtn);
+            companionCard.appendChild(row);
+            continue;
+          }
 
           // Disabled entity — show enable instructions
           if (phone.is_disabled) {
