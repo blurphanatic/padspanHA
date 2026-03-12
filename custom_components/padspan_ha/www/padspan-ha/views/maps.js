@@ -1481,10 +1481,13 @@ function _edit(ctx, map){
   // ── Rotate Image panel ─────────────────────────────────────────────────
   // Only available before the map is connected to the 3D stack fabric.
   // Bakes rotation into the actual image so downstream code stays simple.
-  const _hasStack = map.stack && (map.stack.x_offset !== undefined || map.stack.is_master);
-  const _hasReceivers = (map.receivers || []).length > 0;
-  const _hasRoomBounds = Object.keys(map.room_bounds || {}).length > 0;
-  const _canRotate = !_hasStack;
+  // Rotation is available unless the map has been positioned in the 3D stack
+  // (has tie-ins or is the master map). Fresh maps get default stack values
+  // (x_offset=0, scale=1) which don't count as "connected".
+  const _stk = map.stack || {};
+  const _hasStackTieIns = Array.isArray(_stk.tie_ins) && _stk.tie_ins.length > 0;
+  const _isMaster = !!_stk.is_master;
+  const _canRotate = !_hasStackTieIns && !_isMaster;
 
   const rotatePanel = el("div",{style:"display:none;margin-top:10px"});
   if(_canRotate && url){
