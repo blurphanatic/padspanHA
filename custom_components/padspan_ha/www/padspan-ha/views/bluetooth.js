@@ -420,17 +420,6 @@ function renderScanners(ctx, radios, sources, adsAll) {
     const d = Math.floor(h/24); return `${d}d ${h%24}h`;
   };
 
-  const detailCard = el("div", { class: "card", style: "max-height:80vh;overflow-y:auto" });
-  const selRadio = radios.find(r => String(r.source || "") === selSrc);
-  const selName = selRadio ? (selRadio.name || selSrc) : selSrc;
-  const _sid = ctx.helpers.radioShortId ? ctx.helpers.radioShortId(selSrc) : "";
-  detailCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap" }, [
-    _sid ? el("span", { class: "pill", style: "font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px" }, _sid) : null,
-    el("div", { class: "h2", style: "margin:0" }, selName),
-    el("span", { class: "badge" }, `${_filteredAds.length} ${_quietMode ? "tracked" : "devices"}`),
-  ].filter(Boolean)));
-  detailCard.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:10px" }, "All BLE devices heard by this scanner, sorted by signal strength."));
-
   // Quiet mode: filter per-scanner device list
   const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   const _filteredAds = _quietMode
@@ -442,6 +431,17 @@ function renderScanners(ctx, radios, sources, adsAll) {
         return false;
       })
     : uniqueAds;
+
+  const detailCard = el("div", { class: "card", style: "max-height:80vh;overflow-y:auto" });
+  const selRadio = radios.find(r => String(r.source || "") === selSrc);
+  const selName = selRadio ? (selRadio.name || selSrc) : selSrc;
+  const _sid = ctx.helpers.radioShortId ? ctx.helpers.radioShortId(selSrc) : "";
+  detailCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap" }, [
+    _sid ? el("span", { class: "pill", style: "font-family:monospace;font-weight:700;font-size:11px;padding:1px 6px" }, _sid) : null,
+    el("div", { class: "h2", style: "margin:0" }, selName),
+    el("span", { class: "badge" }, `${_filteredAds.length} ${_quietMode ? "tracked" : "devices"}`),
+  ].filter(Boolean)));
+  detailCard.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:10px" }, "All BLE devices heard by this scanner, sorted by signal strength."));
 
   if (!_filteredAds.length) {
     detailCard.appendChild(el("div", { class: "muted", style: "padding:12px 0" }, _quietMode ? "No tracked devices heard by this scanner." : "No devices heard by this scanner yet."));
