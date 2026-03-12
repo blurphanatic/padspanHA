@@ -2982,7 +2982,8 @@ function _stack(ctx, maps, helpBtn){
     // Reference layer: image (if any) + SVG room bounds on top
     const refLayer = document.createElement("div");
     refLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none";
-    const refUrl = refMap.image?.filename ? `/local/padspan_ha/maps/${refMap.image.filename}` : null;
+    const _refV = (refMap.updated||refMap.image?.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
+    const refUrl = refMap.image?.filename ? `/local/padspan_ha/maps/${refMap.image.filename}${_refV ? '?v='+_refV : ''}` : null;
     if(refUrl){
       const ri = document.createElement("img");
       ri.src = refUrl;
@@ -3009,7 +3010,8 @@ function _stack(ctx, maps, helpBtn){
       tgtLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:grab;transform-origin:50% 50%";
 
       // Target layer: image (if any) + SVG room bounds on top
-      const tgtUrl = tgtMap.image?.filename ? `/local/padspan_ha/maps/${tgtMap.image.filename}` : null;
+      const _tgtV = (tgtMap.updated||tgtMap.image?.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
+      const tgtUrl = tgtMap.image?.filename ? `/local/padspan_ha/maps/${tgtMap.image.filename}${_tgtV ? '?v='+_tgtV : ''}` : null;
       if(tgtUrl){
         const ti = document.createElement("img");
         ti.src = tgtUrl;
@@ -4146,7 +4148,8 @@ async function _combinedMapPng(map, ctx){
   const canvas = document.createElement("canvas");
   canvas.width = iw; canvas.height = ih;
   const g = canvas.getContext("2d");
-  const pngUrl = map.image?.filename ? `/local/padspan_ha/maps/${map.image.filename}` : null;
+  const _lv = (map.updated||map.image?.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
+  const pngUrl = map.image?.filename ? `/local/padspan_ha/maps/${map.image.filename}${_lv ? '?v='+_lv : ''}` : null;
   if(pngUrl){
     try{ const img = await _loadImage(pngUrl); g.drawImage(img,0,0,iw,ih); }
     catch(e){ g.fillStyle="#071008"; g.fillRect(0,0,iw,ih); }
