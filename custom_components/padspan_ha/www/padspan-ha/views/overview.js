@@ -1026,8 +1026,10 @@ export function render(ctx){
     for(const m of maps_list){
       const tf = mapTransforms[m.id]; if(!tf) continue;
       for(const r of (m.receivers||[])){
-        const liveRadio = allRadios_live.find(rd=>rd.name===(r.label||"")||rd.source===(r.id||"")||rd.source===(r.source||"")||rd.name===(r.id||""));
-        const src = (liveRadio ? liveRadio.source : null) || r.source || r.id || "";
+        // Match stored receiver to live radio — primary key is source
+        const rSrc = r.source || "";
+        const liveRadio = rSrc ? allRadios_live.find(rd=>rd.source===rSrc) : allRadios_live.find(rd=>rd.name===(r.label||""));
+        const src = (liveRadio ? liveRadio.source : null) || rSrc || r.id || "";
         if(!src) continue;
         const [wx,wy] = tf.mapPt(r.x||0, r.y||0);
         const [sx,sy] = iso(wx, wy, tf.z);

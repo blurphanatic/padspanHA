@@ -1411,9 +1411,6 @@ function _tuneTab(ctx, el, cs, calData) {
   // Live radios from snapshot — used to filter stale receivers
   const _snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const _liveRadios = _snap?.ble?.radios || [];
-  const _isLiveRadio = (r) => _liveRadios.some(rd =>
-    rd.name === (r.label || "") || rd.source === (r.id || "") || rd.source === (r.source || "") || rd.name === (r.id || "")
-  );
 
   if (!ctx.state._calibTune) ctx.state._calibTune = {
     fg: ctx.state.settings?.overview_iso_floor_gap ?? 150,
@@ -1710,11 +1707,9 @@ function _tuneTab(ctx, el, cs, calData) {
     _refreshInfo();
 
     const draft = ts.draftReceivers[mapId];
-    if (!draft) { console.warn("[PadSpan] drag: no draft for map", mapId, Object.keys(ts.draftReceivers)); isoDiv.style.cursor = ""; return; }
-    // Match by id first, then fallback to source or label
+    if (!draft) { ctx.toast("Cannot drag: map data not loaded. Try Reset.", true); isoDiv.style.cursor = ""; return; }
     let rxObj = draft.find(r => r.id === rxId);
-    if (!rxObj) rxObj = draft.find(r => (r.source || "") === rxId || (r.label || "") === rxId);
-    if (!rxObj) { console.warn("[PadSpan] drag: no receiver", rxId, "in draft", draft.map(r => r.id)); isoDiv.style.cursor = ""; return; }
+    if (!rxObj) { ctx.toast("Cannot drag: receiver data out of sync. Try Reset.", true); isoDiv.style.cursor = ""; return; }
     const xf = mapXforms[mapId];
     if (!xf) { console.warn("[PadSpan] drag: no xform for map", mapId); isoDiv.style.cursor = ""; return; }
     const [origWx, origWy] = xf.mapPt(rxObj.x, rxObj.y);
@@ -2057,7 +2052,44 @@ function _tuneTab(ctx, el, cs, calData) {
       `Room: ${_esc(rx.room || "—")}`,
       `Position: x ${(rx.x * 100).toFixed(1)}%, y ${(rx.y * 100).toFixed(1)}%`,
     ];
-    infoCard.innerHTML = lines.join(" &nbsp;·&nbsp; ");
+    const infoLine = document.createElement("div");
+    infoLine.innerHTML = lines.join(" &nbsp;·&nbsp; ");
+    infoCard.appendChild(infoLine);
+    // "Remove from this map" button — removes from current map only
+    const _selMapId = ts.selectedRx.mapId;
+    const _selRxId = ts.selectedRx.rxId;
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "btn inline";
+    removeBtn.style.cssText = "font-size:10px;padding:2px 10px;color:#f87171;border-color:#f8717140;margin-top:6px";
+    removeBtn.textContent = "Remove from this map";
+    removeBtn.title = "Remove this receiver from " + (mapObj?.name || "this map") + " only";
+    removeBtn.addEventListener("click", async () => {
+      ts._confirming = true;
+      const d = ts.draftReceivers[_selMapId] || [];
+      ts.draftReceivers[_selMapId] = d.filter(r => r.id !== _selRxId);
+      ts.dirtyMaps[_selMapId] = true;
+      ts.selectedRx = null;
+      // Save immediately
+      const origMap = maps_list.find(m => m.id === _selMapId);
+      if (origMap) {
+        try {
+          await ctx.actions.mapsUpdateQuiet({
+            map_id: _selMapId,
+            receivers: ts.draftReceivers[_selMapId],
+            calibration: origMap.calibration || {},
+            notes: origMap.notes || "",
+          });
+          ts.dirtyMaps = {};
+          ts._mapsStamp = null;
+          ctx.toast("Receiver removed from " + (origMap.name || "map"));
+          await ctx.actions.mapsRefresh();
+        } catch (e) {
+          ctx.toast("Remove failed: " + String(e), true);
+        }
+      }
+      ts._confirming = false;
+    });
+    infoCard.appendChild(removeBtn);
   }
   _refreshInfo();
 
@@ -2107,18 +2139,17 @@ function _tuneTab(ctx, el, cs, calData) {
     radiosCard.appendChild(hint);
 
     // Build lookup: which map(s) each radio is placed on
-    const radioPlacement = {}; // source → [{mapId, mapName, rxId}]
+    // Use source as the primary key; fall back to label only for legacy receivers
+    const radioPlacement = {}; // source|label → [{mapId, mapName, rxId}]
     for (const [mapId, recs] of Object.entries(ts.draftReceivers)) {
       const mapObj = maps_list.find(m => m.id === mapId);
       const mapName = mapObj?.name || mapId;
       for (const r of recs) {
-        const keys = [r.id, r.source, r.label].filter(Boolean);
-        for (const k of keys) {
-          if (!radioPlacement[k]) radioPlacement[k] = [];
-          // Avoid duplicates
-          if (!radioPlacement[k].some(p => p.mapId === mapId && p.rxId === r.id)) {
-            radioPlacement[k].push({ mapId, mapName, rxId: r.id });
-          }
+        const key = r.source || r.label || "";
+        if (!key) continue;
+        if (!radioPlacement[key]) radioPlacement[key] = [];
+        if (!radioPlacement[key].some(p => p.mapId === mapId && p.rxId === r.id)) {
+          radioPlacement[key].push({ mapId, mapName, rxId: r.id });
         }
       }
     }
@@ -2224,13 +2255,12 @@ function _tuneTab(ctx, el, cs, calData) {
             spin.textContent = "Deleting…";
             actWrap.appendChild(spin);
             try {
-              // 1. Remove from local drafts (match by id, source, OR label)
+              // 1. Remove from local drafts (match by source — the stable key)
               let removedMaps = [];
               for (const [mapId, recs] of Object.entries(ts.draftReceivers)) {
                 const before = recs.length;
                 ts.draftReceivers[mapId] = recs.filter(r =>
-                  (r.id || "") !== src && (r.source || "") !== src &&
-                  (r.id || "") !== nm && (r.label || "") !== nm
+                  !src || (r.source || "") !== src
                 );
                 if (ts.draftReceivers[mapId].length < before) {
                   ts.dirtyMaps[mapId] = true;

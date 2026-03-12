@@ -322,6 +322,10 @@ class MapsStore:
     async def async_prune_stale_receivers(self, known_sources: set[str], known_names: set[str]) -> int:
         """Remove receivers from all maps that don't match any known radio.
 
+        Only prunes receivers with an EMPTY source field (legacy data).
+        Receivers with a non-empty source are always kept — the user placed
+        them intentionally and the source may simply be temporarily offline.
+
         Returns the number of receivers removed.
         """
         removed = 0
@@ -333,8 +337,7 @@ class MapsStore:
             before = len(recs)
             m["receivers"] = [
                 r for r in recs
-                if (r.get("id") or "") in known_sources
-                or (r.get("source") or "") in known_sources
+                if r.get("source")  # non-empty source → always keep
                 or (r.get("label") or "") in known_names
             ]
             diff = before - len(m["receivers"])
