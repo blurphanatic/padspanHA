@@ -139,6 +139,9 @@ class PadSpanAreaSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity):
     def __init__(self, coordinator: PresenceCoordinator, key: str) -> None:
         super().__init__(coordinator)
         self._key = key
+        obj = (coordinator.data or {}).get(key, {})
+        self._init_label = str(obj.get("user_label") or obj.get("name") or key)
+        self._init_uid = _device_uid(obj) or key
 
     # ── internal helpers ─────────────────────────────────────────────────────
 
@@ -148,7 +151,7 @@ class PadSpanAreaSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity):
 
     def _label(self) -> str:
         obj = self._obj
-        return str(obj.get("user_label") or obj.get("name") or self._key)
+        return str(obj.get("user_label") or obj.get("name") or self._init_label)
 
     # ── HA entity identity ────────────────────────────────────────────────────
 
@@ -164,8 +167,9 @@ class PadSpanAreaSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity):
 
     @property
     def device_info(self) -> dict[str, Any]:
+        uid = _device_uid(self._obj) or self._init_uid
         return {
-            "identifiers": {(DOMAIN, _device_uid(self._obj))},
+            "identifiers": {(DOMAIN, uid)},
             "name": self._label(),
             "manufacturer": "PadSpan HA",
             "model": "BLE Presence Tracker",
@@ -224,6 +228,9 @@ class PadSpanDistanceSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity
     def __init__(self, coordinator: PresenceCoordinator, key: str) -> None:
         super().__init__(coordinator)
         self._key = key
+        obj = (coordinator.data or {}).get(key, {})
+        self._init_label = str(obj.get("user_label") or obj.get("name") or key)
+        self._init_uid = _device_uid(obj) or key
 
     @property
     def _obj(self) -> dict[str, Any]:
@@ -231,7 +238,7 @@ class PadSpanDistanceSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity
 
     def _label(self) -> str:
         obj = self._obj
-        return str(obj.get("user_label") or obj.get("name") or self._key)
+        return str(obj.get("user_label") or obj.get("name") or self._init_label)
 
     @property
     def unique_id(self) -> str:
@@ -244,8 +251,9 @@ class PadSpanDistanceSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity
 
     @property
     def device_info(self) -> dict[str, Any]:
+        uid = _device_uid(self._obj) or self._init_uid
         return {
-            "identifiers": {(DOMAIN, _device_uid(self._obj))},
+            "identifiers": {(DOMAIN, uid)},
             "name": self._label(),
             "manufacturer": "PadSpan HA",
             "model": "BLE Presence Tracker",
@@ -299,6 +307,9 @@ class PadSpanScannerDistanceSensor(CoordinatorEntity[PresenceCoordinator], Senso
         super().__init__(coordinator)
         self._key = key
         self._source = source
+        obj = (coordinator.data or {}).get(key, {})
+        self._init_label = str(obj.get("user_label") or obj.get("name") or key)
+        self._init_uid = _device_uid(obj) or key
 
     @property
     def _obj(self) -> dict[str, Any]:
@@ -306,7 +317,7 @@ class PadSpanScannerDistanceSensor(CoordinatorEntity[PresenceCoordinator], Senso
 
     def _label(self) -> str:
         obj = self._obj
-        return str(obj.get("user_label") or obj.get("name") or self._key)
+        return str(obj.get("user_label") or obj.get("name") or self._init_label)
 
     @property
     def unique_id(self) -> str:
@@ -320,8 +331,9 @@ class PadSpanScannerDistanceSensor(CoordinatorEntity[PresenceCoordinator], Senso
 
     @property
     def device_info(self) -> dict[str, Any]:
+        uid = _device_uid(self._obj) or self._init_uid
         return {
-            "identifiers": {(DOMAIN, _device_uid(self._obj))},
+            "identifiers": {(DOMAIN, uid)},
             "name": self._label(),
             "manufacturer": "PadSpan HA",
             "model": "BLE Presence Tracker",

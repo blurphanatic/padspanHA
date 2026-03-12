@@ -102,6 +102,12 @@ class PadSpanDeviceTracker(CoordinatorEntity["PresenceCoordinator"], TrackerEnti
     def __init__(self, coordinator: "PresenceCoordinator", key: str) -> None:
         super().__init__(coordinator)
         self._key = key
+        # Snapshot label and device UID at creation time (when coordinator.data has
+        # the object).  This prevents device_info from returning empty identifiers
+        # if the object temporarily drops out of the coordinator result.
+        obj = (coordinator.data or {}).get(key, {})
+        self._init_label = str(obj.get("user_label") or obj.get("name") or key)
+        self._init_uid = _device_uid(obj) or key
 
     # ── internal helpers ─────────────────────────────────────────────────────
 
@@ -111,7 +117,7 @@ class PadSpanDeviceTracker(CoordinatorEntity["PresenceCoordinator"], TrackerEnti
 
     def _label(self) -> str:
         obj = self._obj
-        return str(obj.get("user_label") or obj.get("name") or self._key)
+        return str(obj.get("user_label") or obj.get("name") or self._init_label)
 
     # ── HA entity identity ────────────────────────────────────────────────────
 
@@ -126,8 +132,9 @@ class PadSpanDeviceTracker(CoordinatorEntity["PresenceCoordinator"], TrackerEnti
 
     @property
     def device_info(self) -> dict[str, Any]:
+        uid = _device_uid(self._obj) or self._init_uid
         return {
-            "identifiers": {(DOMAIN, _device_uid(self._obj))},
+            "identifiers": {(DOMAIN, uid)},
             "name": self._label(),
             "manufacturer": "PadSpan HA",
             "model": "BLE Presence Tracker",

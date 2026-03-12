@@ -1037,6 +1037,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         "best_rssi": -999,
                         "best_rec": rec,
                         "best_addr": addr,
+                        "freshest_age": None,   # minimum age_s across all rotating MACs
+                        "freshest_rec": None,    # record with the freshest observation
                         "device": None,
                         "manufacturer_data": {},
                         "service_data": {},
@@ -1044,18 +1046,39 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     }
                 pg = _private_groups[cid]
                 pg["addrs"].append(addr)
+                # Per-source merge: prefer the FRESHEST (lowest age_s) reading
+                # per scanner source across all rotating MACs — not the strongest
+                # RSSI, which may come from a stale MAC the phone stopped using.
                 for src_key, src_info in (rec.get("sources") or {}).items():
                     prev = pg["all_sources"].get(src_key)
-                    s_rssi = src_info.get("rssi") if isinstance(src_info, dict) else None
-                    if prev is None or (s_rssi is not None and (prev.get("rssi") is None or s_rssi > prev["rssi"])):
-                        pg["all_sources"][src_key] = src_info if isinstance(src_info, dict) else {"rssi": None, "age_s": None}
+                    si = src_info if isinstance(src_info, dict) else {"rssi": None, "age_s": None}
+                    if prev is None:
+                        pg["all_sources"][src_key] = si
+                    else:
+                        s_age = si.get("age_s")
+                        p_age = prev.get("age_s")
+                        # Prefer lower age (fresher); fall back to stronger RSSI if ages equal/missing
+                        if s_age is not None and (p_age is None or s_age < p_age):
+                            pg["all_sources"][src_key] = si
+                        elif s_age == p_age:
+                            s_rssi = si.get("rssi")
+                            if s_rssi is not None and (prev.get("rssi") is None or s_rssi > prev["rssi"]):
+                                pg["all_sources"][src_key] = si
                 for e in addr_to_entities.get(addr, []):
                     pg["all_linked"].add(e)
+                # Track best RSSI for address/signal display
                 rssi = rec.get("rssi")
                 if rssi is not None and rssi > pg["best_rssi"]:
                     pg["best_rssi"] = rssi
                     pg["best_rec"] = rec
                     pg["best_addr"] = addr
+                # Track freshest record (minimum age_s) for last_seen/age reporting.
+                # This is the critical fix: a phone's newest rotating MAC has age≈0
+                # even if an older MAC with stronger RSSI has age>>0.
+                age = rec.get("age_s")
+                if age is not None and (pg["freshest_age"] is None or age < pg["freshest_age"]):
+                    pg["freshest_age"] = age
+                    pg["freshest_rec"] = rec
                 if not pg["device"] and addr in addr_to_device:
                     pg["device"] = addr_to_device[addr]
                 # Merge BLE metadata
@@ -1183,7 +1206,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         # (B2) Merged private_ble objects — one per canonical_id (phone identity)
         for cid, pg in _private_groups.items():
             canonical = pg["canonical"]
-            rec = pg["best_rec"]
+            # Use the freshest record for age/last_seen (not the strongest RSSI record)
+            # — a phone's newest rotating MAC has age≈0 but may have weaker RSSI.
+            freshest = pg.get("freshest_rec")
+            rec = freshest if freshest else pg["best_rec"]
             addr = pg["best_addr"]
             parts = addr.split(":")
             prefix = ":".join(parts[:3]) if len(parts) >= 3 else ""
@@ -1195,9 +1221,9 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "private_ble_name": canonical["name"],
                 "all_addresses": sorted(pg["addrs"]),  # all rotating MACs seen this cycle
                 "name": canonical.get("name") or rec.get("name") or addr,
-                "rssi": rec.get("rssi"),
+                "rssi": pg["best_rssi"] if pg["best_rssi"] > -999 else rec.get("rssi"),
                 "last_seen": rec.get("last_seen"),
-                "age_s": rec.get("age_s"),
+                "age_s": pg["freshest_age"] if pg["freshest_age"] is not None else rec.get("age_s"),
                 "sources": sorted(
                     [{"source": k, "rssi": v.get("rssi"), "age_s": v.get("age_s")} for k, v in pg["all_sources"].items()],
                     key=lambda x: x["source"],
