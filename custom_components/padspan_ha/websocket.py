@@ -1803,6 +1803,21 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         if ib_key:
                             entry = obj_store.get(ib_key)
 
+                    # For private_ble, also check all rotating MACs (handles labels
+                    # stored under an old rotating MAC before canonical_id fix)
+                    if not entry and kind == "private_ble":
+                        for mac in (obj.get("all_addresses") or []):
+                            entry = obj_store.get(mac)
+                            if entry:
+                                # Migrate: re-store under canonical_id so future lookups work
+                                _cid = obj.get("canonical_id")
+                                if _cid and _cid != mac:
+                                    _LOGGER.info(
+                                        "Migrating label '%s' from rotating MAC %s → canonical %s",
+                                        entry.get("label", ""), mac, _cid,
+                                    )
+                                break
+
                     # For iBeacon objects, also check if any of their MACs have a label
                     if not entry and kind == "ibeacon":
                         for mac in _ibeacon_to_macs.get(lookup_key, []):
@@ -1815,7 +1830,14 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         if label:
                             _device_labels[lookup_key] = label
                             # Propagate to all related keys
-                            if kind == "ibeacon":
+                            if kind == "private_ble":
+                                # Propagate to canonical_id + all rotating MACs
+                                _cid = obj.get("canonical_id")
+                                if _cid:
+                                    _device_labels[_cid] = label
+                                for mac in (obj.get("all_addresses") or []):
+                                    _device_labels[mac.upper()] = label
+                            elif kind == "ibeacon":
                                 for mac in _ibeacon_to_macs.get(lookup_key, []):
                                     _device_labels[mac] = label
                             elif addr in _mac_to_ibeacon_key:
@@ -2890,7 +2912,7 @@ async def ws_maps_delete(hass: HomeAssistant, connection, msg) -> None:
 )
 @websocket_api.async_response
 async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
-    """Assign a user label to a BLE MAC address."""
+    """Assign a user label to a BLE MAC address (or canonical_id / ibeacon key)."""
     obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
     if not obj_store:
         connection.send_error(msg["id"], "no_object_store", "Object store not initialized")
@@ -2906,8 +2928,26 @@ async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
     if not label:
         connection.send_error(msg["id"], "invalid_label", "Label is required")
         return
-    await obj_store.async_set(addr, label)
-    connection.send_result(msg["id"], {"ok": True, "address": addr, "label": label})
+
+    # If the address is a rotating MAC (RPA), resolve to canonical_id so the
+    # label survives BLE address rotation (iPhones, Android phones).
+    store_addr = addr
+    if len(addr) == 17 and addr.count(":") == 5 and not addr.startswith("irk:"):
+        try:
+            from .private_ble_resolver import get_resolver  # noqa: PLC0415
+            resolver = await get_resolver(hass)
+            resolved = resolver.resolve_address(addr)
+            if resolved and resolved.get("canonical_id"):
+                store_addr = resolved["canonical_id"]
+                _LOGGER.debug(
+                    "object_label_set: resolved rotating MAC %s → %s",
+                    addr, store_addr,
+                )
+        except Exception:
+            pass
+
+    await obj_store.async_set(store_addr, label)
+    connection.send_result(msg["id"], {"ok": True, "address": store_addr, "label": label})
 
 
 @websocket_api.websocket_command(
@@ -2927,6 +2967,16 @@ async def ws_object_label_delete(hass: HomeAssistant, connection, msg) -> None:
     # Only uppercase plain MAC addresses; leave ibeacon/irk keys as-is
     if len(addr) == 17 and addr.count(":") == 5:
         addr = addr.upper()
+    # Resolve rotating MAC → canonical_id (same as label_set)
+    if addr and len(addr) == 17 and addr.count(":") == 5 and not addr.startswith("irk:"):
+        try:
+            from .private_ble_resolver import get_resolver  # noqa: PLC0415
+            resolver = await get_resolver(hass)
+            resolved = resolver.resolve_address(addr)
+            if resolved and resolved.get("canonical_id"):
+                addr = resolved["canonical_id"]
+        except Exception:
+            pass
     if addr:
         await obj_store.async_delete(addr)
     connection.send_result(msg["id"], {"ok": True, "address": addr})

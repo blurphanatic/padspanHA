@@ -104,8 +104,13 @@ export function render(ctx){
           const label = (o && o.user_label) || (o && o.name) || d.name || d.addr;
           const rssiStr = d.rssi!=null ? `RSSI ${d.rssi}` : "";
 
+          // Use stable identifier for private_ble/ibeacon
+          const kind = o && o.kind;
+          const tagAddr = kind === "private_ble" ? (o.canonical_id || d.addr)
+                        : kind === "ibeacon"     ? (o.key || d.addr)
+                        : d.addr;
           const tagBtn = el("button",{class:"btn tiny"}, o&&o.user_label ? "Relabel" : "Tag");
-          tagBtn.addEventListener("click",()=>ctx.actions.tagObjectPrompt(d.addr, (o&&o.user_label)||""));
+          tagBtn.addEventListener("click",()=>ctx.actions.tagObjectPrompt(tagAddr, (o&&o.user_label)||""));
 
           // Follow toggle
           const followKey = (d.addr || (o && o.entity_id) || "").toUpperCase();

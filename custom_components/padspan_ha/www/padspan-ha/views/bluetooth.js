@@ -565,8 +565,12 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     if (xr.canonical_id) subParts.push("IRK-resolved");
     if (xr.ibeacon_uuid) subParts.push("iBeacon");
 
+    // Use stable identifier for private_ble/ibeacon (same logic as objects.js)
+    const tagAddr = xr.kind === "private_ble" ? (xr.canonical_id || addr)
+                  : xr.kind === "ibeacon"     ? (xr.key || addr)
+                  : addr;
     const tagBtn = el("button", { class: "btn tiny" }, userLabel ? "Relabel" : "Tag");
-    tagBtn.addEventListener("click", e => { e.stopPropagation(); ctx.actions.tagObjectPrompt(addr, userLabel); });
+    tagBtn.addEventListener("click", e => { e.stopPropagation(); ctx.actions.tagObjectPrompt(tagAddr, userLabel); });
 
     const mainDiv = el("div", { class: "bt-adv-main" }, [
       el("div", { class: "bt-adv-name" }, displayName),
