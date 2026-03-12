@@ -1605,7 +1605,7 @@ function _edit(ctx, map){
     const rotCancelBtn = el("button",{class:"btn inline", onclick:()=>{ rotatePanel.style.display="none"; _rotAngle=0; _updatePreview(); }}, "Cancel");
 
     rotatePanel.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:6px"},"Preview rotation, then click Apply to bake it into the image:"));
-    if(_hasReceivers || _hasRoomBounds){
+    if((map.receivers||[]).length || Object.keys(map.room_bounds||{}).length){
       rotatePanel.appendChild(el("div",{style:"font-size:11px;color:#fbbf24;margin-bottom:6px"},"Receivers and room boundaries will be remapped to match the rotated image."));
     }
     rotatePanel.appendChild(rotWrap);
