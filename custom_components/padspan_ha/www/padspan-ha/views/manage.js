@@ -2020,25 +2020,20 @@ function _factoryReset(ctx, el){
     }
 
     // ── Done ──
-    _setProgress(100, "Factory reset complete — reloading page…");
-    _logStep("All done. Reloading in 2 seconds…");
+    _setProgress(100, "Factory reset complete");
+    _logStep("All done. Click Reload Page to start fresh.");
     resetBtn.textContent = "Reset Complete";
     resetBtn.style.background = "#14532d";
     resetBtn.style.borderColor = "#16a34a";
     resetBtn.style.color = "#4ade80";
+    ctx.state._factoryResetInProgress = false;
 
-    // Auto-reload after a short delay so the user can see the log
     const reloadBtn = el("button",{
       class:"btn",
       style:"background:#1e40af;border-color:#3b82f6;color:#93c5fd;font-weight:700;padding:8px 20px;margin-top:12px",
-    },"Reload Now");
+    },"Reload Page");
     reloadBtn.addEventListener("click",()=>location.reload());
     btnWrap.appendChild(reloadBtn);
-
-    setTimeout(()=>{
-      ctx.state._factoryResetInProgress = false;
-      location.reload();
-    }, 2000);
   });
 
   btnWrap.appendChild(resetBtn);
