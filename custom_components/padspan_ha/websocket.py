@@ -5059,17 +5059,25 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
         # Collect debug info about what mobile_app entities exist
         _debug_mobile_entities: list[str] = []
         _debug_ble_candidates: list[str] = []
+        _debug_platforms: dict[str, int] = {}
+        _debug_ble_any: list[str] = []  # BLE-related entities on ANY platform
 
         # Find all BLE transmitter sensor entities from mobile_app
         for entity in ent_reg.entities.values():
+            # Track all platforms for debug
+            _debug_platforms[entity.platform] = _debug_platforms.get(entity.platform, 0) + 1
+            # Catch BLE-related entities on ANY platform
+            _eid_lower = entity.entity_id.lower()
+            if ("ble" in _eid_lower or "transmit" in _eid_lower or "beacon" in _eid_lower) and len(_debug_ble_any) < 20:
+                _debug_ble_any.append(f"{entity.entity_id} (platform={entity.platform})")
+
             if entity.platform != "mobile_app":
                 continue
             _debug_mobile_entities.append(entity.entity_id)
             eid = entity.entity_id
             if "ble_transmitter" not in eid:
                 # Also check for BLE-related entities with different naming
-                _lower = eid.lower()
-                if "ble" in _lower or "bluetooth" in _lower or "transmit" in _lower or "beacon" in _lower:
+                if "ble" in _eid_lower or "bluetooth" in _eid_lower or "transmit" in _eid_lower or "beacon" in _eid_lower:
                     _debug_ble_candidates.append(eid)
                 continue
 
@@ -5241,12 +5249,17 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                 "attributes": {k: str(v) for k, v in attrs.items()},
             })
 
+        # Sort platforms by count descending, top 20
+        _sorted_plats = dict(sorted(_debug_platforms.items(), key=lambda x: -x[1])[:20])
+
         connection.send_result(msg["id"], {
             "phones": phones,
             "debug": {
                 "mobile_app_entities": _debug_mobile_entities[:50],
                 "ble_candidates": _debug_ble_candidates[:20],
                 "total_entities": len(list(ent_reg.entities.values())),
+                "platforms": _sorted_plats,
+                "ble_any_platform": _debug_ble_any,
             },
         })
     except Exception as err:

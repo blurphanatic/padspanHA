@@ -2009,11 +2009,15 @@ export function render(ctx){
             const d = res.debug || {};
             const mobileEnts = d.mobile_app_entities || [];
             const bleCands = d.ble_candidates || [];
+            const platforms = d.platforms || {};
+            const bleAny = d.ble_any_platform || [];
             let msg = "No Companion App phones detected.";
             if (!mobileEnts.length) msg += " No mobile_app entities found in HA at all.";
             else msg += ` Found ${mobileEnts.length} mobile_app entities but none with 'ble_transmitter' in ID.`;
             if (bleCands.length) msg += ` BLE-related: ${bleCands.join(", ")}`;
-            if (mobileEnts.length && mobileEnts.length <= 15) msg += ` | Entities: ${mobileEnts.join(", ")}`;
+            if (bleAny.length) msg += ` | BLE entities (all platforms): ${bleAny.join(", ")}`;
+            const platKeys = Object.keys(platforms);
+            if (platKeys.length) msg += ` | Platforms: ${platKeys.map(p => p + "(" + platforms[p] + ")").join(", ")}`;
             _bLoadMsg.textContent = msg;
             return;
           }
@@ -2238,11 +2242,15 @@ export function render(ctx){
           const d = res.debug || {};
           const mobileEnts = d.mobile_app_entities || [];
           const bleCands = d.ble_candidates || [];
+          const platforms = d.platforms || {};
+          const bleAny = d.ble_any_platform || [];
           let msg = "No Companion App phones detected.";
           if (!mobileEnts.length) msg += " No mobile_app entities found in HA at all.";
           else msg += ` Found ${mobileEnts.length} mobile_app entities but none with 'ble_transmitter' in ID.`;
           if (bleCands.length) msg += ` BLE-related: ${bleCands.join(", ")}`;
-          if (mobileEnts.length && mobileEnts.length <= 15) msg += ` | Entities: ${mobileEnts.join(", ")}`;
+          if (bleAny.length) msg += ` | BLE entities (all platforms): ${bleAny.join(", ")}`;
+          const platKeys = Object.keys(platforms);
+          if (platKeys.length) msg += ` | Platforms: ${platKeys.map(p => p + "(" + platforms[p] + ")").join(", ")}`;
           _aLoadMsg.textContent = msg;
           return;
         }
