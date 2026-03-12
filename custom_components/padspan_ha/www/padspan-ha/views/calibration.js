@@ -1613,9 +1613,9 @@ function _tuneTab(ctx, el, cs, calData) {
           const lbl = (r.label || r.id || "R").substring(0, 6);
           const tip = `${r.label || r.id || "Receiver"}${r.room ? " | Room: " + r.room : ""} | x: ${(r.x * 100).toFixed(1)}% y: ${(r.y * 100).toFixed(1)}%`;
 
-          s += `<g data-rx-id="${_esc(r.id)}" data-map-id="${_esc(m.id)}" data-z="${z}" data-tip="${_esc(tip)}" style="cursor:grab">`;
+          s += `<g data-rx-id="${_esc(r.id)}" data-map-id="${_esc(m.id)}" data-z="${z}" data-tip="${_esc(tip)}" style="cursor:grab;pointer-events:all">`;
           // Transparent hit area for easier clicking/dragging
-          s += `<circle cx="${rx}" cy="${ry}" r="22" fill="transparent" stroke="none"/>`;
+          s += `<circle cx="${rx}" cy="${ry}" r="22" fill="rgba(0,0,0,0.01)" stroke="none" style="cursor:grab;pointer-events:all"/>`;
           // Selection highlight
           if (isSel) s += `<circle cx="${rx}" cy="${ry}" r="22" fill="none" stroke="#fbbf24" stroke-width="2" stroke-dasharray="4,3" opacity="0.9"/>`;
           // Outer pulse ring
@@ -1623,11 +1623,11 @@ function _tuneTab(ctx, el, cs, calData) {
           // Middle ring
           s += `<circle cx="${rx}" cy="${ry}" r="10" fill="none" stroke="#52b788" stroke-width="1.8" opacity="0.7"/>`;
           // Center dot
-          s += `<circle cx="${rx}" cy="${ry}" r="5" fill="#52b788" opacity="0.95"/>`;
+          s += `<circle cx="${rx}" cy="${ry}" r="5" fill="#52b788" opacity="0.95" style="cursor:grab"/>`;
           // Label below
           const lblW = Math.min(lbl.length * 7 + 8, 60);
           s += `<rect x="${rx - lblW / 2}" y="${ry + 18}" width="${lblW}" height="13" rx="3" fill="#071008" opacity="0.8"/>`;
-          s += `<text x="${rx}" y="${ry + 28}" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600">${_esc(lbl)}</text>`;
+          s += `<text x="${rx}" y="${ry + 28}" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600" style="cursor:grab;pointer-events:all">${_esc(lbl)}</text>`;
           s += `</g>`;
         }
       }
@@ -1708,7 +1708,9 @@ function _tuneTab(ctx, el, cs, calData) {
 
     const draft = ts.draftReceivers[mapId];
     if (!draft) { ctx.toast("Cannot drag: map data not loaded. Try Reset.", true); isoDiv.style.cursor = ""; return; }
+    // Match by id first, then fallback to source or label (handles legacy receivers)
     let rxObj = draft.find(r => r.id === rxId);
+    if (!rxObj) rxObj = draft.find(r => (r.source || "") === rxId || (r.label || "") === rxId);
     if (!rxObj) { ctx.toast("Cannot drag: receiver data out of sync. Try Reset.", true); isoDiv.style.cursor = ""; return; }
     const xf = mapXforms[mapId];
     if (!xf) { console.warn("[PadSpan] drag: no xform for map", mapId); isoDiv.style.cursor = ""; return; }
@@ -2064,7 +2066,6 @@ function _tuneTab(ctx, el, cs, calData) {
     removeBtn.textContent = "Remove from this map";
     removeBtn.title = "Remove this receiver from " + (mapObj?.name || "this map") + " only";
     removeBtn.addEventListener("click", async () => {
-      ts._confirming = true;
       const d = ts.draftReceivers[_selMapId] || [];
       ts.draftReceivers[_selMapId] = d.filter(r => r.id !== _selRxId);
       ts.dirtyMaps[_selMapId] = true;
@@ -2087,7 +2088,6 @@ function _tuneTab(ctx, el, cs, calData) {
           ctx.toast("Remove failed: " + String(e), true);
         }
       }
-      ts._confirming = false;
     });
     infoCard.appendChild(removeBtn);
   }

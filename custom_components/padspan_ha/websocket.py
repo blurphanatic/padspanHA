@@ -2685,46 +2685,9 @@ async def ws_maps_list(hass: HomeAssistant, connection, msg) -> None:
     global _last_receiver_prune
     ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
 
-    # Auto-prune stale receivers at most once per 5 minutes.
-    # Safety: skip prune if fewer radios are known than receivers placed on maps.
-    # This prevents mass-deletion after a reboot when scanners haven't reconnected yet.
-    if ms:
-        now = _time.monotonic()
-        if now - _last_receiver_prune > 300:
-            try:
-                bl = get_bluetooth_live(hass)
-                if bl is not None:
-                    snap = bl.get_snapshot(max_age_s=300)
-                    radios = snap.get("radios") or []
-                    known_sources = {str(r.get("source") or "") for r in radios if r.get("source")}
-                    known_names = {str(r.get("name") or "") for r in radios if r.get("name")}
-                    # Collect unique placed receiver identifiers across all maps
-                    placed_ids: set[str] = set()
-                    for _m in ms.list_maps():
-                        for _r in _m.get("receivers") or []:
-                            _pid = _r.get("source") or _r.get("id") or ""
-                            if _pid:
-                                placed_ids.add(_pid)
-                            _plbl = _r.get("label") or ""
-                            if _plbl:
-                                placed_ids.add(_plbl)
-                    # Only prune if EVERY placed receiver can be matched to a known radio.
-                    # This prevents mass-deletion when some scanners haven't reconnected.
-                    all_known = known_sources | known_names
-                    if not placed_ids or placed_ids.issubset(all_known):
-                        removed = await ms.async_prune_stale_receivers(known_sources, known_names)
-                        if removed:
-                            _LOGGER.info("Pruned %d stale receiver(s) from maps", removed)
-                    else:
-                        missing = placed_ids - all_known
-                        _LOGGER.debug(
-                            "Skipping receiver prune: %d placed identifier(s) not yet seen: %s — "
-                            "waiting for all scanners to report in",
-                            len(missing), missing,
-                        )
-            except Exception:
-                pass
-            _last_receiver_prune = now
+    # Auto-prune disabled — receivers are only removed via explicit user action
+    # (Delete button or Remove-from-map in the Tune tab).  The previous auto-prune
+    # caused receivers to silently disappear after reboots or scanner reconnects.
 
     maps = ms.list_maps() if ms else []
     connection.send_result(msg["id"], {"maps": maps})
