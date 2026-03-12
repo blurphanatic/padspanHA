@@ -1986,6 +1986,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             obj_copy = dict(cached_obj)
             base_age = cached_obj.get("_cache_age_s") or 0
             obj_copy["age_s"] = base_age + stale_s
+            # Update per-source age_s values too (they were frozen at cache time)
+            if obj_copy.get("sources"):
+                obj_copy["sources"] = [
+                    {**s, "age_s": (s.get("age_s") or 0) + stale_s}
+                    if isinstance(s, dict) else s
+                    for s in obj_copy["sources"]
+                ]
             objects.append(obj_copy)
             _cached_added += 1
 

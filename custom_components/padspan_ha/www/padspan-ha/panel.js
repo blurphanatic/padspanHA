@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.8.76";
+const APP_VERSION = "0.8.77";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260312T014949Z";
+const BUILD_ID = "20260312T035757Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1559,8 +1559,8 @@ class PadSpanHaApp extends HTMLElement {
       if(sources.length){
         for(const s of sources){
           const srcName = typeof s === "string" ? s : (s.source || "");
-          const rssi = typeof s === "object" ? (s.rssi ?? obj.rssi) : obj.rssi;
-          const age_s = typeof s === "object" ? (s.age_s ?? obj.age_s) : obj.age_s;
+          const rssi = typeof s === "object" ? s.rssi : obj.rssi;
+          const age_s = typeof s === "object" ? s.age_s : obj.age_s;
           tbody.appendChild(makeSourceRow(srcName, rssi, age_s));
         }
       } else {
