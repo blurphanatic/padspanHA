@@ -4263,6 +4263,17 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         row.appendChild(tag);
       }
 
+      // Detail button — opens the object detail modal (rename, delete, etc.)
+      const detailBtn = document.createElement("button");
+      detailBtn.className = "btn inline";
+      detailBtn.style.cssText = "font-size:10px;padding:1px 6px;color:#94a3b8;border-color:#94a3b840;flex-shrink:0";
+      detailBtn.textContent = "Details";
+      detailBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        ctx.actions.showObjectDetail(obj);
+      });
+      row.appendChild(detailBtn);
+
       // Hide button (only for non-pinned)
       if (!isPinned) {
         const hideBtn = document.createElement("button");
@@ -4277,7 +4288,13 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         row.appendChild(hideBtn);
       }
 
-      if (!isPinned) {
+      if (isPinned) {
+        // Pinned: click row to open details
+        row.addEventListener("click", () => {
+          ctx.actions.showObjectDetail(obj);
+        });
+      } else {
+        // Not pinned: click row to enter placement mode
         row.addEventListener("click", () => {
           bs.pendingPlace = { key: obj.key, label: obj.user_label || obj.name || "", kind: obj.kind || "ble" };
           _refreshAvailable();
