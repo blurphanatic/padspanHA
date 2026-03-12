@@ -4409,6 +4409,43 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         _refreshAvailable();
       });
       actRow.appendChild(rmBtn);
+      // Relocate button — re-tune at a new position without deleting
+      const relocBtn = document.createElement("button");
+      relocBtn.className = "btn inline";
+      relocBtn.style.cssText = "font-size:10px;padding:1px 6px;color:#f59e0b;border-color:#92400e";
+      relocBtn.textContent = "Relocate";
+      relocBtn.title = "Move this beacon to a new spot and re-calibrate";
+      relocBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        // Stop any active timer
+        if (bs._liveTimers[bk.id]) {
+          const t = bs._liveTimers[bk.id];
+          if (t.timer) clearTimeout(t.timer);
+          if (t.pollTimer) clearTimeout(t.pollTimer);
+          delete bs._liveTimers[bk.id];
+        }
+        // Remove from live tracking so it renders as draggable (pinned)
+        bs._liveBeaconKeys.delete(bk.key);
+        // Select it for dragging
+        bs.selectedBk = { mapId: map.id, bkId: bk.id };
+        // Focus the floor this beacon is on
+        const mapZ = map.stack?.z_level ?? 0;
+        const zIdx = sortedIsoLevels.indexOf(mapZ);
+        if (zIdx >= 0) {
+          const posIdx = _isoPos.indexOf(mapZ);
+          if (posIdx >= 0) {
+            bs.focusIdx = posIdx;
+            focusSlider.value = String(posIdx);
+            focusLbl.textContent = _getFocusLbl(posIdx);
+          }
+        }
+        _refreshSVG();
+        _refreshInfo();
+        _refreshTimerRow();
+        _refreshBeaconList();
+        ctx.toast("Drag the beacon to its new location — calibration starts when you drop it");
+      });
+      actRow.appendChild(relocBtn);
       // Compact move dropdown
       const otherMaps2 = maps_list.filter(m => m.id !== map.id);
       if (otherMaps2.length) {
