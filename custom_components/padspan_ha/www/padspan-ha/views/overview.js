@@ -589,7 +589,7 @@ export function render(ctx){
     const imgUrl = activeMap.image?.filename ? `/local/padspan_ha/maps/${activeMap.image.filename}` : null;
 
     // Filter state (persists within session)
-    if(ctx.state._2dFilters === undefined) ctx.state._2dFilters = { scanners: true, tagged: true, unknown: false, rooms: true };
+    if(ctx.state._2dFilters === undefined) ctx.state._2dFilters = { scanners: true, tagged: true, unknown: false, rooms: true, mapImg: true };
     const F = ctx.state._2dFilters;
 
     // Zoom/pan state
@@ -606,15 +606,26 @@ export function render(ctx){
     const liveRadioMap = {};
     for(const r of liveRadios) liveRadioMap[r.source] = r;
 
-    // Build SVG content
+    // Stroke widths & marker sizes in normalized [0..1] space (matches Maps tab approach)
+    const _sw = 0.003;           // room boundary stroke
+    const _mkR = 0.015;          // scanner marker radius
+    const _dotR = 0.008;         // object dot radius
+    const _fsRoom = 0.022;       // room label font size
+    const _fsScan = 0.014;       // scanner label font size
+    const _fsObj = 0.013;        // object label font size
+
+    // Build SVG content — uses viewBox="0 0 1 1" + preserveAspectRatio="none"
+    // to match the Maps tab coordinate system exactly (normalized 0..1 space).
     const buildSVG = () => {
-      let s = `<svg viewBox="0 0 ${imgW} ${imgH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" width="100%" height="100%" style="display:block">`;
+      let s = `<svg viewBox="0 0 1 1" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" width="100%" height="100%" style="display:block">`;
 
       // Background image
-      if(imgUrl){
-        s += `<image href="${imgUrl}" x="0" y="0" width="${imgW}" height="${imgH}" opacity="0.75"/>`;
+      if(F.mapImg && imgUrl){
+        s += `<image href="${imgUrl}" x="0" y="0" width="1" height="1" preserveAspectRatio="none" opacity="0.75"/>`;
+      } else if(!F.mapImg){
+        s += `<rect x="0" y="0" width="1" height="1" fill="#0d1f12"/>`;
       } else {
-        s += `<rect x="0" y="0" width="${imgW}" height="${imgH}" fill="#0d1f12"/>`;
+        s += `<rect x="0" y="0" width="1" height="1" fill="#0d1f12"/>`;
       }
 
       // Room boundaries
@@ -622,32 +633,29 @@ export function render(ctx){
         for(const [room, b] of Object.entries(activeMap.room_bounds || {})){
           if(!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
           const color = roomColorFn(room);
-          const pp = b.points.map(p => `${(p[0] * imgW).toFixed(1)},${(p[1] * imgH).toFixed(1)}`).join(" ");
-          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.12" stroke="${color}" stroke-width="2" stroke-opacity="0.7"/>`;
+          const pp = b.points.map(p => `${p[0]},${p[1]}`).join(" ");
+          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.12" stroke="${color}" stroke-width="${_sw}" stroke-opacity="0.7"/>`;
           // Room label at centroid
-          const cx = b.points.reduce((a,p)=>a+p[0],0) / b.points.length * imgW;
-          const cy = b.points.reduce((a,p)=>a+p[1],0) / b.points.length * imgH;
-          const fontSize = Math.max(10, Math.min(18, imgW / 50));
-          s += `<text x="${cx.toFixed(0)}" y="${cy.toFixed(0)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="${fontSize}" font-weight="600" opacity="0.8">${_esc(room)}</text>`;
+          const cx = b.points.reduce((a,p)=>a+p[0],0) / b.points.length;
+          const cy = b.points.reduce((a,p)=>a+p[1],0) / b.points.length;
+          s += `<text x="${cx.toFixed(4)}" y="${cy.toFixed(4)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="${_fsRoom}" font-weight="600" opacity="0.8">${_esc(room)}</text>`;
         }
       }
 
       // Scanners
       if(F.scanners){
         for(const r of receivers){
-          const px = (r.x != null ? r.x : 0.5) * imgW;
-          const py = (r.y != null ? r.y : 0.5) * imgH;
+          const px = r.x != null ? r.x : 0.5;
+          const py = r.y != null ? r.y : 0.5;
           const src = r.source || r.id || "";
           const liveR = liveRadioMap[src];
           const isOnline = !!liveR;
           const rxColor = isOnline ? "#52b788" : "#4a6052";
           const rxName = (r.label || (liveR && liveR.name) || r.source || "radio").substring(0, 16);
-          const markerR = Math.max(6, imgW / 80);
-          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${(markerR*1.8).toFixed(1)}" fill="none" stroke="${rxColor}" stroke-width="1.5" opacity="0.3"/>`;
-          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${markerR.toFixed(1)}" fill="none" stroke="${rxColor}" stroke-width="2" opacity="0.6"/>`;
-          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${(markerR*0.5).toFixed(1)}" fill="${rxColor}" opacity="0.9"/>`;
-          const labelFS = Math.max(8, imgW / 70);
-          s += `<text x="${px.toFixed(1)}" y="${(py - markerR*2.2).toFixed(1)}" text-anchor="middle" fill="${rxColor}" font-size="${labelFS}" font-weight="600">${_esc(rxName)}</text>`;
+          s += `<circle cx="${px}" cy="${py}" r="${_mkR*1.8}" fill="none" stroke="${rxColor}" stroke-width="${_sw*0.5}" opacity="0.3"/>`;
+          s += `<circle cx="${px}" cy="${py}" r="${_mkR}" fill="none" stroke="${rxColor}" stroke-width="${_sw*0.7}" opacity="0.6"/>`;
+          s += `<circle cx="${px}" cy="${py}" r="${_mkR*0.5}" fill="${rxColor}" opacity="0.9"/>`;
+          s += `<text x="${px}" y="${(py - _mkR*2.2).toFixed(4)}" text-anchor="middle" fill="${rxColor}" font-size="${_fsScan}" font-weight="600">${_esc(rxName)}</text>`;
         }
       }
 
@@ -656,8 +664,8 @@ export function render(ctx){
       for(const [room, b] of Object.entries(activeMap.room_bounds || {})){
         if(!b || !b.points || b.points.length < 3) continue;
         roomCentroids[room] = {
-          x: b.points.reduce((a,p)=>a+p[0],0) / b.points.length * imgW,
-          y: b.points.reduce((a,p)=>a+p[1],0) / b.points.length * imgH,
+          x: b.points.reduce((a,p)=>a+p[0],0) / b.points.length,
+          y: b.points.reduce((a,p)=>a+p[1],0) / b.points.length,
         };
       }
 
@@ -672,14 +680,14 @@ export function render(ctx){
         // Position: prefer k-NN on this map, else room centroid on this map
         let px, py;
         if(typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id === activeMap.id){
-          px = o.x_frac * imgW;
-          py = o.y_frac * imgH;
+          px = o.x_frac;
+          py = o.y_frac;
         } else if(o.room && roomCentroids[o.room]){
           const c = roomCentroids[o.room];
           const idx = (_roomObjIdx[o.room] || 0);
           _roomObjIdx[o.room] = idx + 1;
           const angle = idx * 2.4;
-          const spread = Math.max(8, imgW / 60);
+          const spread = 0.04;
           px = c.x + Math.cos(angle) * Math.min(spread * (1 + idx * 0.3), spread * 3);
           py = c.y + Math.sin(angle) * Math.min(spread * (1 + idx * 0.3), spread * 3);
         } else {
@@ -687,21 +695,19 @@ export function render(ctx){
         }
 
         const lbl = (o.user_label || o.name || "").substring(0, 14);
-        const dotR = Math.max(4, imgW / 120);
-        const lblFS = Math.max(8, imgW / 80);
 
         if(isFollowed){
           // Followed: yellow marker
-          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${(dotR*2).toFixed(1)}" fill="#fbbf24" fill-opacity="0.15"/>`;
-          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${dotR.toFixed(1)}" fill="#fbbf24" stroke="#071008" stroke-width="1.5"/>`;
-          if(lbl) s += `<text x="${px.toFixed(1)}" y="${(py - dotR*2).toFixed(1)}" text-anchor="middle" fill="#fbbf24" font-size="${lblFS}" font-weight="600">${_esc(lbl)}</text>`;
+          s += `<circle cx="${px}" cy="${py}" r="${_dotR*2}" fill="#fbbf24" fill-opacity="0.15"/>`;
+          s += `<circle cx="${px}" cy="${py}" r="${_dotR}" fill="#fbbf24" stroke="#071008" stroke-width="${_sw*0.5}"/>`;
+          if(lbl) s += `<text x="${px}" y="${(py - _dotR*2).toFixed(4)}" text-anchor="middle" fill="#fbbf24" font-size="${_fsObj}" font-weight="600">${_esc(lbl)}</text>`;
         } else if(isTagged){
           // Tagged: teal dot
-          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${dotR.toFixed(1)}" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="0.9"/>`;
-          if(lbl) s += `<text x="${px.toFixed(1)}" y="${(py - dotR*1.8).toFixed(1)}" text-anchor="middle" fill="#5eead4" font-size="${lblFS}" font-weight="600" opacity="0.85">${_esc(lbl)}</text>`;
+          s += `<circle cx="${px}" cy="${py}" r="${_dotR}" fill="#5eead4" stroke="#071008" stroke-width="${_sw*0.5}" opacity="0.9"/>`;
+          if(lbl) s += `<text x="${px}" y="${(py - _dotR*1.8).toFixed(4)}" text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="0.85">${_esc(lbl)}</text>`;
         } else {
           // Unknown: dim amber dot (no label)
-          s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${(dotR*0.7).toFixed(1)}" fill="#f59e0b" stroke="#071008" stroke-width="1" opacity="0.5"/>`;
+          s += `<circle cx="${px}" cy="${py}" r="${_dotR*0.7}" fill="#f59e0b" stroke="#071008" stroke-width="${_sw*0.3}" opacity="0.5"/>`;
         }
       }
 
@@ -741,10 +747,16 @@ export function render(ctx){
       return btn;
     };
 
+    // Layer toggles (map image + room lines) first — top left
+    filterBar.appendChild(makeFilterBtn("mapImg", "Map", "#a78bfa"));
+    filterBar.appendChild(makeFilterBtn("rooms", "Rooms", "#60a5fa"));
+    // Separator
+    const sep2d = document.createElement("span");
+    sep2d.style.cssText = "width:1px;height:16px;background:#334155;margin:0 2px";
+    filterBar.appendChild(sep2d);
     filterBar.appendChild(makeFilterBtn("scanners", "Scanners", "#52b788"));
     filterBar.appendChild(makeFilterBtn("tagged", "Tagged", "#5eead4"));
     filterBar.appendChild(makeFilterBtn("unknown", "Unknown", "#f59e0b"));
-    filterBar.appendChild(makeFilterBtn("rooms", "Rooms", "#60a5fa"));
     outer.appendChild(filterBar);
 
     // Map selector (only if multi-floor)
