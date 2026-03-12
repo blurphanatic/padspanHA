@@ -3502,10 +3502,10 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   // Helper: commit placement of a pending beacon onto a specific map at (nx, ny)
   function _placeBeaconOnMap(m, nx, ny) {
     const pd = bs.pendingPlace;
-    // If relocating, remove old beacon entry first
+    // If relocating, update the existing marker's position (preserves all calibration data)
     if (bs._relocating) {
       const { bkId: oldId, mapId: oldMapId } = bs._relocating;
-      // Stop any active timer on the old entry
+      // Stop any active timer so a fresh capture starts
       if (bs._liveTimers[oldId]) {
         const t = bs._liveTimers[oldId];
         if (t.timer) clearTimeout(t.timer);
@@ -3513,8 +3513,35 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         delete bs._liveTimers[oldId];
       }
       bs._liveBeaconKeys.delete(pd.key);
-      bs.draftBeacons[oldMapId] = (bs.draftBeacons[oldMapId] || []).filter(b => b.id !== oldId);
-      bs.dirtyMaps[oldMapId] = true;
+      // Find the existing draft entry and update its position
+      const oldDraft = (bs.draftBeacons[oldMapId] || []).find(b => b.id === oldId);
+      if (oldDraft) {
+        // If placing on a different map, move the entry across maps
+        if (oldMapId !== m.id) {
+          bs.draftBeacons[oldMapId] = (bs.draftBeacons[oldMapId] || []).filter(b => b.id !== oldId);
+          bs.dirtyMaps[oldMapId] = true;
+          oldDraft.x = Math.max(0, Math.min(1, nx));
+          oldDraft.y = Math.max(0, Math.min(1, ny));
+          if (!bs.draftBeacons[m.id]) bs.draftBeacons[m.id] = [];
+          bs.draftBeacons[m.id].push(oldDraft);
+        } else {
+          oldDraft.x = Math.max(0, Math.min(1, nx));
+          oldDraft.y = Math.max(0, Math.min(1, ny));
+        }
+        bs.dirtyMaps[m.id] = true;
+        bs.selectedBk = { mapId: m.id, bkId: oldId };
+        bs.pendingPlace = null;
+        bs._confirming = false;
+        bs._relocating = null;
+        _autoSaveAndStartTimer(oldDraft, m.id);
+        _refreshSVG();
+        _refreshInfo();
+        _refreshDirtyLabel();
+        _refreshBeaconList();
+        _refreshAvailable();
+        _refreshPlaceBanner();
+        return;
+      }
       bs._relocating = null;
     }
     const newBk = {
