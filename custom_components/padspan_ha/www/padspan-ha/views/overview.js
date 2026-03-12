@@ -1094,7 +1094,7 @@ export function render(ctx){
         wTotal += w;
         matched++;
       }
-      if(matched < 1 || wTotal < 1e-10) return null;
+      if(matched < 2 || wTotal < 1e-10) return null;
       // Confidence scales with number of matched scanners (≥3 = full)
       const confidence = Math.min(1.0, matched / 3) * 0.35;
       return {sx: wx / wTotal, sy: wy / wTotal, confidence};
@@ -1400,16 +1400,20 @@ export function render(ctx){
         const _mapMaxAge = Math.max(_mapAwayM * 2, 3600); // show up to 2x away timeout or 1hr, whichever is larger
         const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
         const _mapObjs = allObjects.filter(o => {
-          const hasKnn = typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id && mapTransforms[o.knn_map_id];
-          if (!hasKnn && (!o.room || o.room === "unknown" || o.room === "not_home" || !roomIsoPos[o.room])) return false;
           if (_renderedObjKeys.has(o.key || o.address || o.entity_id || "")) return false;
           const isFol = _isFollowed(o);
+          const hasKnn = typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id && mapTransforms[o.knn_map_id];
+          const hasRoom = o.room && o.room !== "unknown" && o.room !== "not_home" && roomIsoPos[o.room];
+          // Must have k-NN or a room to be positionable
+          if (!hasKnn && !hasRoom) return false;
           // Quiet mode: only show followed or labeled/identified objects
           if (_quietMode && !isFol && !o.user_label && !o.identified) return false;
           // Persistent pins mode: only show followed items
           if (ctx.state._overviewPersistentPins && !isFol) return false;
-          // Non-persistent: skip stale objects from history (keeps map clean)
+          // Non-persistent, non-followed: only show labeled/identified objects.
+          // Unlabeled random BLE devices are too numerous and cluster at scanner positions.
           if (!ctx.state._overviewPersistentPins && !isFol) {
+            if (!o.user_label && !o.identified) return false;
             const age = typeof o.age_s === "number" ? o.age_s : 0;
             if (age > _mapMaxAge) return false;
           }
