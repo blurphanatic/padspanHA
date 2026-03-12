@@ -1478,7 +1478,146 @@ function _edit(ctx, map){
   // Insert Trim button into the existing title row buttons (direct reference — no fragile querySelector)
   titleBtns.insertBefore(trimToggleBtn, titleBtns.firstChild);
 
+  // ── Rotate Image panel ─────────────────────────────────────────────────
+  // Only available before the map is connected to the 3D stack fabric.
+  // Bakes rotation into the actual image so downstream code stays simple.
+  const _hasStack = map.stack && (map.stack.x_offset !== undefined || map.stack.is_master);
+  const _hasReceivers = (map.receivers || []).length > 0;
+  const _hasRoomBounds = Object.keys(map.room_bounds || {}).length > 0;
+  const _canRotate = !_hasStack;
+
+  const rotatePanel = el("div",{style:"display:none;margin-top:10px"});
+  if(_canRotate && url){
+    let _rotAngle = 0;
+    const rotStatus = el("div",{class:"mono",style:"font-size:12px;margin-top:6px"}, "0°");
+
+    const rotWrap = el("div",{style:"position:relative;display:inline-block;max-width:100%;border:1px solid #253e2e;border-radius:6px;overflow:hidden;background:#0a150e"});
+    const rotImg = document.createElement("img");
+    rotImg.src = url;
+    rotImg.style.cssText = "display:block;max-width:100%;max-height:320px;transition:transform 0.3s ease";
+    rotWrap.appendChild(rotImg);
+
+    const _updatePreview = () => {
+      rotImg.style.transform = `rotate(${_rotAngle}deg)`;
+      rotStatus.textContent = `${_rotAngle}°`;
+    };
+
+    const rotBtns = el("div",{style:"display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center"});
+    for(const [label, delta] of [["-90°",-90],["-15°",-15],["-5°",-5],["+5°",5],["+15°",15],["+90°",90]]){
+      const b = el("button",{class:"btn tiny"}, label);
+      b.addEventListener("click", ()=>{ _rotAngle = (_rotAngle + delta) % 360; _updatePreview(); });
+      rotBtns.appendChild(b);
+    }
+    const resetBtn = el("button",{class:"btn tiny"}, "0°");
+    resetBtn.addEventListener("click", ()=>{ _rotAngle = 0; _updatePreview(); });
+    rotBtns.appendChild(resetBtn);
+
+    const applyStatus = el("div",{class:"mono",style:"font-size:12px;margin-top:6px"});
+    const applyBtn = el("button",{class:"btn inline",style:"margin-top:8px"}, "Apply Rotation");
+    applyBtn.addEventListener("click", async ()=>{
+      if(_rotAngle === 0){ applyStatus.textContent = "No rotation to apply."; return; }
+      applyBtn.disabled = true;
+      applyStatus.textContent = "Rotating image…";
+      try {
+        const img = await _loadImage(url);
+        const sw = img.naturalWidth || img.width;
+        const sh = img.naturalHeight || img.height;
+        const rad = _rotAngle * Math.PI / 180;
+        const absCos = Math.abs(Math.cos(rad));
+        const absSin = Math.abs(Math.sin(rad));
+        const nw = Math.round(sw * absCos + sh * absSin);
+        const nh = Math.round(sw * absSin + sh * absCos);
+        const canvas = document.createElement("canvas");
+        canvas.width = nw; canvas.height = nh;
+        const g = canvas.getContext("2d");
+        g.imageSmoothingEnabled = true;
+        g.translate(nw/2, nh/2);
+        g.rotate(rad);
+        g.drawImage(img, -sw/2, -sh/2);
+        const blob = await new Promise(r => canvas.toBlob(r, "image/png", 0.92));
+        const ab = await blob.arrayBuffer();
+        const b64 = _arrayBufferToBase64(ab);
+
+        applyStatus.textContent = "Uploading rotated image…";
+
+        // Remap receiver and room bound coordinates through the same rotation
+        const _rotPoint = (px, py) => {
+          // px, py are 0-1 fractions in the old image
+          const ox = px * sw - sw/2;
+          const oy = py * sh - sh/2;
+          const rx = ox * Math.cos(rad) - oy * Math.sin(rad);
+          const ry = ox * Math.sin(rad) + oy * Math.cos(rad);
+          return [Math.max(0, Math.min(1, (rx + nw/2) / nw)),
+                  Math.max(0, Math.min(1, (ry + nh/2) / nh))];
+        };
+
+        // Rotate receivers
+        const newReceivers = (map.receivers || []).map(r => {
+          const [nx, ny] = _rotPoint(r.x || 0, r.y || 0);
+          return { ...r, x: nx, y: ny };
+        });
+        // Rotate beacons
+        const newBeacons = (map.beacons || []).map(b => {
+          const [nx, ny] = _rotPoint(b.x || 0, b.y || 0);
+          return { ...b, x: nx, y: ny };
+        });
+        // Rotate room bounds
+        const newBounds = {};
+        for(const [room, b] of Object.entries(map.room_bounds || {})){
+          if(b && b.type === "poly" && Array.isArray(b.points)){
+            newBounds[room] = { ...b, points: b.points.map(p => { const [nx,ny] = _rotPoint(p[0],p[1]); return [nx,ny]; }) };
+          } else if(b && b.type === "circle"){
+            const [cx2,cy2] = _rotPoint(b.cx||0.5, b.cy||0.5);
+            newBounds[room] = { ...b, cx: cx2, cy: cy2 };
+          } else {
+            newBounds[room] = b;
+          }
+        }
+
+        await ctx.actions.mapsReplaceImage({ map_id: map.id, png_base64: b64, width: nw, height: nh });
+        // Save rotated coordinates
+        if(newReceivers.length || Object.keys(newBounds).length || newBeacons.length){
+          await ctx.actions.mapsUpdate({
+            map_id: map.id,
+            receivers: newReceivers,
+            calibration: map.calibration || {},
+            notes: map.notes || "",
+            room_bounds: newBounds,
+            beacons: newBeacons,
+          });
+        }
+        applyStatus.style.color = "#4ade80";
+        applyStatus.textContent = `Rotated ${_rotAngle}° and saved.`;
+        _rotAngle = 0;
+        // Refresh to show updated image
+        await ctx.actions.mapsRefresh();
+      } catch(e){
+        applyStatus.style.color = "#f87171";
+        applyStatus.textContent = "Failed: " + (e.message || e);
+      }
+      applyBtn.disabled = false;
+    });
+
+    const rotCancelBtn = el("button",{class:"btn inline", onclick:()=>{ rotatePanel.style.display="none"; _rotAngle=0; _updatePreview(); }}, "Cancel");
+
+    rotatePanel.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:6px"},"Preview rotation, then click Apply to bake it into the image:"));
+    if(_hasReceivers || _hasRoomBounds){
+      rotatePanel.appendChild(el("div",{style:"font-size:11px;color:#fbbf24;margin-bottom:6px"},"Receivers and room boundaries will be remapped to match the rotated image."));
+    }
+    rotatePanel.appendChild(rotWrap);
+    rotatePanel.appendChild(rotBtns);
+    rotatePanel.appendChild(rotStatus);
+    rotatePanel.appendChild(el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"},[applyBtn, rotCancelBtn]));
+    rotatePanel.appendChild(applyStatus);
+
+    const rotateToggleBtn = el("button",{class:"btn inline", onclick:()=>{
+      rotatePanel.style.display = rotatePanel.style.display==="none" ? "" : "none";
+    }}, "Rotate Image");
+    titleBtns.insertBefore(rotateToggleBtn, titleBtns.firstChild);
+  }
+
   card.appendChild(title);
+  card.appendChild(rotatePanel);
   card.appendChild(trimPanel);
   card.appendChild(stage);
   card.appendChild(info);
