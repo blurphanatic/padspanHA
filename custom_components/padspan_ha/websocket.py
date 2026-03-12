@@ -5586,6 +5586,36 @@ async def ws_factory_reset(hass: HomeAssistant, connection, msg) -> None:
     if DATA_OBJECTS_CACHE in domain:
         domain[DATA_OBJECTS_CACHE] = {}
 
+    # Clear plain-dict caches (DATA_OBJECT_HISTORY is a plain dict, not a store class)
+    if DATA_OBJECT_HISTORY in domain:
+        domain[DATA_OBJECT_HISTORY] = {}
+    # Clear the history store's last-save timestamp
+    domain.pop("_obj_hist_last_save", None)
+
+    # Clear the presence coordinator's cached objects so old labels don't linger
+    try:
+        _coord = domain.get("presence_coordinator")
+        if _coord and hasattr(_coord, "_known_objs"):
+            _coord._known_objs.clear()
+        if _coord and hasattr(_coord, "_last_seen"):
+            _coord._last_seen.clear()
+        if _coord and hasattr(_coord, "_room_votes"):
+            _coord._room_votes.clear()
+        if _coord and hasattr(_coord, "_room_confidence"):
+            _coord._room_confidence.clear()
+    except Exception:
+        pass
+
+    # Clear the main coordinator's cached state
+    try:
+        _main_coord = domain.get(DATA_COORDINATOR)
+        if _main_coord and hasattr(_main_coord, "_known_objs"):
+            _main_coord._known_objs.clear()
+        if _main_coord and hasattr(_main_coord, "_last_seen"):
+            _main_coord._last_seen.clear()
+    except Exception:
+        pass
+
     _LOGGER.warning(
         "FACTORY RESET executed by %s — cleared %d stores",
         connection.user.name if connection.user else "unknown",

@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.8.86";
+const APP_VERSION = "0.8.87";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260312T165838Z";
+const BUILD_ID = "20260312T173158Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1207,7 +1207,7 @@ class PadSpanHaApp extends HTMLElement {
         showScannerDetail: (scanner) => this._showScannerDetail(scanner),
 
         // Mapping suite actions
-        setMapsTab: (t)=>{ this.state.mapsTab=t; this._renderCurrentView(); },
+        setMapsTab: (t)=>{ this.state.mapsTab=t; if(t==="library") this._getMapsList().then(()=>this._renderCurrentView()).catch(()=>this._renderCurrentView()); else this._renderCurrentView(); },
         mapsRefresh: async ()=>{ await this._getMapsList(); this._renderCurrentView(); },
         mapsSetActive: (id)=>{ this.state.activeMapId=id; this._renderCurrentView(); },
         mapsDelete: async (id)=>{ await this._callWS({ type:"padspan_ha/maps_delete", map_id:id }); await this._getMapsList(); if(this.state.activeMapId===id) this.state.activeMapId=null; this._renderCurrentView(); },
@@ -1971,12 +1971,15 @@ class PadSpanHaApp extends HTMLElement {
   _renderCurrentView(fromPoll){
     // Skip re-render during active drag to prevent DOM destruction mid-interaction
     if(this.state._calibTune?._dragging || this.state._calibBeacon?._dragging || this.state._calibTune?._confirming || this.state._calibBeacon?._confirming) return;
+    // Skip re-render during active drag on 3D Stack alignment, Edit tab, or Trim tool
+    if(this.state.maps?._stackDragging || this.state.maps?._editDragging) return;
     // Skip ALL re-renders while traceback tab is active (prevents flicker/DOM destruction)
     if(this.state._traceback?.active && this.state.view === "traceback") return;
-    // Skip poll-triggered re-renders while on the maps upload tab.
-    // The file input element gets destroyed on DOM rebuild, which loses the selected file
-    // AND kills the OS file-picker dialog if it's open (user hasn't picked a file yet).
-    if(fromPoll && this.state.view === "maps" && this.state.mapsTab === "upload") return;
+    // Skip poll-triggered re-renders while on the maps upload/stack/edit tabs.
+    // Upload: file input gets destroyed, loses selected file + kills file-picker dialog.
+    // Stack: 3D alignment overlay has drag state that breaks on DOM rebuild.
+    // Edit: receiver dragging and trim crop tool break on DOM rebuild.
+    if(fromPoll && this.state.view === "maps" && (this.state.mapsTab === "upload" || this.state.mapsTab === "stack" || this.state.mapsTab === "edit")) return;
     // Skip poll-triggered re-renders when the user is actively interacting.
     // Checks: (1) a form element has focus, or (2) user interacted within the last 3s.
     // User-initiated renders (tab clicks, saves, etc.) always proceed.

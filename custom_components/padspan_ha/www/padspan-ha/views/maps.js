@@ -1055,7 +1055,7 @@ function _edit(ctx, map){
         ctx.state.maps._selectedRxId = r.id;
         renderAll(); renderTools();
       });
-      _makeDraggable(mk, r, overlay, ()=>{ renderAll(); refreshList(); }, ()=>ctx.state.maps._mode==="receivers");
+      _makeDraggable(mk, r, overlay, ()=>{ renderAll(); refreshList(); }, ()=>ctx.state.maps._mode==="receivers", (v)=>{ if(ctx.state.maps) ctx.state.maps._editDragging=v; });
       overlay.appendChild(mk);
     }
   };
@@ -1608,13 +1608,14 @@ function _layoutText(receivers, roomBounds){
 }
 
 
-function _makeDraggable(node, receiver, container, onMoved=null, isEnabled=null){
+function _makeDraggable(node, receiver, container, onMoved=null, isEnabled=null, onDragState=null){
   let dragging = false;
   let rect = null;
 
   const onDown = (ev)=>{
     if(isEnabled && !isEnabled()) return;
     dragging = true;
+    if(onDragState) onDragState(true);
     rect = container.getBoundingClientRect();
     ev.preventDefault();
   };
@@ -1633,6 +1634,7 @@ function _makeDraggable(node, receiver, container, onMoved=null, isEnabled=null)
   const onUp = ()=>{
     if(!dragging) return;
     dragging = false;
+    if(onDragState) onDragState(false);
     rect = null;
     if(onMoved) onMoved();
   };
@@ -2857,15 +2859,16 @@ function _stack(ctx, maps, helpBtn){
 
       let dragging = false, dragStartX = 0, dragStartY = 0, startOffX = 0, startOffY = 0;
       const stageRect = ()=>stageWrap.getBoundingClientRect();
+      const _setDrag = (v)=>{ dragging=v; if(ctx.state.maps) ctx.state.maps._stackDragging=v; };
 
       tgtLayer.addEventListener("mousedown",(ev)=>{
-        dragging=true; dragStartX=ev.clientX; dragStartY=ev.clientY;
+        _setDrag(true); dragStartX=ev.clientX; dragStartY=ev.clientY;
         startOffX=alignState.x_offset; startOffY=alignState.y_offset;
         tgtLayer.style.cursor="grabbing"; ev.preventDefault();
       });
       tgtLayer.addEventListener("touchstart",(ev)=>{
         if(!ev.touches[0]) return;
-        dragging=true; dragStartX=ev.touches[0].clientX; dragStartY=ev.touches[0].clientY;
+        _setDrag(true); dragStartX=ev.touches[0].clientX; dragStartY=ev.touches[0].clientY;
         startOffX=alignState.x_offset; startOffY=alignState.y_offset;
         ev.preventDefault();
       },{passive:false});
@@ -2883,8 +2886,8 @@ function _stack(ctx, maps, helpBtn){
         alignState.y_offset = startOffY + (ev.touches[0].clientY - dragStartY)/r.height;
         applyCurrentTransform();
       },{ passive:false, signal });
-      window.addEventListener("mouseup",()=>{ dragging=false; tgtLayer.style.cursor="grab"; }, { signal });
-      window.addEventListener("touchend",()=>{ dragging=false; }, { signal });
+      window.addEventListener("mouseup",()=>{ _setDrag(false); tgtLayer.style.cursor="grab"; }, { signal });
+      window.addEventListener("touchend",()=>{ _setDrag(false); }, { signal });
 
       stageWrap.appendChild(tgtLayer);
     } else {
