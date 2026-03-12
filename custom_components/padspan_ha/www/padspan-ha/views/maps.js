@@ -1494,7 +1494,7 @@ function _edit(ctx, map){
     let _rotAngle = 0;
     const rotStatus = el("div",{class:"mono",style:"font-size:12px;margin-top:6px"}, "0°");
 
-    const rotWrap = el("div",{style:"position:relative;display:inline-block;max-width:100%;border:1px solid #253e2e;border-radius:6px;overflow:hidden;background:#0a150e"});
+    const rotWrap = el("div",{style:"position:relative;display:inline-block;max-width:100%;border:1px solid #253e2e;border-radius:6px;overflow:visible;background:#0a150e;padding:20px"});
     const rotImg = document.createElement("img");
     rotImg.src = url;
     rotImg.style.cssText = "display:block;max-width:100%;max-height:320px;transition:transform 0.3s ease";
@@ -1508,7 +1508,7 @@ function _edit(ctx, map){
     const rotBtns = el("div",{style:"display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center"});
     for(const [label, delta] of [["-90°",-90],["-15°",-15],["-5°",-5],["+5°",5],["+15°",15],["+90°",90]]){
       const b = el("button",{class:"btn tiny"}, label);
-      b.addEventListener("click", ()=>{ _rotAngle = (_rotAngle + delta) % 360; _updatePreview(); });
+      b.addEventListener("click", ()=>{ _rotAngle = ((_rotAngle + delta) % 360 + 360) % 360; _updatePreview(); });
       rotBtns.appendChild(b);
     }
     const resetBtn = el("button",{class:"btn tiny"}, "0°");
@@ -1590,9 +1590,10 @@ function _edit(ctx, map){
           });
         }
         applyStatus.style.color = "#4ade80";
-        applyStatus.textContent = `Rotated ${_rotAngle}° and saved.`;
+        applyStatus.textContent = `Rotated ${_rotAngle}° and saved. Reloading edit…`;
         _rotAngle = 0;
-        // Refresh to show updated image
+        // Short delay so the user sees the success message, then refresh
+        await new Promise(r => setTimeout(r, 1200));
         await ctx.actions.mapsRefresh();
       } catch(e){
         applyStatus.style.color = "#f87171";
