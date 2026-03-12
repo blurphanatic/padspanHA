@@ -89,6 +89,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_maps_update)
     websocket_api.async_register_command(hass, ws_maps_replace_image)
     websocket_api.async_register_command(hass, ws_maps_delete)
+    websocket_api.async_register_command(hass, ws_maps_delete_migrate)
     websocket_api.async_register_command(hass, ws_model_get)
     websocket_api.async_register_command(hass, ws_model_update)
     websocket_api.async_register_command(hass, ws_object_label_set)
@@ -2907,8 +2908,150 @@ async def ws_maps_delete(hass: HomeAssistant, connection, msg) -> None:
     if not ms:
         connection.send_error(msg["id"], "no_maps_store", "Maps store not initialized")
         return
-    await ms.async_delete_map(msg.get("map_id"))
+    map_id = msg.get("map_id") or ""
+    # Clean up calibration data for the deleted map
+    try:
+        cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+        if cal:
+            await cal.async_clear_map(map_id)
+    except Exception:
+        pass
+    await ms.async_delete_map(map_id)
     connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/maps_delete_migrate",
+        "map_id": str,
+        "target_map_id": str,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_maps_delete_migrate(hass: HomeAssistant, connection, msg) -> None:
+    """Delete a map after migrating its data (receivers, beacons, room_bounds,
+    calibration) to a target map on the same z-level.
+
+    Only data whose rooms / positions fall within the target map's coverage
+    is migrated.  Anything that cannot be placed is reported in the response
+    so the UI can warn the user.
+    """
+    ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+    if not ms:
+        connection.send_error(msg["id"], "no_maps_store", "Maps store not initialized")
+        return
+
+    src_id = str(msg.get("map_id") or "").strip()
+    tgt_id = str(msg.get("target_map_id") or "").strip()
+    src_map = ms.get_map(src_id)
+    tgt_map = ms.get_map(tgt_id)
+    if not src_map:
+        connection.send_error(msg["id"], "not_found", "Source map not found")
+        return
+    if not tgt_map:
+        connection.send_error(msg["id"], "not_found", "Target map not found")
+        return
+
+    tgt_receivers = list(tgt_map.get("receivers") or [])
+    tgt_beacons = list(tgt_map.get("beacons") or [])
+    tgt_bounds = dict(tgt_map.get("room_bounds") or {})
+
+    # Track existing source IDs / beacon keys on target to avoid duplicates
+    tgt_rx_sources = {r.get("source") for r in tgt_receivers if r.get("source")}
+    tgt_bk_keys = {b.get("key") for b in tgt_beacons if b.get("key")}
+
+    moved_receivers: list[str] = []
+    moved_beacons: list[str] = []
+    moved_rooms: list[str] = []
+    skipped_receivers: list[str] = []
+    skipped_beacons: list[str] = []
+    skipped_rooms: list[str] = []
+
+    # --- Migrate receivers (scanners) ---
+    for rx in (src_map.get("receivers") or []):
+        src_key = rx.get("source") or rx.get("id") or ""
+        label = rx.get("label") or src_key
+        if src_key and src_key in tgt_rx_sources:
+            skipped_receivers.append(f"{label} (already on target)")
+            continue
+        # Receiver position is in 0-1 normalized coords — always transferable
+        tgt_receivers.append(dict(rx))
+        moved_receivers.append(label)
+        if src_key:
+            tgt_rx_sources.add(src_key)
+
+    # --- Migrate beacons ---
+    for bk in (src_map.get("beacons") or []):
+        bk_key = bk.get("key") or ""
+        label = bk.get("label") or bk_key
+        if bk_key and bk_key in tgt_bk_keys:
+            skipped_beacons.append(f"{label} (already on target)")
+            continue
+        tgt_beacons.append(dict(bk))
+        moved_beacons.append(label)
+        if bk_key:
+            tgt_bk_keys.add(bk_key)
+
+    # --- Migrate room_bounds ---
+    for room_name, bounds in (src_map.get("room_bounds") or {}).items():
+        if room_name in tgt_bounds:
+            skipped_rooms.append(f"{room_name} (already drawn on target)")
+            continue
+        tgt_bounds[room_name] = dict(bounds)
+        moved_rooms.append(room_name)
+
+    # --- Save merged data to target map ---
+    await ms.async_update_map(
+        tgt_id,
+        receivers=tgt_receivers,
+        calibration=tgt_map.get("calibration") or {},
+        notes=tgt_map.get("notes") or "",
+        floor_id=tgt_map.get("floor_id") or "",
+        room_bounds=tgt_bounds,
+        stack=tgt_map.get("stack") or {},
+        beacons=tgt_beacons,
+    )
+
+    # --- Migrate calibration points ---
+    cal_moved = 0
+    try:
+        cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+        if cal:
+            points = cal.data.get("points", [])
+            changed = False
+            for pt in points:
+                if pt.get("map_id") == src_id:
+                    pt["map_id"] = tgt_id
+                    cal_moved += 1
+                    changed = True
+            if changed:
+                # Invalidate coverage cache for both maps
+                cov = (cal.data.get("model") or {}).get("coverage_by_map")
+                if isinstance(cov, dict):
+                    cov.pop(src_id, None)
+                    cov.pop(tgt_id, None)
+                await cal.store.async_save(cal.data)
+    except Exception:
+        pass
+
+    # --- Delete the source map ---
+    await ms.async_delete_map(src_id)
+
+    connection.send_result(msg["id"], {
+        "ok": True,
+        "migrated": {
+            "receivers": moved_receivers,
+            "beacons": moved_beacons,
+            "rooms": moved_rooms,
+            "calibration_points": cal_moved,
+        },
+        "skipped": {
+            "receivers": skipped_receivers,
+            "beacons": skipped_beacons,
+            "rooms": skipped_rooms,
+        },
+    })
 
 
 @websocket_api.websocket_command(

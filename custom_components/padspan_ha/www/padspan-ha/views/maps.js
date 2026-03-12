@@ -113,6 +113,58 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
   }
 
   const libSnap = (ctx.state.live && ctx.state.live.snapshot) || null;
+
+  // Undo migration banner — shown after a migrate+delete, lets user revert if things look bad
+  const _mig = ctx.state._lastMapMigration;
+  if(_mig && (Date.now() - _mig.timestamp < 600000)){ // show for 10 minutes
+    const tgtMap = maps.find(m => m.id === _mig.targetMapId);
+    if(tgtMap){
+      const undoBanner = el("div",{style:"margin-top:8px;padding:10px 14px;border-radius:8px;background:#2a1a0a;border:1px solid #d97706;display:flex;align-items:center;gap:10px;flex-wrap:wrap"},[
+        el("div",{style:"flex:1;min-width:200px"},[
+          el("div",{style:"font-weight:600;color:#fbbf24;font-size:13px"}, `Data migrated from "${_mig.srcMapName}" to "${_mig.targetMapName}"`),
+          el("div",{class:"muted",style:"font-size:11px"}, "Review the target map. If things look wrong, revert the migrated data."),
+        ]),
+        el("button",{class:"btn inline", style:"color:#52b788;border-color:#52b788", onclick:()=>{
+          ctx.actions.mapsSetActive(_mig.targetMapId);
+          ctx.actions.setMapsTab('edit');
+        }}, "Review map"),
+        el("button",{class:"btn danger", style:"font-size:12px", onclick:async ()=>{
+          if(!confirm("Remove all migrated receivers, beacons, and room outlines from the target map?")) return;
+          // Remove migrated items from target map
+          const m = maps.find(x => x.id === _mig.targetMapId);
+          if(!m){ ctx.toast("Target map not found", true); return; }
+          const mig = _mig.migrated || {};
+          const movedRxLabels = new Set(mig.receivers || []);
+          const movedBkLabels = new Set(mig.beacons || []);
+          const movedRooms = new Set(mig.rooms || []);
+          const newRx = (m.receivers||[]).filter(r => !movedRxLabels.has(r.label || r.source || r.id || ""));
+          const newBk = (m.beacons||[]).filter(b => !movedBkLabels.has(b.label || b.key || ""));
+          const newBounds = {};
+          for(const [k,v] of Object.entries(m.room_bounds||{})){
+            if(!movedRooms.has(k)) newBounds[k] = v;
+          }
+          await ctx.actions.mapsUpdate({
+            map_id: _mig.targetMapId,
+            receivers: newRx,
+            calibration: m.calibration || {},
+            notes: m.notes || "",
+            floor_id: m.floor_id || "",
+            room_bounds: newBounds,
+            stack: m.stack || {},
+            beacons: newBk,
+          });
+          delete ctx.state._lastMapMigration;
+          ctx.toast("Migrated data reverted");
+        }}, "Revert migration"),
+        el("button",{class:"btn inline", style:"font-size:11px", onclick:async ()=>{
+          delete ctx.state._lastMapMigration;
+          await ctx.actions.mapsRefresh();
+        }}, "Dismiss"),
+      ]);
+      wrap.appendChild(undoBanner);
+    }
+  }
+
   // Masters first, then by name
   const sortedMaps = [...maps].sort((a,b) => (b.stack?.is_master?1:0) - (a.stack?.is_master?1:0));
   const list = el("div",{style:"margin-top:10px;display:flex;flex-direction:column;gap:8px"});
@@ -169,7 +221,7 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
     if(masterBtn) actions.appendChild(masterBtn);
     if(changeMasterBtn) actions.appendChild(changeMasterBtn);
     actions.appendChild(el("button",{class:"btn inline", onclick:()=>{ ctx.actions.mapsSetActive(m.id); ctx.actions.setMapsTab('edit'); }}, "Open"));
-    actions.appendChild(el("button",{class:"btn inline danger", onclick:async ()=>{ if(confirm(`Delete map "${m.name||m.id}"?`)){ await ctx.actions.mapsDelete(m.id); } }}, "Delete"));
+    actions.appendChild(el("button",{class:"btn inline danger", onclick:()=>{ _deleteMapModal(ctx, m, maps); }}, "Delete"));
 
     row.appendChild(thumb);
     row.appendChild(left);
@@ -179,6 +231,187 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
   wrap.appendChild(list);
   wrap.appendChild(wizardContainer);
   return wrap;
+}
+
+function _deleteMapModal(ctx, srcMap, allMaps){
+  const { el } = ctx.helpers;
+
+  const srcRx = srcMap.receivers || [];
+  const srcBk = srcMap.beacons || [];
+  const srcRooms = Object.keys(srcMap.room_bounds || {});
+  const srcZ = (srcMap.stack || {}).z_level || 0;
+  const hasData = srcRx.length || srcBk.length || srcRooms.length;
+
+  // Find same-z_level maps (excluding the one being deleted)
+  const sameFloorMaps = allMaps.filter(m => m.id !== srcMap.id && ((m.stack || {}).z_level || 0) === srcZ);
+
+  // No data → simple delete
+  if(!hasData){
+    const body = el("div",{style:"display:flex;flex-direction:column;gap:12px"},[
+      el("div",{}, `This map has no receivers, beacons, or room outlines.`),
+      el("div",{style:"display:flex;gap:8px;justify-content:flex-end"},[
+        el("button",{class:"btn inline", onclick:()=>ctx.actions.closeModal()}, "Cancel"),
+        el("button",{class:"btn danger", onclick:async ()=>{
+          await ctx.actions.mapsDelete(srcMap.id);
+          ctx.actions.closeModal();
+          ctx.toast(`Deleted "${srcMap.name||srcMap.id}"`);
+        }}, "Delete"),
+      ]),
+    ]);
+    ctx.actions.openModal(`Delete "${srcMap.name||srcMap.id}"?`, body);
+    return;
+  }
+
+  // Build data summary
+  const dataBadges = [];
+  if(srcRx.length) dataBadges.push(`${srcRx.length} receiver(s)`);
+  if(srcBk.length) dataBadges.push(`${srcBk.length} beacon(s)`);
+  if(srcRooms.length) dataBadges.push(`${srcRooms.length} room outline(s)`);
+
+  const summary = el("div",{style:"margin-bottom:10px"},[
+    el("div",{style:"font-weight:600;margin-bottom:6px;color:#f59e0b"}, "This map has data that will be lost:"),
+    el("div",{style:"display:flex;flex-wrap:wrap;gap:6px"},
+      dataBadges.map(b => el("span",{class:"badge warn"}, b))
+    ),
+  ]);
+
+  // No same-floor targets → can only delete outright
+  if(!sameFloorMaps.length){
+    const body = el("div",{style:"display:flex;flex-direction:column;gap:12px"},[
+      summary,
+      el("div",{class:"muted"}, "No other maps on this floor to migrate data to."),
+      el("div",{style:"display:flex;gap:8px;justify-content:flex-end"},[
+        el("button",{class:"btn inline", onclick:()=>ctx.actions.closeModal()}, "Cancel"),
+        el("button",{class:"btn danger", onclick:async ()=>{
+          await ctx.actions.mapsDelete(srcMap.id);
+          ctx.actions.closeModal();
+          ctx.toast(`Deleted "${srcMap.name||srcMap.id}" and all its data`);
+        }}, "Delete anyway"),
+      ]),
+    ]);
+    ctx.actions.openModal(`Delete "${srcMap.name||srcMap.id}"?`, body);
+    return;
+  }
+
+  // Has same-floor targets → show migration option
+  const targetSel = document.createElement("select");
+  targetSel.style.cssText = "padding:6px 10px;border-radius:6px;border:1px solid #334;background:#0a1a10;color:#e2e8f0;width:100%";
+  for(const tm of sameFloorMaps){
+    const opt = document.createElement("option");
+    opt.value = tm.id;
+    opt.textContent = `${tm.name || tm.id} (${(tm.receivers||[]).length} receivers, ${Object.keys(tm.room_bounds||{}).length} rooms)`;
+    targetSel.appendChild(opt);
+  }
+
+  // Preview what will migrate vs skip
+  const previewDiv = el("div",{style:"margin-top:8px"});
+  const updatePreview = () => {
+    const tgtId = targetSel.value;
+    const tgt = sameFloorMaps.find(m => m.id === tgtId);
+    if(!tgt){ previewDiv.innerHTML = ""; return; }
+
+    const tgtRxSources = new Set((tgt.receivers||[]).map(r=>r.source||r.id||"").filter(Boolean));
+    const tgtBkKeys = new Set((tgt.beacons||[]).map(b=>b.key||"").filter(Boolean));
+    const tgtRoomNames = new Set(Object.keys(tgt.room_bounds||{}));
+
+    const willMove = [];
+    const willSkip = [];
+
+    for(const rx of srcRx){
+      const k = rx.source || rx.id || "";
+      const lbl = rx.label || k;
+      if(k && tgtRxSources.has(k)) willSkip.push(`Receiver: ${lbl} (already on target)`);
+      else willMove.push(`Receiver: ${lbl}`);
+    }
+    for(const bk of srcBk){
+      const k = bk.key || "";
+      const lbl = bk.label || k;
+      if(k && tgtBkKeys.has(k)) willSkip.push(`Beacon: ${lbl} (already on target)`);
+      else willMove.push(`Beacon: ${lbl}`);
+    }
+    for(const rm of srcRooms){
+      if(tgtRoomNames.has(rm)) willSkip.push(`Room: ${rm} (already drawn on target)`);
+      else willMove.push(`Room: ${rm}`);
+    }
+
+    previewDiv.innerHTML = "";
+    if(willMove.length){
+      previewDiv.appendChild(el("div",{style:"font-size:12px;color:#52b788;margin-bottom:4px;font-weight:600"}, `Will migrate (${willMove.length}):`));
+      previewDiv.appendChild(el("div",{style:"font-size:11px;color:#86efac;max-height:120px;overflow-y:auto;padding-left:8px"},
+        willMove.map(m => el("div",{}, m))
+      ));
+    }
+    if(willSkip.length){
+      previewDiv.appendChild(el("div",{style:"font-size:12px;color:#f59e0b;margin-top:6px;margin-bottom:4px;font-weight:600"}, `Will skip (${willSkip.length}):`));
+      previewDiv.appendChild(el("div",{style:"font-size:11px;color:#fbbf24;max-height:80px;overflow-y:auto;padding-left:8px"},
+        willSkip.map(m => el("div",{}, m))
+      ));
+    }
+    if(!willMove.length && !willSkip.length){
+      previewDiv.appendChild(el("div",{class:"muted"}, "Nothing to migrate."));
+    }
+  };
+  targetSel.addEventListener("change", updatePreview);
+  // Initial preview
+  setTimeout(updatePreview, 0);
+
+  const statusDiv = el("div",{style:"min-height:20px"});
+
+  const body = el("div",{style:"display:flex;flex-direction:column;gap:12px"},[
+    summary,
+    el("div",{},[
+      el("div",{style:"font-weight:600;margin-bottom:6px"}, "Migrate data to:"),
+      targetSel,
+    ]),
+    previewDiv,
+    statusDiv,
+    el("div",{style:"display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap"},[
+      el("button",{class:"btn inline", onclick:()=>ctx.actions.closeModal()}, "Cancel"),
+      el("button",{class:"btn danger", onclick:async ()=>{
+        await ctx.actions.mapsDelete(srcMap.id);
+        ctx.actions.closeModal();
+        ctx.toast(`Deleted "${srcMap.name||srcMap.id}" — data was NOT migrated`);
+      }}, "Delete without migrating"),
+      el("button",{class:"btn", style:"background:#1a3a2a;border-color:#52b788;color:#52b788", onclick:async ()=>{
+        const tgtId = targetSel.value;
+        statusDiv.textContent = "Migrating...";
+        try {
+          const result = await ctx.actions.mapsDeleteMigrate(srcMap.id, tgtId);
+          const mig = (result && result.migrated) || {};
+          const skip = (result && result.skipped) || {};
+          const parts = [];
+          if((mig.receivers||[]).length) parts.push(`${mig.receivers.length} receivers`);
+          if((mig.beacons||[]).length) parts.push(`${mig.beacons.length} beacons`);
+          if((mig.rooms||[]).length) parts.push(`${mig.rooms.length} rooms`);
+          if(mig.calibration_points) parts.push(`${mig.calibration_points} cal points`);
+          const skipParts = [];
+          if((skip.receivers||[]).length) skipParts.push(`${skip.receivers.length} receivers`);
+          if((skip.beacons||[]).length) skipParts.push(`${skip.beacons.length} beacons`);
+          if((skip.rooms||[]).length) skipParts.push(`${skip.rooms.length} rooms`);
+
+          // Store migration info for undo button
+          const tgtMap = sameFloorMaps.find(m => m.id === tgtId);
+          ctx.state._lastMapMigration = {
+            targetMapId: tgtId,
+            targetMapName: tgtMap ? (tgtMap.name||tgtMap.id) : tgtId,
+            srcMapName: srcMap.name || srcMap.id,
+            migrated: mig,
+            timestamp: Date.now(),
+          };
+
+          ctx.actions.closeModal();
+          let msg = `Deleted "${srcMap.name||srcMap.id}"`;
+          if(parts.length) msg += ` — migrated ${parts.join(", ")}`;
+          if(skipParts.length) msg += ` (skipped: ${skipParts.join(", ")})`;
+          ctx.toast(msg);
+        } catch(e) {
+          statusDiv.textContent = `Error: ${e.message || e}`;
+          statusDiv.style.color = "#f87171";
+        }
+      }}, "Migrate & Delete"),
+    ]),
+  ]);
+  ctx.actions.openModal(`Delete "${srcMap.name||srcMap.id}"?`, body, "This map has data — migrate it to another map first?");
 }
 
 function _upload(ctx, helpBtn, isBasic){

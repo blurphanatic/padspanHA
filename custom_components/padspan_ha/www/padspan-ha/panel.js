@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.8.77";
+const APP_VERSION = "0.8.78";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260312T035757Z";
+const BUILD_ID = "20260312T040444Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1208,6 +1208,7 @@ class PadSpanHaApp extends HTMLElement {
         mapsRefresh: async ()=>{ await this._getMapsList(); this._renderCurrentView(); },
         mapsSetActive: (id)=>{ this.state.activeMapId=id; this._renderCurrentView(); },
         mapsDelete: async (id)=>{ await this._callWS({ type:"padspan_ha/maps_delete", map_id:id }); await this._getMapsList(); if(this.state.activeMapId===id) this.state.activeMapId=null; this._renderCurrentView(); },
+        mapsDeleteMigrate: async (mapId, targetMapId)=>{ const r = await this._callWS({ type:"padspan_ha/maps_delete_migrate", map_id:mapId, target_map_id:targetMapId }); await this._getMapsList(); if(this.state.activeMapId===mapId) this.state.activeMapId=null; this._renderCurrentView(); return r; },
         mapsUpload: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_upload"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         mapsUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         mapsUpdateQuiet: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); },
