@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.8.91";
+const APP_VERSION = "0.8.92";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260312T182524Z";
+const BUILD_ID = "20260312T183724Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1206,8 +1206,10 @@ class PadSpanHaApp extends HTMLElement {
             // Reset in-memory followed state immediately
             this.state.followedAddrs = new Set();
             this.state.followAddr = "";
-            // Allow _fetchSettings to overwrite followedAddrs from server again
+            // Allow _fetchSettings to overwrite followedAddrs from server on next refresh
             this._followedLoadedFromServer = false;
+            // Clear cached snapshot so stale objects with labels/followed don't linger
+            this.state.live = { snapshot: null, error: null };
             return res;
         },
         refreshAll: async () => { await this._refreshAll(false); },

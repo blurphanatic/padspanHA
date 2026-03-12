@@ -66,6 +66,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "quiet_mode": False,
     # Experimental: 2D flat map mode (replaces 3D isometric view)
     "overview_2d_mode": False,
+    # Followed BLE addresses (uppercase MAC/key strings)
+    "followed_addrs": [],
 }
 
 

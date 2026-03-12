@@ -1864,10 +1864,32 @@ function _factoryReset(ctx, el){
     resetBtn.style.cursor = match ? "pointer" : "not-allowed";
   });
 
+  // ── Progress UI (hidden until reset starts) ──
+  const progressWrap = el("div",{style:"display:none;margin-top:16px"});
+  const progressBar = el("div",{style:"width:100%;height:8px;background:#1e293b;border-radius:4px;overflow:hidden;margin-bottom:10px"});
+  const progressFill = el("div",{style:"width:0%;height:100%;background:#52b788;border-radius:4px;transition:width 0.3s ease"});
+  progressBar.appendChild(progressFill);
+  progressWrap.appendChild(progressBar);
+  const stepLabel = el("div",{style:"font-size:13px;color:#94a3b8;min-height:20px"});
+  progressWrap.appendChild(stepLabel);
+  const stepLog = el("div",{style:"font-size:11px;color:#64748b;margin-top:6px;max-height:180px;overflow-y:auto;font-family:monospace;line-height:1.7"});
+  progressWrap.appendChild(stepLog);
+
+  const _setProgress = (pct, label, isError=false) => {
+    progressFill.style.width = pct + "%";
+    progressFill.style.background = isError ? "#dc2626" : "#52b788";
+    stepLabel.textContent = label;
+    stepLabel.style.color = isError ? "#f87171" : "#94a3b8";
+  };
+  const _logStep = (msg, ok=true) => {
+    const line = el("div",{style:"color:"+(ok?"#4ade80":"#f87171")}, (ok?"✓ ":"✗ ") + msg);
+    stepLog.appendChild(line);
+    stepLog.scrollTop = stepLog.scrollHeight;
+  };
+
   resetBtn.addEventListener("click", async ()=>{
     if(input.value.trim() !== "FACTORY RESET") return;
 
-    // Second confirmation via native confirm dialog
     const sure = confirm(
       "FINAL WARNING\\n\\n" +
       "You are about to permanently erase ALL PadSpan data.\\n" +
@@ -1878,50 +1900,119 @@ function _factoryReset(ctx, el){
 
     resetBtn.disabled = true;
     resetBtn.textContent = "Resetting…";
-    status.textContent = "";
-    status.style.color = "#64748b";
+    input.disabled = true;
+    progressWrap.style.display = "block";
+    stepLog.innerHTML = "";
 
+    // ── Step 1: Send factory reset to backend (clears all stores) ──
+    _setProgress(10, "Erasing all backend stores…");
+    let res;
     try {
-      const res = await ctx.actions.factoryReset();
+      res = await ctx.actions.factoryReset();
       if(res && res.ok){
-        status.style.color = "#4ade80";
-        status.textContent = `Done — ${res.cleared} stores cleared. Refreshing…`;
-        resetBtn.textContent = "Reset Complete";
-        resetBtn.style.background = "#14532d";
-        resetBtn.style.borderColor = "#16a34a";
-        resetBtn.style.color = "#4ade80";
-        // Auto-refresh all state from backend so UI reflects the clean slate
-        try {
-          await ctx.actions.refreshAll();
-          status.textContent = `Done — ${res.cleared} stores cleared. All data refreshed.`;
-        } catch(e) {
-          status.textContent = `Cleared ${res.cleared} stores. Refresh failed — reload the page.`;
-          status.style.color = "#fbbf24";
-        }
-        // Still offer a hard reload as fallback
-        const reloadBtn = el("button",{
-          class:"btn",
-          style:"background:#1e40af;border-color:#3b82f6;color:#93c5fd;font-weight:700;padding:8px 20px;margin-top:12px",
-        },"Reload Page");
-        reloadBtn.addEventListener("click",()=>location.reload());
-        btnWrap.appendChild(reloadBtn);
+        _logStep(`Backend: ${res.cleared}/${res.total} stores cleared`);
       } else {
-        status.style.color = "#f87171";
-        status.textContent = `Partial reset: ${res?.cleared || 0}/${res?.total || "?"} stores cleared. Errors: ${(res?.errors || []).join(", ")}`;
-        resetBtn.textContent = "Erase All Data & Reset";
-        resetBtn.disabled = false;
+        const errs = (res?.errors || []).join(", ");
+        _logStep(`Backend: ${res?.cleared || 0}/${res?.total || "?"} stores — errors: ${errs}`, false);
       }
     } catch(err) {
-      status.style.color = "#f87171";
-      status.textContent = `Error: ${err.message || err}`;
+      _setProgress(10, "Backend reset failed: " + (err.message||err), true);
+      _logStep("Backend reset failed: " + (err.message||err), false);
       resetBtn.textContent = "Erase All Data & Reset";
       resetBtn.disabled = false;
+      input.disabled = false;
+      return;
     }
+
+    // ── Step 2: Clear browser-side caches ──
+    _setProgress(30, "Clearing browser caches…");
+    try {
+      localStorage.removeItem("padspan_followed");
+      localStorage.removeItem("padspan_followAddr");
+      localStorage.removeItem("padspan_hiddenMapIds");
+      _logStep("Browser localStorage cleared");
+    } catch(e){
+      _logStep("localStorage clear failed: " + e.message, false);
+    }
+
+    // ── Step 3: Reset all in-memory frontend state ──
+    _setProgress(45, "Resetting frontend state…");
+    try {
+      ctx.state.followedAddrs = new Set();
+      ctx.state.followAddr = "";
+      ctx.state.objSearch = "";
+      ctx.state.objKind = "all";
+      ctx.state.objStatus = "all";
+      ctx.state.selectedRooms = [];
+      ctx.state.tagFilter = "";
+      ctx.state.mode = "all";
+      _logStep("Frontend state reset (followed, filters, selections)");
+    } catch(e){
+      _logStep("Frontend state reset error: " + e.message, false);
+    }
+
+    // ── Step 4: Reload settings from backend ──
+    _setProgress(55, "Reloading settings from server…");
+    try {
+      const sRes = await ctx.actions.wsCall("padspan_ha/settings_get", {});
+      if(sRes?.settings){
+        ctx.state.settings = sRes.settings;
+        ctx.state.dataMode = (sRes.settings.data_mode || "sample").toLowerCase() === "live" ? "live" : "sample";
+        // Force overwrite followed from server (now empty after reset)
+        ctx.state.followedAddrs = new Set(sRes.settings.followed_addrs || []);
+        _logStep("Settings reloaded — followed list: " + ctx.state.followedAddrs.size + " items");
+      } else {
+        _logStep("Settings response empty", false);
+      }
+    } catch(e){
+      _logStep("Settings reload failed: " + e.message, false);
+    }
+
+    // ── Step 5: Refresh live snapshot ──
+    _setProgress(70, "Refreshing live snapshot…");
+    try {
+      await ctx.actions.refreshAll();
+      _logStep("Full data refresh complete");
+    } catch(e){
+      _logStep("Data refresh failed: " + e.message, false);
+    }
+
+    // ── Step 6: Verify clean state ──
+    _setProgress(90, "Verifying clean state…");
+    try {
+      const followCount = ctx.state.followedAddrs ? ctx.state.followedAddrs.size : 0;
+      const objList = ctx.state.live?.snapshot?.objects?.list || [];
+      const labelledCount = objList.filter(o => o.user_label).length;
+      const followedInList = objList.filter(o => {
+        const k = (o.kind === "ibeacon" ? (o.key||"") : (o.address||o.entity_id||"")).toUpperCase();
+        return k && ctx.state.followedAddrs.has(k);
+      }).length;
+      _logStep(`Verification: ${followCount} followed, ${labelledCount} labelled, ${followedInList} followed-in-objects`);
+      if(followCount > 0 || labelledCount > 0){
+        _logStep("WARNING: stale data may remain — try Reload Page below", false);
+      }
+    } catch(e){
+      _logStep("Verification skipped: " + e.message, false);
+    }
+
+    // ── Done ──
+    _setProgress(100, "Factory reset complete");
+    resetBtn.textContent = "Reset Complete";
+    resetBtn.style.background = "#14532d";
+    resetBtn.style.borderColor = "#16a34a";
+    resetBtn.style.color = "#4ade80";
+
+    const reloadBtn = el("button",{
+      class:"btn",
+      style:"background:#1e40af;border-color:#3b82f6;color:#93c5fd;font-weight:700;padding:8px 20px;margin-top:12px",
+    },"Reload Page");
+    reloadBtn.addEventListener("click",()=>location.reload());
+    btnWrap.appendChild(reloadBtn);
   });
 
   btnWrap.appendChild(resetBtn);
   wrap.appendChild(btnWrap);
-  wrap.appendChild(el("div",{style:"margin-top:8px"},status));
+  wrap.appendChild(progressWrap);
 
   return wrap;
 }
