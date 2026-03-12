@@ -2585,6 +2585,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     dirtyMaps: {},       // mapId → true
     selectedBk: null,    // {mapId, bkId}
     pendingPlace: null,  // {key, label, kind} — awaiting dblclick on map
+    _relocating: null,   // {bkId, mapId} — beacon being relocated (old entry to remove on place)
     _mapsStamp: null,
     // ── Per-beacon live timers (independent 60s RSSI capture) ──
     _liveTimers: {},       // bkId → { endTime, mapId, bk:{...}, readings:{}, timer, pollTimer, warning }
@@ -3501,6 +3502,21 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   // Helper: commit placement of a pending beacon onto a specific map at (nx, ny)
   function _placeBeaconOnMap(m, nx, ny) {
     const pd = bs.pendingPlace;
+    // If relocating, remove old beacon entry first
+    if (bs._relocating) {
+      const { bkId: oldId, mapId: oldMapId } = bs._relocating;
+      // Stop any active timer on the old entry
+      if (bs._liveTimers[oldId]) {
+        const t = bs._liveTimers[oldId];
+        if (t.timer) clearTimeout(t.timer);
+        if (t.pollTimer) clearTimeout(t.pollTimer);
+        delete bs._liveTimers[oldId];
+      }
+      bs._liveBeaconKeys.delete(pd.key);
+      bs.draftBeacons[oldMapId] = (bs.draftBeacons[oldMapId] || []).filter(b => b.id !== oldId);
+      bs.dirtyMaps[oldMapId] = true;
+      bs._relocating = null;
+    }
     const newBk = {
       id: "bk_" + Date.now().toString(16),
       label: pd.label || pd.key || "",
@@ -3928,11 +3944,13 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   function _refreshPlaceBanner() {
     if (bs.pendingPlace) {
       const nm = bs.pendingPlace.label || bs.pendingPlace.key || "beacon";
-      placeBanner.innerHTML = `<b style="color:#f59e0b">Double-click</b> on the 3D map to mark the current location of <b style="color:#5eead4">${_esc(nm)}</b> &nbsp; <span style="color:#94a3b8;cursor:pointer;text-decoration:underline" id="_cancelBkPlace">Cancel</span>`;
+      const verb = bs._relocating ? "relocate" : "mark the current location of";
+      placeBanner.innerHTML = `<b style="color:#f59e0b">Double-click</b> on the 3D map to ${verb} <b style="color:#5eead4">${_esc(nm)}</b> &nbsp; <span style="color:#94a3b8;cursor:pointer;text-decoration:underline" id="_cancelBkPlace">Cancel</span>`;
       placeBanner.style.display = "block";
       const cancelEl = placeBanner.querySelector("#_cancelBkPlace");
       if (cancelEl) cancelEl.addEventListener("click", () => {
         bs.pendingPlace = null;
+        bs._relocating = null;
         _refreshPlaceBanner();
         _refreshAvailable();
       });
@@ -4256,6 +4274,29 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         tag.style.cssText = "font-size:10px;color:#5eead4;background:#5eead418;padding:1px 6px;border-radius:4px;white-space:nowrap";
         tag.textContent = "Placed";
         row.appendChild(tag);
+        // Relocate button — re-place at a new position via double-click
+        const relocBtn = document.createElement("button");
+        relocBtn.className = "btn inline";
+        relocBtn.style.cssText = "font-size:10px;padding:1px 6px;color:#f59e0b;border-color:#92400e;flex-shrink:0";
+        relocBtn.textContent = "Relocate";
+        relocBtn.title = "Move this beacon to a new spot and re-calibrate";
+        relocBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          // Find the draft beacon entry for this object
+          let foundBk = null, foundMapId = null;
+          for (const [mid, bks] of Object.entries(bs.draftBeacons)) {
+            const bk = bks.find(b => b.key === obj.key);
+            if (bk) { foundBk = bk; foundMapId = mid; break; }
+          }
+          if (!foundBk) return;
+          // Set relocating state so _placeBeaconOnMap removes the old entry
+          bs._relocating = { bkId: foundBk.id, mapId: foundMapId };
+          // Enter pending-place mode (same as clicking an unplaced beacon)
+          bs.pendingPlace = { key: obj.key, label: obj.user_label || obj.name || "", kind: obj.kind || "ble" };
+          _refreshAvailable();
+          _refreshPlaceBanner();
+        });
+        row.appendChild(relocBtn);
       } else {
         const tag = document.createElement("span");
         tag.style.cssText = `font-size:10px;padding:1px 6px;border-radius:4px;white-space:nowrap;${isPending ? "color:#fbbf24;background:#fbbf2418;font-weight:600" : "color:#94a3b8;background:#94a3b818"}`;
@@ -4409,43 +4450,6 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         _refreshAvailable();
       });
       actRow.appendChild(rmBtn);
-      // Relocate button — re-tune at a new position without deleting
-      const relocBtn = document.createElement("button");
-      relocBtn.className = "btn inline";
-      relocBtn.style.cssText = "font-size:10px;padding:1px 6px;color:#f59e0b;border-color:#92400e";
-      relocBtn.textContent = "Relocate";
-      relocBtn.title = "Move this beacon to a new spot and re-calibrate";
-      relocBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        // Stop any active timer
-        if (bs._liveTimers[bk.id]) {
-          const t = bs._liveTimers[bk.id];
-          if (t.timer) clearTimeout(t.timer);
-          if (t.pollTimer) clearTimeout(t.pollTimer);
-          delete bs._liveTimers[bk.id];
-        }
-        // Remove from live tracking so it renders as draggable (pinned)
-        bs._liveBeaconKeys.delete(bk.key);
-        // Select it for dragging
-        bs.selectedBk = { mapId: map.id, bkId: bk.id };
-        // Focus the floor this beacon is on
-        const mapZ = map.stack?.z_level ?? 0;
-        const zIdx = sortedIsoLevels.indexOf(mapZ);
-        if (zIdx >= 0) {
-          const posIdx = _isoPos.indexOf(mapZ);
-          if (posIdx >= 0) {
-            bs.focusIdx = posIdx;
-            focusSlider.value = String(posIdx);
-            focusLbl.textContent = _getFocusLbl(posIdx);
-          }
-        }
-        _refreshSVG();
-        _refreshInfo();
-        _refreshTimerRow();
-        _refreshBeaconList();
-        ctx.toast("Drag the beacon to its new location — calibration starts when you drop it");
-      });
-      actRow.appendChild(relocBtn);
       // Compact move dropdown
       const otherMaps2 = maps_list.filter(m => m.id !== map.id);
       if (otherMaps2.length) {
