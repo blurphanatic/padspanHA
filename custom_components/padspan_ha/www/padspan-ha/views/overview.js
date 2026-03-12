@@ -1372,12 +1372,35 @@ export function render(ctx){
           s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
         }
 
+        // Warning indicator: detect when positioning seems wrong
+        let warnMsg = "";
+        const hasKnn = typeof o.x_frac === "number" && typeof o.y_frac === "number";
+        const knnMapMatch = hasKnn && o.knn_map_id && mapTransforms[o.knn_map_id];
+        if(!hasKnn && o.room){
+          // No k-NN at all — positioned by room centroid only
+          warnMsg = "No calibration — room centroid";
+        } else if(hasKnn && !knnMapMatch){
+          // k-NN returned a position on a map that isn't in the 3D stack
+          warnMsg = "k-NN map mismatch — using fallback";
+        } else if(posConf > 0 && posConf < 0.35){
+          // Very low confidence
+          warnMsg = "Low confidence (" + Math.round(posConf*100) + "%)";
+        }
+
         const _ok = _esc(o.key||o.address||o.entity_id||"");
         // Dim away/ghost objects
         const dotOp = isAway ? "0.35" : "0.97";
         const glowOp = isAway ? "0.08" : "0.18";
         const lblColor = isAway ? "#a0845c" : BEACON_CLR;
         s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(o))}" style="cursor:pointer">`;
+        // Warning ring + icon
+        if(warnMsg && !isAway){
+          s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="18" fill="none" stroke="#f87171" stroke-width="2" stroke-dasharray="6,3" opacity="0.8"/>`;
+          s += `<text x="${Math.round(bx)+16}" y="${Math.round(by)-12}" fill="#f87171" font-size="14" font-weight="700" opacity="0.9">\u26a0</text>`;
+          const wW = Math.min(warnMsg.length * 5.5 + 8, 160);
+          s += `<rect x="${Math.round(bx)-wW/2}" y="${Math.round(by)+20}" width="${wW}" height="12" rx="3" fill="#7f1d1d" opacity="0.85"/>`;
+          s += `<text x="${Math.round(bx)}" y="${Math.round(by)+30}" text-anchor="middle" fill="#fca5a5" font-size="8" font-weight="600">${_esc(warnMsg)}</text>`;
+        }
         s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="14" fill="${BEACON_CLR}" opacity="${glowOp}"/>`;
         s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="10" fill="${BEACON_CLR}" stroke="#071008" stroke-width="1.5" opacity="${dotOp}"/>`;
         s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="3" fill="#071008" opacity="0.7"/>`;

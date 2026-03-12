@@ -4496,6 +4496,52 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         });
         actRow.appendChild(moveSel2);
       }
+      // Purge all calibration data for this beacon
+      const purgeBtn = document.createElement("button");
+      purgeBtn.className = "btn inline";
+      purgeBtn.style.cssText = "font-size:10px;padding:1px 6px;color:#f87171;border-color:#7f1d1d";
+      purgeBtn.textContent = "Purge Data";
+      purgeBtn.title = "Delete all calibration data points for this beacon";
+      purgeBtn.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        const bkLabel = obj?.user_label || obj?.name || bk.label || bk.key;
+        if (!confirm(`Delete ALL calibration data for "${bkLabel}"?\n\nThis removes every data point collected for this beacon across all maps. The beacon marker stays on the map — only the RSSI training data is erased.\n\nThis cannot be undone.`)) return;
+        purgeBtn.disabled = true;
+        purgeBtn.textContent = "Purging...";
+        try {
+          const calData = await ctx.actions.calibrationGet();
+          const allPts = calData?.points || [];
+          const deviceId = (obj?.address || obj?.canonical_id || bk.key || "").toUpperCase();
+          const myLabel = (bk.label || "").toUpperCase();
+          const myKey = (bk.key || "").toUpperCase();
+          let purged = 0;
+          for (const pt of allPts) {
+            const ptDev = (pt.device_id || "").toUpperCase();
+            const ptLbl = (pt.label || "").toUpperCase();
+            const isMatch =
+              (ptDev && deviceId && ptDev === deviceId) ||
+              (ptDev && myKey && ptDev === myKey) ||
+              (ptLbl && myLabel && ptLbl === myLabel) ||
+              (ptLbl && myKey && ptLbl === myKey);
+            if (!isMatch) continue;
+            try {
+              await ctx.actions.calibrationDeletePoint(pt.id);
+              purged++;
+            } catch (_) { /**/ }
+          }
+          ctx.toast(`Purged ${purged} calibration point${purged !== 1 ? "s" : ""} for ${bkLabel}`);
+          // Refresh calibration data
+          try { ctx.state.calibration = await ctx.actions.calibrationGet(); } catch(_) {}
+          purgeBtn.textContent = `${purged} purged`;
+          purgeBtn.style.color = "#52b788";
+          bs._calibRounds[bk.key] = 0;
+        } catch (e) {
+          purgeBtn.textContent = "Error";
+          purgeBtn.disabled = false;
+          ctx.toast("Purge failed: " + String(e), true);
+        }
+      });
+      actRow.appendChild(purgeBtn);
       leftCol.appendChild(actRow);
       row.appendChild(leftCol);
 
