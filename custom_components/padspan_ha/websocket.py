@@ -5522,6 +5522,9 @@ async def ws_factory_reset(hass: HomeAssistant, connection, msg) -> None:
     Requires confirm="FACTORY RESET" to execute.  Admin-only.
     Clears: settings, calibration, adaptive, objects, maps, model,
     alerts, movement, traceback, object_history, and backups.
+
+    Each store type is reset to its correct default state — not blindly to {}.
+    bluetooth_live is intentionally left intact so BLE radios keep working.
     """
     if msg["confirm"] != "FACTORY RESET":
         connection.send_error(
@@ -5530,89 +5533,197 @@ async def ws_factory_reset(hass: HomeAssistant, connection, msg) -> None:
         )
         return
 
+    import asyncio as _aio
+    from pathlib import Path as _Path
     from homeassistant.helpers.storage import Store as _St
+    from .settings_store import DEFAULT_SETTINGS
+    from .model_store import DEFAULT_DATA as _model_defaults
+
+    def _adaptive_empty():
+        return {
+            "room_fingerprints": {},
+            "transition_counts": {},
+            "floor_pairs": {},
+            "stats": {"total_observations": 0, "learning_since": None, "days_active": 0},
+        }
 
     domain = hass.data.get(DOMAIN, {})
-
-    # All store keys to wipe (persistent .storage JSON files)
-    _ALL_STORE_KEYS = [
-        SETTINGS_STORE_KEY,
-        CALIBRATION_STORE_KEY,
-        ADAPTIVE_STORE_KEY,
-        OBJECT_STORE_KEY,
-        MAPS_STORE_KEY,
-        MODEL_STORE_KEY,
-        ALERTS_STORE_KEY,
-        MOVEMENT_STORE_KEY,
-        TRACEBACK_STORE_KEY,
-        OBJECT_HISTORY_STORE_KEY,
-        BACKUPS_STORE_KEY,
-    ]
-
-    # Map store_key → data_key for in-memory reset
-    _FULL_DATA_MAP = {
-        SETTINGS_STORE_KEY: DATA_SETTINGS,
-        CALIBRATION_STORE_KEY: DATA_CALIBRATION,
-        ADAPTIVE_STORE_KEY: DATA_ADAPTIVE,
-        OBJECT_STORE_KEY: DATA_OBJECTS,
-        MAPS_STORE_KEY: DATA_MAPS,
-        MODEL_STORE_KEY: DATA_MODEL,
-        ALERTS_STORE_KEY: DATA_ALERTS,
-        MOVEMENT_STORE_KEY: DATA_MOVEMENT,
-        TRACEBACK_STORE_KEY: DATA_TRACEBACK,
-        OBJECT_HISTORY_STORE_KEY: DATA_OBJECT_HISTORY,
-    }
-
     cleared = 0
     errors = []
 
-    for store_key in _ALL_STORE_KEYS:
-        try:
-            st = _St(hass, 1, store_key)
-            await st.async_save({})
-            cleared += 1
+    # ── 1. SettingsStore — reset to DEFAULT_SETTINGS, NOT {} ─────────────
+    try:
+        st = _St(hass, 1, SETTINGS_STORE_KEY)
+        await st.async_save(dict(DEFAULT_SETTINGS))
+        cleared += 1
+        store_obj = domain.get(DATA_SETTINGS)
+        if store_obj and hasattr(store_obj, "data"):
+            store_obj.data = dict(DEFAULT_SETTINGS)
+    except Exception as e:
+        _LOGGER.warning("Factory reset: settings — %s", e)
+        errors.append(SETTINGS_STORE_KEY)
 
-            # Also wipe the in-memory object so the running instance sees the reset
-            data_key = _FULL_DATA_MAP.get(store_key)
-            if data_key:
-                store_obj = domain.get(data_key)
-                if store_obj and hasattr(store_obj, "data"):
-                    store_obj.data = {}
-        except Exception as e:
-            _LOGGER.warning("Factory reset: failed to clear %s: %s", store_key, e)
-            errors.append(str(store_key))
+    # ── 2. MapsStore — reset to {"maps": []} and delete map image files ──
+    try:
+        st = _St(hass, 1, MAPS_STORE_KEY)
+        await st.async_save({"maps": []})
+        cleared += 1
+        maps_obj = domain.get(DATA_MAPS)
+        if maps_obj and hasattr(maps_obj, "data"):
+            maps_obj.data = {"maps": []}
+        # Delete uploaded map images
+        if maps_obj and hasattr(maps_obj, "maps_dir"):
+            _mdir = maps_obj.maps_dir
+        else:
+            _mdir = _Path(hass.config.path("www")) / "padspan_ha" / "maps"
+        if _mdir.is_dir():
+            for f in _mdir.iterdir():
+                if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                    try:
+                        await _aio.to_thread(f.unlink)
+                    except Exception:
+                        pass
+    except Exception as e:
+        _LOGGER.warning("Factory reset: maps — %s", e)
+        errors.append(MAPS_STORE_KEY)
 
-    # Clear in-memory caches
-    if DATA_OBJECTS_CACHE in domain:
-        domain[DATA_OBJECTS_CACHE] = {}
+    # ── 3. CalibrationStore — reset to {"points": [], "model": {}} ───────
+    try:
+        st = _St(hass, 1, CALIBRATION_STORE_KEY)
+        await st.async_save({"points": [], "model": {}})
+        cleared += 1
+        cal_obj = domain.get(DATA_CALIBRATION)
+        if cal_obj and hasattr(cal_obj, "data"):
+            cal_obj.data = {"points": [], "model": {}}
+    except Exception as e:
+        _LOGGER.warning("Factory reset: calibration — %s", e)
+        errors.append(CALIBRATION_STORE_KEY)
 
-    # Clear plain-dict caches (DATA_OBJECT_HISTORY is a plain dict, not a store class)
-    if DATA_OBJECT_HISTORY in domain:
-        domain[DATA_OBJECT_HISTORY] = {}
-    # Clear the history store's last-save timestamp
+    # ── 4. AdaptiveStore — reset to _empty_data() ────────────────────────
+    try:
+        st = _St(hass, 1, ADAPTIVE_STORE_KEY)
+        await st.async_save(_adaptive_empty())
+        cleared += 1
+        ada_obj = domain.get(DATA_ADAPTIVE)
+        if ada_obj and hasattr(ada_obj, "data"):
+            ada_obj.data = _adaptive_empty()
+    except Exception as e:
+        _LOGGER.warning("Factory reset: adaptive — %s", e)
+        errors.append(ADAPTIVE_STORE_KEY)
+
+    # ── 5. ModelStore — reset to DEFAULT_DATA ─────────────────────────────
+    try:
+        st = _St(hass, 1, MODEL_STORE_KEY)
+        await st.async_save(dict(_model_defaults))
+        cleared += 1
+        mod_obj = domain.get(DATA_MODEL)
+        if mod_obj and hasattr(mod_obj, "data"):
+            mod_obj.data = dict(_model_defaults)
+    except Exception as e:
+        _LOGGER.warning("Factory reset: model — %s", e)
+        errors.append(MODEL_STORE_KEY)
+
+    # ── 6. ObjectStore — reset ._data to {} ───────────────────────────────
+    try:
+        st = _St(hass, 1, OBJECT_STORE_KEY)
+        await st.async_save({})
+        cleared += 1
+        obj_obj = domain.get(DATA_OBJECTS)
+        if obj_obj:
+            if hasattr(obj_obj, "_data"):
+                obj_obj._data = {}
+            elif hasattr(obj_obj, "data"):
+                obj_obj.data = {}
+    except Exception as e:
+        _LOGGER.warning("Factory reset: objects — %s", e)
+        errors.append(OBJECT_STORE_KEY)
+
+    # ── 7. AlertStore — reset to {} ───────────────────────────────────────
+    try:
+        st = _St(hass, 1, ALERTS_STORE_KEY)
+        await st.async_save({})
+        cleared += 1
+        alert_obj = domain.get(DATA_ALERTS)
+        if alert_obj and hasattr(alert_obj, "data"):
+            alert_obj.data = {}
+    except Exception as e:
+        _LOGGER.warning("Factory reset: alerts — %s", e)
+        errors.append(ALERTS_STORE_KEY)
+
+    # ── 8. MovementStore — reset .entries to [] ───────────────────────────
+    try:
+        st = _St(hass, 1, MOVEMENT_STORE_KEY)
+        await st.async_save([])
+        cleared += 1
+        mov_obj = domain.get(DATA_MOVEMENT)
+        if mov_obj and hasattr(mov_obj, "entries"):
+            mov_obj.entries = []
+        elif mov_obj and hasattr(mov_obj, "data"):
+            mov_obj.data = []
+    except Exception as e:
+        _LOGGER.warning("Factory reset: movement — %s", e)
+        errors.append(MOVEMENT_STORE_KEY)
+
+    # ── 9. TracebackStore — reset .frames to [] ──────────────────────────
+    try:
+        st = _St(hass, 1, TRACEBACK_STORE_KEY)
+        await st.async_save({"frames": []})
+        cleared += 1
+        tb_obj = domain.get(DATA_TRACEBACK)
+        if tb_obj and hasattr(tb_obj, "frames"):
+            tb_obj.frames = []
+        elif tb_obj and hasattr(tb_obj, "data"):
+            tb_obj.data = {"frames": []}
+    except Exception as e:
+        _LOGGER.warning("Factory reset: traceback — %s", e)
+        errors.append(TRACEBACK_STORE_KEY)
+
+    # ── 10. Object history (plain dict, not a store class) ────────────────
+    try:
+        st = _St(hass, 1, OBJECT_HISTORY_STORE_KEY)
+        await st.async_save({})
+        cleared += 1
+    except Exception as e:
+        _LOGGER.warning("Factory reset: object_history — %s", e)
+        errors.append(OBJECT_HISTORY_STORE_KEY)
+
+    # ── 11. Backups store ─────────────────────────────────────────────────
+    try:
+        st = _St(hass, 1, BACKUPS_STORE_KEY)
+        await st.async_save({})
+        cleared += 1
+    except Exception as e:
+        _LOGGER.warning("Factory reset: backups — %s", e)
+        errors.append(BACKUPS_STORE_KEY)
+
+    # ── Clear ALL in-memory caches ────────────────────────────────────────
+
+    # Object snapshot cache (used for fast re-renders)
+    domain.pop(DATA_OBJECTS_CACHE, None)
+
+    # Object history — set to None so the reload condition triggers fresh load
+    domain.pop(DATA_OBJECT_HISTORY, None)
     domain.pop("_obj_hist_last_save", None)
+    domain.pop("_obj_hist_store", None)
 
-    # Clear the presence coordinator's cached objects so old labels don't linger
+    # Presence coordinator caches
     try:
         _coord = domain.get("presence_coordinator")
-        if _coord and hasattr(_coord, "_known_objs"):
-            _coord._known_objs.clear()
-        if _coord and hasattr(_coord, "_last_seen"):
-            _coord._last_seen.clear()
-        if _coord and hasattr(_coord, "_room_votes"):
-            _coord._room_votes.clear()
-        if _coord and hasattr(_coord, "_room_confidence"):
-            _coord._room_confidence.clear()
+        if _coord:
+            for attr in ("_known_objs", "_last_seen", "_room_votes",
+                         "_room_confidence", "_device_labels"):
+                if hasattr(_coord, attr):
+                    getattr(_coord, attr).clear()
     except Exception:
         pass
 
-    # Clear the main coordinator's cached state
+    # Main coordinator caches
     try:
         _main_coord = domain.get(DATA_COORDINATOR)
-        if _main_coord and hasattr(_main_coord, "_known_objs"):
-            _main_coord._known_objs.clear()
-        if _main_coord and hasattr(_main_coord, "_last_seen"):
-            _main_coord._last_seen.clear()
+        if _main_coord:
+            for attr in ("_known_objs", "_last_seen"):
+                if hasattr(_main_coord, attr):
+                    getattr(_main_coord, attr).clear()
     except Exception:
         pass
 
@@ -5625,6 +5736,6 @@ async def ws_factory_reset(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], {
         "ok": len(errors) == 0,
         "cleared": cleared,
-        "total": len(_ALL_STORE_KEYS),
+        "total": 11,
         "errors": errors,
     })
