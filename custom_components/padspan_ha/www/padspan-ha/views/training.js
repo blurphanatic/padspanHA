@@ -1160,6 +1160,75 @@ function _svgMasterAlign() {
 </svg>`;
 }
 
+function _svgRotateImage() {
+  return `<svg viewBox="0 0 400 240" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:220px;background:#071008;border-radius:8px;display:block">
+<style>@keyframes rotArrow{0%{transform:rotate(0deg)}100%{transform:rotate(90deg)}}.ra{animation:rotArrow 2s ease-in-out infinite alternate;transform-origin:200px 110px}</style>
+<text x="200" y="18" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="700" font-family="system-ui">Rotate image BEFORE drawing rooms</text>
+<rect x="30" y="34" width="140" height="100" rx="6" fill="#0a150e" stroke="#ef4444" stroke-width="1.5"/>
+<text x="100" y="54" text-anchor="middle" fill="#ef4444" font-size="9" font-weight="600" font-family="system-ui">Before rotation</text>
+<line x1="50" y1="70" x2="80" y2="120" stroke="#ef4444" stroke-width="1" stroke-dasharray="3,2"/>
+<rect x="55" y="72" width="30" height="20" rx="2" fill="#ef444420" stroke="#ef4444" stroke-width="0.6" transform="rotate(-25 70 82)"/>
+<text x="100" y="90" text-anchor="middle" fill="#64748b" font-size="8" font-family="system-ui">Rooms tilted in</text>
+<text x="100" y="102" text-anchor="middle" fill="#64748b" font-size="8" font-family="system-ui">3D stack view</text>
+<text x="100" y="128" text-anchor="middle" fill="#ef4444" font-size="8" font-family="system-ui">✗ Walls don't align</text>
+<rect x="230" y="34" width="140" height="100" rx="6" fill="#0a150e" stroke="#52b788" stroke-width="1.5"/>
+<text x="300" y="54" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600" font-family="system-ui">After rotation</text>
+<rect x="250" y="68" width="50" height="30" rx="2" fill="#52b78815" stroke="#52b788" stroke-width="0.6"/>
+<text x="275" y="87" text-anchor="middle" fill="#52b788" font-size="7" font-family="system-ui">Kitchen</text>
+<rect x="310" y="68" width="40" height="30" rx="2" fill="#52b78815" stroke="#52b788" stroke-width="0.6"/>
+<text x="330" y="87" text-anchor="middle" fill="#52b788" font-size="7" font-family="system-ui">Bath</text>
+<text x="300" y="115" text-anchor="middle" fill="#52b788" font-size="8" font-family="system-ui">✓ Clean alignment</text>
+<text x="300" y="128" text-anchor="middle" fill="#52b788" font-size="8" font-family="system-ui">✓ Walls straight in 3D</text>
+<g class="ra"><path d="M185 110 A20 20 0 0 1 215 110" fill="none" stroke="#60a5fa" stroke-width="2"/><polygon points="214,106 218,112 212,112" fill="#60a5fa"/></g>
+<rect x="20" y="148" width="360" height="80" rx="6" fill="#0a150e" stroke="#1b3526" stroke-width="1"/>
+<text x="200" y="168" text-anchor="middle" fill="#60a5fa" font-size="9" font-weight="600" font-family="system-ui">Rotate your floor plan image in Edit BEFORE drawing rooms</text>
+<text x="200" y="184" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">Most floor plans from estate agents or architects are rotated</text>
+<text x="200" y="198" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">so north faces up. But in the 3D stack view, walls should run</text>
+<text x="200" y="212" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">parallel to the screen edges for clean alignment. Use Edit →</text>
+<text x="200" y="226" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600" font-family="system-ui">Rotate Image to fix this before placing any room boundaries.</text>
+</svg>`;
+}
+
+function _svgFactoryReset() {
+  return `<svg viewBox="0 0 400 200" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:180px;background:#071008;border-radius:8px;display:block">
+<style>@keyframes warnFlash{0%,100%{fill:#ef4444;opacity:1}50%{fill:#7f1d1d;opacity:0.6}}.wf{animation:warnFlash 1.5s ease-in-out infinite}</style>
+<text x="200" y="18" text-anchor="middle" fill="#ef4444" font-size="11" font-weight="700" font-family="system-ui">Factory Reset — erases everything</text>
+<rect x="30" y="30" width="340" height="80" rx="8" fill="#1a0a0a" stroke="#7f1d1d" stroke-width="1.5"/>
+<text class="wf" x="200" y="52" text-anchor="middle" font-size="22" font-family="system-ui">⚠</text>
+<text x="200" y="72" text-anchor="middle" fill="#fca5a5" font-size="9" font-family="system-ui">Clears: settings, calibration, objects, maps, model,</text>
+<text x="200" y="86" text-anchor="middle" fill="#fca5a5" font-size="9" font-family="system-ui">alerts, movement, traceback, history, and backups</text>
+<text x="200" y="100" text-anchor="middle" fill="#ef4444" font-size="9" font-weight="600" font-family="system-ui">BLE radios kept intact — only PadSpan data is erased</text>
+<rect x="30" y="120" width="340" height="68" rx="6" fill="#0a150e" stroke="#1b3526" stroke-width="1"/>
+<text x="200" y="140" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">Found in Settings → Manage tab (Advanced mode).</text>
+<text x="200" y="156" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">Requires typing "FACTORY RESET" to confirm. Admin only.</text>
+<text x="200" y="172" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">Use when starting over or troubleshooting persistent issues.</text>
+<text x="200" y="188" text-anchor="middle" fill="#52b788" font-size="9" font-weight="600" font-family="system-ui">HA restart recommended after factory reset.</text>
+</svg>`;
+}
+
+function _svg2dMode() {
+  return `<svg viewBox="0 0 400 200" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:180px;background:#071008;border-radius:8px;display:block">
+<text x="200" y="18" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="700" font-family="system-ui">2D Flat Map vs 3D Isometric View</text>
+<rect x="20" y="30" width="170" height="110" rx="8" fill="#0a150e" stroke="#1b3526" stroke-width="1.5"/>
+<text x="105" y="50" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600" font-family="system-ui">3D Isometric (default)</text>
+<g transform="skewX(-15) translate(55,55)"><rect width="80" height="50" rx="3" fill="#52b78815" stroke="#52b788" stroke-width="0.8"/></g>
+<g transform="skewX(-15) translate(55,35)"><rect width="80" height="50" rx="3" fill="#60a5fa15" stroke="#60a5fa" stroke-width="0.6" opacity="0.5"/></g>
+<text x="105" y="130" text-anchor="middle" fill="#64748b" font-size="8" font-family="system-ui">Stacked floors in 3D</text>
+<rect x="210" y="30" width="170" height="110" rx="8" fill="#0a150e" stroke="#60a5fa" stroke-width="1.5"/>
+<text x="295" y="50" text-anchor="middle" fill="#60a5fa" font-size="10" font-weight="600" font-family="system-ui">2D Flat Map</text>
+<rect x="230" y="58" width="130" height="70" rx="4" fill="#52b78815" stroke="#52b788" stroke-width="0.8"/>
+<rect x="238" y="66" width="45" height="25" rx="2" fill="#52b78815" stroke="#52b788" stroke-width="0.5"/>
+<text x="260" y="82" text-anchor="middle" fill="#52b788" font-size="7" font-family="system-ui">Kitchen</text>
+<rect x="290" y="66" width="55" height="25" rx="2" fill="#52b78815" stroke="#52b788" stroke-width="0.5"/>
+<text x="317" y="82" text-anchor="middle" fill="#52b788" font-size="7" font-family="system-ui">Living</text>
+<circle cx="275" cy="105" r="4" fill="#14b8a6"/><text x="275" y="108" text-anchor="middle" fill="white" font-size="5" font-weight="700" font-family="system-ui">AL</text>
+<text x="295" y="130" text-anchor="middle" fill="#64748b" font-size="8" font-family="system-ui">Zoom + pan, no tilt</text>
+<rect x="20" y="150" width="360" height="40" rx="6" fill="#0a150e" stroke="#1b3526" stroke-width="1"/>
+<text x="200" y="168" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">Enable in Settings → Appearance → 2D Flat Map Mode.</text>
+<text x="200" y="182" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">Replaces the 3D isometric view with a flat zoomable map.</text>
+</svg>`;
+}
+
 // ─── Walkthrough Definitions ──────────────────────────────────────────────────
 
 const WALKTHROUGHS = [
@@ -1206,7 +1275,8 @@ const WALKTHROUGHS = [
     summary: "Upload a floor plan image, draw room boundaries, and place your Bluetooth scanners on the map.",
     steps: [
       { title: "Upload Your Floor Plan",                 text: "Go to Mapping → Upload tab. Give the map a name like 'Ground Floor', choose your image file (PNG, JPG, or even a photo of a hand-drawn plan), and click Upload & Convert. PadSpan automatically resizes and stores it.", svg: _svgUpload },
-      { title: "Draw Room Boundaries",                   text: "In the Edit tab, select Rooms mode then pick a room from the dropdown. Click on the floor plan image to place polygon points around that room. Click the first point again to close the shape. Repeat for each room.", svg: _svgDrawRooms },
+      { title: "Rotate the Image First",                 text: "Before drawing rooms, check whether your floor plan needs rotating. Most plans from estate agents or architects are oriented with north at the top, but in PadSpan's 3D isometric stack view, walls should run parallel to the screen edges for clean alignment between floors. Open Edit, click Rotate Image, preview at 90°/180°/270°, then click Apply to bake the rotation into the actual image. This remaps any existing receivers and room boundaries automatically. Do this before drawing rooms — rotating after drawing means all your polygons shift perfectly, but it's easier to get the orientation right on a clean map.", svg: _svgRotateImage },
+      { title: "Draw Room Boundaries",                   text: "In the Edit tab, select Rooms mode then pick a room from the dropdown. Rooms with a ⚠ warning are already placed on another map — you can still place them here but be aware they'll exist on multiple maps. Click on the floor plan image to place polygon points around that room. Click the first point again to close the shape. Repeat for each room.", svg: _svgDrawRooms },
       { title: "Place Your Bluetooth Scanners",          text: "Switch to Receivers mode in the Edit tab. Click anywhere on the floor plan to place a scanner icon where a physical Bluetooth radio is located. PadSpan uses these positions for distance calculations and visualisation.", svg: _svgPlaceScanners },
       { title: "Assign Scanners to Rooms (Bluetooth)",   text: "Go to Bluetooth → Scanners tab to see all detected radios. Use the Area dropdown on each scanner row to assign it to the correct room. This links the scanner's RSSI readings to the right room in the system.", svg: _svgPlaceScanners },
     ],
@@ -1239,6 +1309,7 @@ const WALKTHROUGHS = [
     steps: [
       { title: "Overview — Summary Counts",              text: "The Overview tab shows live counts of rooms, objects, and radios. In Advanced mode these appear as clickable KPI cards — tap any number to see a full list. Click any row in the list for detailed info on that item.", svg: _svgKpiCards },
       { title: "Room Grid — What's in Each Room",        text: "Scroll down to see the room grid. Each coloured box is a room. Inside: green antenna rings are Bluetooth scanners, teal dots are identified (named) devices, orange dots are unidentified BLE signals. Counts shown in the corner.", svg: _svgRoomGrid },
+      { title: "2D Flat Map Mode",                        text: "If you prefer a simple flat view instead of the 3D isometric stack, enable 2D Flat Map Mode in Settings → Appearance. This replaces the tilted 3D floor stack with a flat overhead view of your floor plan that supports mouse-wheel zoom and click-drag panning. Device dots and scanner icons are rendered directly on the image. Useful on small screens or when you only have one floor.", svg: _svg2dMode },
       { title: "Follow — Track a Specific Tag",          text: "Switch to the Follow tab and pick any tracked device from the dropdown. You'll see its current room, signal strength, age of last detection, and a room map with a pulsing location dot. Advanced mode adds a movement history log.", svg: _svgFollowTab },
     ],
   },
@@ -1311,6 +1382,7 @@ const WALKTHROUGHS = [
       { title: "The Manage Tab",                         text: "The Manage tab gives you full control over your PadSpan data. It's visible in Advanced and Development modes (cycle the mode toggle in the top bar). Click Manage in the sidebar to find tabs for BLE Tags, Rooms (HA Areas), Maps, and Data.", svg: _svgManageOverview },
       { title: "Untag or Remove BLE Devices",           text: "Under BLE Tags, every named BLE device is listed with its last-seen time. Click Delete to remove the name — the device reverts to showing its hardware address. A two-click confirm prevents accidental deletes.", svg: _svgUntagDevice },
       { title: "Clean Up Orphan Polygons",              text: "The Data tab's Orphan Room Polygons scanner finds room boundaries in your maps that no longer match a real HA area — commonly leftover from sample mode or rooms that were deleted. Delete them individually or all at once.", svg: _svgOrphanClean },
+      { title: "Factory Reset",                         text: "When you need a completely fresh start, use Factory Reset in Settings → Manage tab. This erases all PadSpan persistent data — settings, calibration, objects, maps, model, alerts, movement history, and backups. BLE radio data is kept intact so scanners continue working. You must type 'FACTORY RESET' to confirm (admin only). Restart HA afterwards. Use this when troubleshooting persistent issues or starting a clean setup from scratch.", svg: _svgFactoryReset },
     ],
   },
 ];
@@ -1556,6 +1628,19 @@ const MANUAL_SECTIONS = [
       "Delete an HA Area — go to Settings → Manage → Rooms. Click Delete next to an area. This removes it from Home Assistant entirely and cannot be undone from within PadSpan. Re-add in HA Settings → Areas & Zones if needed.",
       "Orphan Room Polygons — found in Manage sidebar → Data. These are room boundaries in your maps that no longer match a real HA area — usually leftover from sample mode or deleted rooms. Delete individually or all at once.",
       "HA Entities — listed in Manage sidebar → Data. Note: entities created by PadSpan will be recreated on next restart. Entities from other integrations (like Bermuda) are managed by those integrations.",
+      "Factory Reset — found in Settings → Manage tab (Advanced mode). Erases all PadSpan persistent data: settings, calibration, objects, maps, model, alerts, movement, traceback, history, and backups. BLE radio data is intentionally left intact so scanners keep working. Requires typing 'FACTORY RESET' to confirm (admin only). Restart HA afterwards. Use when you want a completely clean start or are troubleshooting persistent data issues.",
+    ],
+  },
+  {
+    id: "view_modes_section",
+    title: "2D Flat Map & View Modes",
+    icon: "🗺️",
+    paragraphs: [
+      "PadSpan offers two map view modes for the Overview and Maps tabs:",
+      "3D Isometric View (default) — stacks your floor plans in a tilted 3D perspective. Each floor is rendered as a slab with room polygons, device dots, and scanner icons. Floors are separated vertically and can be individually hidden or focused. Outside maps auto-fit inside the indoor bounding box.",
+      "2D Flat Map Mode — replaces the 3D stack with a simple flat overhead view of your floor plan. Supports mouse-wheel zoom and click-drag panning. Enable in Settings → Appearance → 2D Flat Map Mode. Best for single-floor setups or mobile screens where the 3D view is hard to navigate.",
+      "Image Rotation — before drawing room boundaries on a new map, check if the image needs rotating. Most architectural floor plans are oriented with north at the top, but PadSpan's 3D isometric view looks best when walls run parallel to screen edges. Go to Maps → Edit → Rotate Image. Preview at 90°, 180°, or 270°, then click Apply. The rotation is baked into the actual image file, and any existing receivers and room boundaries are automatically remapped to match. Always rotate before drawing rooms — it's easier to start with the right orientation than to fix it later.",
+      "Duplicate Room Warning — when editing a map and picking rooms from the dropdown, rooms that are already placed on another map show a ⚠ warning with the other map's name. You can still place them (useful for rooms spanning multiple floors), but the warning prevents accidental duplicates.",
     ],
   },
   {
