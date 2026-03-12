@@ -2626,7 +2626,8 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                     "_stale": True,
                 }
                 # Also overlay presence data
-                for _mk2 in ("x_frac", "y_frac", "knn_confidence",
+                for _mk2 in ("x_frac", "y_frac", "knn_map_id",
+                              "knn_confidence",
                               "room_confidence", "rssi_margin_confidence"):
                     _v2 = _pv.get(_mk2)
                     if _v2 is not None:

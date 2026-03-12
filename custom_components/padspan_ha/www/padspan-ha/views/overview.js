@@ -1376,7 +1376,8 @@ export function render(ctx){
         const _mapMaxAge = Math.max(_mapAwayM * 2, 3600); // show up to 2x away timeout or 1hr, whichever is larger
         const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
         const _mapObjs = allObjects.filter(o => {
-          if (!o.room || o.room === "unknown" || o.room === "not_home" || !roomIsoPos[o.room]) return false;
+          const hasKnn = typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id && mapTransforms[o.knn_map_id];
+          if (!hasKnn && (!o.room || o.room === "unknown" || o.room === "not_home" || !roomIsoPos[o.room])) return false;
           if (_renderedObjKeys.has(o.key || o.address || o.entity_id || "")) return false;
           const isFol = _isFollowed(o);
           // Quiet mode: only show followed or labeled/identified objects
@@ -1418,7 +1419,7 @@ export function render(ctx){
               if(tri){
                 px = Math.round(tri.sx);
                 py = Math.round(tri.sy);
-              } else {
+              } else if (obj.room && roomIsoPos[obj.room]) {
                 const pos = roomIsoPos[obj.room];
                 const idx = (_roomObjCount[obj.room] || 0);
                 _roomObjCount[obj.room] = idx + 1;
@@ -1429,6 +1430,8 @@ export function render(ctx){
               }
             }
           }
+          // Skip if no position could be determined
+          if(px == null || py == null) continue;
 
           if(ctx.state._overviewPersistentPins){
             if(isAway){
