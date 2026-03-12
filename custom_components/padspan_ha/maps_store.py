@@ -7,7 +7,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import math
 import os
+import struct
+import zlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -388,3 +391,425 @@ class MapsStore:
                     pass
         self.data["maps"] = [x for x in self.data.get("maps", []) if x.get("id") != map_id]
         await self.store.async_save(self.data)
+
+    # ── Coordinate transforms for cross-map migration ──────────────────────
+
+    @staticmethod
+    def map_to_world(px: float, py: float, stk: dict) -> tuple[float, float]:
+        """Map-local normalised (0-1) → world coords.
+
+        Mirrors the JS ``mapPt`` function in overview.js / calibration.js.
+        """
+        sc = float(stk.get("scale", 1.0))
+        sx_adj = float(stk.get("scale_x_adj", 1.0))
+        ref_ar = float(stk.get("ref_ar") or (1.0))
+        ox = float(stk.get("x_offset", 0.0))
+        oy = float(stk.get("y_offset", 0.0))
+        rot = math.radians(float(stk.get("rotation", 0.0)))
+
+        dx = (px - 0.5) * sc * sx_adj
+        dy = (py - 0.5) * sc * ref_ar
+        rx = dx * math.cos(rot) - dy * math.sin(rot)
+        ry = dx * math.sin(rot) + dy * math.cos(rot)
+        return ((0.5 + ox) + rx, ref_ar * (0.5 + oy) + ry)
+
+    @staticmethod
+    def world_to_map(wx: float, wy: float, stk: dict) -> tuple[float, float]:
+        """World coords → map-local normalised (0-1).  Inverse of map_to_world."""
+        sc = float(stk.get("scale", 1.0))
+        sx_adj = float(stk.get("scale_x_adj", 1.0))
+        ref_ar = float(stk.get("ref_ar") or (1.0))
+        ox = float(stk.get("x_offset", 0.0))
+        oy = float(stk.get("y_offset", 0.0))
+        rot = math.radians(float(stk.get("rotation", 0.0)))
+
+        rx = wx - (0.5 + ox)
+        ry = wy - ref_ar * (0.5 + oy)
+        # Inverse rotation
+        dx = rx * math.cos(-rot) - ry * math.sin(-rot)
+        dy = rx * math.sin(-rot) + ry * math.cos(-rot)
+        # Inverse scale
+        denom_x = sc * sx_adj if abs(sc * sx_adj) > 1e-9 else 1e-9
+        denom_y = sc * ref_ar if abs(sc * ref_ar) > 1e-9 else 1e-9
+        px = dx / denom_x + 0.5
+        py = dy / denom_y + 0.5
+        return (px, py)
+
+    async def async_extend_canvas(
+        self,
+        map_id: str,
+        pad_left: float,
+        pad_right: float,
+        pad_top: float,
+        pad_bottom: float,
+    ) -> dict[str, Any]:
+        """Extend a map's PNG canvas with dark padding and renormalise all
+        stored coordinates.
+
+        pad_* values are in normalised (0-1) space of the CURRENT image.
+        e.g. pad_left=0.2 means add 20% of the current width to the left.
+
+        Returns the updated map dict and stores ``_pre_extend`` snapshot
+        for undo.
+        """
+        m = self.get_map(map_id)
+        if not m:
+            raise KeyError("not_found")
+
+        img = m.get("image") or {}
+        old_w = int(img.get("width") or 800)
+        old_h = int(img.get("height") or 600)
+
+        # Pixels to add on each side
+        add_l = max(0, int(round(pad_left * old_w)))
+        add_r = max(0, int(round(pad_right * old_w)))
+        add_t = max(0, int(round(pad_top * old_h)))
+        add_b = max(0, int(round(pad_bottom * old_h)))
+
+        if add_l + add_r + add_t + add_b == 0:
+            return m  # nothing to do
+
+        new_w = old_w + add_l + add_r
+        new_h = old_h + add_t + add_b
+
+        # Read existing PNG
+        fn = img.get("filename")
+        if not fn:
+            raise ValueError("Map has no image file")
+        fp = (self.maps_dir / str(fn)).resolve()
+        if not str(fp).startswith(str(self.maps_dir.resolve())) or not fp.exists():
+            raise ValueError("Image file not found")
+        old_png = await asyncio.to_thread(fp.read_bytes)
+
+        # Extend the PNG using Canvas-style compositing
+        new_png = _extend_png(old_png, old_w, old_h, new_w, new_h, add_l, add_t)
+        await asyncio.to_thread(fp.write_bytes, new_png)
+
+        # Save pre-extend snapshot for undo
+        m["_pre_extend"] = {
+            "width": old_w,
+            "height": old_h,
+            "pad_left": add_l,
+            "pad_right": add_r,
+            "pad_top": add_t,
+            "pad_bottom": add_b,
+        }
+
+        # Update image dimensions
+        m["image"]["width"] = new_w
+        m["image"]["height"] = new_h
+        m["image"]["size_bytes"] = len(new_png)
+        m["image"]["sha256"] = _sha256(new_png)
+
+        # Renormalise all stored coordinates
+        fw = old_w / new_w
+        fh = old_h / new_h
+        ox = add_l / new_w
+        oy = add_t / new_h
+
+        def _rx(px: float) -> float:
+            return ox + float(px) * fw
+
+        def _ry(py: float) -> float:
+            return oy + float(py) * fh
+
+        for r in m.get("receivers", []):
+            r["x"] = _rx(r.get("x", 0))
+            r["y"] = _ry(r.get("y", 0))
+
+        for bk in m.get("beacons", []):
+            bk["x"] = _rx(bk.get("x", 0))
+            bk["y"] = _ry(bk.get("y", 0))
+
+        for b in m.get("room_bounds", {}).values():
+            if isinstance(b, dict):
+                if b.get("type") == "poly" and isinstance(b.get("points"), list):
+                    b["points"] = [[_rx(p[0]), _ry(p[1])] for p in b["points"] if len(p) >= 2]
+                elif b.get("type") == "circle":
+                    b["cx"] = _rx(b.get("cx", 0.5))
+                    b["cy"] = _ry(b.get("cy", 0.5))
+                    # Scale radius proportionally (use smaller factor)
+                    b["r"] = float(b.get("r", 0.12)) * min(fw, fh)
+
+        m["updated"] = _now_iso()
+        await self.store.async_save(self.data)
+        return m
+
+    async def async_revert_extend(self, map_id: str) -> dict[str, Any] | None:
+        """Revert a canvas extension using the saved ``_pre_extend`` snapshot.
+
+        Returns the updated map or None if no snapshot exists.
+        """
+        m = self.get_map(map_id)
+        if not m:
+            return None
+        pre = m.get("_pre_extend")
+        if not pre:
+            return None
+
+        old_w = int(pre["width"])
+        old_h = int(pre["height"])
+        add_l = int(pre["pad_left"])
+        add_t = int(pre["pad_top"])
+        new_w = m["image"]["width"]
+        new_h = m["image"]["height"]
+
+        # Read current (extended) PNG and crop back to original
+        fn = (m.get("image") or {}).get("filename")
+        if fn:
+            fp = (self.maps_dir / str(fn)).resolve()
+            if str(fp).startswith(str(self.maps_dir.resolve())) and fp.exists():
+                cur_png = await asyncio.to_thread(fp.read_bytes)
+                orig_png = _crop_png(cur_png, new_w, new_h, add_l, add_t, old_w, old_h)
+                if orig_png:
+                    await asyncio.to_thread(fp.write_bytes, orig_png)
+                    m["image"]["size_bytes"] = len(orig_png)
+                    m["image"]["sha256"] = _sha256(orig_png)
+
+        m["image"]["width"] = old_w
+        m["image"]["height"] = old_h
+
+        # Reverse the coordinate renormalisation
+        fw = old_w / new_w
+        ox = add_l / new_w
+        fh = old_h / new_h
+        oy = add_t / new_h
+
+        def _ux(px: float) -> float:
+            return max(0.0, min(1.0, (float(px) - ox) / fw)) if fw > 0 else 0.5
+
+        def _uy(py: float) -> float:
+            return max(0.0, min(1.0, (float(py) - oy) / fh)) if fh > 0 else 0.5
+
+        for r in m.get("receivers", []):
+            r["x"] = _ux(r.get("x", 0))
+            r["y"] = _uy(r.get("y", 0))
+
+        for bk in m.get("beacons", []):
+            bk["x"] = _ux(bk.get("x", 0))
+            bk["y"] = _uy(bk.get("y", 0))
+
+        for b in m.get("room_bounds", {}).values():
+            if isinstance(b, dict):
+                if b.get("type") == "poly" and isinstance(b.get("points"), list):
+                    b["points"] = [[_ux(p[0]), _uy(p[1])] for p in b["points"] if len(p) >= 2]
+                elif b.get("type") == "circle":
+                    b["cx"] = _ux(b.get("cx", 0.5))
+                    b["cy"] = _uy(b.get("cy", 0.5))
+                    b["r"] = float(b.get("r", 0.12)) / min(fw, fh) if min(fw, fh) > 0 else 0.12
+
+        del m["_pre_extend"]
+        m["updated"] = _now_iso()
+        await self.store.async_save(self.data)
+        return m
+
+
+def _extend_png(old_png: bytes, old_w: int, old_h: int,
+                new_w: int, new_h: int,
+                offset_x: int, offset_y: int) -> bytes:
+    """Create a new PNG with the original image placed at (offset_x, offset_y)
+    on a larger dark canvas.  Uses raw RGBA scanline construction + zlib.
+    Falls back to returning a 1x1 dark PNG on error.
+    """
+    try:
+        # Decode original PNG to raw RGBA pixels
+        old_pixels = _decode_png_to_rgba(old_png, old_w, old_h)
+        if not old_pixels:
+            # Can't decode — return original as-is
+            return old_png
+
+        # Build new RGBA buffer (dark background: #0a1a10 fully opaque)
+        bg = b'\x0a\x1a\x10\xff'
+        new_row_bytes = new_w * 4
+        rows: list[bytes] = []
+        for y in range(new_h):
+            src_y = y - offset_y
+            if 0 <= src_y < old_h:
+                # Build row: left pad + old row data + right pad
+                old_row_start = src_y * old_w * 4
+                left = bg * offset_x if offset_x > 0 else b''
+                mid = old_pixels[old_row_start:old_row_start + old_w * 4]
+                right_pad = new_w - offset_x - old_w
+                right = bg * right_pad if right_pad > 0 else b''
+                row = left + mid + right
+            else:
+                row = bg * new_w
+            # PNG filter byte (0 = None)
+            rows.append(b'\x00' + row[:new_row_bytes])
+
+        raw_data = b''.join(rows)
+        return _encode_rgba_to_png(raw_data, new_w, new_h)
+    except Exception:
+        return old_png  # safety fallback
+
+
+def _crop_png(png_data: bytes, cur_w: int, cur_h: int,
+              crop_x: int, crop_y: int,
+              crop_w: int, crop_h: int) -> bytes | None:
+    """Crop a PNG back to a sub-region. Returns new PNG bytes or None on error."""
+    try:
+        pixels = _decode_png_to_rgba(png_data, cur_w, cur_h)
+        if not pixels:
+            return None
+
+        rows: list[bytes] = []
+        for y in range(crop_h):
+            src_y = crop_y + y
+            if 0 <= src_y < cur_h:
+                start = (src_y * cur_w + crop_x) * 4
+                row = pixels[start:start + crop_w * 4]
+                # Pad if needed
+                if len(row) < crop_w * 4:
+                    row += b'\x0a\x1a\x10\xff' * (crop_w - len(row) // 4)
+            else:
+                row = b'\x0a\x1a\x10\xff' * crop_w
+            rows.append(b'\x00' + row)
+
+        raw_data = b''.join(rows)
+        return _encode_rgba_to_png(raw_data, crop_w, crop_h)
+    except Exception:
+        return None
+
+
+def _decode_png_to_rgba(png_data: bytes, expected_w: int, expected_h: int) -> bytes | None:
+    """Minimal PNG decoder → raw RGBA pixels.  Handles 8-bit RGBA and RGB."""
+    try:
+        if png_data[:8] != b'\x89PNG\r\n\x1a\n':
+            return None
+
+        pos = 8
+        width = height = bit_depth = color_type = 0
+        idat_chunks: list[bytes] = []
+        palette: list[tuple[int, int, int]] = []
+
+        while pos < len(png_data):
+            length = struct.unpack(">I", png_data[pos:pos + 4])[0]
+            chunk_type = png_data[pos + 4:pos + 8]
+            chunk_data = png_data[pos + 8:pos + 8 + length]
+            pos += 12 + length
+
+            if chunk_type == b'IHDR':
+                width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk_data[:10])
+            elif chunk_type == b'PLTE':
+                for i in range(0, len(chunk_data), 3):
+                    palette.append((chunk_data[i], chunk_data[i + 1], chunk_data[i + 2]))
+            elif chunk_type == b'IDAT':
+                idat_chunks.append(chunk_data)
+            elif chunk_type == b'IEND':
+                break
+
+        if width != expected_w or height != expected_h:
+            return None
+        if bit_depth != 8:
+            return None
+
+        raw = zlib.decompress(b''.join(idat_chunks))
+
+        # Determine bytes per pixel and convert to RGBA
+        if color_type == 6:    # RGBA
+            bpp = 4
+        elif color_type == 2:  # RGB
+            bpp = 3
+        elif color_type == 3:  # Indexed
+            bpp = 1
+        elif color_type == 0:  # Greyscale
+            bpp = 1
+        elif color_type == 4:  # Greyscale + alpha
+            bpp = 2
+        else:
+            return None
+
+        # Reconstruct scanlines (apply PNG filters)
+        stride = width * bpp
+        scanlines = _unfilter_png(raw, width, height, bpp, stride)
+        if not scanlines:
+            return None
+
+        # Convert to RGBA
+        rgba = bytearray(width * height * 4)
+        for y in range(height):
+            row = scanlines[y * stride:(y + 1) * stride]
+            for x in range(width):
+                off = (y * width + x) * 4
+                if color_type == 6:  # RGBA
+                    rgba[off:off + 4] = row[x * 4:x * 4 + 4]
+                elif color_type == 2:  # RGB
+                    rgba[off:off + 3] = row[x * 3:x * 3 + 3]
+                    rgba[off + 3] = 255
+                elif color_type == 3:  # Indexed
+                    idx = row[x]
+                    if idx < len(palette):
+                        r, g, b = palette[idx]
+                        rgba[off] = r; rgba[off + 1] = g; rgba[off + 2] = b; rgba[off + 3] = 255
+                    else:
+                        rgba[off:off + 4] = b'\x00\x00\x00\xff'
+                elif color_type == 0:  # Greyscale
+                    v = row[x]
+                    rgba[off] = v; rgba[off + 1] = v; rgba[off + 2] = v; rgba[off + 3] = 255
+                elif color_type == 4:  # Greyscale + alpha
+                    v = row[x * 2]
+                    a = row[x * 2 + 1]
+                    rgba[off] = v; rgba[off + 1] = v; rgba[off + 2] = v; rgba[off + 3] = a
+        return bytes(rgba)
+    except Exception:
+        return None
+
+
+def _unfilter_png(raw: bytes, width: int, height: int, bpp: int, stride: int) -> bytes | None:
+    """Apply PNG scanline filters to reconstruct pixel data."""
+    try:
+        result = bytearray(height * stride)
+        row_size = stride + 1  # +1 for filter byte
+        for y in range(height):
+            filt = raw[y * row_size]
+            row_raw = raw[y * row_size + 1:y * row_size + 1 + stride]
+            if len(row_raw) < stride:
+                row_raw = row_raw + b'\x00' * (stride - len(row_raw))
+            dst_off = y * stride
+            prev_off = (y - 1) * stride if y > 0 else -1
+
+            if filt == 0:  # None
+                result[dst_off:dst_off + stride] = row_raw
+            elif filt == 1:  # Sub
+                for i in range(stride):
+                    a = result[dst_off + i - bpp] if i >= bpp else 0
+                    result[dst_off + i] = (row_raw[i] + a) & 0xFF
+            elif filt == 2:  # Up
+                for i in range(stride):
+                    b = result[prev_off + i] if prev_off >= 0 else 0
+                    result[dst_off + i] = (row_raw[i] + b) & 0xFF
+            elif filt == 3:  # Average
+                for i in range(stride):
+                    a = result[dst_off + i - bpp] if i >= bpp else 0
+                    b = result[prev_off + i] if prev_off >= 0 else 0
+                    result[dst_off + i] = (row_raw[i] + (a + b) // 2) & 0xFF
+            elif filt == 4:  # Paeth
+                for i in range(stride):
+                    a = result[dst_off + i - bpp] if i >= bpp else 0
+                    b = result[prev_off + i] if prev_off >= 0 else 0
+                    c = result[prev_off + i - bpp] if prev_off >= 0 and i >= bpp else 0
+                    p = a + b - c
+                    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                    pr = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+                    result[dst_off + i] = (row_raw[i] + pr) & 0xFF
+            else:
+                result[dst_off:dst_off + stride] = row_raw
+        return bytes(result)
+    except Exception:
+        return None
+
+
+def _encode_rgba_to_png(filtered_data: bytes, width: int, height: int) -> bytes:
+    """Encode pre-filtered RGBA scanline data into a PNG file."""
+    ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    idat_data = zlib.compress(filtered_data, 6)
+
+    def _chunk(ctype: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(ctype + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + ctype + data + struct.pack(">I", crc)
+
+    png = b'\x89PNG\r\n\x1a\n'
+    png += _chunk(b'IHDR', ihdr_data)
+    png += _chunk(b'IDAT', idat_data)
+    png += _chunk(b'IEND', b'')
+    return png

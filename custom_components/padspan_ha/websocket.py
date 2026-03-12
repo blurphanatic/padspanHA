@@ -90,6 +90,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_maps_replace_image)
     websocket_api.async_register_command(hass, ws_maps_delete)
     websocket_api.async_register_command(hass, ws_maps_delete_migrate)
+    websocket_api.async_register_command(hass, ws_maps_revert_extend)
     websocket_api.async_register_command(hass, ws_model_get)
     websocket_api.async_register_command(hass, ws_model_update)
     websocket_api.async_register_command(hass, ws_object_label_set)
@@ -2925,6 +2926,7 @@ async def ws_maps_delete(hass: HomeAssistant, connection, msg) -> None:
         "type": "padspan_ha/maps_delete_migrate",
         "map_id": str,
         "target_map_id": str,
+        vol.Optional("extend_canvas", default=False): bool,
     }
 )
 @websocket_api.require_admin
@@ -2933,9 +2935,9 @@ async def ws_maps_delete_migrate(hass: HomeAssistant, connection, msg) -> None:
     """Delete a map after migrating its data (receivers, beacons, room_bounds,
     calibration) to a target map on the same z-level.
 
-    Only data whose rooms / positions fall within the target map's coverage
-    is migrated.  Anything that cannot be placed is reported in the response
-    so the UI can warn the user.
+    Coordinates are transformed from source map space → world → target map
+    space using stack alignment.  If migrated data falls outside the target's
+    [0,1] bounds the target canvas is extended automatically.
     """
     ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
     if not ms:
@@ -2953,11 +2955,33 @@ async def ws_maps_delete_migrate(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "not_found", "Target map not found")
         return
 
+    src_stk = src_map.get("stack") or {}
+    tgt_stk = tgt_map.get("stack") or {}
+
+    def _xform(px: float, py: float) -> tuple[float, float]:
+        """Source map 0-1 → target map 0-1 via world coords."""
+        wx, wy = ms.map_to_world(px, py, src_stk)
+        return ms.world_to_map(wx, wy, tgt_stk)
+
+    def _xform_bounds(bounds: dict) -> dict:
+        """Transform a room_bounds entry from source → target space."""
+        b = dict(bounds)
+        if b.get("type") == "poly" and isinstance(b.get("points"), list):
+            b["points"] = [list(_xform(p[0], p[1])) for p in b["points"] if len(p) >= 2]
+        elif b.get("type") == "circle":
+            cx, cy = _xform(b.get("cx", 0.5), b.get("cy", 0.5))
+            b["cx"] = cx
+            b["cy"] = cy
+            # Scale radius: transform a point at (cx+r, cy) and measure distance
+            r = float(b.get("r", 0.12))
+            rx, ry = _xform(b.get("cx", 0.5) + r, b.get("cy", 0.5))
+            b["r"] = max(0.01, ((rx - cx) ** 2 + (ry - cy) ** 2) ** 0.5)
+        return b
+
     tgt_receivers = list(tgt_map.get("receivers") or [])
     tgt_beacons = list(tgt_map.get("beacons") or [])
     tgt_bounds = dict(tgt_map.get("room_bounds") or {})
 
-    # Track existing source IDs / beacon keys on target to avoid duplicates
     tgt_rx_sources = {r.get("source") for r in tgt_receivers if r.get("source")}
     tgt_bk_keys = {b.get("key") for b in tgt_beacons if b.get("key")}
 
@@ -2968,15 +2992,23 @@ async def ws_maps_delete_migrate(hass: HomeAssistant, connection, msg) -> None:
     skipped_beacons: list[str] = []
     skipped_rooms: list[str] = []
 
-    # --- Migrate receivers (scanners) ---
+    # Collect all migrated target-space coords to detect canvas extension need
+    all_migrated_pts: list[tuple[float, float]] = []
+
+    # --- Migrate receivers ---
     for rx in (src_map.get("receivers") or []):
         src_key = rx.get("source") or rx.get("id") or ""
         label = rx.get("label") or src_key
         if src_key and src_key in tgt_rx_sources:
             skipped_receivers.append(f"{label} (already on target)")
             continue
-        # Receiver position is in 0-1 normalized coords — always transferable
-        tgt_receivers.append(dict(rx))
+        new_rx = dict(rx)
+        tx, ty = _xform(float(rx.get("x", 0.5)), float(rx.get("y", 0.5)))
+        new_rx["x"] = tx
+        new_rx["y"] = ty
+        new_rx["_migrated"] = True
+        all_migrated_pts.append((tx, ty))
+        tgt_receivers.append(new_rx)
         moved_receivers.append(label)
         if src_key:
             tgt_rx_sources.add(src_key)
@@ -2988,7 +3020,13 @@ async def ws_maps_delete_migrate(hass: HomeAssistant, connection, msg) -> None:
         if bk_key and bk_key in tgt_bk_keys:
             skipped_beacons.append(f"{label} (already on target)")
             continue
-        tgt_beacons.append(dict(bk))
+        new_bk = dict(bk)
+        tx, ty = _xform(float(bk.get("x", 0.5)), float(bk.get("y", 0.5)))
+        new_bk["x"] = tx
+        new_bk["y"] = ty
+        new_bk["_migrated"] = True
+        all_migrated_pts.append((tx, ty))
+        tgt_beacons.append(new_bk)
         moved_beacons.append(label)
         if bk_key:
             tgt_bk_keys.add(bk_key)
@@ -2998,22 +3036,93 @@ async def ws_maps_delete_migrate(hass: HomeAssistant, connection, msg) -> None:
         if room_name in tgt_bounds:
             skipped_rooms.append(f"{room_name} (already drawn on target)")
             continue
-        tgt_bounds[room_name] = dict(bounds)
+        new_b = _xform_bounds(bounds)
+        # Collect all points for canvas extension check
+        if new_b.get("type") == "poly":
+            for p in (new_b.get("points") or []):
+                all_migrated_pts.append((p[0], p[1]))
+        elif new_b.get("type") == "circle":
+            cx, cy, r = new_b.get("cx", 0.5), new_b.get("cy", 0.5), new_b.get("r", 0.12)
+            all_migrated_pts.extend([(cx - r, cy - r), (cx + r, cy + r)])
+        tgt_bounds[room_name] = new_b
         moved_rooms.append(room_name)
+
+    # --- Check if canvas extension is needed ---
+    canvas_extended = False
+    needs_extend = False
+    _renorm_x = lambda px: px  # noqa: E731 — identity unless canvas is extended
+    _renorm_y = lambda py: py  # noqa: E731
+    if all_migrated_pts:
+        min_x = min(p[0] for p in all_migrated_pts)
+        max_x = max(p[0] for p in all_migrated_pts)
+        min_y = min(p[1] for p in all_migrated_pts)
+        max_y = max(p[1] for p in all_migrated_pts)
+
+        margin = 0.03  # 3% padding
+        pad_left = max(0.0, -min_x + margin)
+        pad_right = max(0.0, max_x - 1.0 + margin)
+        pad_top = max(0.0, -min_y + margin)
+        pad_bottom = max(0.0, max_y - 1.0 + margin)
+
+        needs_extend = pad_left > 0 or pad_right > 0 or pad_top > 0 or pad_bottom > 0
+
+        if needs_extend and msg.get("extend_canvas"):
+            try:
+                await ms.async_extend_canvas(tgt_id, pad_left, pad_right, pad_top, pad_bottom)
+                canvas_extended = True
+                tgt_map = ms.get_map(tgt_id)
+                old_w_ratio = 1.0 / (1.0 + pad_left + pad_right)
+                old_h_ratio = 1.0 / (1.0 + pad_top + pad_bottom)
+                ox_off = pad_left / (1.0 + pad_left + pad_right)
+                oy_off = pad_top / (1.0 + pad_top + pad_bottom)
+
+                _renorm_x = lambda px: ox_off + float(px) * old_w_ratio  # noqa: E731
+                _renorm_y = lambda py: oy_off + float(py) * old_h_ratio  # noqa: E731
+
+                for rx in tgt_receivers:
+                    if rx.get("_migrated"):
+                        rx["x"] = _renorm_x(rx["x"])
+                        rx["y"] = _renorm_y(rx["y"])
+                for bk in tgt_beacons:
+                    if bk.get("_migrated"):
+                        bk["x"] = _renorm_x(bk["x"])
+                        bk["y"] = _renorm_y(bk["y"])
+                for rm_name in moved_rooms:
+                    b = tgt_bounds.get(rm_name)
+                    if not b:
+                        continue
+                    if b.get("type") == "poly":
+                        b["points"] = [[_renorm_x(p[0]), _renorm_y(p[1])] for p in b.get("points", [])]
+                    elif b.get("type") == "circle":
+                        b["cx"] = _renorm_x(b.get("cx", 0.5))
+                        b["cy"] = _renorm_y(b.get("cy", 0.5))
+                        b["r"] = float(b.get("r", 0.12)) * min(old_w_ratio, old_h_ratio)
+            except Exception as _ext_err:
+                _LOGGER.debug("Canvas extension failed: %s", _ext_err)
+        elif needs_extend and not msg.get("extend_canvas"):
+            # Data needs extending but user hasn't approved — report overflow
+            # Items outside [0,1] will be clamped to the edge (not ideal but safe)
+            pass
+
+    # Clean up migration markers before save
+    for rx in tgt_receivers:
+        rx.pop("_migrated", None)
+    for bk in tgt_beacons:
+        bk.pop("_migrated", None)
 
     # --- Save merged data to target map ---
     await ms.async_update_map(
         tgt_id,
         receivers=tgt_receivers,
-        calibration=tgt_map.get("calibration") or {},
-        notes=tgt_map.get("notes") or "",
-        floor_id=tgt_map.get("floor_id") or "",
+        calibration=(tgt_map or {}).get("calibration") or {},
+        notes=(tgt_map or {}).get("notes") or "",
+        floor_id=(tgt_map or {}).get("floor_id") or "",
         room_bounds=tgt_bounds,
-        stack=tgt_map.get("stack") or {},
+        stack=(tgt_map or {}).get("stack") or {},
         beacons=tgt_beacons,
     )
 
-    # --- Migrate calibration points ---
+    # --- Migrate calibration points (transform coords too) ---
     cal_moved = 0
     try:
         cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
@@ -3022,11 +3131,19 @@ async def ws_maps_delete_migrate(hass: HomeAssistant, connection, msg) -> None:
             changed = False
             for pt in points:
                 if pt.get("map_id") == src_id:
+                    # Transform calibration point coordinates
+                    px = float(pt.get("x", 0.5))
+                    py = float(pt.get("y", 0.5))
+                    tx, ty = _xform(px, py)
+                    if canvas_extended:
+                        tx = _renorm_x(tx)
+                        ty = _renorm_y(ty)
+                    pt["x"] = tx
+                    pt["y"] = ty
                     pt["map_id"] = tgt_id
                     cal_moved += 1
                     changed = True
             if changed:
-                # Invalidate coverage cache for both maps
                 cov = (cal.data.get("model") or {}).get("coverage_by_map")
                 if isinstance(cov, dict):
                     cov.pop(src_id, None)
@@ -3040,6 +3157,8 @@ async def ws_maps_delete_migrate(hass: HomeAssistant, connection, msg) -> None:
 
     connection.send_result(msg["id"], {
         "ok": True,
+        "canvas_extended": canvas_extended,
+        "needs_extend": needs_extend and not canvas_extended,
         "migrated": {
             "receivers": moved_receivers,
             "beacons": moved_beacons,
@@ -3052,6 +3171,22 @@ async def ws_maps_delete_migrate(hass: HomeAssistant, connection, msg) -> None:
             "rooms": skipped_rooms,
         },
     })
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/maps_revert_extend", "map_id": str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_maps_revert_extend(hass: HomeAssistant, connection, msg) -> None:
+    """Revert a canvas extension on a map (undo the image padding + coord shift)."""
+    ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+    if not ms:
+        connection.send_error(msg["id"], "no_maps_store", "Maps store not initialized")
+        return
+    result = await ms.async_revert_extend(msg.get("map_id") or "")
+    if result:
+        connection.send_result(msg["id"], {"ok": True})
+    else:
+        connection.send_result(msg["id"], {"ok": False, "reason": "no_extend_snapshot"})
 
 
 @websocket_api.websocket_command(

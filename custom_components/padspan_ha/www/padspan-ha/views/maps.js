@@ -153,6 +153,12 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
             stack: m.stack || {},
             beacons: newBk,
           });
+          // Revert canvas extension if it was applied
+          if(_mig.canvasExtended){
+            try {
+              await ctx.actions.callWS({ type:"padspan_ha/maps_revert_extend", map_id: _mig.targetMapId });
+            } catch(e){ /* best effort */ }
+          }
           delete ctx.state._lastMapMigration;
           ctx.toast("Migrated data reverted");
         }}, "Revert migration"),
@@ -303,6 +309,18 @@ function _deleteMapModal(ctx, srcMap, allMaps){
     targetSel.appendChild(opt);
   }
 
+  // Canvas extension checkbox (shown when needed)
+  const extendCheckbox = document.createElement("input");
+  extendCheckbox.type = "checkbox";
+  extendCheckbox.checked = false;
+  extendCheckbox.disabled = true;
+  extendCheckbox.id = "_mig_extend_cb";
+  const extendLabel = el("label",{for:"_mig_extend_cb", style:"display:none;font-size:12px;color:#7dd3fc;cursor:pointer;align-items:center;gap:6px"},[
+    extendCheckbox,
+    el("span",{}, "Extend target map canvas to fit migrated data"),
+  ]);
+  const extendNote = el("div",{class:"muted", style:"display:none;font-size:11px;margin-top:2px"});
+
   // Preview what will migrate vs skip
   const previewDiv = el("div",{style:"margin-top:8px"});
   const updatePreview = () => {
@@ -334,6 +352,59 @@ function _deleteMapModal(ctx, srcMap, allMaps){
       else willMove.push(`Room: ${rm}`);
     }
 
+    // Check if any migrated coords would fall outside [0,1] on target
+    // Simple JS mapPt/inverse to estimate — mirrors backend transform
+    const srcStk = srcMap.stack || {};
+    const tgtStk = tgt.stack || {};
+    const _mapToWorld = (px, py, stk) => {
+      const sc = stk.scale||1, sx = stk.scale_x_adj||1, ar = stk.ref_ar||1;
+      const ox = stk.x_offset||0, oy = stk.y_offset||0;
+      const r = (stk.rotation||0)*Math.PI/180;
+      const dx=(px-0.5)*sc*sx, dy=(py-0.5)*sc*ar;
+      return [(0.5+ox)+dx*Math.cos(r)-dy*Math.sin(r), ar*(0.5+oy)+dx*Math.sin(r)+dy*Math.cos(r)];
+    };
+    const _worldToMap = (wx, wy, stk) => {
+      const sc = stk.scale||1, sx = stk.scale_x_adj||1, ar = stk.ref_ar||1;
+      const ox = stk.x_offset||0, oy = stk.y_offset||0;
+      const r = (stk.rotation||0)*Math.PI/180;
+      const rx2=wx-(0.5+ox), ry2=wy-ar*(0.5+oy);
+      const dx2=rx2*Math.cos(-r)-ry2*Math.sin(-r);
+      const dy2=rx2*Math.sin(-r)+ry2*Math.cos(-r);
+      return [dx2/(sc*sx||1e-9)+0.5, dy2/(sc*ar||1e-9)+0.5];
+    };
+
+    let hasOutOfBounds = false;
+    const allPts = [];
+    for(const rx of srcRx){
+      const k = rx.source || rx.id || "";
+      if(k && tgtRxSources.has(k)) continue;
+      const [wx,wy] = _mapToWorld(rx.x||0.5, rx.y||0.5, srcStk);
+      allPts.push(_worldToMap(wx, wy, tgtStk));
+    }
+    for(const bk of srcBk){
+      const k = bk.key || "";
+      if(k && tgtBkKeys.has(k)) continue;
+      const [wx,wy] = _mapToWorld(bk.x||0.5, bk.y||0.5, srcStk);
+      allPts.push(_worldToMap(wx, wy, tgtStk));
+    }
+    for(const rm of srcRooms){
+      if(tgtRoomNames.has(rm)) continue;
+      const b = (srcMap.room_bounds||{})[rm];
+      if(b && b.type === "poly" && b.points){
+        for(const p of b.points){
+          const [wx,wy] = _mapToWorld(p[0], p[1], srcStk);
+          allPts.push(_worldToMap(wx, wy, tgtStk));
+        }
+      } else if(b && b.type === "circle"){
+        const [wx,wy] = _mapToWorld(b.cx||0.5, b.cy||0.5, srcStk);
+        allPts.push(_worldToMap(wx, wy, tgtStk));
+      }
+    }
+    if(allPts.length){
+      const xs = allPts.map(p=>p[0]), ys = allPts.map(p=>p[1]);
+      hasOutOfBounds = Math.min(...xs) < -0.01 || Math.max(...xs) > 1.01 || Math.min(...ys) < -0.01 || Math.max(...ys) > 1.01;
+    }
+
     previewDiv.innerHTML = "";
     if(willMove.length){
       previewDiv.appendChild(el("div",{style:"font-size:12px;color:#52b788;margin-bottom:4px;font-weight:600"}, `Will migrate (${willMove.length}):`));
@@ -350,6 +421,20 @@ function _deleteMapModal(ctx, srcMap, allMaps){
     if(!willMove.length && !willSkip.length){
       previewDiv.appendChild(el("div",{class:"muted"}, "Nothing to migrate."));
     }
+
+    // Canvas extension notice
+    if(hasOutOfBounds && willMove.length){
+      extendCheckbox.checked = true;
+      extendCheckbox.disabled = false;
+      extendLabel.style.display = "flex";
+      extendNote.textContent = "Some data falls outside the target map. The canvas will be extended to fit.";
+      extendNote.style.display = "";
+    } else {
+      extendCheckbox.checked = false;
+      extendCheckbox.disabled = true;
+      extendLabel.style.display = "none";
+      extendNote.style.display = "none";
+    }
   };
   targetSel.addEventListener("change", updatePreview);
   // Initial preview
@@ -364,6 +449,8 @@ function _deleteMapModal(ctx, srcMap, allMaps){
       targetSel,
     ]),
     previewDiv,
+    extendLabel,
+    extendNote,
     statusDiv,
     el("div",{style:"display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap"},[
       el("button",{class:"btn inline", onclick:()=>ctx.actions.closeModal()}, "Cancel"),
@@ -376,7 +463,7 @@ function _deleteMapModal(ctx, srcMap, allMaps){
         const tgtId = targetSel.value;
         statusDiv.textContent = "Migrating...";
         try {
-          const result = await ctx.actions.mapsDeleteMigrate(srcMap.id, tgtId);
+          const result = await ctx.actions.mapsDeleteMigrate(srcMap.id, tgtId, extendCheckbox.checked);
           const mig = (result && result.migrated) || {};
           const skip = (result && result.skipped) || {};
           const parts = [];
@@ -396,12 +483,14 @@ function _deleteMapModal(ctx, srcMap, allMaps){
             targetMapName: tgtMap ? (tgtMap.name||tgtMap.id) : tgtId,
             srcMapName: srcMap.name || srcMap.id,
             migrated: mig,
+            canvasExtended: !!(result && result.canvas_extended),
             timestamp: Date.now(),
           };
 
           ctx.actions.closeModal();
           let msg = `Deleted "${srcMap.name||srcMap.id}"`;
           if(parts.length) msg += ` — migrated ${parts.join(", ")}`;
+          if(result && result.canvas_extended) msg += " (canvas extended)";
           if(skipParts.length) msg += ` (skipped: ${skipParts.join(", ")})`;
           ctx.toast(msg);
         } catch(e) {
