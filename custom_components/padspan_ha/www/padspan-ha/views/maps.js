@@ -1726,8 +1726,9 @@ function _libraryThumb(m, ctx, reco){
     + `border-radius:6px;overflow:hidden;border:1px solid #1b3526;background:#071008`;
 
   if(m.image?.filename){
+    const _tv = (m.updated||m.image?.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
     const img = document.createElement("img");
-    img.src = `/local/padspan_ha/maps/${m.image.filename}`;
+    img.src = `/local/padspan_ha/maps/${m.image.filename}${_tv ? '?v='+_tv : ''}`;
     img.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill";
     wrap.appendChild(img);
   }
