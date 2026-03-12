@@ -1375,15 +1375,11 @@ export function render(ctx){
         // Warning indicator: detect when positioning seems wrong
         let warnMsg = "";
         const hasKnn = typeof o.x_frac === "number" && typeof o.y_frac === "number";
-        const knnMapMatch = hasKnn && o.knn_map_id && mapTransforms[o.knn_map_id];
         if(!hasKnn && o.room){
           // No k-NN at all — positioned by room centroid only
-          warnMsg = "No calibration — room centroid";
-        } else if(hasKnn && !knnMapMatch){
-          // k-NN returned a position on a map that isn't in the 3D stack
-          warnMsg = "k-NN map mismatch — using fallback";
+          warnMsg = "No calibration data";
         } else if(posConf > 0 && posConf < 0.35){
-          // Very low confidence
+          // Very low confidence — RSSI fingerprint doesn't match calibration well
           warnMsg = "Low confidence (" + Math.round(posConf*100) + "%)";
         }
 
