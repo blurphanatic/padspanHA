@@ -1372,16 +1372,12 @@ export function render(ctx){
           s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
         }
 
-        // Warning indicator: detect when positioning seems wrong
-        let warnMsg = "";
+        // Confidence badge — always visible, color-coded by quality
         const hasKnn = typeof o.x_frac === "number" && typeof o.y_frac === "number";
-        if(!hasKnn && o.room){
-          // No k-NN at all — positioned by room centroid only
-          warnMsg = "No calibration data";
-        } else if(posConf > 0 && posConf < 0.35){
-          // Very low confidence — RSSI fingerprint doesn't match calibration well
-          warnMsg = "Low confidence (" + Math.round(posConf*100) + "%)";
-        }
+        const confPct = hasKnn ? Math.round((o.knn_confidence || 0) * 100) : 0;
+        // Color: green > 60%, amber 30-60%, red < 30%, gray = no data
+        const confColor = !hasKnn ? "#64748b" : confPct >= 60 ? "#52b788" : confPct >= 30 ? "#f59e0b" : "#f87171";
+        const confLabel = !hasKnn ? "Room only" : confPct + "%";
 
         const _ok = _esc(o.key||o.address||o.entity_id||"");
         // Dim away/ghost objects
@@ -1389,13 +1385,15 @@ export function render(ctx){
         const glowOp = isAway ? "0.08" : "0.18";
         const lblColor = isAway ? "#a0845c" : BEACON_CLR;
         s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(o))}" style="cursor:pointer">`;
-        // Warning ring + icon
-        if(warnMsg && !isAway){
-          s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="18" fill="none" stroke="#f87171" stroke-width="2" stroke-dasharray="6,3" opacity="0.8"/>`;
-          s += `<text x="${Math.round(bx)+16}" y="${Math.round(by)-12}" fill="#f87171" font-size="14" font-weight="700" opacity="0.9">\u26a0</text>`;
-          const wW = Math.min(warnMsg.length * 5.5 + 8, 160);
-          s += `<rect x="${Math.round(bx)-wW/2}" y="${Math.round(by)+20}" width="${wW}" height="12" rx="3" fill="#7f1d1d" opacity="0.85"/>`;
-          s += `<text x="${Math.round(bx)}" y="${Math.round(by)+30}" text-anchor="middle" fill="#fca5a5" font-size="8" font-weight="600">${_esc(warnMsg)}</text>`;
+        // Confidence badge below the dot (skip for away)
+        if(!isAway){
+          const cW = Math.min(confLabel.length * 6 + 8, 60);
+          s += `<rect x="${Math.round(bx)-cW/2}" y="${Math.round(by)+18}" width="${cW}" height="12" rx="3" fill="#071008" opacity="0.8"/>`;
+          s += `<text x="${Math.round(bx)}" y="${Math.round(by)+27}" text-anchor="middle" fill="${confColor}" font-size="8" font-weight="600">${_esc(confLabel)}</text>`;
+          // Red warning ring only when truly bad (< 30% or no data)
+          if(confPct < 30){
+            s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="18" fill="none" stroke="${confColor}" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.5"/>`;
+          }
         }
         s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="14" fill="${BEACON_CLR}" opacity="${glowOp}"/>`;
         s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="10" fill="${BEACON_CLR}" stroke="#071008" stroke-width="1.5" opacity="${dotOp}"/>`;
