@@ -1855,18 +1855,45 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         if ib_key:
                             entry = obj_store.get(ib_key)
 
+                    # For private_ble with iBeacon metadata, also check the iBeacon key
+                    # (companion_follow stores labels under ibeacon:uuid:major:minor)
+                    if not entry and kind == "private_ble":
+                        _ib_uuid = obj.get("ibeacon_uuid")
+                        _ib_major = obj.get("ibeacon_major")
+                        _ib_minor = obj.get("ibeacon_minor")
+                        if _ib_uuid is not None:
+                            _ib_key = f"ibeacon:{_ib_uuid}:{_ib_major}:{_ib_minor}"
+                            entry = obj_store.get(_ib_key)
+                            if entry:
+                                # Migrate: persist under canonical_id for faster future lookups
+                                _cid = obj.get("canonical_id")
+                                if _cid:
+                                    _migrate_label = entry.get("label", "")
+                                    if _migrate_label and not obj_store.get(_cid):
+                                        _LOGGER.info(
+                                            "Migrating label '%s' from ibeacon key %s → canonical %s",
+                                            _migrate_label, _ib_key, _cid,
+                                        )
+                                        hass.async_create_task(
+                                            obj_store.async_set(_cid, _migrate_label)
+                                        )
+
                     # For private_ble, also check all rotating MACs (handles labels
                     # stored under an old rotating MAC before canonical_id fix)
                     if not entry and kind == "private_ble":
                         for mac in (obj.get("all_addresses") or []):
                             entry = obj_store.get(mac)
                             if entry:
-                                # Migrate: re-store under canonical_id so future lookups work
+                                # Migrate: persist under canonical_id so future lookups work
                                 _cid = obj.get("canonical_id")
-                                if _cid and _cid != mac:
+                                _mac_label = entry.get("label", "")
+                                if _cid and _cid != mac and _mac_label and not obj_store.get(_cid):
                                     _LOGGER.info(
                                         "Migrating label '%s' from rotating MAC %s → canonical %s",
-                                        entry.get("label", ""), mac, _cid,
+                                        _mac_label, mac, _cid,
+                                    )
+                                    hass.async_create_task(
+                                        obj_store.async_set(_cid, _mac_label)
                                     )
                                 break
 
@@ -1881,18 +1908,23 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         label = entry.get("label", "")
                         if label:
                             _device_labels[lookup_key] = label
-                            # Propagate to all related keys
+                            # Propagate to STABLE keys only — never to rotating MACs.
+                            # Propagating to individual MACs causes labels to bleed
+                            # to unrelated objects that share a coincidental MAC.
                             if kind == "private_ble":
-                                # Propagate to canonical_id + all rotating MACs
                                 _cid = obj.get("canonical_id")
                                 if _cid:
                                     _device_labels[_cid] = label
-                                for mac in (obj.get("all_addresses") or []):
-                                    _device_labels[mac.upper()] = label
+                                # Also register under iBeacon key if this device has one
+                                _ib_uuid = obj.get("ibeacon_uuid")
+                                if _ib_uuid is not None:
+                                    _ib_k = f"ibeacon:{_ib_uuid}:{obj.get('ibeacon_major')}:{obj.get('ibeacon_minor')}"
+                                    _device_labels[_ib_k] = label
+                                    _device_labels[_ib_k.upper()] = label
                             elif kind == "ibeacon":
-                                for mac in _ibeacon_to_macs.get(lookup_key, []):
-                                    _device_labels[mac] = label
-                            elif addr in _mac_to_ibeacon_key:
+                                # iBeacon label → also register under uppercase variant
+                                _device_labels[lookup_key.upper()] = label
+                            elif kind == "ble" and addr in _mac_to_ibeacon_key:
                                 _device_labels[_mac_to_ibeacon_key[addr]] = label
                             # Propagate to canonical_id for entity→private_ble cross-ref
                             _ent_cid = obj.get("canonical_id")
@@ -1923,10 +1955,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         ib_key = obj.get("ibeacon_key")
                         if ib_key:
                             label = _device_labels.get(ib_key)
+                    # For iBeacon: check if any of its MACs belong to a labelled
+                    # regular BLE device (non-rotating MAC with a label)
                     if not label and kind == "ibeacon":
                         for mac in _ibeacon_to_macs.get(lookup_key, []):
-                            label = _device_labels.get(mac)
-                            if label:
+                            mac_entry = obj_store.get(mac) if obj_store else None
+                            if mac_entry and mac_entry.get("label"):
+                                label = mac_entry["label"]
                                 break
 
                     if label:
@@ -5237,6 +5272,34 @@ async def ws_companion_follow(hass: HomeAssistant, connection, msg) -> None:
             await obj_store.async_set(ibeacon_key, device_name)
             # Also label the uppercase variant so lookups always match
             await obj_store.async_set(follow_key, device_name)
+
+            # If this phone also resolves via IRK (private_ble), store the label
+            # under the canonical_id too — otherwise the private_ble object won't
+            # find it (private_ble looks up by canonical_id, not ibeacon key).
+            try:
+                resolver = await _get_ble_resolver(hass)
+                ble_live = get_bluetooth_live(hass)
+                ble_snap = ble_live.get_snapshot(max_ads=2000, max_age_s=600)
+                for ad in (ble_snap.get("advertisements") or []):
+                    ib = resolver.parse_ibeacon(ad.get("manufacturer_data") or {})
+                    if not ib:
+                        continue
+                    ad_ib_key = f"ibeacon:{ib['uuid']}:{ib['major']}:{ib['minor']}"
+                    if ad_ib_key.upper() != follow_key:
+                        continue
+                    ad_addr = (ad.get("address") or "").upper()
+                    resolved = resolver.resolve_address(ad_addr)
+                    if resolved and resolved.get("canonical_id"):
+                        cid = resolved["canonical_id"]
+                        await obj_store.async_set(cid, device_name)
+                        _LOGGER.info(
+                            "companion_follow: also labelled canonical_id %s for %s",
+                            cid, device_name,
+                        )
+                    break
+            except Exception as _cid_err:
+                _LOGGER.debug("companion_follow: canonical_id cross-label: %s", _cid_err)
+
             labelled = True
             results.append(f"Labelled as '{device_name}'")
 
