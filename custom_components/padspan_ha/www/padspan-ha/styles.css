@@ -506,10 +506,11 @@
 
   /* Content area: padding for bottom nav + scroll */
   .main{
-    padding:0 10px calc(60px + env(safe-area-inset-bottom,0px)) 10px;
+    padding:0 10px calc(72px + env(safe-area-inset-bottom,0px)) 10px;
     overflow-x:hidden;
     overflow-y:auto;
     height:100vh;
+    height:100dvh; /* dynamic viewport height — shrinks when mobile browser chrome is visible */
     min-width:0;
   }
 

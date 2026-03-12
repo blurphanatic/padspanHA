@@ -1968,57 +1968,6 @@ export function render(ctx){
   // Always try iso floor stack first; falls back to sample floor plan or room grid if no maps
   const mapEl = renderIsoFloorStack();
 
-  // ---------- IRK / Private BLE Phone Card (shared between basic + advanced) ----------
-  function _buildIrkCard(){
-    const card = el("div",{class:"card",style:"border-color:#a78bfa;display:none"});
-    if(dataMode !== "live" || !liveSnap) return card;
-    const allObjs = (liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [];
-    const irkPhones = allObjs.filter(o => o.kind === "private_ble" && o.canonical_id);
-    if(!irkPhones.length) return card;
-    card.style.display = "";
-    card.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#a78bfa;margin-bottom:6px"}, "Private BLE Phones (IRK)"));
-    card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
-      "Phones resolved via Identity Resolving Key. Track them to see their location on the map."));
-    for(const phone of irkPhones){
-      const addr = phone.canonical_id || phone.address || phone.key || "";
-      const isFol = ctx.actions.followedHas(addr);
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px;background:#1a0a2e;margin-bottom:6px";
-      const info = document.createElement("div");
-      info.style.cssText = "flex:1;min-width:0";
-      info.appendChild(el("div",{style:"font-weight:600;font-size:13px;color:#e2e8f0"}, phone.user_label || phone.private_ble_name || phone.name || addr.substring(0,20)));
-      const meta = document.createElement("div");
-      meta.style.cssText = "font-size:11px;color:#64748b;margin-top:2px";
-      const parts = [];
-      if(phone.room && phone.room !== "unknown") parts.push(`Room: ${phone.room}`);
-      if(phone.rssi != null) parts.push(`RSSI: ${phone.rssi} dBm`);
-      parts.push(isFol ? "tracked" : "not tracked");
-      meta.textContent = parts.join(" · ");
-      info.appendChild(meta);
-      row.appendChild(info);
-      if(isFol){
-        row.appendChild(el("span",{style:"font-size:11px;padding:2px 8px;border-radius:10px;background:#052e16;border:1px solid #22c55e;color:#4ade80;font-weight:600"}, "Tracked"));
-      } else {
-        const btn = el("button",{class:"btn inline",style:"font-size:12px;padding:4px 14px;color:#a78bfa;border-color:#7c3aed;font-weight:600"}, "Track");
-        btn.addEventListener("click", async ()=>{
-          btn.disabled = true; btn.textContent = "Saving...";
-          try {
-            const label = phone.private_ble_name || phone.name || "Phone";
-            await ctx.actions.tagObjectPrompt(addr, label);
-            ctx.state.followedAddrs.add(addr);
-            try { localStorage.setItem("padspan_followed", JSON.stringify([...ctx.state.followedAddrs])); } catch(e){}
-            btn.textContent = "Tracked!"; btn.style.color = "#4ade80"; btn.style.borderColor = "#22c55e";
-            meta.textContent = meta.textContent.replace("not tracked","tracked");
-            setTimeout(()=> ctx.actions.renderRooms(), 1500);
-          } catch(e){ btn.textContent = "Track"; btn.disabled = false; }
-        });
-        row.appendChild(btn);
-      }
-      card.appendChild(row);
-    }
-    return card;
-  }
-
   // ---------- Basic mode layout ----------
   if(isBasic){
     const summary = el("div",{class:"basic-summary"},[
@@ -2209,7 +2158,6 @@ export function render(ctx){
       ]),
       summary,
       basicCompanionCard,
-      _buildIrkCard(),
       mapCard,
     ]);
     return section;
@@ -2469,6 +2417,5 @@ export function render(ctx){
   if(mapEl) section.appendChild(mapEl);
   section.appendChild(grid);
   section.appendChild(companionCard);
-  section.appendChild(_buildIrkCard());
   return section;
 }
