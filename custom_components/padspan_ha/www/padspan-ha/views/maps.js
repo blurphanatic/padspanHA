@@ -173,6 +173,7 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
 
   // Masters first, then by name
   const sortedMaps = [...maps].sort((a,b) => (b.stack?.is_master?1:0) - (a.stack?.is_master?1:0));
+  const currentMaster = maps.find(m => !!(m.stack?.is_master)) || null;
   const list = el("div",{style:"margin-top:10px;display:flex;flex-direction:column;gap:8px"});
   const wizardContainer = el("div",{});
   for(const m of sortedMaps){
@@ -208,10 +209,41 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
         ctx.toast("Master status removed");
       }}, "Unset Master");
     } else if(isEligible){
-      masterBtn = el("button",{class:"btn inline",style:"font-size:11px;background:#0a2a1a;border-color:#52b788", onclick: async()=>{
-        const newStk = Object.assign({}, m.stack||{}, { is_master: true, master_set_date: new Date().toISOString().slice(0,10) });
-        await ctx.actions.mapsUpdate({ map_id:m.id, receivers:m.receivers||[], calibration:m.calibration||{}, notes:m.notes||"", floor_id:m.floor_id||"", room_bounds:m.room_bounds||{}, stack:newStk });
-        ctx.toast("Map set as master ⭐ — it is now your alignment anchor");
+      masterBtn = el("button",{class:"btn inline",style:"font-size:10px;padding:2px 6px;color:#6b7280;border-color:#334155", onclick: async()=>{
+        const _doSet = async ()=>{
+          const newStk = Object.assign({}, m.stack||{}, { is_master: true, master_set_date: new Date().toISOString().slice(0,10) });
+          await ctx.actions.mapsUpdate({ map_id:m.id, receivers:m.receivers||[], calibration:m.calibration||{}, notes:m.notes||"", floor_id:m.floor_id||"", room_bounds:m.room_bounds||{}, stack:newStk });
+          if(currentMaster){
+            const oldStk = Object.assign({}, currentMaster.stack||{}, { is_master: false });
+            await ctx.actions.mapsUpdate({ map_id:currentMaster.id, receivers:currentMaster.receivers||[], calibration:currentMaster.calibration||{}, notes:currentMaster.notes||"", floor_id:currentMaster.floor_id||"", room_bounds:currentMaster.room_bounds||{}, stack:oldStk });
+          }
+          ctx.toast("Map set as master — it is now your alignment anchor");
+        };
+        if(currentMaster){
+          const body = el("div",{style:"display:flex;flex-direction:column;gap:12px"},[
+            el("div",{style:"padding:10px 14px;border-radius:8px;background:#3b1010;border:1px solid #dc2626"},[
+              el("div",{style:"font-weight:700;color:#fca5a5;font-size:14px;margin-bottom:4px"}, "Warning: A master map is already set"),
+              el("div",{style:"color:#fca5a5;font-size:12px"}, `"${currentMaster.name||currentMaster.id}" is currently the master alignment anchor.`),
+            ]),
+            el("div",{style:"padding:10px 14px;border-radius:8px;background:#2a1a0a;border:1px solid #d97706"},[
+              el("div",{style:"font-weight:600;color:#fbbf24;font-size:12px;margin-bottom:4px"}, "Changing the master map can break your 3D stack alignment."),
+              el("div",{style:"color:#fbbf24;font-size:11px"}, "All other maps are positioned relative to the master. If you change it, you may need to re-align every map in the 3D stack."),
+            ]),
+            el("div",{style:"color:#94a3b8;font-size:12px"}, `This will remove master from "${currentMaster.name||currentMaster.id}" and set "${m.name||m.id}" as the new master.`),
+            el("div",{style:"display:flex;gap:8px;justify-content:flex-end;margin-top:4px"},[
+              el("button",{class:"btn inline", onclick:()=>ctx.actions.closeModal()}, "Cancel"),
+              el("button",{class:"btn danger", onclick:async ()=>{
+                await _doSet();
+                ctx.actions.closeModal();
+                await ctx.actions.mapsRefresh();
+              }}, "Replace Master"),
+            ]),
+          ]);
+          ctx.actions.openModal("Change Master Map?", body);
+        } else {
+          await _doSet();
+          await ctx.actions.mapsRefresh();
+        }
       }}, "Set Master");
     }
 
