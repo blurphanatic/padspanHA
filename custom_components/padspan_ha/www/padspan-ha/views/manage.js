@@ -1885,16 +1885,24 @@ function _factoryReset(ctx, el){
       const res = await ctx.actions.factoryReset();
       if(res && res.ok){
         status.style.color = "#4ade80";
-        status.textContent = `Done — ${res.cleared} stores cleared. Reload the page to start fresh.`;
+        status.textContent = `Done — ${res.cleared} stores cleared. Refreshing…`;
         resetBtn.textContent = "Reset Complete";
         resetBtn.style.background = "#14532d";
         resetBtn.style.borderColor = "#16a34a";
         resetBtn.style.color = "#4ade80";
-        // Show reload prompt
+        // Auto-refresh all state from backend so UI reflects the clean slate
+        try {
+          await ctx.actions.refreshAll();
+          status.textContent = `Done — ${res.cleared} stores cleared. All data refreshed.`;
+        } catch(e) {
+          status.textContent = `Cleared ${res.cleared} stores. Refresh failed — reload the page.`;
+          status.style.color = "#fbbf24";
+        }
+        // Still offer a hard reload as fallback
         const reloadBtn = el("button",{
           class:"btn",
           style:"background:#1e40af;border-color:#3b82f6;color:#93c5fd;font-weight:700;padding:8px 20px;margin-top:12px",
-        },"Reload Page Now");
+        },"Reload Page");
         reloadBtn.addEventListener("click",()=>location.reload());
         btnWrap.appendChild(reloadBtn);
       } else {

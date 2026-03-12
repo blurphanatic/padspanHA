@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.8.89";
+const APP_VERSION = "0.8.90";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260312T181823Z";
+const BUILD_ID = "20260312T182218Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1197,8 +1197,18 @@ class PadSpanHaApp extends HTMLElement {
             await this._callWS({ type: "padspan_ha/room_tag_purge_missing" }),
         integrationReload: async () =>
             await this._callWS({ type: "padspan_ha/integration_reload" }),
-        factoryReset: async () =>
-            await this._callWS({ type: "padspan_ha/factory_reset", confirm: "FACTORY RESET" }),
+        factoryReset: async () => {
+            const res = await this._callWS({ type: "padspan_ha/factory_reset", confirm: "FACTORY RESET" });
+            // Clear frontend-side localStorage caches so stale data doesn't survive reload
+            try { localStorage.removeItem("padspan_followed"); } catch(e){}
+            try { localStorage.removeItem("padspan_followAddr"); } catch(e){}
+            try { localStorage.removeItem("padspan_hiddenMapIds"); } catch(e){}
+            // Reset in-memory followed state immediately
+            this.state.followedAddrs = new Set();
+            this.state.followAddr = "";
+            return res;
+        },
+        refreshAll: async () => { await this._refreshAll(false); },
         modelRefresh: async () => { await this._getModel(); this._renderCurrentView(); },
 
         // Detail modals
