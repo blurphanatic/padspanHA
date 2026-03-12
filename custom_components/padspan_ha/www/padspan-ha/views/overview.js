@@ -1016,18 +1016,42 @@ export function render(ctx){
     // Per-map coord transform: image-fraction (0-1) → ISO screen pixel
     // Uses the same mapPt formula as the room-polygon renderer so positions align exactly.
     // Built from ALL maps (not just visible) so objects on hidden maps can still be positioned.
+    const _OUTSIDE_FID = "__outside__";
+    const _isOutMap = m => (m.floor_id || "") === _OUTSIDE_FID;
+
+    // Compute indoor bounding box (union of all non-outside maps) for fitting outside layers
+    let _indoorBB = {minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity};
+    for(const m of maps_list){
+      if(_isOutMap(m)) continue;
+      const stk=m.stack||{}, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+      const ar=(m.image?.height||600)/(m.image?.width||800);
+      const arRef=stk.ref_ar||ar, sxAdj=stk.scale_x_adj||1.0;
+      const rot=(stk.rotation||0)*Math.PI/180;
+      const bbPt=(px,py)=>{const dx=(px-0.5)*sc*sxAdj,dy=(py-0.5)*sc*arRef,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,arRef*(0.5+oy_)+ry];};
+      for(const [cx,cy] of [[0,0],[1,0],[1,1],[0,1]]){const[wx,wy]=bbPt(cx,cy);_indoorBB.minX=Math.min(_indoorBB.minX,wx);_indoorBB.minY=Math.min(_indoorBB.minY,wy);_indoorBB.maxX=Math.max(_indoorBB.maxX,wx);_indoorBB.maxY=Math.max(_indoorBB.maxY,wy);}
+    }
+    if(!isFinite(_indoorBB.minX)){_indoorBB={minX:0,minY:0,maxX:1,maxY:0.75};}
+
     const mapTransforms = {};
     for(const m of maps_list){
-      const stk=m.stack||{}, z=stk.z_level||0, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
-      const ar=(m.image?.height||600)/(m.image?.width||800);
-      const arRefT=stk.ref_ar||ar, sxAdjT=stk.scale_x_adj||1.0;
-      const rotRad=(stk.rotation||0)*Math.PI/180;
-      mapTransforms[m.id]={z, mapPt:(px,py)=>{
-        const dx=(px-0.5)*sc*sxAdjT, dy=(py-0.5)*sc*arRefT;
-        const rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad);
-        const ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);
-        return[(0.5+ox)+rx, arRefT*(0.5+oy_)+ry];
-      }};
+      const stk=m.stack||{}, z=stk.z_level||0;
+      if(_isOutMap(m)){
+        // Outside maps: fit 0-1 coords into the indoor bounding box
+        mapTransforms[m.id]={z, mapPt:(px,py)=>{
+          return[_indoorBB.minX+px*(_indoorBB.maxX-_indoorBB.minX), _indoorBB.minY+py*(_indoorBB.maxY-_indoorBB.minY)];
+        }};
+      } else {
+        const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+        const ar=(m.image?.height||600)/(m.image?.width||800);
+        const arRefT=stk.ref_ar||ar, sxAdjT=stk.scale_x_adj||1.0;
+        const rotRad=(stk.rotation||0)*Math.PI/180;
+        mapTransforms[m.id]={z, mapPt:(px,py)=>{
+          const dx=(px-0.5)*sc*sxAdjT, dy=(py-0.5)*sc*arRefT;
+          const rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad);
+          const ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);
+          return[(0.5+ox)+rx, arRefT*(0.5+oy_)+ry];
+        }};
+      }
     }
     _rebuildPositions();
 
@@ -1204,8 +1228,10 @@ export function render(ctx){
         const lyrColor = levelColor(z);
         const lidx = sortedIsoLevels.indexOf(z);
 
+        // Bounding box from indoor maps only; outside maps render as overlay inside
         let x0=Infinity,y0_=Infinity,x1=-Infinity,y1_=-Infinity;
         for(const m of group){
+          if(_isOutMap(m)) continue;
           const stk=m.stack||{}, ox=stk.x_offset||0, oy__=stk.y_offset||0, sc=stk.scale||1.0;
           const ar=(m.image?.height||600)/(m.image?.width||800);
           const arRefBB=stk.ref_ar||ar, sxAdjBB=stk.scale_x_adj||1.0;
@@ -1213,6 +1239,8 @@ export function render(ctx){
           const bbPt=(px,py)=>{const dx=(px-0.5)*sc*sxAdjBB,dy=(py-0.5)*sc*arRefBB,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,arRefBB*(0.5+oy__)+ry];};
           for(const [cx,cy] of [[0,0],[1,0],[1,1],[0,1]]){const[wx,wy]=bbPt(cx,cy);x0=Math.min(x0,wx);y0_=Math.min(y0_,wy);x1=Math.max(x1,wx);y1_=Math.max(y1_,wy);}
         }
+        // Level with only outside maps: use global indoor BB
+        if(!isFinite(x0)){x0=_indoorBB.minX;y0_=_indoorBB.minY;x1=_indoorBB.maxX;y1_=_indoorBB.maxY;}
         if(!isFinite(x0)){x0=0;y0_=0;x1=1;y1_=0.75;}
 
         const TL=iso(x0,y0_,z), TR=iso(x1,y0_,z), BR=iso(x1,y1_,z), BL=iso(x0,y1_,z);
@@ -1226,12 +1254,8 @@ export function render(ctx){
 
         // Room polygons
         for(const m of group){
-          const stk=m.stack||{}, ox=stk.x_offset||0, oy__=stk.y_offset||0, sc=stk.scale||1.0;
-          const ar=(m.image?.height||600)/(m.image?.width||800);
-          const rotRad=(stk.rotation||0)*Math.PI/180;
-          // CSS-matching: scale centered, rotation in pixel space, then offset
-          const arRef=stk.ref_ar||ar, sxAdj=stk.scale_x_adj||1.0;
-          const mapPt=(px,py)=>{const dx=(px-0.5)*sc*sxAdj,dy=(py-0.5)*sc*arRef,rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad),ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);return[(0.5+ox)+rx,arRef*(0.5+oy__)+ry];};
+          const tf = mapTransforms[m.id]; if(!tf) continue;
+          const mapPt = tf.mapPt;
           for(const [room,b] of Object.entries(m.room_bounds||{})){
             if(!b||b.type!=="poly"||!Array.isArray(b.points)||b.points.length<3) continue;
             const color = roomColorFn(room);

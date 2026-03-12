@@ -3912,27 +3912,27 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
   }
   const sortedLevels = [...byLevel.keys()].sort((a,b)=>a-b);
 
-  // ── Outside map auto-scale: shrink large outdoor layers so they don't dwarf indoor maps ──
-  const _indoorAreas = [];
-  let _outsideArea = 0;
+  // ── Outside map: rendered as overlay inside indoor bounding box, not its own slab ──
+  // Compute per-level indoor bounding boxes so outside maps can be fit inside them.
+  const _indoorBBByLevel = new Map();
   for(const m of visMaps){
-    const stk = m.stack||{}, sc = stk.scale||1.0, sxAdj = stk.scale_x_adj||1.0;
-    const ar = (m.image?.height||600)/(m.image?.width||800);
-    const arRef = stk.ref_ar || ar;
-    const area = sc * sxAdj * sc * arRef;
-    if(_isOutsideMap(m)) _outsideArea = area;
-    else _indoorAreas.push(area);
+    if(_isOutsideMap(m)) continue;
+    const z = m.stack?.z_level ?? 0;
+    const stk=m.stack||{}, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+    const sxAdj=stk.scale_x_adj||1.0, ar=(m.image?.height||600)/(m.image?.width||800);
+    const arRef=stk.ref_ar||ar, rot=(stk.rotation||0)*Math.PI/180;
+    const bbPt=(px,py)=>{const dx=(px-0.5)*sc*sxAdj,dy=(py-0.5)*sc*arRef,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,arRef*(0.5+oy_)+ry];};
+    if(!_indoorBBByLevel.has(z)) _indoorBBByLevel.set(z,{minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity});
+    const bb=_indoorBBByLevel.get(z);
+    for(const [cx,cy] of [[0,0],[1,0],[1,1],[0,1]]){const[wx,wy]=bbPt(cx,cy);bb.minX=Math.min(bb.minX,wx);bb.minY=Math.min(bb.minY,wy);bb.maxX=Math.max(bb.maxX,wx);bb.maxY=Math.max(bb.maxY,wy);}
   }
-  let _outsideDisplayScale = 1.0, _outsideScaleLabel = "";
-  if(_outsideArea > 0 && _indoorAreas.length){
-    const sa = [..._indoorAreas].sort((a,b)=>a-b);
-    const median = sa[Math.floor(sa.length/2)];
-    _outsideDisplayScale = Math.min(1.0, median / _outsideArea);
-    if(_outsideDisplayScale < 1.0){
-      const ratio = Math.round(1 / _outsideDisplayScale);
-      _outsideScaleLabel = `Outside (Exp.) displayed at 1:${ratio}`;
-    }
+  // Also compute a global indoor bounding box (union of all levels) as fallback
+  let _globalIndoorBB = {minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity};
+  for(const bb of _indoorBBByLevel.values()){
+    _globalIndoorBB.minX=Math.min(_globalIndoorBB.minX,bb.minX);_globalIndoorBB.minY=Math.min(_globalIndoorBB.minY,bb.minY);
+    _globalIndoorBB.maxX=Math.max(_globalIndoorBB.maxX,bb.maxX);_globalIndoorBB.maxY=Math.max(_globalIndoorBB.maxY,bb.maxY);
   }
+  if(!isFinite(_globalIndoorBB.minX)){_globalIndoorBB={minX:0,minY:0,maxX:1,maxY:0.75};}
 
   const levelColor = (z) => {
     const grp = byLevel.get(z) || [];
@@ -3962,12 +3962,13 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
     const groupOpacity = isFocused ? 1.0 : 0.12;
     const lyrColor = levelColor(z);
 
-    // Merged bounding box using correct CSS-aligned world coords for all four corners of each map
+    // Merged bounding box — only from indoor maps; outside maps rendered as overlay inside
+    const indoorGroup = group.filter(m => !_isOutsideMap(m));
+    const outsideGroup = group.filter(m => _isOutsideMap(m));
     let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
-    for(const m of group){
+    for(const m of indoorGroup){
       const stk=m.stack||{}, ox=stk.x_offset||0, oy_=stk.y_offset||0;
-      const _isOut = _isOutsideMap(m);
-      const sc = (stk.scale||1.0) * (_isOut ? _outsideDisplayScale : 1.0);
+      const sc = stk.scale||1.0;
       const sxAdj = stk.scale_x_adj || 1.0;
       const ar=(m.image?.height||600)/(m.image?.width||800);
       const arRef = stk.ref_ar || ar;
@@ -3982,6 +3983,11 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
         minX=Math.min(minX,wx); minY=Math.min(minY,wy);
         maxX=Math.max(maxX,wx); maxY=Math.max(maxY,wy);
       }
+    }
+    // If level has only outside maps, use global indoor bounding box as the slab
+    if(!isFinite(minX)){
+      const fb = _indoorBBByLevel.get(z) || _globalIndoorBB;
+      minX=fb.minX; minY=fb.minY; maxX=fb.maxX; maxY=fb.maxY;
     }
     if(!isFinite(minX)){ minX=0; minY=0; maxX=1; maxY=0.75; }
 
@@ -4000,18 +4006,28 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
     for(const m of group){
       const stk = m.stack||{};
       const _isOut2 = _isOutsideMap(m);
-      const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=(stk.scale||1.0) * (_isOut2 ? _outsideDisplayScale : 1.0);
-      const sxAdj = stk.scale_x_adj || 1.0;
-      const ar=(m.image?.height||600)/(m.image?.width||800);
-      const arRef = stk.ref_ar || ar;
-      const rotRad = (stk.rotation||0) * Math.PI / 180;
-      // Matches CSS transform: scale(sc*sxAdj, sc) with transform-origin:50% 50%
-      const mapPt = (px,py) => {
-        const dx=(px-0.5)*sc*sxAdj, dy=(py-0.5)*sc*arRef;
-        const rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad);
-        const ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);
-        return [(0.5+ox)+rx, arRef*(0.5+oy_)+ry];
-      };
+
+      // Outside maps: auto-fit their 0-1 coordinate space into the indoor bounding box
+      // so their room bounds/receivers appear inside the indoor slab footprint.
+      let mapPt;
+      if(_isOut2){
+        mapPt = (px,py) => {
+          return [minX + px * (maxX - minX), minY + py * (maxY - minY)];
+        };
+      } else {
+        const ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
+        const sxAdj = stk.scale_x_adj || 1.0;
+        const ar=(m.image?.height||600)/(m.image?.width||800);
+        const arRef = stk.ref_ar || ar;
+        const rotRad = (stk.rotation||0) * Math.PI / 180;
+        // Matches CSS transform: scale(sc*sxAdj, sc) with transform-origin:50% 50%
+        mapPt = (px,py) => {
+          const dx=(px-0.5)*sc*sxAdj, dy=(py-0.5)*sc*arRef;
+          const rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad);
+          const ry=dx*Math.sin(rotRad)+dy*Math.cos(rotRad);
+          return [(0.5+ox)+rx, arRef*(0.5+oy_)+ry];
+        };
+      }
 
       for(const [room, b] of Object.entries(m.room_bounds||{})){
         if(!b || b.type!=="poly" || !Array.isArray(b.points) || b.points.length<3) continue;
@@ -4090,9 +4106,9 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
     s += `<text x="${W-10}" y="${ly+15}" text-anchor="end" fill="#94a3b8" font-size="15">${_escSVG(lvlLabel(z))} · ${ceil0}m</text>`;
   });
 
-  // Outside auto-scale label
-  if(_outsideScaleLabel){
-    s += `<text x="${W-10}" y="20" text-anchor="end" fill="#6b8e23" font-size="11" font-weight="500">${_escSVG(_outsideScaleLabel)}</text>`;
+  // Outside overlay label
+  if(visMaps.some(m => _isOutsideMap(m))){
+    s += `<text x="${W-10}" y="20" text-anchor="end" fill="#6b8e23" font-size="11" font-weight="500">Outside layer fitted to indoor footprint</text>`;
   }
 
   s += `</svg>`;
