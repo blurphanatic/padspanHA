@@ -1996,17 +1996,18 @@ export function render(ctx){
     if(mapEl) mapCard.appendChild(mapEl);
 
     // Companion phone discovery (basic mode) — always show all phones
-    const basicCompanionCard = el("div",{class:"card",style:"border-color:#2563eb;display:none"});
+    const basicCompanionCard = el("div",{class:"card",style:"border-color:#2563eb"});
     if (dataMode === "live") {
+      basicCompanionCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#60a5fa;margin-bottom:6px"}, "Track Your Phone"));
+      const _bLoadMsg = el("div",{class:"muted",style:"font-size:12px"}, "Discovering phones...");
+      basicCompanionCard.appendChild(_bLoadMsg);
       (async () => {
         try {
           const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
           const phones = res.phones || [];
-          if (!phones.length) return;
+          if (!phones.length) { _bLoadMsg.textContent = "No Companion App phones detected. Open Companion App \u2192 Settings \u2192 Manage Sensors \u2192 BLE Transmitter \u2192 Enable."; return; }
 
-          basicCompanionCard.style.display = "";
-          basicCompanionCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#60a5fa;margin-bottom:6px"}, "Companion App Phones"));
-          basicCompanionCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"}, "Phones with the HA Companion App. Track or unfollow below."));
+          _bLoadMsg.textContent = "Phones with the HA Companion App. Track or unfollow below.";
 
           for (const phone of phones) {
             const row = document.createElement("div");
@@ -2128,8 +2129,10 @@ export function render(ctx){
             row.appendChild(btn);
             basicCompanionCard.appendChild(row);
           }
-        } catch (e) { /* optional feature */ }
+        } catch (e) { _bLoadMsg.textContent = "Phone discovery error: " + (e.message||e); _bLoadMsg.style.color = "#f87171"; }
       })();
+    } else {
+      basicCompanionCard.style.display = "none";
     }
 
     // Basic mode quiet toggle
@@ -2209,22 +2212,20 @@ export function render(ctx){
   ]);
 
   // ---------- Companion App Phone Discovery ----------
-  const companionCard = el("div",{class:"card",style:"border-color:#2563eb;display:none"});
+  const companionCard = el("div",{class:"card",style:"border-color:#2563eb"});
   if (dataMode === "live") {
+    companionCard.appendChild(el("div",{class:"card-head"},[
+      el("div",{class:"h2",style:"color:#60a5fa"}, "Track Your Phone"),
+    ]));
+    const _aLoadMsg = el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"}, "Discovering phones...");
+    companionCard.appendChild(_aLoadMsg);
     (async () => {
       try {
         const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
         const phones = res.phones || [];
-        if (!phones.length) return;
+        if (!phones.length) { _aLoadMsg.textContent = "No Companion App phones detected. Open Companion App \u2192 Settings \u2192 Manage Sensors \u2192 BLE Transmitter \u2192 Enable."; return; }
 
-        companionCard.style.display = "";
-        const hdr = el("div",{class:"card-head"},[
-          el("div",{class:"h2",style:"color:#60a5fa"}, "Companion App Phones"),
-        ]);
-        const desc = el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
-          "Phones running the HA Companion App with BLE Transmitter enabled. Click to track.");
-        companionCard.appendChild(hdr);
-        companionCard.appendChild(desc);
+        _aLoadMsg.textContent = "Phones running the HA Companion App with BLE Transmitter. Click to track.";
 
         for (const phone of phones) {
           const row = document.createElement("div");
@@ -2386,9 +2387,12 @@ export function render(ctx){
           "Not seeing your phone? Open Companion App \u2192 Settings \u2192 Companion App \u2192 Manage Sensors \u2192 BLE Transmitter \u2192 Enable. The phone will appear here once the transmitter is active.");
         companionCard.appendChild(helpNote);
       } catch (e) {
-        // Silently fail — companion discovery is optional
+        _aLoadMsg.textContent = "Phone discovery error: " + (e.message||e);
+        _aLoadMsg.style.color = "#f87171";
       }
     })();
+  } else {
+    companionCard.style.display = "none";
   }
 
   // Quiet Mode toggle for top-right
@@ -2414,8 +2418,8 @@ export function render(ctx){
     ]),
     el("div",{style:"color:#94a3b8;margin-top:2px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
   ]);
+  section.appendChild(companionCard);
   if(mapEl) section.appendChild(mapEl);
   section.appendChild(grid);
-  section.appendChild(companionCard);
   return section;
 }
