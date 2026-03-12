@@ -28,6 +28,7 @@ from .const import (
     SETTINGS_STORE_KEY, CALIBRATION_STORE_KEY, ADAPTIVE_STORE_KEY,
     OBJECT_STORE_KEY, MAPS_STORE_KEY, MODEL_STORE_KEY,
     ALERTS_STORE_KEY, MOVEMENT_STORE_KEY,
+    DATA_TRACEBACK, TRACEBACK_STORE_KEY,
 )
 from .calibration_store import CalibrationStore
 from .build_info import BUILD_ID, BUILD_VERSION
@@ -139,6 +140,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_companion_follow)
     websocket_api.async_register_command(hass, ws_companion_unfollow)
     websocket_api.async_register_command(hass, ws_tags_status)
+    websocket_api.async_register_command(hass, ws_factory_reset)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -5391,3 +5393,97 @@ async def ws_tags_status(hass: HomeAssistant, connection, msg) -> None:
             "followed_tag_mappings": [],
             "error": str(err),
         })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Factory Reset — wipe ALL persistent data
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/factory_reset",
+    vol.Required("confirm"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_factory_reset(hass: HomeAssistant, connection, msg) -> None:
+    """Erase every PadSpan HA persistent store and reset to factory defaults.
+
+    Requires confirm="FACTORY RESET" to execute.  Admin-only.
+    Clears: settings, calibration, adaptive, objects, maps, model,
+    alerts, movement, traceback, object_history, and backups.
+    """
+    if msg["confirm"] != "FACTORY RESET":
+        connection.send_error(
+            msg["id"], "confirmation_failed",
+            'You must pass confirm="FACTORY RESET" to proceed.'
+        )
+        return
+
+    from homeassistant.helpers.storage import Store as _St
+
+    domain = hass.data.get(DOMAIN, {})
+
+    # All store keys to wipe (persistent .storage JSON files)
+    _ALL_STORE_KEYS = [
+        SETTINGS_STORE_KEY,
+        CALIBRATION_STORE_KEY,
+        ADAPTIVE_STORE_KEY,
+        OBJECT_STORE_KEY,
+        MAPS_STORE_KEY,
+        MODEL_STORE_KEY,
+        ALERTS_STORE_KEY,
+        MOVEMENT_STORE_KEY,
+        TRACEBACK_STORE_KEY,
+        OBJECT_HISTORY_STORE_KEY,
+        BACKUPS_STORE_KEY,
+    ]
+
+    # Map store_key → data_key for in-memory reset
+    _FULL_DATA_MAP = {
+        SETTINGS_STORE_KEY: DATA_SETTINGS,
+        CALIBRATION_STORE_KEY: DATA_CALIBRATION,
+        ADAPTIVE_STORE_KEY: DATA_ADAPTIVE,
+        OBJECT_STORE_KEY: DATA_OBJECTS,
+        MAPS_STORE_KEY: DATA_MAPS,
+        MODEL_STORE_KEY: DATA_MODEL,
+        ALERTS_STORE_KEY: DATA_ALERTS,
+        MOVEMENT_STORE_KEY: DATA_MOVEMENT,
+        TRACEBACK_STORE_KEY: DATA_TRACEBACK,
+        OBJECT_HISTORY_STORE_KEY: DATA_OBJECT_HISTORY,
+    }
+
+    cleared = 0
+    errors = []
+
+    for store_key in _ALL_STORE_KEYS:
+        try:
+            st = _St(hass, 1, store_key)
+            await st.async_save({})
+            cleared += 1
+
+            # Also wipe the in-memory object so the running instance sees the reset
+            data_key = _FULL_DATA_MAP.get(store_key)
+            if data_key:
+                store_obj = domain.get(data_key)
+                if store_obj and hasattr(store_obj, "data"):
+                    store_obj.data = {}
+        except Exception as e:
+            _LOGGER.warning("Factory reset: failed to clear %s: %s", store_key, e)
+            errors.append(str(store_key))
+
+    # Clear in-memory caches
+    if DATA_OBJECTS_CACHE in domain:
+        domain[DATA_OBJECTS_CACHE] = {}
+
+    _LOGGER.warning(
+        "FACTORY RESET executed by %s — cleared %d stores",
+        connection.user.name if connection.user else "unknown",
+        cleared,
+    )
+
+    connection.send_result(msg["id"], {
+        "ok": len(errors) == 0,
+        "cleared": cleared,
+        "total": len(_ALL_STORE_KEYS),
+        "errors": errors,
+    })

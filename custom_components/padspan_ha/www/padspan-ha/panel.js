@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.8.79";
+const APP_VERSION = "0.8.80";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260312T041548Z";
+const BUILD_ID = "20260312T160120Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1197,6 +1197,8 @@ class PadSpanHaApp extends HTMLElement {
             await this._callWS({ type: "padspan_ha/room_tag_purge_missing" }),
         integrationReload: async () =>
             await this._callWS({ type: "padspan_ha/integration_reload" }),
+        factoryReset: async () =>
+            await this._callWS({ type: "padspan_ha/factory_reset", confirm: "FACTORY RESET" }),
         modelRefresh: async () => { await this._getModel(); this._renderCurrentView(); },
 
         // Detail modals

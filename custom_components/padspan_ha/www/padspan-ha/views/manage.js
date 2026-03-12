@@ -20,6 +20,7 @@ export function render(ctx){
     ["history","History"],
     ["events","Events"],
     ["logs","Logs"],
+    ["factory_reset","Factory Reset"],
   ];
 
   const tabBar = el("div",{class:"tabs",style:"margin-bottom:12px;flex-wrap:wrap;gap:4px"});
@@ -28,10 +29,11 @@ export function render(ctx){
   }
   root.appendChild(tabBar);
 
-  if(mTab === "ha_entities") { root.appendChild(_haEntities(ctx, el));  return root; }
-  if(mTab === "history")     { root.appendChild(_history(ctx, el));     return root; }
-  if(mTab === "events")      { root.appendChild(_events(ctx, el));      return root; }
-  if(mTab === "logs")        { root.appendChild(_logs(ctx, el));        return root; }
+  if(mTab === "ha_entities")   { root.appendChild(_haEntities(ctx, el));    return root; }
+  if(mTab === "history")       { root.appendChild(_history(ctx, el));      return root; }
+  if(mTab === "events")        { root.appendChild(_events(ctx, el));       return root; }
+  if(mTab === "logs")          { root.appendChild(_logs(ctx, el));         return root; }
+  if(mTab === "factory_reset") { root.appendChild(_factoryReset(ctx, el)); return root; }
   // ── Data tab ─────────────────────────────────────────────────────────────────
   const snap     = (ctx.state.live && ctx.state.live.snapshot) || null;
   const haAreas  = (ctx.state.model && Array.isArray(ctx.state.model.areas))  ? ctx.state.model.areas  : [];
@@ -1782,6 +1784,137 @@ function _logs(ctx, el) {
   }
 
   wrap.appendChild(logList);
+  return wrap;
+}
+
+
+// ── Factory Reset tab ─────────────────────────────────────────────────────────
+function _factoryReset(ctx, el){
+  const wrap = el("div",{class:"card",style:"max-width:640px"});
+
+  const dataMode = ctx.state.dataMode || "sample";
+  const disabled = dataMode !== "live";
+
+  // Warning banner
+  wrap.appendChild(el("div",{style:"background:#3d0c0c;border:3px solid #dc2626;border-radius:12px;padding:20px;margin-bottom:16px"},[
+    el("div",{style:"font-weight:900;font-size:18px;color:#fca5a5;margin-bottom:10px"},"⚠  FACTORY RESET"),
+    el("div",{style:"font-size:14px;color:#fcd5d5;line-height:1.7"},[
+      "This will ",
+      el("strong",{style:"color:#f87171"},"permanently delete ALL PadSpan data"),
+      " and return the integration to a blank state. This includes:",
+    ].filter(Boolean)),
+    el("ul",{style:"color:#fcd5d5;font-size:13px;line-height:1.8;margin:10px 0 0 16px"},[
+      el("li",{},"All calibration points and computed models"),
+      el("li",{},"All uploaded floor maps, room polygons and receiver positions"),
+      el("li",{},"Room model metadata (floor assignments, colors)"),
+      el("li",{},"All BLE object labels and tag names"),
+      el("li",{},"All follow alerts and notification settings"),
+      el("li",{},"Movement history and traceback data"),
+      el("li",{},"Adaptive learning fingerprints"),
+      el("li",{},"All integration settings and scanner offsets"),
+      el("li",{},"All backups stored within PadSpan"),
+    ]),
+  ]));
+
+  wrap.appendChild(el("div",{style:"background:#1e293b;border:1px solid #334155;border-radius:8px;padding:14px;margin-bottom:16px;font-size:13px;color:#94a3b8;line-height:1.6"},[
+    el("strong",{style:"color:#e2e8f0"},"What this does NOT delete: "),
+    "Home Assistant areas, floors, entities, and devices are managed by HA itself and will not be touched. ",
+    "You may want to remove those separately from Settings > Devices & Services after the reset.",
+  ]));
+
+  if(disabled){
+    wrap.appendChild(el("div",{style:"font-weight:700;color:#fbbf24;font-size:14px;margin-bottom:12px"},
+      "⚡ Switch to Live mode to enable factory reset."
+    ));
+    return wrap;
+  }
+
+  // Confirmation input — user must type FACTORY RESET
+  const confirmWrap = el("div",{style:"margin-bottom:16px"});
+  confirmWrap.appendChild(el("div",{style:"font-size:13px;color:#94a3b8;margin-bottom:6px"},
+    'To confirm, type FACTORY RESET in the box below:'
+  ));
+
+  const input = el("input",{
+    type:"text",
+    placeholder:"Type FACTORY RESET here",
+    autocomplete:"off",
+    spellcheck:"false",
+    style:"width:100%;max-width:300px;padding:8px 12px;background:#0f172a;border:2px solid #475569;border-radius:6px;color:#e2e8f0;font-size:14px;font-family:monospace",
+  });
+  confirmWrap.appendChild(input);
+  wrap.appendChild(confirmWrap);
+
+  // Button area
+  const btnWrap = el("div",{style:"display:flex;gap:12px;align-items:center"});
+
+  const resetBtn = el("button",{
+    class:"btn",
+    style:"background:#7f1d1d;border:2px solid #dc2626;color:#fca5a5;font-weight:800;padding:10px 24px;font-size:14px;opacity:0.4;cursor:not-allowed",
+    disabled:true,
+  },"Erase All Data & Reset");
+
+  const status = el("span",{style:"font-size:13px;color:#64748b"});
+
+  // Enable button only when input matches
+  input.addEventListener("input", ()=>{
+    const match = input.value.trim() === "FACTORY RESET";
+    resetBtn.disabled = !match;
+    resetBtn.style.opacity = match ? "1" : "0.4";
+    resetBtn.style.cursor = match ? "pointer" : "not-allowed";
+  });
+
+  resetBtn.addEventListener("click", async ()=>{
+    if(input.value.trim() !== "FACTORY RESET") return;
+
+    // Second confirmation via native confirm dialog
+    const sure = confirm(
+      "FINAL WARNING\\n\\n" +
+      "You are about to permanently erase ALL PadSpan data.\\n" +
+      "This cannot be undone.\\n\\n" +
+      "Are you absolutely sure?"
+    );
+    if(!sure) return;
+
+    resetBtn.disabled = true;
+    resetBtn.textContent = "Resetting…";
+    status.textContent = "";
+    status.style.color = "#64748b";
+
+    try {
+      const res = await ctx.actions.factoryReset();
+      if(res && res.ok){
+        status.style.color = "#4ade80";
+        status.textContent = `Done — ${res.cleared} stores cleared. Reload the page to start fresh.`;
+        resetBtn.textContent = "Reset Complete";
+        resetBtn.style.background = "#14532d";
+        resetBtn.style.borderColor = "#16a34a";
+        resetBtn.style.color = "#4ade80";
+        // Show reload prompt
+        const reloadBtn = el("button",{
+          class:"btn",
+          style:"background:#1e40af;border-color:#3b82f6;color:#93c5fd;font-weight:700;padding:8px 20px;margin-top:12px",
+        },"Reload Page Now");
+        reloadBtn.addEventListener("click",()=>location.reload());
+        btnWrap.appendChild(reloadBtn);
+      } else {
+        status.style.color = "#f87171";
+        status.textContent = `Partial reset: ${res?.cleared || 0}/${res?.total || "?"} stores cleared. Errors: ${(res?.errors || []).join(", ")}`;
+        resetBtn.textContent = "Erase All Data & Reset";
+        resetBtn.disabled = false;
+      }
+    } catch(err) {
+      status.style.color = "#f87171";
+      status.textContent = `Error: ${err.message || err}`;
+      resetBtn.textContent = "Erase All Data & Reset";
+      resetBtn.disabled = false;
+    }
+  });
+
+  btnWrap.appendChild(resetBtn);
+  wrap.appendChild(btnWrap);
+  wrap.appendChild(el("div",{style:"margin-top:8px"},status));
+
   return wrap;
 }
 
