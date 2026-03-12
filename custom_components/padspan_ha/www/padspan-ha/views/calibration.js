@@ -274,16 +274,66 @@ function _setup(ctx, el, cs, calData) {
     mapSel.style.width = "100%";
     const mp0 = document.createElement("option");
     mp0.value = "";
-    mp0.textContent = cs.mapId ? "" : "— choose map —";
+    mp0.textContent = cs.mapId ? "" : "— choose map or floor —";
     mapSel.appendChild(mp0);
+
+    // Build floor → maps lookup
+    const _fl = ctx.state.model?.floors || [];
+    const _floorMaps = new Map(); // z_level → [map, ...]
     for (const m of maps) {
+      const z = m.stack?.z_level ?? 0;
+      if (!_floorMaps.has(z)) _floorMaps.set(z, []);
+      _floorMaps.get(z).push(m);
+    }
+    // Floor entries at the top (only floors with maps)
+    const _sortedZ = [..._floorMaps.keys()].sort((a, b) => a - b);
+    if (_sortedZ.length > 1) {
+      const floorGroup = document.createElement("optgroup");
+      floorGroup.label = "Floors";
+      for (const z of _sortedZ) {
+        const fObj = _fl.find(f => f.level === z);
+        const fName = fObj ? (fObj.name || `Floor ${z}`) : `Floor ${z}`;
+        const opt = document.createElement("option");
+        opt.value = `__floor__${z}`;
+        opt.textContent = `${fName} (${_floorMaps.get(z).length} map${_floorMaps.get(z).length > 1 ? "s" : ""})`;
+        floorGroup.appendChild(opt);
+      }
+      mapSel.appendChild(floorGroup);
+    }
+
+    // Map entries
+    const mapGroup = _sortedZ.length > 1 ? document.createElement("optgroup") : null;
+    if (mapGroup) mapGroup.label = "Maps";
+    for (const m of maps) {
+      const z = m.stack?.z_level ?? 0;
+      const fObj = _fl.find(f => f.level === z);
+      const fLabel = fObj ? ` (${fObj.name || `Floor ${z}`})` : "";
       const opt = document.createElement("option");
       opt.value = m.id;
-      opt.textContent = m.name || m.id;
+      opt.textContent = (m.name || m.id) + fLabel;
       if (m.id === cs.mapId) opt.selected = true;
-      mapSel.appendChild(opt);
+      (mapGroup || mapSel).appendChild(opt);
     }
-    mapSel.addEventListener("change", () => { cs.mapId = mapSel.value; ctx.actions.renderRooms(); });
+    if (mapGroup) mapSel.appendChild(mapGroup);
+
+    mapSel.addEventListener("change", () => {
+      const v = mapSel.value;
+      if (v.startsWith("__floor__")) {
+        // Floor selected — pick the map on that floor with the most calibration data
+        const z = Number(v.replace("__floor__", ""));
+        const candidates = _floorMaps.get(z) || [];
+        // Rank by receiver count, then room_bounds count (most activity first)
+        const best = candidates.slice().sort((a, b) => {
+          const ra = (a.receivers || []).length + Object.keys(a.room_bounds || {}).length;
+          const rb = (b.receivers || []).length + Object.keys(b.room_bounds || {}).length;
+          return rb - ra;
+        })[0];
+        cs.mapId = best ? best.id : "";
+      } else {
+        cs.mapId = v;
+      }
+      ctx.actions.renderRooms();
+    });
     mapCard.appendChild(mapSel);
   } else {
     mapCard.appendChild(el("div", { style: "font-size:12px;color:#f59e0b" },
@@ -1856,8 +1906,48 @@ function _tuneTab(ctx, el, cs, calData) {
     title.textContent = "Place on which map?";
     popup.appendChild(title);
 
+    // Group candidates by floor for floor-level shortcuts
+    const fl = ctx.state.model?.floors || [];
+    const candByFloor = new Map(); // z → [candidate, ...]
     for (const c of candidates) {
-      const fl = ctx.state.model?.floors || [];
+      if (!candByFloor.has(c.z)) candByFloor.set(c.z, []);
+      candByFloor.get(c.z).push(c);
+    }
+
+    // Floor shortcuts at top (only if multiple floors or floor has multiple maps)
+    const floorZs = [...candByFloor.keys()].sort((a, b) => a - b);
+    if (floorZs.length > 1 || (floorZs.length === 1 && candByFloor.get(floorZs[0]).length > 1)) {
+      for (const z of floorZs) {
+        const floorObj = fl.find(f => f.level === z);
+        const floorName = floorObj ? (floorObj.name || `Floor ${z}`) : `Floor ${z}`;
+        const floorCands = candByFloor.get(z);
+        const btn = document.createElement("button");
+        btn.className = "btn inline";
+        btn.style.cssText = "display:block;width:100%;text-align:left;padding:6px 10px;margin-bottom:4px;font-size:12px;color:#fbbf24;border-color:#92400e;cursor:pointer;font-weight:600";
+        btn.textContent = `${floorName}`;
+        btn.addEventListener("click", () => {
+          if (isoWrap.contains(popup)) isoWrap.removeChild(popup);
+          // Pick the map on this floor with the most receivers (most activity)
+          const best = floorCands.slice().sort((a, b) => {
+            const ra = (ts.draftReceivers[a.m.id] || []).length + Object.keys(a.m.room_bounds || {}).length;
+            const rb = (ts.draftReceivers[b.m.id] || []).length + Object.keys(b.m.room_bounds || {}).length;
+            return rb - ra;
+          })[0];
+          _placeRadioOnMap(best.m, best.nx, best.ny);
+        });
+        popup.appendChild(btn);
+      }
+      // Separator
+      const sep = document.createElement("div");
+      sep.style.cssText = "border-top:1px solid #2d6a4f;margin:6px 0;opacity:0.5";
+      popup.appendChild(sep);
+      const subTitle = document.createElement("div");
+      subTitle.style.cssText = "font-size:10px;color:#94a3b8;margin-bottom:4px";
+      subTitle.textContent = "Or pick a specific map:";
+      popup.appendChild(subTitle);
+    }
+
+    for (const c of candidates) {
       const floorObj = fl.find(f => f.level === c.z);
       const floorName = floorObj ? (floorObj.name || `L${c.z}`) : `L${c.z}`;
       const btn = document.createElement("button");
@@ -3476,9 +3566,46 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     title2.style.cssText = "font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:8px";
     title2.textContent = "Which map is it on right now?";
     popup.appendChild(title2);
+
+    // Group candidates by floor for floor-level shortcuts
+    const fl2 = ctx.state.model?.floors || [];
+    const candByFloor2 = new Map();
     for (const c of candidates) {
-      const fl = ctx.state.model?.floors || [];
-      const floorObj = fl.find(f => f.level === c.z);
+      if (!candByFloor2.has(c.z)) candByFloor2.set(c.z, []);
+      candByFloor2.get(c.z).push(c);
+    }
+    const floorZs2 = [...candByFloor2.keys()].sort((a, b) => a - b);
+    if (floorZs2.length > 1 || (floorZs2.length === 1 && candByFloor2.get(floorZs2[0]).length > 1)) {
+      for (const z of floorZs2) {
+        const floorObj = fl2.find(f => f.level === z);
+        const floorName = floorObj ? (floorObj.name || `Floor ${z}`) : `Floor ${z}`;
+        const floorCands = candByFloor2.get(z);
+        const btn = document.createElement("button");
+        btn.className = "btn inline";
+        btn.style.cssText = "display:block;width:100%;text-align:left;padding:6px 10px;margin-bottom:4px;font-size:12px;color:#fbbf24;border-color:#92400e;cursor:pointer;font-weight:600";
+        btn.textContent = `${floorName}`;
+        btn.addEventListener("click", () => {
+          if (isoWrap.contains(popup)) isoWrap.removeChild(popup);
+          const best = floorCands.slice().sort((a, b) => {
+            const ra = (bs.draftBeacons[a.m.id] || []).length + Object.keys(a.m.room_bounds || {}).length;
+            const rb = (bs.draftBeacons[b.m.id] || []).length + Object.keys(b.m.room_bounds || {}).length;
+            return rb - ra;
+          })[0];
+          _placeBeaconOnMap(best.m, best.nx, best.ny);
+        });
+        popup.appendChild(btn);
+      }
+      const sep2 = document.createElement("div");
+      sep2.style.cssText = "border-top:1px solid #2d6a4f;margin:6px 0;opacity:0.5";
+      popup.appendChild(sep2);
+      const subTitle2 = document.createElement("div");
+      subTitle2.style.cssText = "font-size:10px;color:#94a3b8;margin-bottom:4px";
+      subTitle2.textContent = "Or pick a specific map:";
+      popup.appendChild(subTitle2);
+    }
+
+    for (const c of candidates) {
+      const floorObj = fl2.find(f => f.level === c.z);
       const floorName = floorObj ? (floorObj.name || `L${c.z}`) : `L${c.z}`;
       const btn = document.createElement("button");
       btn.className = "btn inline";
