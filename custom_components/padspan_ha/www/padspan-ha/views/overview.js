@@ -2157,7 +2157,7 @@ export function render(ctx){
                 );
               });
             } else if (phone.is_disabled) {
-              btn.textContent = "Enable";
+              btn.textContent = "Enable & Track";
               btn.style.color = "#f59e0b";
               btn.style.borderColor = "#92400e";
               btn.addEventListener("click", async () => {
@@ -2168,8 +2168,17 @@ export function render(ctx){
                     entity_id: phone.entity_id,
                     disabled_by: null,
                   });
+                  // Also auto-follow so the notify command turns on BLE transmitter
+                  if (phone.ibeacon_key) {
+                    await ctx.actions.wsCall("padspan_ha/companion_follow", {
+                      ibeacon_key: phone.ibeacon_key,
+                      device_name: phone.device_name,
+                      entity_id: phone.entity_id,
+                    });
+                  }
                   btn.textContent = "Enabled — restart HA";
                   btn.style.color = "#34d399"; btn.style.borderColor = "#065f46";
+                  meta.textContent = "Entity enabled & BLE command sent. Restart HA to complete.";
                 } catch (e) {
                   btn.textContent = "Enable manually in HA";
                   btn.style.color = "#f59e0b";
@@ -2353,12 +2362,12 @@ export function render(ctx){
             continue;
           }
 
-          // Disabled entity — show enable instructions
+          // Disabled entity — enable + auto-follow
           if (phone.is_disabled) {
             const enableBtn = document.createElement("button");
             enableBtn.className = "btn inline";
             enableBtn.style.cssText = "font-size:12px;padding:4px 14px;color:#f59e0b;border-color:#92400e;font-weight:600;white-space:nowrap";
-            enableBtn.textContent = "Enable entity";
+            enableBtn.textContent = "Enable & Track";
             enableBtn.addEventListener("click", async () => {
               enableBtn.disabled = true;
               enableBtn.textContent = "Enabling...";
@@ -2368,10 +2377,18 @@ export function render(ctx){
                   entity_id: phone.entity_id,
                   disabled_by: null,
                 });
+                // Also auto-follow so the notify command turns on BLE transmitter
+                if (phone.ibeacon_key) {
+                  await ctx.actions.wsCall("padspan_ha/companion_follow", {
+                    ibeacon_key: phone.ibeacon_key,
+                    device_name: phone.device_name,
+                    entity_id: phone.entity_id,
+                  });
+                }
                 enableBtn.textContent = "Enabled — restart HA";
                 enableBtn.style.color = "#34d399";
                 enableBtn.style.borderColor = "#065f46";
-                meta.textContent = "Entity enabled. Restart Home Assistant, then open the Companion App on the phone to start BLE Transmitter.";
+                meta.textContent = "Entity enabled & BLE command sent. Restart Home Assistant to complete setup.";
               } catch (e) {
                 enableBtn.textContent = "Enable manually";
                 enableBtn.disabled = false;

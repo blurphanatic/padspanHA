@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.10.10";
+const APP_VERSION = "0.10.11";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260312T235826Z";
+const BUILD_ID = "20260313T001531Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -314,6 +314,7 @@ class PadSpanHaApp extends HTMLElement {
 
         <main class="main">
           <div class="mobile-topbar" id="mobileTopbar">
+            <button class="mobile-topbar-btn" id="mobileBackBtn" title="Back to Home Assistant" style="font-size:18px;padding:4px 6px">&#x2190;</button>
             <button class="mobile-topbar-btn" id="mobileMenuBtn">&#9776;</button>
             <span class="mobile-topbar-title" id="mobileTitle">Overview</span>
             <button class="mobile-topbar-pill" id="mobileDataPill">Sample</button>
@@ -357,6 +358,14 @@ class PadSpanHaApp extends HTMLElement {
       this.$("#app").classList.remove("mobile-open");
       this.$("#sideBackdrop").classList.remove("active");
     };
+    this.$("#mobileBackBtn").addEventListener("click", () => {
+      // Navigate back to HA dashboard — works in Companion App on iPhone
+      if (window.history.length > 1) {
+        window.history.back();
+      } else {
+        window.location.href = "/";
+      }
+    });
     this.$("#mobileMenuBtn").addEventListener("click", _openDrawer);
     this.$("#sidebarClose").addEventListener("click", _closeDrawer);
     this.$("#sideBackdrop").addEventListener("click", _closeDrawer);
