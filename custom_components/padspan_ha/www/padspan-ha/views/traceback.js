@@ -30,9 +30,9 @@ export function render(ctx) {
   const TILE = 220, CX = 380, CY = 590, W = 760, BASE_H = 940;
   const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
 
-  const floorGap = ctx.state._overviewFloorGap ?? ctx.state.settings?.overview_iso_floor_gap ?? 150;
-  const horizGap = ctx.state._overviewHorizGap ?? ctx.state.settings?.overview_iso_horiz_gap ?? 0;
-  let _ovFG = floorGap, _ovHG = horizGap;
+  if(ctx.state._overviewFloorGap===undefined) ctx.state._overviewFloorGap = ctx.state.settings?.overview_iso_floor_gap ?? 150;
+  if(ctx.state._overviewHorizGap===undefined) ctx.state._overviewHorizGap = ctx.state.settings?.overview_iso_horiz_gap ?? 0;
+  let _ovFG = ctx.state._overviewFloorGap, _ovHG = ctx.state._overviewHorizGap;
 
   const iso = (wx, wy, wz) => [CX + (wx - wy) * TILE * 0.866 + wz * _ovHG, CY + (wx + wy) * TILE * 0.5 - wz * _ovFG];
   const pt  = c => `${Math.round(c[0])},${Math.round(c[1])}`;
@@ -53,18 +53,22 @@ export function render(ctx) {
   const levelColor = (z) => LAYER_PAL[sortedIsoLevels.indexOf(z) % LAYER_PAL.length];
   const LEGEND_H = sortedIsoLevels.length * 30 + 24;
 
-  // Build room centroid iso positions
+  // Build room centroid iso positions (rebuilt when sliders change)
   const roomIsoPos = {};
-  for (const m of sorted) {
-    const stk = m.stack || {}, z = stk.z_level || 0, ox = stk.x_offset || 0, oy_ = stk.y_offset || 0, sc = stk.scale || 1.0;
-    const ar = (m.image?.height || 600) / (m.image?.width || 800);
-    for (const [room, b] of Object.entries(m.room_bounds || {})) {
-      if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
-      const cx = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
-      const cy = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
-      roomIsoPos[room] = iso(ox + cx * sc, oy_ + cy * sc * ar, z);
+  function _rebuildRoomPositions() {
+    for (const k of Object.keys(roomIsoPos)) delete roomIsoPos[k];
+    for (const m of sorted) {
+      const stk = m.stack || {}, z = stk.z_level || 0, ox = stk.x_offset || 0, oy_ = stk.y_offset || 0, sc = stk.scale || 1.0;
+      const ar = (m.image?.height || 600) / (m.image?.width || 800);
+      for (const [room, b] of Object.entries(m.room_bounds || {})) {
+        if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
+        const cx = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
+        const cy = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
+        roomIsoPos[room] = iso(ox + cx * sc, oy_ + cy * sc * ar, z);
+      }
     }
   }
+  _rebuildRoomPositions();
 
   // Slider positions for floor focus
   const _isoPos = [null];
@@ -72,8 +76,16 @@ export function render(ctx) {
     _isoPos.push(sortedIsoLevels[i]);
     if (i < sortedIsoLevels.length - 1) _isoPos.push([sortedIsoLevels[i], sortedIsoLevels[i + 1]]);
   }
-  const focusIdx = ctx.state._overviewIsoFocusIdx ?? 0;
-  const focusZ = _isoPos[Math.max(0, Math.min(focusIdx, _isoPos.length - 1))];
+  if(ctx.state._overviewIsoFocusIdx === undefined)
+    ctx.state._overviewIsoFocusIdx = Math.max(0, Math.min(ctx.state.settings?.overview_iso_focus ?? 0, _isoPos.length-1));
+  let focusZ = _isoPos[Math.max(0, Math.min(ctx.state._overviewIsoFocusIdx, _isoPos.length - 1))];
+
+  function _getFocusLbl(idx) {
+    const fz = _isoPos[Math.max(0, Math.min(idx, _isoPos.length-1))];
+    if (fz === null) return "All floors";
+    if (Array.isArray(fz)) return `Floors ${sortedIsoLevels.indexOf(fz[0])+1}–${sortedIsoLevels.indexOf(fz[1])+1}`;
+    return `Floor ${sortedIsoLevels.indexOf(fz)+1}`;
+  }
 
   // ── Traceback state ────────────────────────────────────────────────────
   if (!ctx.state._traceback) ctx.state._traceback = {
@@ -636,7 +648,132 @@ export function render(ctx) {
     ctrlCard.appendChild(scrubberWrap);
   }
 
+  // ── Iso controls (Floor / Spacing / L/R / Save / Reset) ────────────────
+  const isoCtrlRow = document.createElement("div");
+  isoCtrlRow.style.cssText = "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px";
+
+  // Floor focus slider
+  const floorLbl = document.createElement("span");
+  floorLbl.style.cssText = "font-size:12px;color:#94a3b8";
+  floorLbl.textContent = "Floor:";
+  isoCtrlRow.appendChild(floorLbl);
+
+  const focusLbl = document.createElement("span");
+  focusLbl.style.cssText = "font-size:12px;color:#94a3b8;min-width:80px;display:inline-block";
+  focusLbl.textContent = _getFocusLbl(ctx.state._overviewIsoFocusIdx);
+
+  const focusSlider = document.createElement("input");
+  focusSlider.type = "range"; focusSlider.min = "0"; focusSlider.max = String(_isoPos.length-1);
+  focusSlider.style.cssText = "width:130px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+  focusSlider.value = String(ctx.state._overviewIsoFocusIdx);
+  focusSlider.addEventListener("input", ()=>{
+    ctx.state._overviewIsoFocusIdx = parseInt(focusSlider.value, 10);
+    focusZ = _isoPos[Math.max(0, Math.min(ctx.state._overviewIsoFocusIdx, _isoPos.length-1))];
+    focusLbl.textContent = _getFocusLbl(ctx.state._overviewIsoFocusIdx);
+    _rebuildRoomPositions();
+    _renderFrame();
+  });
+  isoCtrlRow.appendChild(focusSlider);
+  isoCtrlRow.appendChild(focusLbl);
+
+  // Spacing slider
+  const ovSpacingLbl = document.createElement("span");
+  ovSpacingLbl.style.cssText = "font-size:12px;color:#94a3b8;margin-left:8px";
+  ovSpacingLbl.textContent = "Spacing:";
+  isoCtrlRow.appendChild(ovSpacingLbl);
+
+  const ovGapLbl = document.createElement("span");
+  ovGapLbl.style.cssText = "font-size:12px;color:#94a3b8;min-width:36px;display:inline-block;text-align:right";
+  ovGapLbl.textContent = String(ctx.state._overviewFloorGap);
+  const ovGapSlider = document.createElement("input");
+  ovGapSlider.type="range"; ovGapSlider.min="60"; ovGapSlider.max="340"; ovGapSlider.step="10";
+  ovGapSlider.style.cssText = "width:110px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+  ovGapSlider.value = String(ctx.state._overviewFloorGap);
+  ovGapSlider.addEventListener("input",()=>{
+    ctx.state._overviewFloorGap = parseInt(ovGapSlider.value, 10);
+    _ovFG = ctx.state._overviewFloorGap;
+    ovGapLbl.textContent = String(ctx.state._overviewFloorGap);
+    _rebuildRoomPositions();
+    _renderFrame();
+  });
+  isoCtrlRow.appendChild(ovGapSlider);
+  isoCtrlRow.appendChild(ovGapLbl);
+
+  // L/R horizontal offset slider
+  const ovLRLbl = document.createElement("span");
+  ovLRLbl.style.cssText = "font-size:12px;color:#94a3b8;margin-left:8px";
+  ovLRLbl.textContent = "L/R:";
+  isoCtrlRow.appendChild(ovLRLbl);
+
+  const ovHorizLbl = document.createElement("span");
+  ovHorizLbl.style.cssText = "font-size:12px;color:#94a3b8;min-width:36px;display:inline-block;text-align:right";
+  ovHorizLbl.textContent = String(ctx.state._overviewHorizGap);
+  const ovHorizSlider = document.createElement("input");
+  ovHorizSlider.type="range"; ovHorizSlider.min="-120"; ovHorizSlider.max="120"; ovHorizSlider.step="10";
+  ovHorizSlider.style.cssText = "width:110px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+  ovHorizSlider.value = String(ctx.state._overviewHorizGap);
+  ovHorizSlider.addEventListener("input",()=>{
+    ctx.state._overviewHorizGap = parseInt(ovHorizSlider.value, 10);
+    _ovHG = ctx.state._overviewHorizGap;
+    ovHorizLbl.textContent = String(ctx.state._overviewHorizGap);
+    _rebuildRoomPositions();
+    _renderFrame();
+  });
+  isoCtrlRow.appendChild(ovHorizSlider);
+  isoCtrlRow.appendChild(ovHorizLbl);
+
+  // Save button
+  const ovSaveLbl = document.createElement("span");
+  ovSaveLbl.style.cssText = "font-size:11px;color:#94a3b8;min-width:50px";
+  const ovSaveBtn = document.createElement("button");
+  ovSaveBtn.className = "btn inline";
+  ovSaveBtn.style.cssText = "padding:2px 10px;font-size:12px";
+  ovSaveBtn.title = "Save these slider positions so both Overview and Traceback use the same layout";
+  ovSaveBtn.textContent = "Save";
+  ovSaveBtn.addEventListener("click", async ()=>{
+    ovSaveBtn.disabled = true;
+    try{
+      await ctx.actions.settingsSet({
+        overview_iso_floor_gap: ctx.state._overviewFloorGap,
+        overview_iso_horiz_gap: ctx.state._overviewHorizGap,
+        overview_iso_focus:     ctx.state._overviewIsoFocusIdx,
+      });
+      ovSaveLbl.textContent = "Saved \u2713";
+      setTimeout(()=>{ ovSaveLbl.textContent = ""; }, 2000);
+    }catch(e){ ovSaveLbl.textContent = "Error"; }
+    ovSaveBtn.disabled = false;
+  });
+
+  // Reset button
+  const ovResetBtn = document.createElement("button");
+  ovResetBtn.className = "btn inline";
+  ovResetBtn.style.cssText = "padding:2px 10px;font-size:12px";
+  ovResetBtn.title = "Reset sliders to default values";
+  ovResetBtn.textContent = "Reset";
+  ovResetBtn.addEventListener("click", async ()=>{
+    ctx.state._overviewFloorGap = 150; _ovFG = 150;
+    ctx.state._overviewHorizGap = 0;   _ovHG = 0;
+    ctx.state._overviewIsoFocusIdx = 0;
+    focusZ = _isoPos[0];
+    ovGapSlider.value   = "150"; ovGapLbl.textContent   = "150";
+    ovHorizSlider.value = "0";   ovHorizLbl.textContent = "0";
+    focusSlider.value   = "0";   focusLbl.textContent   = "All floors";
+    _rebuildRoomPositions();
+    _renderFrame();
+    ovResetBtn.disabled = true;
+    try{
+      await ctx.actions.settingsSet({ overview_iso_floor_gap:150, overview_iso_horiz_gap:0, overview_iso_focus:0 });
+      ovSaveLbl.textContent = "Reset \u2713";
+      setTimeout(()=>{ ovSaveLbl.textContent = ""; }, 2000);
+    }catch(e){ ovSaveLbl.textContent = "Error"; }
+    ovResetBtn.disabled = false;
+  });
+  isoCtrlRow.appendChild(ovSaveBtn);
+  isoCtrlRow.appendChild(ovResetBtn);
+  isoCtrlRow.appendChild(ovSaveLbl);
+
   // ── Assemble ───────────────────────────────────────────────────────────
+  outer.appendChild(isoCtrlRow);
   outer.appendChild(mapDiv);
   outer.appendChild(ctrlCard);
 
