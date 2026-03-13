@@ -917,7 +917,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // Scanner nodes + labels (left-aligned, growing rightward toward node) — clickable
   // Invisible hit-area rect behind each row so clicks land reliably on the <g>
   for (const sn of scannerNodes) {
-    s += `<g class="bt-viz-click" data-type="scanner" data-id="${_escSvg(sn.id)}" style="cursor:pointer">`;
+    s += `<g class="bt-viz-click" data-type="scanner" data-id="${_escSvg(sn.id)}" style="cursor:pointer" pointer-events="all">`;
     s += `<rect x="${scannerLabelX - 4}" y="${sn.y - 10}" width="${sn.x - scannerLabelX + 18}" height="20" fill="transparent"/>`;
     s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner"/>`;
     s += `<text x="${scannerLabelX}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(sn.label))}</text>`;
@@ -927,7 +927,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // Device nodes + labels (left-aligned, growing rightward from node) — clickable
   for (const d of deviceNodes) {
     const rc = rssiClass(d.rssi);
-    s += `<g class="bt-viz-click" data-type="device" data-id="${_escSvg(d.id)}" style="cursor:pointer">`;
+    s += `<g class="bt-viz-click" data-type="device" data-id="${_escSvg(d.id)}" style="cursor:pointer" pointer-events="all">`;
     s += `<rect x="${d.x - 8}" y="${d.y - 9}" width="${deviceLabelX - d.x + 18}" height="18" fill="transparent"/>`;
     s += `<circle cx="${d.x}" cy="${d.y}" r="5" class="bt-viz-node device ${rc}"/>`;
     s += `<text x="${d.x + 10}" y="${d.y}" class="bt-viz-label" font-size="11" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(d.label))}</text>`;
@@ -943,37 +943,36 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const svgWrap = document.createElement("div");
   svgWrap.innerHTML = s;
 
-  // Click handler — drill into scanner or device detail
-  svgWrap.addEventListener("click", (e) => {
-    const g = e.target.closest(".bt-viz-click");
-    if (!g) return;
-    const type = g.getAttribute("data-type");
-    const id = g.getAttribute("data-id");
-    if (!id) return;
-    if (type === "scanner") {
-      const radio = radios.find(r => String(r.source || "") === id);
-      if (radio) ctx.actions.showScannerDetail(radio);
-    } else if (type === "device") {
-      // Try to find a full object from the snapshot for a rich detail modal
-      const obj = objIndex.get(id.toUpperCase());
-      if (obj) {
-        ctx.actions.showObjectDetail(obj);
-      } else {
-        // Build a minimal object from the advertisement
-        const ad = ads.find(a => String(a.address || "") === id || String(a.name || "") === id);
-        if (ad) {
-          ctx.actions.showObjectDetail({
-            address: ad.address || id,
-            name: ad.name || ad.address || id,
-            kind: "ble",
-            room: ad.area_name || "",
-            rssi: ad.rssi,
-            source: ad.source || "",
-          });
+  // Click handlers — attach directly to each clickable <g> node for reliable
+  // SVG click handling (closest() can be unreliable on SVG elements in WebViews)
+  for (const g of svgWrap.querySelectorAll(".bt-viz-click")) {
+    g.addEventListener("click", () => {
+      const type = g.getAttribute("data-type");
+      const id = g.getAttribute("data-id");
+      if (!id) return;
+      if (type === "scanner") {
+        const radio = radios.find(r => String(r.source || "") === id);
+        if (radio) ctx.actions.showScannerDetail(radio);
+      } else if (type === "device") {
+        const obj = objIndex.get(id.toUpperCase());
+        if (obj) {
+          ctx.actions.showObjectDetail(obj);
+        } else {
+          const ad = ads.find(a => String(a.address || "") === id || String(a.name || "") === id);
+          if (ad) {
+            ctx.actions.showObjectDetail({
+              address: ad.address || id,
+              name: ad.name || ad.address || id,
+              kind: "ble",
+              room: ad.area_name || "",
+              rssi: ad.rssi,
+              source: ad.source || "",
+            });
+          }
         }
       }
-    }
-  });
+    });
+  }
 
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),
