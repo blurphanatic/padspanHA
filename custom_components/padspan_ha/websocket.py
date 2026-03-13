@@ -5461,6 +5461,37 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
             except Exception:
                 pass
 
+            # Check if this phone has an IRK configured
+            has_irk = False
+            irk_canonical = ""
+            try:
+                _irk_resolver = await _get_ble_resolver(hass)
+                _irk_ble_live = get_bluetooth_live(hass)
+                _irk_snap = _irk_ble_live.get_snapshot(max_ads=2000, max_age_s=600)
+                for _irk_ad in (_irk_snap.get("advertisements") or []):
+                    _irk_ib = _irk_resolver.parse_ibeacon(_irk_ad.get("manufacturer_data") or {})
+                    if not _irk_ib:
+                        continue
+                    _irk_ib_key = f"ibeacon:{_irk_ib['uuid']}:{_irk_ib['major']}:{_irk_ib['minor']}"
+                    if _irk_ib_key.lower() != ibeacon_key.lower():
+                        continue
+                    _irk_addr = (_irk_ad.get("address") or "").upper()
+                    _irk_res = _irk_resolver.resolve_address(_irk_addr)
+                    if _irk_res and _irk_res.get("canonical_id"):
+                        has_irk = True
+                        irk_canonical = _irk_res["canonical_id"]
+                    break
+                # Also check: does the resolver have ANY device matching
+                # this phone's device name?
+                if not has_irk:
+                    for _dev in _irk_resolver._devices:
+                        if device_name.lower() in (_dev.get("name") or "").lower():
+                            has_irk = True
+                            irk_canonical = _dev["canonical_id"]
+                            break
+            except Exception:
+                pass
+
             phones.append({
                 "entity_id": eid,
                 "device_name": device_name,
@@ -5476,6 +5507,8 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                 "existing_label": existing_label,
                 "state": state_obj.state,
                 "attributes": {k: str(v) for k, v in attrs.items()},
+                "has_irk": has_irk,
+                "irk_canonical": irk_canonical,
             })
 
         # ── Device-registry fallback ──────────────────────────────────────

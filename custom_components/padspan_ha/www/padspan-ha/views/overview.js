@@ -2058,12 +2058,21 @@ export function render(ctx){
             const parts = [];
             if (phone.is_disabled) parts.push("Entity disabled");
             else if (phone.is_transmitting) parts.push("BLE active");
-            else parts.push("BLE off");
+            else parts.push(`BLE: ${phone.state || "off"}`);
             if (!phone.is_disabled) parts.push(phone.is_visible ? "visible" : "not seen");
             if (phone.is_followed) parts.push("tracked");
             if (phone.existing_label) parts.push(phone.existing_label);
+            parts.push(phone.has_irk ? "IRK \u2713" : "no IRK");
             meta.textContent = parts.join(" · ");
             info.appendChild(meta);
+
+            // IRK warning/guidance
+            if (!phone.has_irk && !phone.is_disabled && phone.state !== "sensor_not_registered") {
+              const irkHint = document.createElement("div");
+              irkHint.style.cssText = "font-size:10px;color:#f59e0b;margin-top:3px;line-height:1.4";
+              irkHint.textContent = "No IRK configured \u2014 tracking relies on iBeacon only (weaker). Set up Private BLE Device integration for reliable MAC-rotation tracking.";
+              info.appendChild(irkHint);
+            }
             row.appendChild(info);
 
             // Action button
