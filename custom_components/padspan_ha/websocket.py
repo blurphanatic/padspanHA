@@ -2810,6 +2810,35 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
             _pc3 = hass.data.get(DOMAIN, {}).get("presence_coordinator")
             if _pc3:
                 _knn_active_count = len(getattr(_pc3, "_knn_position", {}))
+            # Collect all scanner source names used in calibration data
+            _cal_sources = set()
+            for _p in _pts:
+                for _r in (_p.get("scanner_readings") or []):
+                    if _r.get("source"):
+                        _cal_sources.add(_r["source"])
+
+            # Live k-NN diagnostic: pick up to 3 objects with EMA data from the
+            # presence coordinator and test them against the calibration store
+            _knn_diag = []
+            _ema_sources = set()
+            if _pc3:
+                _ema_dict = getattr(_pc3, "_ema_rssi", {})
+                for _ek, _ev in list(_ema_dict.items())[:5]:
+                    _ema_sources.update(_ev.keys())
+                    _shared = set(_ev.keys()) & _cal_sources
+                    _result = _cal.knn_locate(dict(_ev)) if _shared else None
+                    _knn_diag.append({
+                        "key": _ek[:40],
+                        "ema_scanners": len(_ev),
+                        "ema_sources": sorted(list(_ev.keys()))[:5],
+                        "shared_with_cal": len(_shared),
+                        "knn_result": {
+                            "confidence": _result.get("confidence") if _result else None,
+                            "room": _result.get("nearest_room") if _result else None,
+                            "map_id": (_result.get("map_id") or "")[:20] if _result else None,
+                            "k_used": _result.get("k_used") if _result else None,
+                        } if _result else None,
+                    })
             snap["calibration_status"] = {
                 "total_points": len(_pts),
                 "auto_points": _auto,
@@ -2821,6 +2850,10 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                 "knn_active": len(_pts) >= 5,
                 "knn_positioned_objects": _knn_active_count,
                 "store_initialized": True,
+                "cal_sources": sorted(list(_cal_sources))[:20],
+                "ema_sources": sorted(list(_ema_sources))[:20],
+                "source_overlap": len(_cal_sources & _ema_sources),
+                "knn_diag": _knn_diag,
             }
         else:
             snap["calibration_status"] = {

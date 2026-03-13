@@ -2382,6 +2382,22 @@ export function render(ctx){
           "CalibrationStore was not loaded at startup. Restart Home Assistant to activate k-NN positioning.") : null,
         empty > 0 ? el("div",{style:"font-size:11px;margin-top:4px;color:#f59e0b"},
           `${empty} point(s) have no RSSI data — re-calibrate to fix`) : null,
+        // k-NN diagnostic: show source overlap + test results
+        cs.source_overlap !== undefined ? el("div",{style:"font-size:10px;margin-top:6px;padding:6px;background:#0f172a;border:1px solid #1e293b;border-radius:4px;color:#94a3b8"}, [
+          el("div",{style:"font-weight:600;color:#e2e8f0;margin-bottom:3px"}, "k-NN Diagnostic"),
+          el("div",{}, `Cal sources: ${(cs.cal_sources||[]).length} · Live EMA sources: ${(cs.ema_sources||[]).length} · Overlap: ${cs.source_overlap}`),
+          cs.source_overlap === 0 ? el("div",{style:"color:#f87171;font-weight:600;margin-top:3px"},
+            "No scanner overlap between calibration data and live objects — k-NN cannot match!") : null,
+          cs.source_overlap === 0 && (cs.cal_sources||[]).length > 0 && (cs.ema_sources||[]).length > 0 ?
+            el("div",{style:"color:#f59e0b;margin-top:3px"},
+              `Cal: ${(cs.cal_sources||[]).slice(0,3).join(", ")} · Live: ${(cs.ema_sources||[]).slice(0,3).join(", ")}`) : null,
+          ...(cs.knn_diag||[]).map(d => el("div",{style:"margin-top:3px;border-top:1px solid #1e293b;padding-top:3px"}, [
+            el("div",{}, `${d.key}: ${d.ema_scanners} scanners, ${d.shared_with_cal} shared`),
+            d.knn_result ? el("div",{style:"color:#52b788"},
+              `→ conf=${(d.knn_result.confidence*100).toFixed(0)}% room=${d.knn_result.room} k=${d.knn_result.k_used}`) :
+              el("div",{style:"color:#f87171"}, d.shared_with_cal > 0 ? "→ knn_locate returned null" : "→ no shared scanners"),
+          ])),
+        ].filter(Boolean)) : null,
       ].filter(Boolean));
     })(),
   ].filter(Boolean));

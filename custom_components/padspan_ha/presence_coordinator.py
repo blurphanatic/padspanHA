@@ -754,6 +754,26 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _calib = self.hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
             if _calib and len(_calib.data.get("points", [])) >= _KNN_MIN_POINTS:
                 _knn = _calib.knn_locate(dict(ema))
+                # Periodic debug log (first object each cycle)
+                if not hasattr(self, "_knn_log_count"):
+                    self._knn_log_count = 0
+                self._knn_log_count += 1
+                if self._knn_log_count <= 3 or self._knn_log_count % 100 == 0:
+                    _cal_srcs = set()
+                    for _cp in _calib.data.get("points", []):
+                        for _cr in (_cp.get("scanner_readings") or []):
+                            if _cr.get("source"):
+                                _cal_srcs.add(_cr["source"])
+                    _overlap = set(ema.keys()) & _cal_srcs
+                    _LOGGER.info(
+                        "k-NN debug [%s]: ema_keys=%s, cal_sources=%d, overlap=%d, "
+                        "result=%s, conf=%s, threshold=%s",
+                        key[:30], list(ema.keys())[:5], len(_cal_srcs),
+                        len(_overlap),
+                        "yes" if _knn else "None",
+                        _knn.get("confidence") if _knn else "N/A",
+                        _KNN_LIVE_THRESHOLD,
+                    )
                 if _knn and _knn.get("confidence", 0.0) >= _KNN_LIVE_THRESHOLD:
                     _knn_room = _knn.get("nearest_room")
                     # Room boundary check — use bounds from the map that k-NN
@@ -785,7 +805,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._knn_position.pop(key, None)
             else:
                 self._knn_position.pop(key, None)
-        except Exception:
+        except Exception as _knn_err:
+            _LOGGER.debug("k-NN error for %s: %s", key[:30], _knn_err)
             self._knn_position.pop(key, None)
 
         # ── Stage 2: majority-vote window (size adjusts to room_change_delay_s) ──
