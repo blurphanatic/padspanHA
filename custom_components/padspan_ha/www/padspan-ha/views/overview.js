@@ -2000,7 +2000,19 @@ export function render(ctx){
         el("div",{class:"basic-summary-num"}, liveLoading ? "--" : String(radiosCount)),
         el("div",{class:"basic-summary-lbl"}, "Scanners"),
       ]),
-    ]);
+      (() => {
+        const cs = snap?.calibration_status;
+        if (!cs) return null;
+        const total = cs.total_points || 0;
+        const empty = cs.empty_points || 0;
+        const usable = total - empty;
+        const color = !usable ? "#f87171" : usable >= (cs.knn_min_required||5) ? "#52b788" : "#f59e0b";
+        return el("div",{style:"text-align:center"},[
+          el("div",{class:"basic-summary-num",style:`color:${color}`}, liveLoading ? "--" : String(usable)),
+          el("div",{class:"basic-summary-lbl"}, "Cal pts"),
+        ]);
+      })(),
+    ].filter(Boolean));
 
     const mapCard = el("div",{class:"card"},[
       el("div",{class:"card-head"},[
@@ -2302,7 +2314,34 @@ export function render(ctx){
       ]),
       el("div",{style:"margin-top:8px;color:#94a3b8;font-size:12px"}, dataMode==="live" ? "Live snapshot" : "Sample data — switch to Live to see your real devices")
     ]),
-  ]);
+    // Calibration status card
+    (() => {
+      const cs = snap?.calibration_status;
+      if (!cs) return null;
+      const total = cs.total_points || 0;
+      const empty = cs.empty_points || 0;
+      const usable = total - empty;
+      const ready = usable >= (cs.knn_min_required || 5);
+      const color = !total ? "#f87171" : empty > 0 ? "#f59e0b" : ready ? "#52b788" : "#f59e0b";
+      const statusText = !total ? "No data" : !ready ? `Need ${(cs.knn_min_required||5) - usable} more` : "Active";
+      const parts = [];
+      if (cs.manual_points > 0) parts.push(`${cs.manual_points} manual`);
+      if (cs.auto_points > 0) parts.push(`${cs.auto_points} auto`);
+      if (empty > 0) parts.push(`${empty} empty (no RSSI)`);
+      return el("div",{class:"card"},[
+        el("div",{class:"kpi"},[
+          el("div",{class:"k"}, "Calibration"),
+          el("div",{class:"v",style:`color:${color}`}, `${usable} pts`),
+        ]),
+        el("div",{style:"font-size:11px;color:#94a3b8;margin-top:4px"},
+          parts.join(" · ") + (cs.scanners ? ` · ${cs.scanners} scanners` : "") + (cs.maps ? ` · ${cs.maps} maps` : "")),
+        el("div",{style:`font-size:11px;margin-top:4px;color:${color}`},
+          `k-NN: ${statusText}`),
+        empty > 0 ? el("div",{style:"font-size:11px;margin-top:4px;color:#f59e0b"},
+          `${empty} point(s) have no RSSI data — re-calibrate to fix`) : null,
+      ].filter(Boolean));
+    })(),
+  ].filter(Boolean));
 
   // ---------- Companion App Phone Discovery ----------
   const companionCard = el("div",{class:"card",style:"border-color:#2563eb"});

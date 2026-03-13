@@ -88,6 +88,14 @@ class CalibrationStore:
         point_id = f"cp_{os.urandom(6).hex()}"
 
         raw_readings = point.get("scanner_readings") or []
+        # Fallback: accept "readings" dict {source: {samples, name}} from older
+        # callers and convert to the expected list-of-dicts format.
+        if not raw_readings and isinstance(point.get("readings"), dict):
+            raw_readings = [
+                {"source": src, "name": (rd.get("name") or src), "rssi_samples": (rd.get("samples") or [])}
+                for src, rd in point["readings"].items()
+                if isinstance(rd, dict)
+            ]
         clean_readings: list[dict[str, Any]] = []
         for r in raw_readings:
             if not isinstance(r, dict):

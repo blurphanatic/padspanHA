@@ -3832,14 +3832,23 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         const deviceId = _resolveBeaconAddr(entry.bk.key, snap3);
 
         // ── Hard relocation (faulty data correction) ─────────────────────────
-        // After 3 consecutive rounds within 6 minutes, DELETE ALL old
-        // calibration points for this device.  This is an intentional
-        // correction — the user is signalling the old data is wrong.
+        // After 3 consecutive POSITION CHANGES within 6 minutes, offer to
+        // purge old data.  Only moves where the beacon actually changed
+        // position count — repeated calibrations at the same spot are normal
+        // accuracy-building and must NOT trigger purge.
         if (!bs._relocHistory) bs._relocHistory = {};
         if (!bs._relocHistory[bkKey]) bs._relocHistory[bkKey] = [];
-        bs._relocHistory[bkKey].push({
-          x: entry.bk.x, y: entry.bk.y, mapId: entry.mapId, ts: Date.now(),
-        });
+        const _lastReloc = bs._relocHistory[bkKey][bs._relocHistory[bkKey].length - 1];
+        const _MOVE_THRESHOLD = 0.02; // minimum position change to count as a move
+        const _moved = !_lastReloc ||
+          Math.abs(entry.bk.x - _lastReloc.x) > _MOVE_THRESHOLD ||
+          Math.abs(entry.bk.y - _lastReloc.y) > _MOVE_THRESHOLD ||
+          entry.mapId !== _lastReloc.mapId;
+        if (_moved) {
+          bs._relocHistory[bkKey].push({
+            x: entry.bk.x, y: entry.bk.y, mapId: entry.mapId, ts: Date.now(),
+          });
+        }
 
         const hist = bs._relocHistory[bkKey];
         const RELOC_ROUNDS = 3;
@@ -3895,6 +3904,12 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           }
         }
 
+        // Transform readings object → scanner_readings array for backend
+        const scannerReadings = Object.entries(entry.readings).map(([source, rd]) => ({
+          source,
+          name: rd.name || source,
+          rssi_samples: rd.samples || [],
+        }));
         const point = {
           map_id: entry.mapId,
           x_frac: entry.bk.x,
@@ -3902,7 +3917,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           room: room,
           device_id: deviceId,
           label: entry.bk.label || entry.bk.key || "",
-          readings: entry.readings,
+          scanner_readings: scannerReadings,
           weight: doRelocation ? 5.0 : weight,
         };
         try {

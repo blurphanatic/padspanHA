@@ -2773,6 +2773,25 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
     except Exception:
         pass
 
+    # Inject calibration status so the UI knows the state of the cal store
+    try:
+        _cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+        if _cal:
+            _pts = _cal.data.get("points", [])
+            _auto = sum(1 for p in _pts if str(p.get("label", "")).startswith("[auto]"))
+            _empty = sum(1 for p in _pts if not (p.get("scanner_readings") or []))
+            snap["calibration_status"] = {
+                "total_points": len(_pts),
+                "auto_points": _auto,
+                "manual_points": len(_pts) - _auto,
+                "empty_points": _empty,
+                "maps": len({p.get("map_id") for p in _pts if p.get("map_id")}),
+                "scanners": len({r.get("source") for p in _pts for r in (p.get("scanner_readings") or [])}),
+                "knn_min_required": 5,
+            }
+    except Exception:
+        pass
+
     connection.send_result(msg["id"], {"snapshot": snap})
 
 

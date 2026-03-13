@@ -776,7 +776,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         candidate = _knn_room
                         self._knn_position[key] = _knn
                     else:
-                        self._knn_position.pop(key, None)
+                        # k-NN position is valid even without a room name —
+                        # store for sub-room display; don't override the
+                        # Gaussian room candidate (it has a room name).
+                        self._knn_position[key] = _knn
                 else:
                     self._knn_position.pop(key, None)
             else:
