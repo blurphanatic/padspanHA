@@ -408,16 +408,19 @@ class CalibrationStore:
         if total_w < 1e-10:
             return None
 
-        # Confidence: normalize by shared scanner count so the value represents
-        # mean-RSSI-error rather than sum-of-squares.  BLE RSSI noise is typically
-        # 3-8 dBm, so we scale so that a per-scanner RMS error of ~5 dBm yields
-        # ~50% confidence.  Formula: conf = 1 / (1 + mean_sq / REF_VARIANCE)
-        # where REF_VARIANCE = 5² = 25 (a "typical" per-scanner squared error).
+        # Confidence: two components multiplied together:
+        #   1. RSSI accuracy — how close the fingerprint matches.
+        #      conf_rssi = 1 / (1 + mean_sq / REF_VARIANCE)
+        #   2. Scanner coverage — how many scanners contributed.
+        #      1 scanner = 25%, 2 = 50%, 3 = 75%, 4+ = 100%.
+        #      A single scanner can only estimate distance (a ring), not position.
         _best_dist_sq = scored[0][0]
         _best_n_shared = max(scored[0][1], 1)
         _mean_sq = _best_dist_sq / _best_n_shared
-        _REF_VARIANCE = 25.0  # 5 dBm per scanner → 50% confidence
-        confidence = round(1.0 / (1.0 + _mean_sq / _REF_VARIANCE), 3)
+        _REF_VARIANCE = 25.0  # 5 dBm per scanner → 50% rssi confidence
+        _conf_rssi = 1.0 / (1.0 + _mean_sq / _REF_VARIANCE)
+        _conf_coverage = min(_best_n_shared, 4) / 4.0
+        confidence = round(_conf_rssi * _conf_coverage, 3)
 
         return {
             "x_frac": round(wx / total_w, 4),
@@ -426,6 +429,7 @@ class CalibrationStore:
             "nearest_room": scored[0][2].get("room", ""),
             "map_id": best_map,
             "k_used": len(top_k),
+            "shared_scanners": _best_n_shared,
         }
 
     # ── Leave-one-out accuracy estimate ───────────────────────────────────────
