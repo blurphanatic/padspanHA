@@ -2101,9 +2101,18 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     kind = obj.get("kind", "")
                     if kind not in ("ble", "private_ble", "ibeacon"):
                         continue
-                    # Try the object's key, address, canonical_id
+                    # Try the object's key, address, canonical_id, ibeacon key variants
                     _lbl = None
-                    for _try_key in (obj.get("key"), obj.get("address"), obj.get("canonical_id")):
+                    _try_keys = [obj.get("key"), obj.get("address"), obj.get("canonical_id")]
+                    # Also try ibeacon key from metadata
+                    _ib_u = obj.get("ibeacon_uuid")
+                    if _ib_u is not None:
+                        _ibk = f"ibeacon:{_ib_u}:{obj.get('ibeacon_major', 0)}:{obj.get('ibeacon_minor', 0)}"
+                        _try_keys.extend([_ibk, _ibk.upper()])
+                    # Also try all_addresses
+                    for _a in (obj.get("all_addresses") or []):
+                        _try_keys.append(_a)
+                    for _try_key in _try_keys:
                         if _try_key:
                             _e = _obj_store2.get(_try_key)
                             if _e and _e.get("label"):
@@ -2114,6 +2123,39 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         obj["identified"] = True
         except Exception:
             pass
+
+        # ── Same-label dedup ──────────────────────────────────────────────
+        # If two objects ended up with the same user_label, they're the same
+        # physical device seen under different identities (e.g. ble MAC +
+        # ibeacon key, or cached + live).  Merge them to prevent splitting.
+        try:
+            _label_groups: dict[str, list[dict]] = {}
+            for obj in objects:
+                ul = obj.get("user_label", "")
+                if ul and obj.get("key", "") not in _dedup_absorbed:
+                    _label_groups.setdefault(ul, []).append(obj)
+
+            for _lbl, _grp in _label_groups.items():
+                if len(_grp) <= 1:
+                    continue
+                # Keep the one with best RSSI (or most recent) as primary
+                _grp.sort(key=lambda o: (o.get("rssi") or -999), reverse=True)
+                _primary = _grp[0]
+                for _sec in _grp[1:]:
+                    _sec_key = _sec.get("key", "")
+                    if _sec_key:
+                        _dedup_absorbed.add(_sec_key)
+                    _merge_into(_primary, _sec)
+                _primary.setdefault("_dedup_reason", "same_user_label")
+                _LOGGER.debug(
+                    "Same-label dedup: merged %d objects with label '%s'",
+                    len(_grp), _lbl,
+                )
+
+            if _dedup_absorbed:
+                objects = [o for o in objects if o.get("key", "") not in _dedup_absorbed]
+        except Exception as _sld_err:
+            _LOGGER.debug("Same-label dedup error: %s", _sld_err)
 
         # Periodic disk save (at most every 60 s)
         _last_save = _dom.get("_obj_hist_last_save") or 0
@@ -3318,7 +3360,90 @@ async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
             pass
 
     await obj_store.async_set(store_addr, label)
-    connection.send_result(msg["id"], {"ok": True, "address": store_addr, "label": label})
+
+    # ── Cross-store label under ALL stable identities ─────────────────
+    # A device can broadcast as ble (MAC), ibeacon (key), private_ble
+    # (canonical_id), or entity.  If we only store the label under one
+    # key, the device splits into labelled + unlabelled when the merge
+    # doesn't fire in a particular snapshot cycle.  Fix: find the device
+    # in the object history cache and store the label under every key.
+    _cross_stored: list[str] = [store_addr]
+    try:
+        _dom = hass.data.get(DOMAIN, {})
+        _cache = _dom.get(DATA_OBJECT_HISTORY) or {}
+
+        # Find the object in cache that matches the address we just labelled
+        _target = _cache.get(addr) or _cache.get(store_addr)
+
+        # If not found by direct key, search by all_addresses or canonical_id
+        if not _target:
+            addr_upper = addr.upper()
+            store_upper = store_addr.upper()
+            for _key, _obj in _cache.items():
+                if _key.upper() == addr_upper or _key.upper() == store_upper:
+                    _target = _obj
+                    break
+                _all = _obj.get("all_addresses") or []
+                if any(str(a).upper() == addr_upper for a in _all):
+                    _target = _obj
+                    break
+                if _obj.get("canonical_id") == store_addr or _obj.get("canonical_id") == addr:
+                    _target = _obj
+                    break
+
+        if _target:
+            # Collect all stable keys for this device
+            _keys_to_label: set[str] = set()
+
+            # canonical_id (private_ble identity)
+            _cid = _target.get("canonical_id")
+            if _cid:
+                _keys_to_label.add(_cid)
+
+            # iBeacon key
+            _ib_key = _target.get("key", "")
+            if _ib_key and _ib_key.startswith("ibeacon:"):
+                _keys_to_label.add(_ib_key)
+                _keys_to_label.add(_ib_key.upper())
+
+            # Build ibeacon key from metadata if available
+            _ib_uuid = _target.get("ibeacon_uuid")
+            if _ib_uuid is not None:
+                _ib_major = _target.get("ibeacon_major", 0)
+                _ib_minor = _target.get("ibeacon_minor", 0)
+                _ib_k = f"ibeacon:{_ib_uuid}:{_ib_major}:{_ib_minor}"
+                _keys_to_label.add(_ib_k)
+                _keys_to_label.add(_ib_k.upper())
+
+            # Static MAC address (non-rotating — starts with non-random prefix)
+            _obj_addr = _target.get("address", "")
+            if _obj_addr and len(_obj_addr) == 17 and _obj_addr.count(":") == 5:
+                # Only store under MAC if it's not a rotating random address
+                _first_byte = int(_obj_addr[:2], 16) if _obj_addr[:2].replace(":", "") else 0
+                if not (_first_byte & 0x02):  # bit 1 clear = globally unique (not random)
+                    _keys_to_label.add(_obj_addr.upper())
+
+            # Remove keys we already stored under
+            _keys_to_label.discard(store_addr)
+            _keys_to_label.discard(store_addr.upper() if store_addr == store_addr.upper() else store_addr)
+
+            for _xk in _keys_to_label:
+                if _xk and not obj_store.get(_xk):
+                    await obj_store.async_set(_xk, label)
+                    _cross_stored.append(_xk)
+
+            if len(_cross_stored) > 1:
+                _LOGGER.info(
+                    "object_label_set: cross-stored '%s' under %d keys: %s",
+                    label, len(_cross_stored), _cross_stored,
+                )
+    except Exception as _xs_err:
+        _LOGGER.debug("object_label_set cross-store: %s", _xs_err)
+
+    connection.send_result(msg["id"], {
+        "ok": True, "address": store_addr, "label": label,
+        "cross_stored": _cross_stored,
+    })
 
 
 @websocket_api.websocket_command(
@@ -3349,7 +3474,51 @@ async def ws_object_label_delete(hass: HomeAssistant, connection, msg) -> None:
         except Exception:
             pass
     if addr:
+        # Get the label before deleting so we can find cross-stored copies
+        _entry = obj_store.get(addr)
+        _del_label = (_entry.get("label", "") if _entry else "").strip()
         await obj_store.async_delete(addr)
+
+        # Also delete cross-stored copies under other identity keys
+        _cross_deleted: list[str] = [addr]
+        if _del_label:
+            try:
+                _all_labels = obj_store.all()
+                for _key, _val in list(_all_labels.items()):
+                    if _key == addr.upper() or _key == addr:
+                        continue
+                    if _val.get("label", "").strip() == _del_label:
+                        # Verify it belongs to the same device by checking
+                        # the object history cache for cross-references
+                        _dom = hass.data.get(DOMAIN, {})
+                        _cache = _dom.get(DATA_OBJECT_HISTORY) or {}
+                        _obj_for_key = _cache.get(_key)
+                        _obj_for_addr = _cache.get(addr)
+                        # If both point to the same canonical_id or same
+                        # ibeacon key, they're the same device
+                        _same = False
+                        if _obj_for_key and _obj_for_addr:
+                            cid1 = _obj_for_key.get("canonical_id")
+                            cid2 = _obj_for_addr.get("canonical_id")
+                            if cid1 and cid2 and cid1 == cid2:
+                                _same = True
+                            k1 = _obj_for_key.get("key", "")
+                            k2 = _obj_for_addr.get("key", "")
+                            if k1 and k2 and k1 == k2:
+                                _same = True
+                        # Also same if one key is an ibeacon variant of the other
+                        if _key.upper() == addr.upper():
+                            _same = True
+                        if _key.startswith("ibeacon:") or _key.startswith("IBEACON:"):
+                            if addr.startswith("ibeacon:") or addr.startswith("IBEACON:"):
+                                if _key.lower() == addr.lower():
+                                    _same = True
+                        if _same:
+                            await obj_store.async_delete(_key)
+                            _cross_deleted.append(_key)
+            except Exception as _xd_err:
+                _LOGGER.debug("object_label_delete cross-delete: %s", _xd_err)
+
     connection.send_result(msg["id"], {"ok": True, "address": addr})
 
 
