@@ -361,7 +361,7 @@ class CalibrationStore:
         if not pts or not query_rssi:
             return None
 
-        scored: list[tuple[float, dict[str, Any]]] = []
+        scored: list[tuple[float, int, dict[str, Any]]] = []
         for pt in pts:
             fp: dict[str, float] = {
                 r["source"]: r["mean_rssi"] for r in pt.get("scanner_readings", [])
@@ -372,7 +372,7 @@ class CalibrationStore:
             dist_sq = sum((query_rssi[s] - fp[s]) ** 2 for s in shared)
             # Penalise points with fewer shared scanners
             penalty = 1.0 + 0.3 * max(0, len(query_rssi) - len(shared))
-            scored.append((dist_sq * penalty, pt))
+            scored.append((dist_sq * penalty, len(shared), pt))
 
         if not scored:
             return None
@@ -382,7 +382,7 @@ class CalibrationStore:
 
         # Determine dominant map_id among top-k points (highest total weight)
         map_weights: dict[str, float] = {}
-        for dist_sq, pt in top_k:
+        for dist_sq, _n_shared, pt in top_k:
             pw = float(pt.get("weight") or 1.0)
             w = pw / (math.sqrt(dist_sq) + 1e-3)
             mid = pt.get("map_id", "")
@@ -396,7 +396,7 @@ class CalibrationStore:
         # its own stack transforms (offset, scale, rotation).
         total_w = 0.0
         wx, wy = 0.0, 0.0
-        for dist_sq, pt in top_k:
+        for dist_sq, _n_shared, pt in top_k:
             if best_map and pt.get("map_id", "") != best_map:
                 continue
             pw = float(pt.get("weight") or 1.0)
@@ -408,11 +408,22 @@ class CalibrationStore:
         if total_w < 1e-10:
             return None
 
+        # Confidence: normalize by shared scanner count so the value represents
+        # mean-RSSI-error rather than sum-of-squares.  BLE RSSI noise is typically
+        # 3-8 dBm, so we scale so that a per-scanner RMS error of ~5 dBm yields
+        # ~50% confidence.  Formula: conf = 1 / (1 + mean_sq / REF_VARIANCE)
+        # where REF_VARIANCE = 5² = 25 (a "typical" per-scanner squared error).
+        _best_dist_sq = scored[0][0]
+        _best_n_shared = max(scored[0][1], 1)
+        _mean_sq = _best_dist_sq / _best_n_shared
+        _REF_VARIANCE = 25.0  # 5 dBm per scanner → 50% confidence
+        confidence = round(1.0 / (1.0 + _mean_sq / _REF_VARIANCE), 3)
+
         return {
             "x_frac": round(wx / total_w, 4),
             "y_frac": round(wy / total_w, 4),
-            "confidence": round(1.0 / (1.0 + scored[0][0]), 3),
-            "nearest_room": scored[0][1].get("room", ""),
+            "confidence": confidence,
+            "nearest_room": scored[0][2].get("room", ""),
             "map_id": best_map,
             "k_used": len(top_k),
         }

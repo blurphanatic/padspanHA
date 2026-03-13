@@ -131,7 +131,9 @@ _AWAY_GRACE_POLLS: int = 2
 # Minimum calibration points before k-NN is consulted for live room assignment.
 _KNN_MIN_POINTS: int = 5
 # Minimum k-NN confidence [0, 1] required to override the Gaussian candidate.
-_KNN_LIVE_THRESHOLD: float = 0.30
+# With the normalized confidence formula (mean-sq-error / REF_VARIANCE), a
+# per-scanner RMS error of ~8 dBm gives ~28% confidence, ~5 dBm gives ~50%.
+_KNN_LIVE_THRESHOLD: float = 0.15
 
 
 def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
