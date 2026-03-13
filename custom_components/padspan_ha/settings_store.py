@@ -72,6 +72,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "beacon_profiling_enabled": True,     # master toggle for beacon profiling feature
     "beacon_tune_disabled": [],           # device_ids excluded from calibration tuning
     "beacon_group_overrides": {},         # device_id → model_key override (ungroup/regroup)
+    # Private BLE IRK devices (managed in PadSpan — no separate integration needed)
+    "irk_devices": [],                    # [{name: str, irk_hex: str}]
 }
 
 

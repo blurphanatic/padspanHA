@@ -185,31 +185,96 @@ export function render(ctx) {
           "No IRK devices registered. Phones and watches rotate their BLE MAC every ~15 min \u2014 to track them, you need their IRK."));
       }
 
-      // ── Setup guidance (always shown when no IRKs) ──
-      if ((st.irk_count || 0) === 0) {
-        detail.appendChild(el("div", { style: "background:rgba(0,0,0,.2);border-radius:8px;padding:12px;margin-top:10px" }, [
-          el("div", { style: "font-weight:700;margin-bottom:8px;font-size:13px" }, "Setup steps:"),
-          el("ol", { style: "margin:0;padding-left:20px;font-size:13px;line-height:1.8" }, [
-            el("li", {}, [
-              el("span", {}, "Install the "),
-              el("a", { href: "https://www.home-assistant.io/integrations/private_ble_device/", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "Private BLE Device"),
-              el("span", {}, " integration in HA (Settings \u2192 Devices & Services \u2192 Add Integration)"),
-            ]),
-            el("li", {}, [
-              el("span", {}, "Install the "),
-              el("a", { href: "https://companion.home-assistant.io/", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "HA Companion App"),
-              el("span", {}, " on each phone/watch"),
-            ]),
-            el("li", {}, "In the Companion App: Settings \u2192 Companion App \u2192 BLE Transmitter \u2192 enable it"),
-            el("li", {}, "Copy the device's IRK and paste into the Private BLE Device integration config"),
-            el("li", {}, "PadSpan detects IRKs within 5 minutes and starts resolving rotating addresses"),
-          ]),
-        ]));
-        detail.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-top:8px" }, [
-          el("span", {}, "Tip: Apple devices share IRKs during Bluetooth pairing. Android uses the Companion App. "),
-          el("a", { href: "https://community.home-assistant.io/t/private-ble-device-apple-devices/546810", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "Apple IRK guide"),
-        ]));
+      // ── Add IRK form (always available) ──
+      const irkForm = el("div", { style: "background:rgba(0,0,0,.2);border-radius:8px;padding:12px;margin-top:10px" });
+      irkForm.appendChild(el("div", { style: "font-weight:700;margin-bottom:8px;font-size:13px" }, "Add IRK Device"));
+      irkForm.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:8px;line-height:1.5" },
+        "Paste the IRK from your phone's Companion App (Settings \u2192 Companion App \u2192 Manage Sensors \u2192 BLE Transmitter). "
+        + "Accepts hex (32 chars), base64, or colon-separated format."));
+
+      const irkInputRow = el("div", { style: "display:flex;gap:6px;align-items:center;flex-wrap:wrap" });
+      const irkNameInput = el("input", {
+        type: "text", placeholder: "Device name (e.g. Garry's Pixel)",
+        style: "font-size:12px;padding:4px 8px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;width:180px",
+      });
+      const irkValueInput = el("input", {
+        type: "text", placeholder: "IRK (hex or base64)",
+        style: "font-size:12px;padding:4px 8px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;width:260px;font-family:monospace",
+      });
+      const irkAddBtn = el("button", {
+        class: "btn", style: "font-size:12px;padding:4px 14px",
+      }, "Add");
+      const irkMsg = el("div", { style: "font-size:11px;margin-top:4px;min-height:16px;width:100%" });
+
+      irkAddBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const name = irkNameInput.value.trim();
+        const irk = irkValueInput.value.trim();
+        if (!name || !irk) { irkMsg.textContent = "Enter both name and IRK"; irkMsg.style.color = "#f59e0b"; return; }
+        irkAddBtn.disabled = true; irkAddBtn.textContent = "Adding...";
+        try {
+          await ctx.actions.wsCall("padspan_ha/irk_add", { name, irk_hex: irk });
+          irkMsg.style.color = "#4ade80";
+          irkMsg.textContent = "\u2713 IRK saved for " + name + " \u2014 resolving will start within 60 seconds";
+          irkNameInput.value = ""; irkValueInput.value = "";
+          // Refresh status
+          ctx.state._pbleStatus = null;
+          setTimeout(() => {
+            ctx.actions.wsCommand("padspan_ha/private_ble_status").then(res => {
+              ctx.state._pbleStatus = res;
+              ctx.actions.renderRooms();
+            });
+          }, 1000);
+        } catch (err) {
+          irkMsg.style.color = "#f87171";
+          irkMsg.textContent = (err && err.message) || String(err);
+        }
+        irkAddBtn.disabled = false; irkAddBtn.textContent = "Add";
+      });
+
+      irkInputRow.appendChild(irkNameInput);
+      irkInputRow.appendChild(irkValueInput);
+      irkInputRow.appendChild(irkAddBtn);
+      irkInputRow.appendChild(irkMsg);
+      irkForm.appendChild(irkInputRow);
+
+      // Remove buttons for PadSpan-managed IRKs
+      if (st.devices && st.devices.length > 0) {
+        const padspanDevs = st.devices.filter(d => d.source === "padspan");
+        if (padspanDevs.length > 0) {
+          const rmDiv = el("div", { style: "margin-top:10px" });
+          rmDiv.appendChild(el("div", { style: "font-size:11px;color:#94a3b8;margin-bottom:4px" }, "PadSpan-managed IRKs:"));
+          for (const d of padspanDevs) {
+            const rmRow = el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:3px" });
+            rmRow.appendChild(el("span", { style: "font-size:12px;color:#e2e8f0" }, d.name));
+            rmRow.appendChild(el("span", { style: "font-size:10px;color:#64748b;font-family:monospace" }, (d.canonical_id || "").substring(0, 20) + "..."));
+            const rmBtn = el("button", { style: "font-size:10px;padding:1px 6px;border-radius:3px;cursor:pointer;border:1px solid #dc2626;background:#3d0c0c;color:#fca5a5" }, "Remove");
+            rmBtn.addEventListener("click", async (ev) => {
+              ev.stopPropagation();
+              if (!confirm(`Remove IRK for ${d.name}?`)) return;
+              const hex = (d.canonical_id || "").replace("irk:", "");
+              await ctx.actions.wsCall("padspan_ha/irk_remove", { irk_hex: hex });
+              ctx.state._pbleStatus = null;
+              ctx.actions.wsCommand("padspan_ha/private_ble_status").then(res => { ctx.state._pbleStatus = res; ctx.actions.renderRooms(); });
+            });
+            rmRow.appendChild(rmBtn);
+            rmDiv.appendChild(rmRow);
+          }
+          irkForm.appendChild(rmDiv);
+        }
       }
+
+      detail.appendChild(irkForm);
+
+      // ── How to find IRK ──
+      detail.appendChild(el("div", { class: "muted", style: "font-size:11px;margin-top:8px;line-height:1.5" }, [
+        el("div", { style: "font-weight:600;margin-bottom:3px" }, "Where to find the IRK:"),
+        el("div", {}, "Android: Companion App \u2192 Settings \u2192 Companion App \u2192 Manage Sensors \u2192 BLE Transmitter \u2192 look for \"IRK\" in the settings/attributes."),
+        el("div", {}, [
+          el("span", {}, "Apple: IRK is shared via Bluetooth pairing. "),
+          el("a", { href: "https://community.home-assistant.io/t/private-ble-device-apple-devices/546810", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "Apple IRK guide"),
+        ]),
+      ]));
 
       // ── Resolver errors ──
       if (st.error) {

@@ -121,6 +121,32 @@ class PrivateBLEResolver:
                         "entry_id": entry.entry_id,
                     })
 
+            # 3) PadSpan settings — IRKs added directly via PadSpan UI
+            try:
+                from .const import DOMAIN
+                _settings = self._hass.data.get(DOMAIN, {}).get("settings")
+                if _settings:
+                    for irk_entry in (_settings.data.get("irk_devices") or []):
+                        irk_raw = irk_entry.get("irk_hex") or ""
+                        irk_name = irk_entry.get("name") or "PadSpan Device"
+                        if not irk_raw:
+                            continue
+                        irk_bytes = _parse_irk(irk_raw)
+                        if irk_bytes and irk_bytes.hex() not in seen_irk_hex:
+                            seen_irk_hex.add(irk_bytes.hex())
+                            canonical_id = f"irk:{irk_bytes.hex()}"
+                            self._devices.append({
+                                "canonical_id": canonical_id,
+                                "name": irk_name,
+                                "irk_bytes": irk_bytes,
+                            })
+                            self._source_info.append({
+                                "name": irk_name, "source": "padspan",
+                                "entry_id": "",
+                            })
+            except Exception as _ps_err:
+                _LOGGER.debug("PadSpan IRK load: %s", _ps_err)
+
             if self._devices:
                 _LOGGER.info(
                     "PrivateBLEResolver loaded %d private device(s): %s",

@@ -2066,12 +2066,79 @@ export function render(ctx){
             meta.textContent = parts.join(" · ");
             info.appendChild(meta);
 
-            // IRK warning/guidance
+            // IRK section — add button or show status
             if (!phone.has_irk && !phone.is_disabled && phone.state !== "sensor_not_registered") {
-              const irkHint = document.createElement("div");
-              irkHint.style.cssText = "font-size:10px;color:#f59e0b;margin-top:3px;line-height:1.4";
-              irkHint.textContent = "No IRK configured \u2014 tracking relies on iBeacon only (weaker). Set up Private BLE Device integration for reliable MAC-rotation tracking.";
-              info.appendChild(irkHint);
+              const irkRow = document.createElement("div");
+              irkRow.style.cssText = "margin-top:4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap";
+
+              const irkHint = document.createElement("span");
+              irkHint.style.cssText = "font-size:10px;color:#f59e0b";
+              irkHint.textContent = "No IRK \u2014 ";
+              irkRow.appendChild(irkHint);
+
+              const addIrkBtn = document.createElement("button");
+              addIrkBtn.style.cssText = "font-size:10px;padding:2px 8px;border-radius:3px;cursor:pointer;border:1px solid #2563eb;background:#1e3a5f;color:#93c5fd";
+              addIrkBtn.textContent = "Add IRK";
+
+              const irkInput = document.createElement("input");
+              irkInput.type = "text";
+              irkInput.placeholder = "Paste IRK (hex or base64)";
+              irkInput.style.cssText = "font-size:10px;padding:2px 6px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:3px;width:220px;display:none;font-family:monospace";
+
+              const irkSaveBtn = document.createElement("button");
+              irkSaveBtn.style.cssText = "font-size:10px;padding:2px 8px;border-radius:3px;cursor:pointer;border:1px solid #16a34a;background:#052e16;color:#4ade80;display:none";
+              irkSaveBtn.textContent = "Save";
+
+              addIrkBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                addIrkBtn.style.display = "none";
+                irkInput.style.display = "inline";
+                irkSaveBtn.style.display = "inline";
+                irkInput.focus();
+              });
+
+              irkSaveBtn.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                const irk = irkInput.value.trim();
+                if (!irk) return;
+                irkSaveBtn.textContent = "Saving...";
+                irkSaveBtn.disabled = true;
+                try {
+                  await ctx.actions.wsCall("padspan_ha/irk_add", {
+                    name: phone.device_name || "Phone",
+                    irk_hex: irk,
+                  });
+                  irkRow.innerHTML = "";
+                  const ok = document.createElement("span");
+                  ok.style.cssText = "font-size:10px;color:#4ade80";
+                  ok.textContent = "\u2713 IRK saved — tracking will activate within 60 seconds";
+                  irkRow.appendChild(ok);
+                } catch (err) {
+                  irkSaveBtn.textContent = "Error";
+                  irkSaveBtn.style.color = "#f87171";
+                  irkSaveBtn.style.borderColor = "#dc2626";
+                  const errMsg = (err && err.message) || String(err);
+                  const errDiv = document.createElement("div");
+                  errDiv.style.cssText = "font-size:10px;color:#f87171;width:100%;margin-top:2px";
+                  errDiv.textContent = errMsg;
+                  irkRow.appendChild(errDiv);
+                  irkSaveBtn.disabled = false;
+                  irkSaveBtn.textContent = "Retry";
+                }
+              });
+
+              irkRow.appendChild(addIrkBtn);
+              irkRow.appendChild(irkInput);
+              irkRow.appendChild(irkSaveBtn);
+
+              // Help text
+              const helpText = document.createElement("div");
+              helpText.style.cssText = "font-size:9px;color:#64748b;width:100%;margin-top:2px;display:none";
+              helpText.textContent = "Find IRK in Companion App: Settings \u2192 Companion App \u2192 Manage Sensors \u2192 BLE Transmitter. Copy the IRK value and paste above.";
+              irkRow.appendChild(helpText);
+              addIrkBtn.addEventListener("click", () => { helpText.style.display = "block"; });
+
+              info.appendChild(irkRow);
             }
             row.appendChild(info);
 

@@ -134,6 +134,8 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_ha_entities_audit)
     websocket_api.async_register_command(hass, ws_logs_get)
     websocket_api.async_register_command(hass, ws_private_ble_status)
+    websocket_api.async_register_command(hass, ws_irk_add)
+    websocket_api.async_register_command(hass, ws_irk_remove)
     websocket_api.async_register_command(hass, ws_private_ble_add_irk)
     websocket_api.async_register_command(hass, ws_private_ble_delete_irk)
     websocket_api.async_register_command(hass, ws_objects_clear_history)
@@ -5103,6 +5105,109 @@ async def ws_private_ble_status(hass: HomeAssistant, connection, msg) -> None:
             "rpa_count": 0, "total_ble_addresses": 0,
             "error": str(err),
         })
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/irk_add",
+        vol.Required("name"): str,
+        vol.Required("irk_hex"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_irk_add(hass: HomeAssistant, connection, msg) -> None:
+    """Add an IRK directly via PadSpan — no separate HA integration needed.
+
+    Stores in PadSpan settings and reloads the resolver immediately.
+    The IRK can be pasted as hex (32 chars), base64, or colon-separated.
+    """
+    name = str(msg["name"]).strip()
+    irk_raw = str(msg["irk_hex"]).strip()
+    if not name:
+        connection.send_error(msg["id"], "invalid", "name is required")
+        return
+    if not irk_raw:
+        connection.send_error(msg["id"], "invalid", "irk_hex is required")
+        return
+
+    # Normalise IRK to plain hex
+    irk_clean = irk_raw.replace(":", "").replace("-", "").replace(" ", "")
+    # Try base64 decode if it doesn't look like hex
+    if len(irk_clean) not in (32,) or not all(c in "0123456789abcdefABCDEF" for c in irk_clean):
+        try:
+            import base64
+            irk_bytes = base64.b64decode(irk_raw)
+            if len(irk_bytes) == 16:
+                irk_clean = irk_bytes.hex()
+            else:
+                connection.send_error(msg["id"], "invalid", f"IRK must be 16 bytes, got {len(irk_bytes)}")
+                return
+        except Exception:
+            connection.send_error(msg["id"], "invalid", "Could not parse IRK. Enter 32 hex chars or base64.")
+            return
+
+    irk_clean = irk_clean.lower()
+
+    # Store in settings
+    st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    if not st:
+        connection.send_error(msg["id"], "not_ready", "Settings store not available")
+        return
+
+    irk_list = list(st.data.get("irk_devices") or [])
+    # Check for duplicates
+    for existing in irk_list:
+        if (existing.get("irk_hex") or "").lower().replace(":", "").replace("-", "").replace(" ", "") == irk_clean:
+            connection.send_error(msg["id"], "duplicate", f"IRK already registered for '{existing.get('name')}'")
+            return
+
+    irk_list.append({"name": name, "irk_hex": irk_clean})
+    await st.async_set(irk_devices=irk_list)
+
+    # Reload the resolver so it picks up the new IRK immediately
+    try:
+        resolver = await _get_ble_resolver(hass)
+        await resolver.async_load()
+        _LOGGER.info("IRK added for '%s' — resolver reloaded (%d devices)", name, resolver.device_count)
+    except Exception as e:
+        _LOGGER.warning("IRK added but resolver reload failed: %s", e)
+
+    connection.send_result(msg["id"], {
+        "ok": True,
+        "name": name,
+        "irk_hex": irk_clean,
+        "canonical_id": f"irk:{irk_clean}",
+        "device_count": resolver.device_count if resolver else 0,
+    })
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/irk_remove",
+        vol.Required("irk_hex"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_irk_remove(hass: HomeAssistant, connection, msg) -> None:
+    """Remove a PadSpan-managed IRK and reload the resolver."""
+    irk_raw = str(msg["irk_hex"]).strip().lower().replace(":", "").replace("-", "").replace(" ", "")
+    st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    if not st:
+        connection.send_error(msg["id"], "not_ready", "Settings store not available")
+        return
+
+    irk_list = list(st.data.get("irk_devices") or [])
+    new_list = [e for e in irk_list if (e.get("irk_hex") or "").lower().replace(":", "").replace("-", "").replace(" ", "") != irk_raw]
+    removed = len(irk_list) - len(new_list)
+    await st.async_set(irk_devices=new_list)
+
+    try:
+        resolver = await _get_ble_resolver(hass)
+        await resolver.async_load()
+    except Exception:
+        pass
+
+    connection.send_result(msg["id"], {"ok": True, "removed": removed})
 
 
 @websocket_api.websocket_command({
