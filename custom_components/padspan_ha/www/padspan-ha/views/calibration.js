@@ -4835,22 +4835,22 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     if (!bs._guideActive) {
       // Collapsed: show activation button
       const row = document.createElement("div");
-      row.style.cssText = "display:flex;align-items:center;gap:10px;flex-wrap:wrap";
+      row.style.cssText = "display:flex;align-items:center;gap:8px";
       const icon = document.createElement("span");
-      icon.style.cssText = "font-size:18px";
+      icon.style.cssText = "font-size:14px";
       icon.textContent = "\uD83C\uDFAF";
       row.appendChild(icon);
       const lbl = document.createElement("span");
-      lbl.style.cssText = "font-weight:700;font-size:14px;color:#3b82f6";
+      lbl.style.cssText = "font-weight:700;font-size:13px;color:#3b82f6";
       lbl.textContent = "Calibration Guide";
       row.appendChild(lbl);
       const desc = document.createElement("span");
-      desc.style.cssText = "font-size:12px;color:#94a3b8;flex:1";
-      desc.textContent = "Guided calibration — the system suggests where to place beacons for maximum location accuracy.";
+      desc.style.cssText = "font-size:11px;color:#94a3b8;flex:1";
+      desc.textContent = "Guided beacon placement for maximum accuracy.";
       row.appendChild(desc);
       const startBtn = document.createElement("button");
       startBtn.className = "btn inline";
-      startBtn.style.cssText = "color:#3b82f6;border-color:#3b82f6;font-weight:700";
+      startBtn.style.cssText = "color:#3b82f6;border-color:#3b82f6;font-weight:700;font-size:12px;padding:3px 12px";
       startBtn.textContent = "Start Guide";
       startBtn.addEventListener("click", () => {
         bs._guideActive = true;
@@ -4862,43 +4862,20 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       return;
     }
 
-    // Active guide UI
+    // Active guide UI — compact single header row with beacon selector inline
     const hdr = document.createElement("div");
-    hdr.style.cssText = "display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap";
+    hdr.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px";
     const icon = document.createElement("span");
-    icon.style.cssText = "font-size:18px";
+    icon.style.cssText = "font-size:14px";
     icon.textContent = "\uD83C\uDFAF";
     hdr.appendChild(icon);
     const title = document.createElement("span");
-    title.style.cssText = "font-weight:700;font-size:14px;color:#3b82f6";
-    title.textContent = "Calibration Guide";
+    title.style.cssText = "font-weight:700;font-size:13px;color:#3b82f6;white-space:nowrap";
+    title.textContent = "Guide";
     hdr.appendChild(title);
-    const closeBtn = document.createElement("button");
-    closeBtn.className = "btn inline";
-    closeBtn.style.cssText = "margin-left:auto;font-size:11px;color:#94a3b8";
-    closeBtn.textContent = "Close Guide";
-    closeBtn.addEventListener("click", () => {
-      bs._guideActive = false;
-      bs._guideTarget = null;
-      bs._guideCapturing = false;
-      bs._guideSaved = false;
-      if (bs._guideTimerId) { clearTimeout(bs._guideTimerId); bs._guideTimerId = null; }
-      if (bs._guidePollId) { clearTimeout(bs._guidePollId); bs._guidePollId = null; }
-      _refreshGuideCard();
-      _refreshSVG();
-    });
-    hdr.appendChild(closeBtn);
-    guideCard.appendChild(hdr);
-
-    // Beacon selector
-    const selRow = document.createElement("div");
-    selRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap";
-    const selLbl = document.createElement("span");
-    selLbl.style.cssText = "font-size:12px;color:#94a3b8";
-    selLbl.textContent = "Beacon:";
-    selRow.appendChild(selLbl);
+    // Beacon selector inline in header
     const guideSel = document.createElement("select");
-    guideSel.style.cssText = "flex:1;min-width:160px;background:#071008;color:#e2e8f0;border:1px solid #1e40af;border-radius:4px;padding:3px 8px;font-size:12px";
+    guideSel.style.cssText = "max-width:25%;min-width:100px;background:#071008;color:#e2e8f0;border:1px solid #1e40af;border-radius:4px;padding:2px 6px;font-size:11px";
     // All tracked beacons on any map
     const allBks = [];
     for (const [mapId, bks] of Object.entries(bs.draftBeacons)) {
@@ -4924,13 +4901,28 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       _refreshGuideCard();
       _refreshSVG();
     });
-    selRow.appendChild(guideSel);
-    guideCard.appendChild(selRow);
+    hdr.appendChild(guideSel);
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "btn inline";
+    closeBtn.style.cssText = "margin-left:auto;font-size:10px;color:#94a3b8;padding:2px 8px";
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", () => {
+      bs._guideActive = false;
+      bs._guideTarget = null;
+      bs._guideCapturing = false;
+      bs._guideSaved = false;
+      if (bs._guideTimerId) { clearTimeout(bs._guideTimerId); bs._guideTimerId = null; }
+      if (bs._guidePollId) { clearTimeout(bs._guidePollId); bs._guidePollId = null; }
+      _refreshGuideCard();
+      _refreshSVG();
+    });
+    hdr.appendChild(closeBtn);
+    guideCard.appendChild(hdr);
 
     if (!bs._guideBkKey) {
       const hint = document.createElement("div");
-      hint.style.cssText = "font-size:12px;color:#64748b";
-      hint.textContent = "Select a beacon above. The system will calculate where calibration data is most needed.";
+      hint.style.cssText = "font-size:11px;color:#64748b";
+      hint.textContent = "Select a beacon to start guided calibration.";
       guideCard.appendChild(hint);
       return;
     }
@@ -4944,13 +4936,13 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       // Show capture in progress
       const rem = Math.max(0, Math.ceil((bs._guideEndTime - Date.now()) / 1000));
       const prog = document.createElement("div");
-      prog.style.cssText = "text-align:center;padding:12px;font-size:14px;color:#3b82f6;font-weight:700";
+      prog.style.cssText = "text-align:center;padding:4px;font-size:12px;color:#3b82f6;font-weight:700";
       const scannerCount = Object.keys(bs._guideReadings).length;
-      prog.textContent = `Capturing... ${rem}s remaining \u2022 ${scannerCount} scanner${scannerCount !== 1 ? "s" : ""} detected`;
+      prog.textContent = `Capturing... ${rem}s \u2022 ${scannerCount} scanner${scannerCount !== 1 ? "s" : ""}`;
       guideCard.appendChild(prog);
       const stopBtn = document.createElement("button");
       stopBtn.className = "btn inline";
-      stopBtn.style.cssText = "display:block;margin:6px auto 0;color:#f87171;border-color:#f87171;font-size:12px";
+      stopBtn.style.cssText = "display:block;margin:4px auto 0;color:#f87171;border-color:#f87171;font-size:11px;padding:2px 10px";
       stopBtn.textContent = "Cancel Capture";
       stopBtn.addEventListener("click", () => {
         if (bs._guideTimerId) { clearTimeout(bs._guideTimerId); bs._guideTimerId = null; }
@@ -4967,33 +4959,24 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     // Capture report before showing next location
     if (bs._guideSaved) {
       const saved = document.createElement("div");
-      saved.style.cssText = "padding:10px;font-size:12px;line-height:1.6";
+      saved.style.cssText = "padding:4px 8px;font-size:11px;line-height:1.5";
       if (bs._guideSaved === "no_signal") {
-        saved.innerHTML = `<div style="color:#f59e0b;font-weight:700;font-size:14px;margin-bottom:4px">&#9888; No Signal</div>`;
+        saved.innerHTML = `<span style="color:#f59e0b;font-weight:700">&#9888; No Signal</span>`;
       } else if (bs._guideSaved === "error") {
-        saved.innerHTML = `<div style="color:#f87171;font-weight:700;font-size:14px;margin-bottom:4px">&#10007; Save Failed</div>`;
+        saved.innerHTML = `<span style="color:#f87171;font-weight:700">&#10007; Save Failed</span>`;
       } else {
-        saved.innerHTML = `<div style="color:#52b788;font-weight:700;font-size:14px;margin-bottom:4px">&#10003; Saved to database</div>`;
+        saved.innerHTML = `<span style="color:#52b788;font-weight:700">&#10003; Saved</span>`;
       }
       if (bs._guideReport) {
         const lines = bs._guideReport.split("\n");
-        const mainLine = document.createElement("div");
-        mainLine.style.cssText = "color:#e2e8f0;margin-bottom:4px";
-        mainLine.textContent = lines[0];
-        saved.appendChild(mainLine);
+        saved.innerHTML += ` <span style="color:#e2e8f0">${_esc(lines[0])}</span>`;
         for (let i = 1; i < lines.length; i++) {
-          const warnLine = document.createElement("div");
           const isError = lines[i].includes("SAVE FAILED");
-          warnLine.style.cssText = `color:${isError ? "#f87171" : "#f59e0b"};font-size:11px`;
-          warnLine.textContent = lines[i];
-          saved.appendChild(warnLine);
+          saved.innerHTML += `<br><span style="color:${isError ? "#f87171" : "#f59e0b"};font-size:10px">${_esc(lines[i])}</span>`;
         }
       }
       if (bs._guideSaved === true) {
-        const next = document.createElement("div");
-        next.style.cssText = "color:#94a3b8;font-size:11px;margin-top:6px";
-        next.textContent = "Moving to next location\u2026";
-        saved.appendChild(next);
+        saved.innerHTML += `<br><span style="color:#94a3b8;font-size:10px">Next location\u2026</span>`;
       }
       guideCard.appendChild(saved);
       return;
@@ -5001,12 +4984,12 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
     if (!bs._guideTarget) {
       const done = document.createElement("div");
-      done.style.cssText = "text-align:center;padding:12px;font-size:13px;color:#52b788";
-      done.innerHTML = "<b>All areas covered!</b> No more suggested positions. You can reset skipped spots or close the guide.";
+      done.style.cssText = "text-align:center;padding:4px;font-size:12px;color:#52b788";
+      done.innerHTML = "<b>All areas covered!</b> Reset skipped spots or close.";
       guideCard.appendChild(done);
       const resetBtn = document.createElement("button");
       resetBtn.className = "btn inline";
-      resetBtn.style.cssText = "display:block;margin:6px auto 0;color:#3b82f6;border-color:#3b82f6;font-size:12px";
+      resetBtn.style.cssText = "display:block;margin:4px auto 0;color:#3b82f6;border-color:#3b82f6;font-size:11px;padding:2px 10px";
       resetBtn.textContent = "Reset Skipped";
       resetBtn.addEventListener("click", () => {
         bs._guideSkipped = [];
@@ -5026,28 +5009,26 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     const flName = flObj ? (flObj.name || `Floor ${tgtMap?.stack?.z_level ?? 0}`) : "";
 
     const suggest = document.createElement("div");
-    suggest.style.cssText = "background:rgba(59,130,246,.1);border-radius:8px;padding:10px 14px;margin-bottom:8px";
-    suggest.innerHTML = `<div style="font-weight:700;font-size:13px;color:#3b82f6;margin-bottom:4px">Suggested Position</div>`
-      + `<div style="font-size:12px;color:#e2e8f0">Room: <b style="color:#5eead4">${_esc(tgt.room)}</b>`
+    suggest.style.cssText = "background:rgba(59,130,246,.1);border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:11px;line-height:1.5";
+    suggest.innerHTML = `<span style="font-weight:700;color:#3b82f6">Next:</span> `
+      + `<b style="color:#5eead4">${_esc(tgt.room)}</b>`
       + (flName ? ` \u2022 ${_esc(flName)}` : "")
-      + ` \u2022 ${tgtMap ? _esc(tgtMap.name || tgtMap.id) : "?"}</div>`
-      + `<div style="font-size:11px;color:#94a3b8;margin-top:4px">`
-      + `${tgt.radioCount} scanner${tgt.radioCount !== 1 ? "s" : ""} in range \u2022 `
-      + `${bs._guideSkipped.length} spot${bs._guideSkipped.length !== 1 ? "s" : ""} skipped</div>`
-      + `<div style="font-size:11px;color:#60a5fa;margin-top:6px">Look for the <b>blue spiral</b> on the 3D map. Place the beacon at that location, then click the spiral or press Start below.</div>`;
+      + ` \u2022 ${tgtMap ? _esc(tgtMap.name || tgtMap.id) : "?"}`
+      + ` <span style="color:#94a3b8">(${tgt.radioCount} scanner${tgt.radioCount !== 1 ? "s" : ""}, ${bs._guideSkipped.length} skipped)</span>`
+      + `<br><span style="color:#60a5fa">Place beacon at the <b>blue spiral</b> on the map, then Start.</span>`;
     guideCard.appendChild(suggest);
 
     const btnRow = document.createElement("div");
-    btnRow.style.cssText = "display:flex;gap:8px;justify-content:center";
+    btnRow.style.cssText = "display:flex;gap:6px;justify-content:center";
     const goBtn = document.createElement("button");
     goBtn.className = "btn";
-    goBtn.style.cssText = "background:#1e3a5f;border-color:#3b82f6;color:#93c5fd;font-weight:700;padding:6px 20px";
-    goBtn.textContent = "Start Capture (60s)";
+    goBtn.style.cssText = "background:#1e3a5f;border-color:#3b82f6;color:#93c5fd;font-weight:700;padding:4px 14px;font-size:12px";
+    goBtn.textContent = "Start (60s)";
     goBtn.addEventListener("click", () => _startGuideCapture());
     btnRow.appendChild(goBtn);
     const skipBtn = document.createElement("button");
     skipBtn.className = "btn inline";
-    skipBtn.style.cssText = "color:#94a3b8;font-size:12px";
+    skipBtn.style.cssText = "color:#94a3b8;font-size:11px;padding:4px 10px";
     skipBtn.textContent = "Skip \u2192";
     skipBtn.title = "Skip this location and suggest the next best spot";
     skipBtn.addEventListener("click", () => {

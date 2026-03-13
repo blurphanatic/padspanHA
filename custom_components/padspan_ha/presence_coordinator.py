@@ -316,6 +316,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _master_bounds: dict[str, Any] = {}  # room_bounds from the master map (precedence)
         _master_map_id: str = ""              # master map ID (for k-NN coordinate space check)
         _master_rooms: set[str] = set()       # rooms defined on the master map
+        _maps_store = None
         try:
             _maps_store = self.hass.data.get(DOMAIN, {}).get(DATA_MAPS)
             if _maps_store:
@@ -380,7 +381,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 smoothed_room = self._smooth_room(
                     key, smooth_addr, addr_src_rssi, source_to_area,
                     _dyn_vote_window, _dyn_vote_threshold, source_to_floor,
-                    _master_rooms)
+                    _master_rooms, _master_map_id, _master_bounds, _maps_store)
                 if smoothed_room:
                     obj["room"] = smoothed_room
                 obj["_smoothed"] = True
@@ -414,7 +415,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 synthetic = {key: merged_src} if merged_src else {}
                 smoothed_room = self._smooth_room(
                     key, key, synthetic, source_to_area,
-                    _dyn_vote_window, _dyn_vote_threshold, source_to_floor)
+                    _dyn_vote_window, _dyn_vote_threshold, source_to_floor,
+                    None, _master_map_id, _master_bounds, _maps_store)
                 if smoothed_room:
                     obj["room"] = smoothed_room
                 obj["_smoothed"] = True
@@ -562,6 +564,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         vote_threshold: int = _VOTE_THRESHOLD,
         source_to_floor: dict[str, str] | None = None,
         master_rooms: set[str] | None = None,
+        master_map_id: str = "",
+        master_bounds: dict | None = None,
+        maps_store: Any | None = None,
     ) -> str | None:
         """
         Run one poll of the two-stage smoothing pipeline for a BLE device.
@@ -758,21 +763,22 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if not hasattr(self, "_knn_log_count"):
                     self._knn_log_count = 0
                 self._knn_log_count += 1
-                if self._knn_log_count <= 3 or self._knn_log_count % 100 == 0:
+                if self._knn_log_count <= 10 or self._knn_log_count % 50 == 0:
                     _cal_srcs = set()
                     for _cp in _calib.data.get("points", []):
                         for _cr in (_cp.get("scanner_readings") or []):
                             if _cr.get("source"):
                                 _cal_srcs.add(_cr["source"])
                     _overlap = set(ema.keys()) & _cal_srcs
-                    _LOGGER.info(
-                        "k-NN debug [%s]: ema_keys=%s, cal_sources=%d, overlap=%d, "
-                        "result=%s, conf=%s, threshold=%s",
-                        key[:30], list(ema.keys())[:5], len(_cal_srcs),
+                    _LOGGER.warning(
+                        "k-NN [%s] addr=%s: ema=%d, cal_src=%d, overlap=%d, "
+                        "result=%s, conf=%s, room=%s, positions_stored=%d",
+                        key[:30], addr[:20], len(ema), len(_cal_srcs),
                         len(_overlap),
                         "yes" if _knn else "None",
                         _knn.get("confidence") if _knn else "N/A",
-                        _KNN_LIVE_THRESHOLD,
+                        _knn.get("nearest_room", "") if _knn else "N/A",
+                        len(self._knn_position),
                     )
                 if _knn and _knn.get("confidence", 0.0) >= _KNN_LIVE_THRESHOLD:
                     _knn_room = _knn.get("nearest_room") or ""
@@ -781,13 +787,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # Only fall back to master map bounds if k-NN is on the master.
                     if _knn.get("x_frac") is not None:
                         _knn_mid = _knn.get("map_id", "")
-                        if _knn_mid == _master_map_id and _master_bounds:
-                            _check_bounds = _master_bounds
-                        elif _knn_mid and _maps_store:
-                            _knn_map = next((m for m in (_maps_store.data.get("maps") or []) if m.get("id") == _knn_mid), None)
-                            _check_bounds = (_knn_map.get("room_bounds") or {}) if _knn_map else _master_bounds
+                        if _knn_mid == master_map_id and master_bounds:
+                            _check_bounds = master_bounds
+                        elif _knn_mid and maps_store:
+                            _knn_map = next((m for m in (maps_store.data.get("maps") or []) if m.get("id") == _knn_mid), None)
+                            _check_bounds = (_knn_map.get("room_bounds") or {}) if _knn_map else (master_bounds or {})
                         else:
-                            _check_bounds = _master_bounds
+                            _check_bounds = master_bounds or {}
                         if _check_bounds:
                             _geo_room = _room_from_bounds(
                                 _check_bounds,
@@ -807,7 +813,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 self._knn_position.pop(key, None)
         except Exception as _knn_err:
-            _LOGGER.debug("k-NN error for %s: %s", key[:30], _knn_err)
+            _LOGGER.warning("k-NN error for %s: %s", key[:30], _knn_err, exc_info=True)
             self._knn_position.pop(key, None)
 
         # ── Stage 2: majority-vote window (size adjusts to room_change_delay_s) ──
