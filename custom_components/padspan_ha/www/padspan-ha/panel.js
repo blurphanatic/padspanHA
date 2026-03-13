@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.11.3";
+const APP_VERSION = "0.11.4";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260313T222335Z";
+const BUILD_ID = "20260313T222742Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -285,7 +285,7 @@ class PadSpanHaApp extends HTMLElement {
       <link rel="stylesheet" href="/padspan_ha_static/padspan-ha/styles.css?v=${APP_VERSION}&b=${BUILD_ID}">
       <style>
         /* Only :host fallback — do not override layout classes that styles.css already handles */
-        :host{display:block;min-height:100vh;background:#0a150e;color:#e2e8f0;font-family:Inter,system-ui,Arial,sans-serif;box-sizing:border-box}
+        :host{display:block;background:#0a150e;color:#e2e8f0;font-family:Inter,system-ui,Arial,sans-serif;box-sizing:border-box}
       </style>
       <div id="app" class="app">
         <div class="side-backdrop" id="sideBackdrop"></div>
@@ -344,6 +344,22 @@ class PadSpanHaApp extends HTMLElement {
     this.$nav = this.$("#nav");
     this.$content = this.$("#content");
     this.$modal = this.$("#modal");
+
+    // Measure actual available height — HA's toolbar offsets the panel
+    // from the top of the viewport.  --header-height may not propagate
+    // through shadow DOM, so measure directly and set on the app element.
+    this._fitHeight = () => {
+      try {
+        const appEl = this.$("#app");
+        if (appEl) {
+          const rect = appEl.getBoundingClientRect();
+          const avail = window.innerHeight - rect.top;
+          if (avail > 100) appEl.style.height = avail + "px";
+        }
+      } catch(e) {}
+    };
+    requestAnimationFrame(() => this._fitHeight());
+    window.addEventListener("resize", () => this._fitHeight());
 
     this.$("#refresh").addEventListener("click", ()=>this._refreshAll(true));
     this.$("#autodiag").addEventListener("click", ()=>this._runAutoDiag(true));
