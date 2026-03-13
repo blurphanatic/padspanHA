@@ -5,8 +5,8 @@
 """Generated at build time. Used to prove what version is actually installed."""
 
 BUILD_VERSION = "0.10.22"
-BUILD_ID = "20260313T082722Z"
-CHANNEL = "beta"
+BUILD_ID = "20260313T082740Z"
+CHANNEL = "stable"
 
 # Backwards/for convenience
 VERSION = BUILD_VERSION
