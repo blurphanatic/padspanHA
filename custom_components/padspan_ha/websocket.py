@@ -2806,6 +2806,10 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
             _pts = _cal.data.get("points", [])
             _auto = sum(1 for p in _pts if str(p.get("label", "")).startswith("[auto]"))
             _empty = sum(1 for p in _pts if not (p.get("scanner_readings") or []))
+            _knn_active_count = 0
+            _pc3 = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+            if _pc3:
+                _knn_active_count = len(getattr(_pc3, "_knn_position", {}))
             snap["calibration_status"] = {
                 "total_points": len(_pts),
                 "auto_points": _auto,
@@ -2814,6 +2818,16 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                 "maps": len({p.get("map_id") for p in _pts if p.get("map_id")}),
                 "scanners": len({r.get("source") for p in _pts for r in (p.get("scanner_readings") or [])}),
                 "knn_min_required": 5,
+                "knn_active": len(_pts) >= 5,
+                "knn_positioned_objects": _knn_active_count,
+                "store_initialized": True,
+            }
+        else:
+            snap["calibration_status"] = {
+                "total_points": 0,
+                "store_initialized": False,
+                "knn_active": False,
+                "knn_positioned_objects": 0,
             }
     except Exception:
         pass

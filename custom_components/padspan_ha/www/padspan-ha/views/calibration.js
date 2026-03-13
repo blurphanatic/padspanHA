@@ -4782,6 +4782,11 @@ function _beaconTuneTab(ctx, el, cs, calData) {
             const d = Math.hypot(p.x_frac - x, p.y_frac - y);
             if (d < minDistAll) minDistAll = d;
           }
+          // Skip positions that already have a calibration point very close
+          // (within half a grid cell). This prevents the guide from suggesting
+          // the same spot repeatedly when radio overlap score is high.
+          if (minDistAll < 0.5 / GRID) continue;
+
           // Extra bonus for distance from this beacon's own points
           let minDistBk = 1.0;
           for (const p of bkPts) {
@@ -4795,10 +4800,10 @@ function _beaconTuneTab(ctx, el, cs, calData) {
             const d = Math.hypot((r.x || 0) - x, (r.y || 0) - y);
             if (d < 0.4) radioCount++;
           }
-          // Strong bonus for 2+ radios (user's key insight)
-          const radioScore = radioCount >= 2 ? 2.0 + radioCount * 0.5 : radioCount * 0.3;
+          // Bonus for 2+ radios, but distance from existing points is dominant
+          const radioScore = radioCount >= 2 ? 1.0 + radioCount * 0.3 : radioCount * 0.2;
 
-          const score = minDistAll * 1.5 + minDistBk * 1.0 + radioScore;
+          const score = minDistAll * 3.0 + minDistBk * 2.0 + radioScore;
           if (score > bestScore) {
             bestScore = score;
             bestTarget = { mapId: m.id, x, y, room: inRoom, radioCount, score };

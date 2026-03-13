@@ -2007,9 +2007,16 @@ export function render(ctx){
         const empty = cs.empty_points || 0;
         const usable = total - empty;
         const color = !usable ? "#f87171" : usable >= (cs.knn_min_required||5) ? "#52b788" : "#f59e0b";
+        const knnLabel = cs.store_initialized === false ? "Store not loaded" :
+          !cs.knn_active ? `Need ${(cs.knn_min_required||5) - usable} more` :
+          cs.knn_positioned_objects > 0 ? `k-NN active (${cs.knn_positioned_objects})` : "k-NN ready";
+        const knnColor = cs.store_initialized === false ? "#f87171" :
+          cs.knn_active && cs.knn_positioned_objects > 0 ? "#52b788" :
+          cs.knn_active ? "#f59e0b" : "#94a3b8";
         return el("div",{style:"text-align:center"},[
           el("div",{class:"basic-summary-num",style:`color:${color}`}, liveLoading ? "--" : String(usable)),
           el("div",{class:"basic-summary-lbl"}, "Cal pts"),
+          el("div",{style:`font-size:9px;color:${knnColor};margin-top:2px`}, knnLabel),
         ]);
       })(),
     ].filter(Boolean));
@@ -2352,8 +2359,12 @@ export function render(ctx){
       const empty = cs.empty_points || 0;
       const usable = total - empty;
       const ready = usable >= (cs.knn_min_required || 5);
-      const color = !total ? "#f87171" : empty > 0 ? "#f59e0b" : ready ? "#52b788" : "#f59e0b";
-      const statusText = !total ? "No data" : !ready ? `Need ${(cs.knn_min_required||5) - usable} more` : "Active";
+      const storeOk = cs.store_initialized !== false;
+      const knnPos = cs.knn_positioned_objects || 0;
+      const color = !storeOk ? "#f87171" : !total ? "#f87171" : empty > 0 ? "#f59e0b" : ready ? "#52b788" : "#f59e0b";
+      const statusText = !storeOk ? "Store not loaded (restart HA)" :
+        !total ? "No data" : !ready ? `Need ${(cs.knn_min_required||5) - usable} more` :
+        knnPos > 0 ? `Active — ${knnPos} objects positioned` : "Ready (no objects matched yet)";
       const parts = [];
       if (cs.manual_points > 0) parts.push(`${cs.manual_points} manual`);
       if (cs.auto_points > 0) parts.push(`${cs.auto_points} auto`);
@@ -2367,6 +2378,8 @@ export function render(ctx){
           parts.join(" · ") + (cs.scanners ? ` · ${cs.scanners} scanners` : "") + (cs.maps ? ` · ${cs.maps} maps` : "")),
         el("div",{style:`font-size:11px;margin-top:4px;color:${color}`},
           `k-NN: ${statusText}`),
+        !storeOk ? el("div",{style:"font-size:11px;margin-top:4px;color:#f87171;font-weight:600"},
+          "CalibrationStore was not loaded at startup. Restart Home Assistant to activate k-NN positioning.") : null,
         empty > 0 ? el("div",{style:"font-size:11px;margin-top:4px;color:#f59e0b"},
           `${empty} point(s) have no RSSI data — re-calibrate to fix`) : null,
       ].filter(Boolean));
