@@ -2001,7 +2001,7 @@ export function render(ctx){
         el("div",{class:"basic-summary-lbl"}, "Scanners"),
       ]),
       (() => {
-        const cs = snap?.calibration_status;
+        const cs = liveSnap?.calibration_status;
         if (!cs) return null;
         const total = cs.total_points || 0;
         const empty = cs.empty_points || 0;
@@ -2270,7 +2270,7 @@ export function render(ctx){
     ]),
     // Calibration status card
     (() => {
-      const cs = snap?.calibration_status;
+      const cs = liveSnap?.calibration_status;
       if (!cs) return null;
       const total = cs.total_points || 0;
       const empty = cs.empty_points || 0;
