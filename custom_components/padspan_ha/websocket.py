@@ -4095,8 +4095,22 @@ async def ws_calibration_save_point(hass: HomeAssistant, connection, msg) -> Non
     cal = await _get_cal_store(hass)
     try:
         saved = await cal.async_add_point(msg["point"])
-        connection.send_result(msg["id"], {"ok": True, "point": saved})
+        _total = len(cal.data.get("points", []))
+        _scanners = len({r.get("source") for p in cal.data.get("points", [])
+                         for r in (p.get("scanner_readings") or []) if r.get("source")})
+        _LOGGER.info(
+            "Calibration point saved: id=%s map=%s room=%s scanners=%d samples=%d (total: %d pts, %d scanners)",
+            saved.get("id", "?"), saved.get("map_id", "?")[:20],
+            saved.get("room") or "(none)", len(saved.get("scanner_readings") or []),
+            sum(len(r.get("rssi_samples", [])) for r in (saved.get("scanner_readings") or [])),
+            _total, _scanners,
+        )
+        connection.send_result(msg["id"], {
+            "ok": True, "point": saved,
+            "total_points": _total, "total_scanners": _scanners,
+        })
     except Exception as e:
+        _LOGGER.warning("Calibration save failed: %s", e)
         connection.send_error(msg["id"], "save_failed", str(e))
 
 

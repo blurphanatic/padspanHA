@@ -2598,6 +2598,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     _guideSkipped: [],     // [{mapId, x, y}] — positions user skipped
     _guideCapturing: false, // true while 60s capture is running
     _guideSaved: false,    // brief "Saved!" flash before advancing to next location
+    _guideReport: "",      // capture report text shown after save
     _guideTimerId: null,
     _guidePollId: null,
     _guideReadings: {},    // {source: {name, samples:[]}}
@@ -3876,6 +3877,9 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       if (entry.pollTimer) clearTimeout(entry.pollTimer);
       // Save calibration point — weight increases with each round
       const readingCount = Object.keys(entry.readings).length;
+      if (readingCount === 0) {
+        ctx.toast(`No signal: ${entry.bk.label || entry.bk.key} — no scanners detected this beacon during 60s capture`, "warning");
+      }
       if (readingCount > 0) {
         const bkKey = entry.bk.key;
         bs._calibRounds[bkKey] = (bs._calibRounds[bkKey] || 0) + 1;
@@ -3975,6 +3979,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           scanner_readings: scannerReadings,
           weight: doRelocation ? 5.0 : weight,
         };
+        const _tActiveRadios = scannerReadings.filter(r => (r.rssi_samples || []).length > 0);
+        const _tTotalSamples = scannerReadings.reduce((s, r) => s + (r.rssi_samples || []).length, 0);
         try {
           const saved = await ctx.actions.calibrationSavePoint(point);
           if (saved?.point?.id) {
@@ -3982,14 +3988,24 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           } else if (saved?.id) {
             bs._relocSavedIds[bkKey].push(saved.id);
           }
+          const _bkName = entry.bk.label || entry.bk.key;
+          const _scanInfo = `${_tActiveRadios.length} scanner(s), ${_tTotalSamples} samples`;
+          const _roomInfo = room ? `, room: ${room}` : ", room: (undetected)";
+          const _warns = [];
+          if (_tActiveRadios.length === 1) _warns.push("1 scanner only");
+          if (_tTotalSamples < 10) _warns.push("low samples");
+          if (!room) _warns.push("no room detected");
+          const _warnStr = _warns.length ? " | " + _warns.join(", ") : "";
           if (doRelocation) {
-            ctx.toast(`\u26A0\uFE0F HARD RELOCATION: old calibration data for ${entry.bk.label || bkKey} replaced. New position locked at 5.0\u00d7 weight.`);
+            ctx.toast(`HARD RELOCATION: ${_bkName} — old data replaced. ${_scanInfo}${_roomInfo}${_warnStr}`);
           } else {
-            const weightLabel = round > 1 ? ` (round ${round}, weight ${weight.toFixed(1)}\u00d7)` : "";
-            ctx.toast(`\u2713 ${entry.bk.label || entry.bk.key} calibration saved${weightLabel}`);
+            const weightLabel = round > 1 ? ` (round ${round}, ${weight.toFixed(1)}x)` : "";
+            ctx.toast(`Saved: ${_bkName}${weightLabel} — ${_scanInfo}${_roomInfo}${_warnStr}`);
           }
         } catch (e) {
-          console.warn("[PadSpan] live timer save failed:", e);
+          const _errMsg = (e && e.message) || String(e);
+          ctx.toast(`SAVE FAILED: ${entry.bk.label || entry.bk.key} — ${_errMsg}`, "error");
+          console.error("[PadSpan] live timer save failed:", e);
         }
         if (doRelocation) {
           try {
@@ -4948,15 +4964,36 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       return;
     }
 
-    // Brief "Saved!" flash before showing next location
+    // Capture report before showing next location
     if (bs._guideSaved) {
       const saved = document.createElement("div");
+      saved.style.cssText = "padding:10px;font-size:12px;line-height:1.6";
       if (bs._guideSaved === "no_signal") {
-        saved.style.cssText = "text-align:center;padding:16px;font-size:14px;color:#f59e0b;font-weight:700";
-        saved.innerHTML = "&#9888; No signal detected — skipping to next location\u2026";
+        saved.innerHTML = `<div style="color:#f59e0b;font-weight:700;font-size:14px;margin-bottom:4px">&#9888; No Signal</div>`;
+      } else if (bs._guideSaved === "error") {
+        saved.innerHTML = `<div style="color:#f87171;font-weight:700;font-size:14px;margin-bottom:4px">&#10007; Save Failed</div>`;
       } else {
-        saved.style.cssText = "text-align:center;padding:16px;font-size:14px;color:#52b788;font-weight:700";
-        saved.innerHTML = "&#10003; Saved! Moving to next location\u2026";
+        saved.innerHTML = `<div style="color:#52b788;font-weight:700;font-size:14px;margin-bottom:4px">&#10003; Saved to database</div>`;
+      }
+      if (bs._guideReport) {
+        const lines = bs._guideReport.split("\n");
+        const mainLine = document.createElement("div");
+        mainLine.style.cssText = "color:#e2e8f0;margin-bottom:4px";
+        mainLine.textContent = lines[0];
+        saved.appendChild(mainLine);
+        for (let i = 1; i < lines.length; i++) {
+          const warnLine = document.createElement("div");
+          const isError = lines[i].includes("SAVE FAILED");
+          warnLine.style.cssText = `color:${isError ? "#f87171" : "#f59e0b"};font-size:11px`;
+          warnLine.textContent = lines[i];
+          saved.appendChild(warnLine);
+        }
+      }
+      if (bs._guideSaved === true) {
+        const next = document.createElement("div");
+        next.style.cssText = "color:#94a3b8;font-size:11px;margin-top:6px";
+        next.textContent = "Moving to next location\u2026";
+        saved.appendChild(next);
       }
       guideCard.appendChild(saved);
       return;
@@ -5090,16 +5127,21 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         source, name: rd.name || source, rssi_samples: rd.samples || [],
       }));
 
-      if (!scannerReadings.length || scannerReadings.every(r => !r.rssi_samples.length)) {
-        console.warn("Guide: no RSSI data collected");
+      // Build capture report
+      const _totalSamples = scannerReadings.reduce((s, r) => s + (r.rssi_samples || []).length, 0);
+      const _activeRadios = scannerReadings.filter(r => (r.rssi_samples || []).length > 0);
+
+      if (!_activeRadios.length) {
         bs._guideSaved = "no_signal";
+        bs._guideReport = "No scanners detected this beacon during 60s capture. Move closer to a scanner or check that the beacon is broadcasting.";
         bs._guideReadings = {};
         ctx.actions.renderRooms();
         setTimeout(() => {
           bs._guideSaved = false;
+          bs._guideReport = "";
           bs._guideTarget = _computeBestTarget(bs._guideBkKey);
           ctx.actions.renderRooms();
-        }, 1500);
+        }, 3000);
         return;
       }
 
@@ -5113,6 +5155,20 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       bs._calibRounds[bkKey] = rounds;
       const weight = Math.min(5.0, 1.0 + (rounds - 1) * 0.5);
 
+      // Build report lines
+      const _reportLines = [];
+      _reportLines.push(`${_activeRadios.length} scanner(s), ${_totalSamples} RSSI samples`);
+      if (room) _reportLines.push(`Room: ${room}`);
+      else _reportLines.push("Room: (not detected — position outside room boundaries)");
+      _reportLines.push(`Weight: ${weight.toFixed(1)}x (round ${rounds})`);
+      const _warnings = [];
+      if (_activeRadios.length === 1) _warnings.push("Only 1 scanner heard — accuracy will be limited");
+      if (_totalSamples < 10) _warnings.push("Very few samples collected — signal may be weak");
+      const _emptyRadios = scannerReadings.length - _activeRadios.length;
+      if (_emptyRadios > 0) _warnings.push(`${_emptyRadios} scanner(s) had no usable samples`);
+
+      let _saveOk = false;
+      let _saveError = "";
       try {
         await ctx.actions.calibrationSavePoint({
           map_id: tgt.mapId,
@@ -5124,22 +5180,28 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           scanner_readings: scannerReadings,
           weight: weight,
         });
+        _saveOk = true;
       } catch (e) {
-        console.error("Guide save error:", e);
+        _saveError = (e && e.message) || String(e);
+        _warnings.push(`SAVE FAILED: ${_saveError}`);
       }
 
-      // Show "Saved!" briefly, then advance to next location
-      bs._guideSaved = true;
+      // Store report for display
+      bs._guideSaved = _saveOk ? true : "error";
+      bs._guideReport = _reportLines.join(" · ") + (_warnings.length ? "\n" + _warnings.map(w => "⚠ " + w).join("\n") : "");
       bs._guideReadings = {};
       // Refresh calibration data so _computeBestTarget sees the new point
-      try { ctx.state.calibration = await ctx.actions.calibrationGet(); } catch (_) {}
+      if (_saveOk) {
+        try { ctx.state.calibration = await ctx.actions.calibrationGet(); } catch (_) {}
+      }
       // Force full re-render so live DOM (not stale closure) updates
       ctx.actions.renderRooms();
       setTimeout(() => {
         bs._guideSaved = false;
-        bs._guideTarget = _computeBestTarget(bs._guideBkKey);
+        bs._guideReport = "";
+        if (_saveOk) bs._guideTarget = _computeBestTarget(bs._guideBkKey);
         ctx.actions.renderRooms();
-      }, 1200);
+      }, _saveOk ? 3000 : 5000);
     }, 60000);
   }
 
