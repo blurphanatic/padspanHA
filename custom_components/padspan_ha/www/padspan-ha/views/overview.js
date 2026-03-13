@@ -1372,9 +1372,12 @@ export function render(ctx){
           s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
         }
 
-        // Confidence badge — only shown when beacon has calibrated k-NN position
+        // Confidence badge — always visible, color-coded by quality
         const hasKnn = typeof o.x_frac === "number" && typeof o.y_frac === "number";
         const confPct = hasKnn ? Math.round((o.knn_confidence || 0) * 100) : 0;
+        // Color: green > 60%, amber 30-60%, red < 30%, gray = no data
+        const confColor = !hasKnn ? "#64748b" : confPct >= 60 ? "#52b788" : confPct >= 30 ? "#f59e0b" : "#f87171";
+        const confLabel = !hasKnn ? "Room only" : confPct + "%";
 
         const _ok = _esc(o.key||o.address||o.entity_id||"");
         // Dim away/ghost objects
@@ -1382,13 +1385,12 @@ export function render(ctx){
         const glowOp = isAway ? "0.08" : "0.18";
         const lblColor = isAway ? "#a0845c" : BEACON_CLR;
         s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(o))}" style="cursor:pointer">`;
-        // Confidence badge below the dot — only when we have a k-NN position (skip for room-only and away)
-        if(!isAway && hasKnn){
-          const confColor = confPct >= 60 ? "#52b788" : confPct >= 30 ? "#f59e0b" : "#f87171";
-          const confLabel = confPct + "%";
+        // Confidence badge below the dot (skip for away)
+        if(!isAway){
           const cW = Math.min(confLabel.length * 6 + 8, 60);
           s += `<rect x="${Math.round(bx)-cW/2}" y="${Math.round(by)+18}" width="${cW}" height="12" rx="3" fill="#071008" opacity="0.8"/>`;
           s += `<text x="${Math.round(bx)}" y="${Math.round(by)+27}" text-anchor="middle" fill="${confColor}" font-size="8" font-weight="600">${_esc(confLabel)}</text>`;
+          // Red warning ring only when truly bad (< 30% or no data)
           if(confPct < 30){
             s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="18" fill="none" stroke="${confColor}" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.5"/>`;
           }

@@ -38,6 +38,7 @@ from .const import (
     DATA_ALERTS,
     DATA_MOVEMENT,
     DATA_ADAPTIVE,
+    DATA_CALIBRATION,
     DATA_TRACEBACK,
     DATA_TAG_INTEGRATION,
     DATA_PANEL_REGISTERED,
@@ -107,6 +108,14 @@ async def _ensure_stores(hass: HomeAssistant) -> None:
         await ad_store.async_load()
         hass.data[DOMAIN][DATA_ADAPTIVE] = ad_store
         _LOGGER.debug("AdaptiveStore ready (%d observations)", ad_store.data.get("stats", {}).get("total_observations", 0))
+
+    if DATA_CALIBRATION not in hass.data[DOMAIN]:
+        from .calibration_store import CalibrationStore
+        cal_store = CalibrationStore(hass)
+        await cal_store.async_setup()
+        hass.data[DOMAIN][DATA_CALIBRATION] = cal_store
+        _pt_count = len(cal_store.data.get("points", []))
+        _LOGGER.debug("CalibrationStore ready (%d points)", _pt_count)
 
     if DATA_TRACEBACK not in hass.data[DOMAIN]:
         from .traceback_store import TracebackStore
