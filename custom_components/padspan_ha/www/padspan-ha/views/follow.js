@@ -496,19 +496,23 @@ function _buildAlerts(ctx, el, helpBtn, addr, chosen, haAreas, dataMode, isBasic
 
   // Notify service selector (loads once, cached in state)
   const serviceSelect = el("select", { class: "input", style: "max-width:200px" });
-  serviceSelect.appendChild(el("option", { value: "" }, "Default"));
+  const _noSvcHint = el("div", { style: "font-size:10px;color:#f59e0b;margin-top:2px;display:none" },
+    "No notify services found — add SMTP or another notification integration in HA Settings → Integrations");
+  serviceSelect.appendChild(el("option", { value: "" }, "Auto-detect"));
   if(!ctx.state._notifyServices){
     ctx.state._notifyServices = [];
     ctx.actions.wsCall("padspan_ha/notify_services_list", {}).then(r => {
       ctx.state._notifyServices = (r && r.services) || [];
+      if (!ctx.state._notifyServices.length) _noSvcHint.style.display = "block";
       for(const svc of ctx.state._notifyServices){
         const opt = document.createElement("option");
         opt.value = svc; opt.textContent = svc;
         if(cfg.notify_service === svc) opt.selected = true;
         serviceSelect.appendChild(opt);
       }
-    }).catch(() => {});
+    }).catch(() => { _noSvcHint.style.display = "block"; });
   } else {
+    if (!ctx.state._notifyServices.length) _noSvcHint.style.display = "block";
     for(const svc of ctx.state._notifyServices){
       const opt = el("option", { value: svc }, svc);
       if(cfg.notify_service === svc) opt.selected = true;
@@ -565,9 +569,16 @@ function _buildAlerts(ctx, el, helpBtn, addr, chosen, haAreas, dataMode, isBasic
 
   if (isBasic) {
     card.appendChild(el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
-      el("div", {}, [
-        el("div", { class: "muted", style: "font-size:11px;margin-bottom:3px" }, "Email address"),
-        emailInput,
+      el("div",{style:"display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end"}, [
+        el("div", {}, [
+          el("div", { class: "muted", style: "font-size:11px;margin-bottom:3px" }, "Email address"),
+          emailInput,
+        ]),
+        el("div", {}, [
+          el("div", { class: "muted", style: "font-size:11px;margin-bottom:3px" }, "Notify service"),
+          serviceSelect,
+          _noSvcHint,
+        ]),
       ]),
       el("label", { style: "display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px" }, [
         chkChange, el("span", {}, `Email me when ${name} moves`),
@@ -598,6 +609,7 @@ function _buildAlerts(ctx, el, helpBtn, addr, chosen, haAreas, dataMode, isBasic
         el("div", {}, [
           el("div", { class: "muted", style: "font-size:11px;margin-bottom:3px" }, "Notify service"),
           serviceSelect,
+          _noSvcHint,
         ]),
       ]),
       el("label", { style: "display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px" }, [
