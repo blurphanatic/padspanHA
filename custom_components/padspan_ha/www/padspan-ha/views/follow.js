@@ -104,16 +104,10 @@ function _buildSelector(ctx, el, helpBtn, allObjects, currentAddr, isBasic) {
     helpBtn("follow_selector"),
   ]));
 
-  const sel = document.createElement("select");
-  sel.className = "select";
-  const blank = document.createElement("option");
-  blank.value = ""; blank.textContent = "— Select a tag —";
-  sel.appendChild(blank);
-
   // Sort: strongest RSSI first (identified objects with no RSSI sort after those with RSSI)
   const sorted = [...allObjects].sort((a, b) => {
     const ra = a.rssi ?? -999, rb = b.rssi ?? -999;
-    if (ra !== rb) return rb - ra;  // strongest (closest to 0) first
+    if (ra !== rb) return rb - ra;
     if (!!a.identified !== !!b.identified) return a.identified ? -1 : 1;
     const na = a.user_label || a.name || a.entity_id || a.address || "";
     const nb = b.user_label || b.name || b.entity_id || b.address || "";
@@ -122,35 +116,100 @@ function _buildSelector(ctx, el, helpBtn, allObjects, currentAddr, isBasic) {
 
   const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   const _isScanner = ctx.helpers.isScanner;
+
+  // Build flat list of selectable items
+  const items = [];
   for (const o of sorted) {
-    const id  = o.address || o.entity_id || "";
+    const id = o.address || o.entity_id || "";
     if (!id) continue;
-    // Hide scanners — they're infrastructure, not trackable devices
     if (_isScanner(o)) continue;
-    // Quiet mode: only show identified/labeled/followed objects
     if (_quietMode && !o.user_label && !o.identified && !ctx.actions.followedHas(id)) continue;
-    const opt = document.createElement("option");
-    opt.value = id;
     const name = o.user_label || o.name || o.entity_id || id;
     const room = o.room ? ` · ${o.room}` : "";
     const rssiStr = o.rssi != null ? ` (${o.rssi} dBm)` : "";
     const kind = o.kind === "entity" ? "[Entity]" : (o.identified ? "[Tagged]" : "[Unidentified]");
-    opt.textContent = `${kind} ${name}${room}${rssiStr}`;
-    if (id === currentAddr) opt.selected = true;
-    sel.appendChild(opt);
+    items.push({ id, label: `${kind} ${name}${room}${rssiStr}`, search: `${name} ${o.room || ""} ${id}`.toLowerCase() });
   }
 
-  sel.addEventListener("change", () => {
-    ctx.state.followAddr = sel.value;
-    // Also add to followed set when selecting in Follow tab
-    if(sel.value && !ctx.actions.followedHas(sel.value)){
-      ctx.actions.followedToggle(sel.value);
-      return; // followedToggle already triggers re-render
-    }
+  // Current selection display
+  const currentItem = items.find(i => i.id === currentAddr);
+
+  // Search input
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "position:relative";
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = currentItem ? currentItem.label : "Search tags...";
+  input.className = "select";
+  input.style.cssText = "width:100%;box-sizing:border-box;cursor:text";
+  input.value = "";
+
+  // Clear button (visible when a tag is selected)
+  const clearBtn = document.createElement("button");
+  clearBtn.textContent = "\u00d7";
+  clearBtn.style.cssText = "position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;padding:2px 6px;display:" + (currentAddr ? "block" : "none");
+  clearBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    ctx.state.followAddr = "";
     ctx.actions.renderRooms();
   });
 
-  card.appendChild(sel);
+  // Dropdown results list
+  const list = document.createElement("div");
+  list.style.cssText = "position:absolute;left:0;right:0;top:100%;max-height:280px;overflow-y:auto;background:#1e293b;border:1px solid #334155;border-radius:0 0 8px 8px;z-index:100;display:none";
+
+  const _select = (id) => {
+    list.style.display = "none";
+    input.value = "";
+    ctx.state.followAddr = id;
+    if (id && !ctx.actions.followedHas(id)) {
+      ctx.actions.followedToggle(id);
+      return;
+    }
+    ctx.actions.renderRooms();
+  };
+
+  const _renderList = (query) => {
+    list.innerHTML = "";
+    const q = (query || "").toLowerCase().trim();
+    const filtered = q ? items.filter(i => i.search.includes(q)) : items;
+    if (!filtered.length) {
+      const empty = document.createElement("div");
+      empty.style.cssText = "padding:10px 12px;color:#64748b;font-size:12px";
+      empty.textContent = q ? "No matches" : "No tags available";
+      list.appendChild(empty);
+      return;
+    }
+    for (const item of filtered.slice(0, 50)) {
+      const row = document.createElement("div");
+      row.style.cssText = "padding:8px 12px;font-size:13px;color:#e2e8f0;cursor:pointer;border-bottom:1px solid #1e293b";
+      row.textContent = item.label;
+      row.addEventListener("mouseenter", () => { row.style.background = "#334155"; });
+      row.addEventListener("mouseleave", () => { row.style.background = ""; });
+      row.addEventListener("mousedown", (ev) => { ev.preventDefault(); _select(item.id); });
+      if (item.id === currentAddr) row.style.cssText += ";background:#1a3a2a;color:#52b788;font-weight:600";
+      list.appendChild(row);
+    }
+  };
+
+  input.addEventListener("focus", () => {
+    _renderList(input.value);
+    list.style.display = "block";
+  });
+  input.addEventListener("input", () => {
+    _renderList(input.value);
+    list.style.display = "block";
+  });
+  input.addEventListener("blur", () => {
+    // Small delay so mousedown on list items fires first
+    setTimeout(() => { list.style.display = "none"; }, 150);
+  });
+
+  wrap.appendChild(input);
+  wrap.appendChild(clearBtn);
+  wrap.appendChild(list);
+  card.appendChild(wrap);
   return card;
 }
 
