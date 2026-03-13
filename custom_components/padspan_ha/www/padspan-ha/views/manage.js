@@ -17,6 +17,7 @@ export function render(ctx){
   const TABS = [
     ["data","Data"],
     ["ha_entities","HA Entities"],
+    ["beacon_chars","Beacon Characteristics"],
     ["history","History"],
     ["events","Events"],
     ["logs","Logs"],
@@ -30,6 +31,7 @@ export function render(ctx){
   root.appendChild(tabBar);
 
   if(mTab === "ha_entities")   { root.appendChild(_haEntities(ctx, el));    return root; }
+  if(mTab === "beacon_chars")  { root.appendChild(_beaconChars(ctx, el));  return root; }
   if(mTab === "history")       { root.appendChild(_history(ctx, el));      return root; }
   if(mTab === "events")        { root.appendChild(_events(ctx, el));       return root; }
   if(mTab === "logs")          { root.appendChild(_logs(ctx, el));         return root; }
@@ -1784,6 +1786,224 @@ function _logs(ctx, el) {
   }
 
   wrap.appendChild(logList);
+  return wrap;
+}
+
+
+// ── Beacon Characteristics tab ────────────────────────────────────────────────
+function _beaconChars(ctx, el){
+  const wrap = el("div",{style:"max-width:900px"});
+
+  // Header
+  wrap.appendChild(el("div",{style:"font-weight:700;font-size:16px;color:#e2e8f0;margin-bottom:8px"},
+    "Beacon Signal Profiles"));
+  wrap.appendChild(el("div",{style:"font-size:12px;color:#94a3b8;margin-bottom:16px;line-height:1.5"},
+    "Per-beacon signal characteristics computed from calibration data. "
+    + "Beacons are automatically grouped by model (iBeacon UUID prefix, manufacturer, BLE name). "
+    + "Model defaults apply to new beacons of the same type until they build their own profile."));
+
+  // State
+  if (!ctx.state._bcProfiles) ctx.state._bcProfiles = null;
+  if (!ctx.state._bcLoading)  ctx.state._bcLoading = false;
+  if (!ctx.state._bcGroupOverrides) ctx.state._bcGroupOverrides = {};   // device_id → model_key override
+  if (!ctx.state._bcTuneDisabled) ctx.state._bcTuneDisabled = new Set(); // device_ids with tuning disabled
+
+  const refresh = () => {
+    ctx.state._bcLoading = true;
+    ctx.actions.renderRooms();
+    ctx.actions.wsCommand("padspan_ha/calibration_beacon_profiles").then(res => {
+      ctx.state._bcProfiles = res;
+      ctx.state._bcLoading = false;
+      ctx.actions.renderRooms();
+    }).catch(e => {
+      console.error("beacon_profiles error:", e);
+      ctx.state._bcLoading = false;
+      ctx.actions.renderRooms();
+    });
+  };
+
+  // Refresh button
+  const refreshBtn = el("button",{class:"btn",style:"margin-bottom:12px;font-size:12px"},"Refresh Profiles");
+  refreshBtn.addEventListener("click", refresh);
+  wrap.appendChild(refreshBtn);
+
+  // Auto-fetch on first render
+  if (!ctx.state._bcProfiles && !ctx.state._bcLoading) {
+    setTimeout(refresh, 50);
+    wrap.appendChild(el("div",{style:"color:#94a3b8;font-size:13px;padding:20px"},"Loading profiles…"));
+    return wrap;
+  }
+  if (ctx.state._bcLoading) {
+    wrap.appendChild(el("div",{style:"color:#94a3b8;font-size:13px;padding:20px"},"Loading…"));
+    return wrap;
+  }
+
+  const profiles = ctx.state._bcProfiles;
+  if (!profiles || !profiles.beacons || profiles.beacons.length === 0) {
+    wrap.appendChild(el("div",{style:"color:#94a3b8;font-size:13px;padding:20px"},
+      "No beacon calibration data yet. Use Beacon Tune or Calibration Guide to collect data."));
+    return wrap;
+  }
+
+  const { beacons, models, scanner_names } = profiles;
+
+  // ── Apply group overrides ──
+  const overrides = ctx.state._bcGroupOverrides || {};
+  const effective = beacons.map(b => ({
+    ...b,
+    effective_model: overrides[b.device_id] || b.model_key,
+  }));
+
+  // ── Group by effective model ──
+  const grouped = {};
+  for (const b of effective) {
+    const mk = b.effective_model;
+    if (!grouped[mk]) grouped[mk] = [];
+    grouped[mk].push(b);
+  }
+
+  const sortedModels = Object.keys(grouped).sort((a,b) => {
+    const ca = grouped[a].reduce((s,x)=>s+x.cal_points,0);
+    const cb = grouped[b].reduce((s,x)=>s+x.cal_points,0);
+    return cb - ca;
+  });
+
+  // ── Model summary cards ──
+  for (const mk of sortedModels) {
+    const group = grouped[mk];
+    const mData = models[mk] || {};
+    const card = el("div",{class:"card",style:"margin-bottom:12px"});
+
+    // Model header
+    const hdr = el("div",{style:"display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"});
+    hdr.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#60a5fa"}, mk));
+    hdr.appendChild(el("div",{style:"font-size:11px;color:#94a3b8"},
+      `${group.length} beacon${group.length!==1?"s":""} · ${mData.total_cal_points||0} cal points`));
+    card.appendChild(hdr);
+
+    // Model defaults row
+    const defaults = el("div",{style:"display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#cbd5e1;margin-bottom:10px;padding:6px 8px;background:rgba(59,130,246,.06);border-radius:6px"});
+    if (mData.default_avg_rssi != null) defaults.appendChild(el("span",{},`Avg RSSI: ${mData.default_avg_rssi} dBm`));
+    if (mData.default_avg_std != null) defaults.appendChild(el("span",{},`Variance: ±${mData.default_avg_std}`));
+    if (mData.default_scanner_reach != null) defaults.appendChild(el("span",{},`Reach: ${mData.default_scanner_reach} scanners`));
+    if (mData.default_multi_radio_pct != null) defaults.appendChild(el("span",{},`Multi-radio: ${Math.round(mData.default_multi_radio_pct*100)}%`));
+    if (mData.default_tx_power != null) defaults.appendChild(el("span",{},`TX Power: ${mData.default_tx_power} dBm`));
+    card.appendChild(defaults);
+
+    // Per-beacon table
+    const tbl = el("table",{style:"width:100%;border-collapse:collapse;font-size:11px"});
+    const thead = el("tr",{style:"color:#94a3b8;text-align:left;border-bottom:1px solid #334155"});
+    for (const h of ["Beacon","Points","Scanners","Avg Reach","Multi%","Avg RSSI","Variance","Cells","Tune","Group"]) {
+      thead.appendChild(el("th",{style:"padding:4px 6px;font-weight:600"},h));
+    }
+    tbl.appendChild(thead);
+
+    for (const b of group) {
+      const tr = el("tr",{style:"border-bottom:1px solid #1e293b"});
+      const lbl = b.label || b.device_id.substring(0,16);
+      tr.appendChild(el("td",{style:"padding:4px 6px;color:#e2e8f0;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",title:b.device_id},lbl));
+      tr.appendChild(el("td",{style:"padding:4px 6px"},String(b.cal_points)));
+      tr.appendChild(el("td",{style:"padding:4px 6px"},String(b.scanners_total)));
+      tr.appendChild(el("td",{style:"padding:4px 6px"},String(b.avg_scanner_reach)));
+      tr.appendChild(el("td",{style:"padding:4px 6px"},`${Math.round(b.multi_radio_pct*100)}%`));
+      tr.appendChild(el("td",{style:"padding:4px 6px"},b.avg_rssi != null ? `${b.avg_rssi}` : "—"));
+      tr.appendChild(el("td",{style:"padding:4px 6px"},b.avg_std != null ? `±${b.avg_std}` : "—"));
+      tr.appendChild(el("td",{style:"padding:4px 6px"},String(b.grid_cells_hit)));
+
+      // Tune toggle
+      const tuneTd = el("td",{style:"padding:4px 6px"});
+      const tuneOff = ctx.state._bcTuneDisabled.has(b.device_id);
+      const tuneBtn = el("button",{
+        style:`font-size:10px;padding:2px 6px;border-radius:3px;cursor:pointer;border:1px solid ${tuneOff?"#dc2626":"#16a34a"};background:${tuneOff?"#3d0c0c":"#052e16"};color:${tuneOff?"#fca5a5":"#4ade80"}`,
+      }, tuneOff ? "Off" : "On");
+      tuneBtn.addEventListener("click", () => {
+        if (tuneOff) ctx.state._bcTuneDisabled.delete(b.device_id);
+        else ctx.state._bcTuneDisabled.add(b.device_id);
+        ctx.actions.renderRooms();
+      });
+      tuneTd.appendChild(tuneBtn);
+      tr.appendChild(tuneTd);
+
+      // Group action
+      const grpTd = el("td",{style:"padding:4px 6px"});
+      const isOverridden = !!overrides[b.device_id];
+      if (group.length > 1 || isOverridden) {
+        if (!isOverridden) {
+          // Ungroup — move to its own solo group
+          const ungroupBtn = el("button",{
+            style:"font-size:10px;padding:2px 6px;border-radius:3px;cursor:pointer;border:1px solid #f59e0b;background:#451a03;color:#fcd34d",
+          },"Ungroup");
+          ungroupBtn.addEventListener("click", () => {
+            ctx.state._bcGroupOverrides[b.device_id] = `solo:${b.device_id.substring(0,12)}`;
+            ctx.actions.renderRooms();
+          });
+          grpTd.appendChild(ungroupBtn);
+        } else {
+          // Regroup — restore original model_key
+          const regroupBtn = el("button",{
+            style:"font-size:10px;padding:2px 6px;border-radius:3px;cursor:pointer;border:1px solid #3b82f6;background:#1e3a5f;color:#93c5fd",
+          },"Regroup");
+          regroupBtn.addEventListener("click", () => {
+            delete ctx.state._bcGroupOverrides[b.device_id];
+            ctx.actions.renderRooms();
+          });
+          grpTd.appendChild(regroupBtn);
+        }
+      }
+      tr.appendChild(grpTd);
+      tbl.appendChild(tr);
+    }
+    card.appendChild(tbl);
+
+    // Per-scanner breakdown (collapsed by default)
+    const detailBtn = el("button",{
+      style:"font-size:11px;color:#60a5fa;background:none;border:none;cursor:pointer;margin-top:6px;padding:2px 0",
+    },"Show per-scanner details ▸");
+    const detailDiv = el("div",{style:"display:none;margin-top:8px"});
+
+    detailBtn.addEventListener("click", () => {
+      const vis = detailDiv.style.display !== "none";
+      detailDiv.style.display = vis ? "none" : "block";
+      detailBtn.textContent = vis ? "Show per-scanner details ▸" : "Hide per-scanner details ▾";
+    });
+    card.appendChild(detailBtn);
+
+    // Per-scanner detail table
+    const allScanners = new Set();
+    for (const b of group) {
+      for (const src of Object.keys(b.per_scanner || {})) allScanners.add(src);
+    }
+    if (allScanners.size > 0) {
+      const st = el("table",{style:"width:100%;border-collapse:collapse;font-size:10px;margin-top:4px"});
+      const sHead = el("tr",{style:"color:#94a3b8;text-align:left;border-bottom:1px solid #334155"});
+      sHead.appendChild(el("th",{style:"padding:3px 5px"},"Beacon"));
+      for (const src of allScanners) {
+        sHead.appendChild(el("th",{style:"padding:3px 5px;max-width:80px;overflow:hidden;text-overflow:ellipsis",title:src},
+          scanner_names[src] || src.substring(0,12)));
+      }
+      st.appendChild(sHead);
+
+      for (const b of group) {
+        const sr = el("tr",{style:"border-bottom:1px solid #1e293b"});
+        sr.appendChild(el("td",{style:"padding:3px 5px;color:#cbd5e1"},b.label||b.device_id.substring(0,12)));
+        for (const src of allScanners) {
+          const ps = (b.per_scanner || {})[src];
+          if (ps) {
+            const color = ps.mean_rssi > -60 ? "#4ade80" : ps.mean_rssi > -75 ? "#fbbf24" : "#f87171";
+            sr.appendChild(el("td",{style:`padding:3px 5px;color:${color}`},
+              `${ps.mean_rssi} (±${ps.std_rssi}) ×${ps.point_count}`));
+          } else {
+            sr.appendChild(el("td",{style:"padding:3px 5px;color:#475569"},"—"));
+          }
+        }
+        st.appendChild(sr);
+      }
+      detailDiv.appendChild(st);
+    }
+    card.appendChild(detailDiv);
+    wrap.appendChild(card);
+  }
+
   return wrap;
 }
 

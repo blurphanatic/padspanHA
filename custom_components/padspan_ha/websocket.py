@@ -116,6 +116,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_object_evict)
     websocket_api.async_register_command(hass, ws_calibration_compute_model)
     websocket_api.async_register_command(hass, ws_calibration_swap_radio)
+    websocket_api.async_register_command(hass, ws_calibration_beacon_profiles)
     websocket_api.async_register_command(hass, ws_calibration_health_check)
     websocket_api.async_register_command(hass, ws_movement_history_get)
     websocket_api.async_register_command(hass, ws_traceback_get)
@@ -4156,6 +4157,26 @@ async def ws_calibration_swap_radio(hass: HomeAssistant, connection, msg) -> Non
         "new_source": new_source,
         "updated_readings": updated_readings,
     })
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/calibration_beacon_profiles"})
+@websocket_api.async_response
+async def ws_calibration_beacon_profiles(hass: HomeAssistant, connection, msg) -> None:
+    """Compute per-beacon signal profiles grouped by model.
+
+    Cross-references calibration points with the live snapshot to derive model
+    keys (iBeacon UUID prefix, company+device_type, BLE name prefix, etc.).
+    Returns per-beacon stats and model-level defaults.
+    """
+    cal = await _get_cal_store(hass)
+    try:
+        snap = await _live_snapshot(hass)
+        obj_list = (snap.get("objects") or {}).get("list") or []
+        profiles = cal.compute_beacon_profiles(snapshot_objects=obj_list)
+        connection.send_result(msg["id"], profiles)
+    except Exception as e:
+        _LOGGER.error("PadSpan HA calibration_beacon_profiles failed: %s", e)
+        connection.send_error(msg["id"], "compute_failed", str(e))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

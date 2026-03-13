@@ -561,3 +561,183 @@ class CalibrationStore:
         }
         self.data["model"] = model
         return model
+
+    # ── Beacon profiling (grouped by model) ────────────────────────────────
+
+    def compute_beacon_profiles(
+        self,
+        snapshot_objects: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Compute per-beacon signal profiles from calibration data, then group
+        by model so new beacons of the same type inherit sensible defaults.
+
+        snapshot_objects: list of beacon dicts from live snapshot, used to
+        derive model_key for each device_id.  Each object should have:
+          - address / canonical_id / ibeacon key  (matched to device_id)
+          - company_name, device_type, ibeacon_uuid, tx_power, ble_name, kind
+
+        Returns {beacons: [...], models: {...}, scanner_names: {...}}.
+        """
+        pts = self.data.get("points", [])
+        if not pts:
+            return {"beacons": [], "models": {}, "scanner_names": {}}
+
+        # ── Build device_id → snapshot object lookup ──
+        obj_by_did: dict[str, dict[str, Any]] = {}
+        if snapshot_objects:
+            for obj in snapshot_objects:
+                for key_field in ("address", "canonical_id", "entity_id"):
+                    val = obj.get(key_field)
+                    if val:
+                        obj_by_did[val] = obj
+                # iBeacon compound key
+                uuid = obj.get("ibeacon_uuid")
+                if uuid:
+                    major = obj.get("ibeacon_major", 0)
+                    minor = obj.get("ibeacon_minor", 0)
+                    ib_key = f"ibeacon:{uuid}:{major}:{minor}"
+                    obj_by_did[ib_key] = obj
+
+        # ── Derive model_key from snapshot object ──
+        def _model_key(obj: dict[str, Any] | None) -> str:
+            if not obj:
+                return "unknown"
+            kind = obj.get("kind", "")
+            uuid = obj.get("ibeacon_uuid", "")
+            company = obj.get("company_name", "")
+            dtype = obj.get("device_type", "")
+            ble_name = obj.get("ble_name") or obj.get("name") or ""
+            # iBeacon: group by UUID prefix (first 8 chars = product line)
+            if uuid:
+                prefix = uuid[:8].lower()
+                return f"ibeacon:{prefix}"
+            # Apple continuity subtypes
+            if company and dtype:
+                return f"{company}:{dtype}".lower()
+            # Service-based (Eddystone, Tile, etc.)
+            svc = obj.get("service_names") or []
+            if svc:
+                return f"{company or 'ble'}:{svc[0]}".lower()
+            # BLE name prefix (e.g. "iTAG", "NUT", "FSC-BP103")
+            if ble_name:
+                # Use first word of BLE name as model group
+                prefix = ble_name.split()[0].split("-")[0][:16]
+                if company:
+                    return f"{company}:{prefix}".lower()
+                return f"ble:{prefix}".lower()
+            if company:
+                return company.lower()
+            return "unknown"
+
+        # ── Group calibration points by device_id ──
+        by_dev: dict[str, list[dict]] = {}
+        for p in pts:
+            did = p.get("device_id", "")
+            if did:
+                by_dev.setdefault(did, []).append(p)
+
+        # ── Collect all scanner names ──
+        scanner_names: dict[str, str] = {}
+        for p in pts:
+            for r in p.get("scanner_readings", []):
+                src = r.get("source", "")
+                if src and src not in scanner_names:
+                    scanner_names[src] = r.get("name", src)
+
+        # ── Per-beacon profile ──
+        beacons: list[dict[str, Any]] = []
+        for did, dev_pts in by_dev.items():
+            obj = obj_by_did.get(did)
+            all_rssi: list[float] = []
+            all_std: list[float] = []
+            scanner_reach: list[int] = []   # scanners reached per point
+            scanner_rssi: dict[str, list[float]] = {}  # per-scanner RSSI
+
+            for p in dev_pts:
+                readings = p.get("scanner_readings", [])
+                scanner_reach.append(len(readings))
+                for r in readings:
+                    src = r.get("source", "")
+                    mean = r.get("mean_rssi")
+                    std = r.get("std_rssi", 0.0)
+                    if mean is not None:
+                        all_rssi.append(mean)
+                        all_std.append(std)
+                        scanner_rssi.setdefault(src, []).append(mean)
+
+            # Coverage: unique map cells touched (10×10 grid)
+            cells_hit: set[tuple[str, int, int]] = set()
+            for p in dev_pts:
+                mid = p.get("map_id", "")
+                cx = int(p.get("x_frac", 0.5) * GRID_N)
+                cy = int(p.get("y_frac", 0.5) * GRID_N)
+                cells_hit.add((mid, min(cx, GRID_N - 1), min(cy, GRID_N - 1)))
+
+            # Multi-radio points (>= 2 scanners)
+            multi_radio_pts = sum(1 for n in scanner_reach if n >= 2)
+
+            tx = None
+            if obj and obj.get("tx_power") is not None:
+                try:
+                    tx = int(obj["tx_power"])
+                except (ValueError, TypeError):
+                    pass
+
+            label = ""
+            if obj:
+                label = obj.get("label") or obj.get("name") or obj.get("ble_name") or ""
+
+            profile = {
+                "device_id": did,
+                "label": label,
+                "model_key": _model_key(obj),
+                "kind": (obj or {}).get("kind", ""),
+                "cal_points": len(dev_pts),
+                "scanners_total": len(scanner_rssi),
+                "avg_scanner_reach": round(_mean(scanner_reach), 1),
+                "multi_radio_pct": round(multi_radio_pts / len(dev_pts), 2) if dev_pts else 0,
+                "avg_rssi": round(_mean(all_rssi), 1) if all_rssi else None,
+                "avg_std": round(_mean(all_std), 2) if all_std else None,
+                "grid_cells_hit": len(cells_hit),
+                "tx_power": tx,
+                "per_scanner": {
+                    src: {
+                        "mean_rssi": round(_mean(vals), 1),
+                        "std_rssi": round(_std(vals), 2),
+                        "point_count": len(vals),
+                    }
+                    for src, vals in scanner_rssi.items()
+                },
+            }
+            beacons.append(profile)
+
+        # ── Aggregate by model ──
+        model_groups: dict[str, list[dict]] = {}
+        for b in beacons:
+            mk = b["model_key"]
+            model_groups.setdefault(mk, []).append(b)
+
+        models: dict[str, dict[str, Any]] = {}
+        for mk, group in model_groups.items():
+            rssi_vals = [b["avg_rssi"] for b in group if b["avg_rssi"] is not None]
+            std_vals = [b["avg_std"] for b in group if b["avg_std"] is not None]
+            reach_vals = [b["avg_scanner_reach"] for b in group]
+            multi_vals = [b["multi_radio_pct"] for b in group]
+            tx_vals = [b["tx_power"] for b in group if b["tx_power"] is not None]
+            models[mk] = {
+                "beacon_count": len(group),
+                "total_cal_points": sum(b["cal_points"] for b in group),
+                "default_avg_rssi": round(_mean(rssi_vals), 1) if rssi_vals else None,
+                "default_avg_std": round(_mean(std_vals), 2) if std_vals else None,
+                "default_scanner_reach": round(_mean(reach_vals), 1) if reach_vals else None,
+                "default_multi_radio_pct": round(_mean(multi_vals), 2) if multi_vals else None,
+                "default_tx_power": round(_mean(tx_vals)) if tx_vals else None,
+                "device_ids": [b["device_id"] for b in group],
+            }
+
+        return {
+            "beacons": sorted(beacons, key=lambda b: b["cal_points"], reverse=True),
+            "models": models,
+            "scanner_names": scanner_names,
+        }
