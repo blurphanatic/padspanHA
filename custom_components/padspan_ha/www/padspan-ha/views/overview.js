@@ -1173,7 +1173,7 @@ export function render(ctx){
       const [sx,sy]=iso(lwx, lwy, tf.z);
       return{sx, sy, z:tf.z, dist:scored[0].dist, confidence:Math.max(0,1-scored[0].dist/50)};
     }
-    const LEGEND_H = sortedIsoLevels.length * 30 + 24;
+    const LEGEND_H = 30;  // single-row compact legend
 
     if(ctx.state._overviewPersistentPins === undefined) ctx.state._overviewPersistentPins = !!(ctx.state.settings && ctx.state.settings.overview_persistent_pins);
 
@@ -1517,16 +1517,24 @@ export function render(ctx){
         s += `<text x="${W/2}" y="${BASE_H-20}" text-anchor="middle" fill="#4a6052" font-size="16">Go to Maps → Edit to draw room boundaries</text>`;
       }
 
-      // Legend at bottom
+      // Legend at bottom — compact single row
       s += `<line x1="10" y1="${BASE_H+4}" x2="${W-10}" y2="${BASE_H+4}" stroke="#1b3526" stroke-width="0.8"/>`;
-      sortedIsoLevels.forEach((z, i)=>{
-        const ly = BASE_H + 10 + i * 30;
-        const color = levelColor(z);
-        const groupLabel = byLevel.get(z).map(m=>m.name||m.id).join(" + ");
-        s += `<circle cx="18" cy="${ly+11}" r="11" fill="${color}" opacity="0.9"/>`;
-        s += `<text x="18" y="${ly+15}" text-anchor="middle" fill="#071008" font-size="12" font-weight="700">${i+1}</text>`;
-        s += `<text x="36" y="${ly+15}" fill="${color}" font-size="18" font-weight="500">${_esc(groupLabel)}</text>`;
-      });
+      {
+        const ly = BASE_H + 10;
+        let lx = 12;
+        sortedIsoLevels.forEach((z, i)=>{
+          const color = levelColor(z);
+          const groupLabel = byLevel.get(z).map(m=>m.name||m.id).join("+");
+          s += `<circle cx="${lx+7}" cy="${ly+7}" r="7" fill="${color}" opacity="0.9"/>`;
+          s += `<text x="${lx+7}" y="${ly+10}" text-anchor="middle" fill="#071008" font-size="9" font-weight="700">${i+1}</text>`;
+          s += `<text x="${lx+18}" y="${ly+10}" fill="${color}" font-size="11" font-weight="500">${_esc(groupLabel)}</text>`;
+          lx += 22 + groupLabel.length * 6;
+          if (i < sortedIsoLevels.length - 1) {
+            s += `<text x="${lx}" y="${ly+10}" fill="#4a6052" font-size="10">\u00B7</text>`;
+            lx += 10;
+          }
+        });
+      }
 
       s += `</svg>`;
       return s;
@@ -2032,12 +2040,26 @@ export function render(ctx){
     ]);
     if(mapEl) mapCard.appendChild(mapEl);
 
-    // Companion phone discovery (basic mode) — always show all phones
+    // Companion phone discovery (basic mode) — collapsed by default
     const basicCompanionCard = el("div",{class:"card",style:"border-color:#2563eb"});
     if (dataMode === "live") {
-      basicCompanionCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#60a5fa;margin-bottom:6px"}, "Track Your Phone"));
+      // Collapsed header row — click to expand
+      const _phoneHdr = el("div",{style:"display:flex;align-items:center;gap:8px;cursor:pointer"});
+      const _phoneArrow = el("span",{style:"font-size:11px;color:#60a5fa;transition:transform .2s"}, "\u25B6");
+      _phoneHdr.appendChild(_phoneArrow);
+      _phoneHdr.appendChild(el("span",{style:"font-weight:600;font-size:13px;color:#60a5fa"}, "Track Your Phone"));
+      _phoneHdr.appendChild(el("span",{class:"muted",style:"font-size:11px;flex:1"}, "Tap to expand"));
+      basicCompanionCard.appendChild(_phoneHdr);
+      const _phoneBody = el("div",{style:"display:none;margin-top:8px"});
+      basicCompanionCard.appendChild(_phoneBody);
+      _phoneHdr.addEventListener("click", () => {
+        const open = _phoneBody.style.display !== "none";
+        _phoneBody.style.display = open ? "none" : "block";
+        _phoneArrow.style.transform = open ? "" : "rotate(90deg)";
+        _phoneHdr.querySelector(".muted").textContent = open ? "Tap to expand" : "";
+      });
       const _bLoadMsg = el("div",{class:"muted",style:"font-size:12px"}, "Discovering phones...");
-      basicCompanionCard.appendChild(_bLoadMsg);
+      _phoneBody.appendChild(_bLoadMsg);
       (async () => {
         try {
           const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
@@ -2270,7 +2292,7 @@ export function render(ctx){
               _setTrack();
             }
             row.appendChild(btn);
-            basicCompanionCard.appendChild(row);
+            _phoneBody.appendChild(row);
           }
         } catch (e) { _bLoadMsg.textContent = "Phone discovery error: " + (e.message||e); _bLoadMsg.style.color = "#f87171"; }
       })();
@@ -2384,22 +2406,37 @@ export function render(ctx){
           "CalibrationStore was not loaded at startup. Restart Home Assistant to activate k-NN positioning.") : null,
         empty > 0 ? el("div",{style:"font-size:11px;margin-top:4px;color:#f59e0b"},
           `${empty} point(s) have no RSSI data — re-calibrate to fix`) : null,
-        // k-NN diagnostic: show source overlap + test results
-        cs.source_overlap !== undefined ? el("div",{style:"font-size:10px;margin-top:6px;padding:6px;background:#0f172a;border:1px solid #1e293b;border-radius:4px;color:#94a3b8"}, [
-          el("div",{style:"font-weight:600;color:#e2e8f0;margin-bottom:3px"}, "k-NN Diagnostic"),
-          el("div",{}, `Cal sources: ${(cs.cal_sources||[]).length} · Live EMA sources: ${(cs.ema_sources||[]).length} · Overlap: ${cs.source_overlap}`),
-          cs.source_overlap === 0 ? el("div",{style:"color:#f87171;font-weight:600;margin-top:3px"},
-            "No scanner overlap between calibration data and live objects — k-NN cannot match!") : null,
-          cs.source_overlap === 0 && (cs.cal_sources||[]).length > 0 && (cs.ema_sources||[]).length > 0 ?
-            el("div",{style:"color:#f59e0b;margin-top:3px"},
-              `Cal: ${(cs.cal_sources||[]).slice(0,3).join(", ")} · Live: ${(cs.ema_sources||[]).slice(0,3).join(", ")}`) : null,
-          ...(cs.knn_diag||[]).map(d => el("div",{style:"margin-top:3px;border-top:1px solid #1e293b;padding-top:3px"}, [
-            el("div",{}, `${d.key}: ${d.ema_scanners} EMA, ${d.shared_with_cal} overlap cal`),
-            d.knn_result ? el("div",{style:"color:#52b788"},
-              `→ conf=${(d.knn_result.confidence*100).toFixed(0)}% room=${d.knn_result.room} k=${d.knn_result.k_used} shared=${d.knn_result.shared_scanners||"?"}`) :
-              el("div",{style:"color:#f87171"}, d.shared_with_cal > 0 ? "→ knn_locate returned null" : "→ no shared scanners"),
-          ])),
-        ].filter(Boolean)) : null,
+        // k-NN diagnostic: collapsible
+        cs.source_overlap !== undefined ? (() => {
+          const diagWrap = el("div",{style:"font-size:10px;margin-top:6px;padding:6px;background:#0f172a;border:1px solid #1e293b;border-radius:4px;color:#94a3b8"});
+          const diagHdr = el("div",{style:"display:flex;align-items:center;gap:6px;cursor:pointer"});
+          const diagArrow = el("span",{style:"font-size:9px;color:#60a5fa;transition:transform .2s"}, "\u25B6");
+          diagHdr.appendChild(diagArrow);
+          diagHdr.appendChild(el("span",{style:"font-weight:600;color:#e2e8f0"}, `${algoLabel} Diagnostic`));
+          diagWrap.appendChild(diagHdr);
+          const diagBody = el("div",{style:"display:none;margin-top:4px"});
+          diagBody.appendChild(el("div",{}, `Cal sources: ${(cs.cal_sources||[]).length} · Live EMA sources: ${(cs.ema_sources||[]).length} · Overlap: ${cs.source_overlap}`));
+          if (cs.source_overlap === 0) diagBody.appendChild(el("div",{style:"color:#f87171;font-weight:600;margin-top:3px"},
+            "No scanner overlap between calibration data and live objects — cannot match!"));
+          if (cs.source_overlap === 0 && (cs.cal_sources||[]).length > 0 && (cs.ema_sources||[]).length > 0)
+            diagBody.appendChild(el("div",{style:"color:#f59e0b;margin-top:3px"},
+              `Cal: ${(cs.cal_sources||[]).slice(0,3).join(", ")} · Live: ${(cs.ema_sources||[]).slice(0,3).join(", ")}`));
+          (cs.knn_diag||[]).forEach(d => {
+            diagBody.appendChild(el("div",{style:"margin-top:3px;border-top:1px solid #1e293b;padding-top:3px"}, [
+              el("div",{}, `${d.key}: ${d.ema_scanners} EMA, ${d.shared_with_cal} overlap cal`),
+              d.knn_result ? el("div",{style:"color:#52b788"},
+                `→ conf=${(d.knn_result.confidence*100).toFixed(0)}% room=${d.knn_result.room} k=${d.knn_result.k_used} shared=${d.knn_result.shared_scanners||"?"}`) :
+                el("div",{style:"color:#f87171"}, d.shared_with_cal > 0 ? "→ locate returned null" : "→ no shared scanners"),
+            ]));
+          });
+          diagWrap.appendChild(diagBody);
+          diagHdr.addEventListener("click", () => {
+            const open = diagBody.style.display !== "none";
+            diagBody.style.display = open ? "none" : "block";
+            diagArrow.style.transform = open ? "" : "rotate(90deg)";
+          });
+          return diagWrap;
+        })() : null,
       ].filter(Boolean));
     })(),
   ].filter(Boolean));
@@ -2407,11 +2444,23 @@ export function render(ctx){
   // ---------- Companion App Phone Discovery ----------
   const companionCard = el("div",{class:"card",style:"border-color:#2563eb"});
   if (dataMode === "live") {
-    companionCard.appendChild(el("div",{class:"card-head"},[
-      el("div",{class:"h2",style:"color:#60a5fa"}, "Track Your Phone"),
-    ]));
+    // Collapsed header — click to expand
+    const _aPhoneHdr = el("div",{style:"display:flex;align-items:center;gap:8px;cursor:pointer"});
+    const _aPhoneArrow = el("span",{style:"font-size:11px;color:#60a5fa;transition:transform .2s"}, "\u25B6");
+    _aPhoneHdr.appendChild(_aPhoneArrow);
+    _aPhoneHdr.appendChild(el("span",{style:"font-weight:700;font-size:14px;color:#60a5fa"}, "Track Your Phone"));
+    _aPhoneHdr.appendChild(el("span",{class:"muted",style:"font-size:11px;flex:1"}, "Tap to expand"));
+    companionCard.appendChild(_aPhoneHdr);
+    const _aPhoneBody = el("div",{style:"display:none;margin-top:8px"});
+    companionCard.appendChild(_aPhoneBody);
+    _aPhoneHdr.addEventListener("click", () => {
+      const open = _aPhoneBody.style.display !== "none";
+      _aPhoneBody.style.display = open ? "none" : "block";
+      _aPhoneArrow.style.transform = open ? "" : "rotate(90deg)";
+      _aPhoneHdr.querySelector(".muted").textContent = open ? "Tap to expand" : "";
+    });
     const _aLoadMsg = el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"}, "Discovering phones...");
-    companionCard.appendChild(_aLoadMsg);
+    _aPhoneBody.appendChild(_aLoadMsg);
     (async () => {
       try {
         const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
@@ -2535,7 +2584,7 @@ export function render(ctx){
               );
             });
             row.appendChild(setupBtn);
-            companionCard.appendChild(row);
+            _aPhoneBody.appendChild(row);
             continue;
           }
 
@@ -2573,7 +2622,7 @@ export function render(ctx){
               }
             });
             row.appendChild(enableBtn);
-            companionCard.appendChild(row);
+            _aPhoneBody.appendChild(row);
             continue;
           }
 
@@ -2672,13 +2721,13 @@ export function render(ctx){
             row.appendChild(btn);
           }
 
-          companionCard.appendChild(row);
+          _aPhoneBody.appendChild(row);
         }
 
         // Help note
         const helpNote = el("div",{style:"font-size:11px;color:#475569;margin-top:8px"},
           "Not seeing your phone? Open Companion App \u2192 Settings \u2192 Companion App \u2192 Manage Sensors \u2192 BLE Transmitter \u2192 Enable. The phone will appear here once the transmitter is active.");
-        companionCard.appendChild(helpNote);
+        _aPhoneBody.appendChild(helpNote);
       } catch (e) {
         _aLoadMsg.textContent = "Phone discovery error: " + (e.message||e);
         _aLoadMsg.style.color = "#f87171";
