@@ -377,7 +377,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 smooth_addr = _rpa_map.get(raw_addr, raw_addr)
                 smoothed_room = self._smooth_room(
                     key, smooth_addr, addr_src_rssi, source_to_area,
-                    _dyn_vote_window, _dyn_vote_threshold, source_to_floor)
+                    _dyn_vote_window, _dyn_vote_threshold, source_to_floor,
+                    _master_rooms)
                 if smoothed_room:
                     obj["room"] = smoothed_room
                 obj["_smoothed"] = True
@@ -558,6 +559,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         vote_window: int = _VOTE_WINDOW,
         vote_threshold: int = _VOTE_THRESHOLD,
         source_to_floor: dict[str, str] | None = None,
+        master_rooms: set[str] | None = None,
     ) -> str | None:
         """
         Run one poll of the two-stage smoothing pipeline for a BLE device.
@@ -669,7 +671,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if _cur_room and _cur_room in room_scores and _best_room != _cur_room:
                     if room_scores[_best_room] - room_scores[_cur_room] < _HYSTERESIS_MARGIN:
                         # Within hysteresis — prefer master map rooms as tie-breaker
-                        if _master_rooms and _cur_room not in _master_rooms and _best_room in _master_rooms:
+                        if master_rooms and _cur_room not in master_rooms and _best_room in master_rooms:
                             candidate = _best_room  # master map room wins the tie
                         else:
                             candidate = _cur_room  # stay — margin too small

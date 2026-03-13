@@ -5335,7 +5335,7 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                     or ""
                 )
                 # Also check if the state itself is a UUID-like string
-                if not transmitting_id and state_obj.state and len(state_obj.state) > 30:
+                if not transmitting_id and state_obj and state_obj.state and len(state_obj.state) > 30:
                     transmitting_id = state_obj.state
 
                 if transmitting_id:
