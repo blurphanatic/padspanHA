@@ -300,6 +300,15 @@ def _get_settings(hass: HomeAssistant) -> dict:
         return dict(st.data)
     return {"data_mode": "sample"}
 
+def _is_rpa_addr(address: str) -> bool:
+    """Return True if a BLE address is a Resolvable Private Address (rotating MAC)."""
+    try:
+        msb = int(address.upper().split(":")[0], 16)
+        return (msb & 0xC0) == 0x40
+    except Exception:
+        return False
+
+
 async def _live_snapshot(hass: HomeAssistant) -> dict:
     """Best-effort read of REAL data from Home Assistant.
 
@@ -992,12 +1001,18 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 # Detect simultaneous MACs → split into per-MAC objects.
                 # If multiple MACs are all recently seen (age < 60s), they are
                 # distinct physical devices, not MAC rotation on a single device.
+                # EXCEPTION: Phones rotate their MAC every ~15 min.  During the
+                # rotation window both old and new MACs are age < 60s.  If ALL
+                # recent MACs are RPAs (Resolvable Private Addresses = rotating),
+                # they almost certainly belong to a single phone — do NOT split.
                 if len(g["addrs"]) > 1:
                     recent_macs = [
                         a for a in g["addrs"]
                         if (ble_by_addr.get(a, {}).get("age_s") or 9999) < 60
                     ]
-                    if len(recent_macs) > 1:
+                    # Check if all recent MACs are RPAs (rotating) — if so, same device
+                    _all_rpa = all(_is_rpa_addr(m) for m in recent_macs) if recent_macs else False
+                    if len(recent_macs) > 1 and not _all_rpa:
                         # Multiple distinct devices — split each MAC into its own object
                         for idx, mac in enumerate(recent_macs):
                             rec = ble_by_addr.get(mac, {})
@@ -1187,6 +1202,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 continue  # absorbed into a merged iBeacon group (section C)
             if canonical_by_addr.get(addr):
                 continue  # handled by _private_groups (section B2)
+            # Skip unresolved RPAs (rotating MACs from phones/watches that
+            # aren't resolved by IRK and aren't part of an iBeacon group).
+            # These are noise — duplicate entries from the same phone's non-
+            # iBeacon advertisements, or from neighbors' devices.  Without
+            # IRK they can't be merged and just clutter the device list.
+            if _is_rpa_addr(addr) and addr not in addr_to_device and addr not in addr_to_entities:
+                continue
 
             # Regular (non-rotating) BLE object
             parts = addr.split(":")
