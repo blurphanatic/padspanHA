@@ -4742,8 +4742,12 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   // Prefers spots that: (1) lack calibration data, (2) overlap multiple radios,
   // (3) are inside room polygons, (4) haven't been skipped
   function _computeBestTarget(bkKey) {
-    const calPts = (calData?.points || []).filter(p => !bkKey || p.device_id === bkKey || p.label === bkKey);
-    const allPts = calData?.points || [];
+    // Use fresh calibration data (ctx.state.calibration) instead of the
+    // stale closure `calData` — otherwise the just-saved point is missing
+    // and the algorithm picks the same spot again.
+    const _fresh = ctx.state.calibration || calData || { points: [] };
+    const calPts = (_fresh.points || []).filter(p => !bkKey || p.device_id === bkKey || p.label === bkKey);
+    const allPts = _fresh.points || [];
     const GRID = 12;
     let bestScore = -1, bestTarget = null;
 
@@ -5122,6 +5126,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       // Show "Saved!" briefly, then advance to next location
       bs._guideSaved = true;
       bs._guideReadings = {};
+      // Refresh calibration data so _computeBestTarget sees the new point
+      try { ctx.state.calibration = await ctx.actions.calibrationGet(); } catch (_) {}
       // Force full re-render so live DOM (not stale closure) updates
       ctx.actions.renderRooms();
       setTimeout(() => {
