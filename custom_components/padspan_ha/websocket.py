@@ -2065,6 +2065,16 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         pass
             stale_s = _now_ts - (cached_obj.get("_last_seen_ts") or _now_ts)
             is_identified = cached_obj.get("identified") or cached_obj.get("user_label")
+            # Verify label still exists — if deleted from obj_store, clear the
+            # cached flags so the ghost can expire normally instead of lingering
+            # forever as a phantom identified object.
+            if is_identified and obj_store and stale_s > 60:
+                _cache_label_key = cached_obj.get("canonical_id") or key
+                _cache_entry = obj_store.get(_cache_label_key) or obj_store.get(key)
+                if not _cache_entry or not _cache_entry.get("label"):
+                    cached_obj.pop("identified", None)
+                    cached_obj.pop("user_label", None)
+                    is_identified = False
             # Tagged/identified objects never expire from history
             if not is_identified and stale_s > _HISTORY_TTL:
                 del _cache[key]
@@ -3537,6 +3547,25 @@ async def ws_object_label_delete(hass: HomeAssistant, connection, msg) -> None:
                             _cross_deleted.append(_key)
             except Exception as _xd_err:
                 _LOGGER.debug("object_label_delete cross-delete: %s", _xd_err)
+
+        # Clear identified/user_label from object history cache so the ghost
+        # doesn't linger indefinitely after label deletion
+        try:
+            _dom = hass.data.get(DOMAIN, {})
+            _hist_cache = _dom.get(DATA_OBJECT_HISTORY) or {}
+            for _del_key in _cross_deleted:
+                _hobj = _hist_cache.get(_del_key)
+                if _hobj:
+                    _hobj.pop("identified", None)
+                    _hobj.pop("user_label", None)
+            # Also scan cache for any entry with the deleted label
+            if _del_label:
+                for _hk, _hv in _hist_cache.items():
+                    if _hv.get("user_label") == _del_label:
+                        _hv.pop("identified", None)
+                        _hv.pop("user_label", None)
+        except Exception:
+            pass
 
     connection.send_result(msg["id"], {"ok": True, "address": addr})
 
