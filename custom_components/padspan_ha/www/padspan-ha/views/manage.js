@@ -1814,7 +1814,7 @@ function _beaconChars(ctx, el){
   }, masterEnabled ? "Enabled" : "Disabled");
   masterBtn.addEventListener("click", () => {
     const newVal = !masterEnabled;
-    ctx.actions.wsCommand("padspan_ha/settings_set", {
+    ctx.actions.wsCall("padspan_ha/settings_set", {
       data_mode: settings.data_mode || "sample",
       beacon_profiling_enabled: newVal,
     }).then(() => {
@@ -1845,7 +1845,7 @@ function _beaconChars(ctx, el){
 
   // Helper to persist tune-disabled + group overrides to settings
   const _saveBC = () => {
-    ctx.actions.wsCommand("padspan_ha/settings_set", {
+    ctx.actions.wsCall("padspan_ha/settings_set", {
       data_mode: settings.data_mode || "sample",
       beacon_tune_disabled: [...ctx.state._bcTuneDisabled],
       beacon_group_overrides: ctx.state._bcGroupOverrides,
@@ -1855,12 +1855,13 @@ function _beaconChars(ctx, el){
   const refresh = () => {
     ctx.state._bcLoading = true;
     ctx.actions.renderRooms();
-    ctx.actions.wsCommand("padspan_ha/calibration_beacon_profiles").then(res => {
+    ctx.actions.wsCall("padspan_ha/calibration_beacon_profiles").then(res => {
       ctx.state._bcProfiles = res;
       ctx.state._bcLoading = false;
       ctx.actions.renderRooms();
     }).catch(e => {
       console.error("beacon_profiles error:", e);
+      ctx.state._bcProfiles = { beacons: [], models: {}, scanner_names: {}, error: String(e) };
       ctx.state._bcLoading = false;
       ctx.actions.renderRooms();
     });
