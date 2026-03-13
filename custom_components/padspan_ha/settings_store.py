@@ -29,6 +29,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "path_loss_exp":   2.5,    # path-loss exponent n (distance formula)
     "hidden_map_ids":  [],     # map IDs hidden from 3D stack view
     "scanner_offsets": {},     # {source_name: offset_dBm} — manual per-scanner RSSI trim
+    "positioning_algorithm": "knn",    # "knn" | "rf" (Random Forest)
     "kalman_q": 0.125,             # Kalman process noise (RSSI responsiveness)
     "kalman_r": 8.0,               # Kalman measurement noise (smoothing strength)
     "room_sigma_m": 4.0,           # Gaussian room-scoring sigma in metres

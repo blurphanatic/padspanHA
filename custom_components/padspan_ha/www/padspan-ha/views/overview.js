@@ -2007,9 +2007,10 @@ export function render(ctx){
         const empty = cs.empty_points || 0;
         const usable = total - empty;
         const color = !usable ? "#f87171" : usable >= (cs.knn_min_required||5) ? "#52b788" : "#f59e0b";
+        const algoName = cs.positioning_algorithm === "rf" ? "RF" : "k-NN";
         const knnLabel = cs.store_initialized === false ? "Store not loaded" :
           !cs.knn_active ? `Need ${(cs.knn_min_required||5) - usable} more` :
-          cs.knn_positioned_objects > 0 ? `k-NN active (${cs.knn_positioned_objects})` : "k-NN ready";
+          cs.knn_positioned_objects > 0 ? `${algoName} active (${cs.knn_positioned_objects})` : `${algoName} ready`;
         const knnColor = cs.store_initialized === false ? "#f87171" :
           cs.knn_active && cs.knn_positioned_objects > 0 ? "#52b788" :
           cs.knn_active ? "#f59e0b" : "#94a3b8";
@@ -2362,9 +2363,10 @@ export function render(ctx){
       const storeOk = cs.store_initialized !== false;
       const knnPos = cs.knn_positioned_objects || 0;
       const color = !storeOk ? "#f87171" : !total ? "#f87171" : empty > 0 ? "#f59e0b" : ready ? "#52b788" : "#f59e0b";
+      const algoLabel = cs.positioning_algorithm === "rf" ? "Random Forest" : "k-NN";
       const statusText = !storeOk ? "Store not loaded (restart HA)" :
         !total ? "No data" : !ready ? `Need ${(cs.knn_min_required||5) - usable} more` :
-        knnPos > 0 ? `Active — ${knnPos} objects positioned` : "Ready (no objects matched yet)";
+        knnPos > 0 ? `${algoLabel} — ${knnPos} objects positioned` : `${algoLabel} ready (no objects matched yet)`;
       const parts = [];
       if (cs.manual_points > 0) parts.push(`${cs.manual_points} manual`);
       if (cs.auto_points > 0) parts.push(`${cs.auto_points} auto`);

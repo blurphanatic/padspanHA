@@ -31,6 +31,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import CALIBRATION_STORE_KEY
+from .random_forest import RandomForestLocator
 
 GRID_N = 10           # 10×10 coverage grid per floor map
 SIGMA_CELLS = 1.8     # Gaussian sigma in grid-cell units (~20% of map width)
@@ -66,6 +67,7 @@ class CalibrationStore:
         self.hass = hass
         self.store = Store(hass, 1, CALIBRATION_STORE_KEY)
         self.data = {"points": [], "model": {}}
+        self._rf: RandomForestLocator = RandomForestLocator()
 
     async def async_setup(self) -> None:
         loaded = await self.store.async_load()
@@ -73,6 +75,8 @@ class CalibrationStore:
             self.data = loaded
         else:
             self.data = {"points": [], "model": {}}
+        # Train Random Forest on startup (non-blocking)
+        await self._async_train_rf()
 
     def list_points(self) -> list[dict[str, Any]]:
         return list(self.data.get("points", []))
@@ -133,6 +137,7 @@ class CalibrationStore:
         }
         self.data.setdefault("points", []).append(clean)
         await self.store.async_save(self.data)
+        await self._async_train_rf()
         return clean
 
     async def async_delete_point(self, point_id: str) -> bool:
@@ -143,12 +148,14 @@ class CalibrationStore:
         changed = len(self.data["points"]) < before
         if changed:
             await self.store.async_save(self.data)
+            await self._async_train_rf()
         return changed
 
     async def async_clear_all(self) -> int:
         count = len(self.data.get("points", []))
         self.data = {"points": [], "model": {}}
         await self.store.async_save(self.data)
+        self._rf = RandomForestLocator()  # reset
         return count
 
     async def async_clear_map(self, map_id: str) -> int:
@@ -163,6 +170,7 @@ class CalibrationStore:
             if isinstance(cov, dict):
                 cov.pop(map_id, None)
             await self.store.async_save(self.data)
+            await self._async_train_rf()
         return removed
 
     async def async_prune_auto_points(self, max_per_beacon: int = 50) -> int:
@@ -431,6 +439,32 @@ class CalibrationStore:
             "k_used": len(top_k),
             "shared_scanners": _best_n_shared,
         }
+
+    # ── Random Forest positioning ─────────────────────────────────────────────
+
+    def rf_locate(
+        self,
+        query_rssi: dict[str, float],
+        map_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Random Forest positioning — same return shape as knn_locate()."""
+        if not self._rf.is_trained:
+            return None
+        return self._rf.predict(query_rssi, map_id=map_id)
+
+    async def _async_train_rf(self) -> None:
+        """Retrain RF from current calibration points (runs in executor)."""
+        pts = list(self.data.get("points", []))
+        if len(pts) < 4:
+            self._rf = RandomForestLocator()
+            return
+        rf = RandomForestLocator()
+        await self.hass.async_add_executor_job(rf.train, pts)
+        self._rf = rf
+
+    @property
+    def rf_trained(self) -> bool:
+        return self._rf.is_trained
 
     # ── Leave-one-out accuracy estimate ───────────────────────────────────────
 

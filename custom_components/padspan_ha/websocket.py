@@ -2477,6 +2477,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("tags_phone_autolink_enabled"): bool,
         vol.Optional("quiet_mode"): bool,
         vol.Optional("overview_2d_mode"): bool,
+        vol.Optional("positioning_algorithm"): str,
         vol.Optional("beacon_profiling_enabled"): bool,
         vol.Optional("beacon_tune_disabled"): list,
         vol.Optional("beacon_group_overrides"): dict,
@@ -2570,6 +2571,9 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
                     "overview_2d_mode", "beacon_profiling_enabled"):
             if key in msg:
                 payload[key] = bool(msg[key])
+        if "positioning_algorithm" in msg:
+            algo = str(msg["positioning_algorithm"]).strip().lower()
+            payload["positioning_algorithm"] = algo if algo in ("knn", "rf") else "knn"
         if "beacon_tune_disabled" in msg:
             raw = msg["beacon_tune_disabled"]
             payload["beacon_tune_disabled"] = [str(x) for x in raw] if isinstance(raw, list) else []
@@ -2850,6 +2854,11 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                 "knn_active": len(_pts) >= 5,
                 "knn_positioned_objects": _knn_active_count,
                 "store_initialized": True,
+                "rf_trained": getattr(_cal, "rf_trained", False),
+                "positioning_algorithm": (
+                    (hass.data.get(DOMAIN, {}).get(DATA_SETTINGS).data.get("positioning_algorithm", "knn"))
+                    if hass.data.get(DOMAIN, {}).get(DATA_SETTINGS) else "knn"
+                ),
                 "cal_sources": sorted(list(_cal_sources))[:20],
                 "ema_sources": sorted(list(_ema_sources))[:20],
                 "source_overlap": len(_cal_sources & _ema_sources),

@@ -557,6 +557,41 @@ function _settingsPresence(ctx, el){
     ]));
   }
 
+  // ── Positioning Algorithm ─────────────────────────────────────────────────
+  {
+    const cs = (ctx.state.live && ctx.state.live.snapshot && ctx.state.live.snapshot.calibration_status) || {};
+    const curAlgo = settings.positioning_algorithm || "knn";
+    const rfReady = cs.rf_trained === true;
+    const algoSel = el("select", {
+      style: "width:180px;background:#0a150e;color:#e2e8f0;border:1px solid #2d5a3d;border-radius:6px;padding:4px 8px;font-size:13px",
+    });
+    const optKnn = el("option", { value: "knn" }, "k-NN (default)");
+    const optRf = el("option", { value: "rf" }, "Random Forest" + (rfReady ? "" : " (not trained)"));
+    if (curAlgo === "knn") optKnn.selected = true;
+    else optRf.selected = true;
+    algoSel.appendChild(optKnn);
+    algoSel.appendChild(optRf);
+    algoSel.addEventListener("change", async () => {
+      try {
+        await ctx.actions.settingsSet({ positioning_algorithm: algoSel.value });
+        ctx.toast(`Positioning algorithm: ${algoSel.value === "rf" ? "Random Forest" : "k-NN"}`);
+        ctx.actions.renderRooms();
+      } catch(e) { ctx.toast("Failed to save", true); }
+    });
+    wrap.appendChild(el("div", { class: "card" }, [
+      el("div", { class: "h2", style: "color:#52b788" }, "Positioning Algorithm"),
+      el("div", { style: "display:flex;align-items:center;gap:10px;margin-bottom:8px" }, [
+        algoSel,
+        el("span", { class: "muted", style: "font-size:12px" },
+          curAlgo === "rf" ? (rfReady ? "Active" : "Falling back to k-NN") : ""),
+      ]),
+      el("div", { class: "muted", style: "font-size:12px;line-height:1.6" },
+        "k-NN compares live signals to the nearest calibration points. " +
+        "Random Forest trains a decision-tree model for potentially better accuracy with enough data. " +
+        "Both use the same calibration dataset — switching is instant and safe."),
+    ]));
+  }
+
   // ── Room change delay ──────────────────────────────────────────────────────
   const currentDelay = (settings.room_change_delay_s != null ? Number(settings.room_change_delay_s) : 20);
   const polls = Math.max(1, Math.round(currentDelay / 10));

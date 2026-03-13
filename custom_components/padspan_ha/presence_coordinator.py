@@ -748,17 +748,23 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except Exception:
                 pass  # adaptive scoring is best-effort
 
-        # ── Change B: k-NN fingerprint override ──────────────────────────────
+        # ── Change B: fingerprint positioning (k-NN or Random Forest) ─────────
         # When calibration data exists and the fingerprint match is confident
-        # enough, use the k-NN result as the candidate instead of the Gaussian
+        # enough, use the result as the candidate instead of the Gaussian
         # winner.  Also captures sub-room (x_frac, y_frac) for map display.
-        # Master map precedence: if k-NN gives a position (x_frac, y_frac),
+        # Master map precedence: if the result gives a position (x_frac, y_frac),
         # test it against the master map's room_bounds.  If the position falls
-        # inside a room on the master map, that room overrides k-NN nearest_room.
+        # inside a room on the master map, that room overrides nearest_room.
         try:
             _calib = self.hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
             if _calib and len(_calib.data.get("points", [])) >= _KNN_MIN_POINTS:
-                _knn = _calib.knn_locate(dict(ema))
+                # Choose algorithm based on setting
+                _st2 = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+                _algo = ((_st2.data if _st2 else {}).get("positioning_algorithm") or "knn")
+                if _algo == "rf" and _calib.rf_trained:
+                    _knn = _calib.rf_locate(dict(ema))
+                else:
+                    _knn = _calib.knn_locate(dict(ema))
                 # Periodic debug log (first object each cycle)
                 if not hasattr(self, "_knn_log_count"):
                     self._knn_log_count = 0
