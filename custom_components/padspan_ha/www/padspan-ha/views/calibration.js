@@ -4189,15 +4189,22 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     .sort((a, b) => (_kindPri2[a.kind] ?? 9) - (_kindPri2[b.kind] ?? 9));
   const _dedupAddrs2 = new Set();
   const _dedupKeys2 = new Set();
+  const _dedupLabels2 = new Set();
   const _allTracked = _rawTracked.filter(o => {
     const k = (o.key||"").toUpperCase();
     if (_dedupKeys2.has(k)) return false;
+    // Check addresses
     const addrs = [];
     for (const a of (o.all_addresses || [])) if (a) addrs.push(String(a).toUpperCase());
     if (o.address) addrs.push(String(o.address).toUpperCase());
+    if (o.canonical_id) addrs.push(String(o.canonical_id).toUpperCase());
     if (addrs.some(a => _dedupAddrs2.has(a))) return false;
+    // Same user_label = same physical device (prevents entity + iBeacon dupes)
+    const ul = (o.user_label || "").toUpperCase();
+    if (ul && _dedupLabels2.has(ul)) return false;
     _dedupKeys2.add(k);
     for (const a of addrs) _dedupAddrs2.add(a);
+    if (ul) _dedupLabels2.add(ul);
     return true;
   });
   const _hasBlePresence = (o) => {

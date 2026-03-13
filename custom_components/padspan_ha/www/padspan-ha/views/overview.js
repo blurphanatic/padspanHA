@@ -2035,54 +2035,8 @@ export function render(ctx){
           const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
           const phones = res.phones || [];
           if (!phones.length) {
-            _bLoadMsg.innerHTML = "";
-            const d = res.debug || {};
-            const diagBox = document.createElement("div");
-            diagBox.style.cssText = "background:#1e1b4b;border:1px solid #4338ca;border-radius:8px;padding:12px;margin-top:4px";
-            let diagHtml = `<div style="font-weight:600;color:#a5b4fc;font-size:13px;margin-bottom:8px">No phones detected — diagnostics</div>`;
-            diagHtml += `<div style="font-size:12px;color:#c7d2fe;line-height:1.6">`;
-            diagHtml += `<b>mobile_app loaded:</b> ${res.mobile_app_loaded ? "Yes" : "No"}<br>`;
-            diagHtml += `<b>mobile_app config entries:</b> ${res.mobile_app_entries || 0}<br>`;
-            diagHtml += `<b>mobile_app entities:</b> ${(d.mobile_app_entities || []).length}<br>`;
-            diagHtml += `<b>mobile_app devices:</b> ${(d.mobile_app_devices || []).length}<br>`;
-            diagHtml += `<b>notify.mobile_app_* services:</b> ${(d.notify_services || []).length ? (d.notify_services || []).join(", ") : "None"}<br>`;
-            diagHtml += `<b>device_tracker entities:</b> ${(d.device_trackers || []).length ? (d.device_trackers || []).join(", ") : "None"}<br>`;
-            const webhooks = d.webhooks || [];
-            if (webhooks.length) {
-              diagHtml += `<b>Webhook registrations:</b><br>`;
-              for (const wh of webhooks) diagHtml += `&nbsp;&nbsp;${wh.device_name || "?"} · ${wh.os_name || ""} ${wh.os_version || ""} · ${wh.model || ""}<br>`;
-            } else {
-              diagHtml += `<b>Webhook registrations:</b> None<br>`;
-            }
-            // Show phone-like devices from any integration
-            const phoneDevs = d.all_phone_devices || [];
-            if (phoneDevs.length) {
-              diagHtml += `<br><b>Phone-like devices (any integration):</b><br>`;
-              for (const pd of phoneDevs) {
-                diagHtml += `&nbsp;&nbsp;${pd.name || "?"} · ${pd.model || "?"} · ${pd.manufacturer || "?"} · [${(pd.integrations || []).join(", ")}]<br>`;
-              }
-            }
-            // Show live iBeacons
-            const liveIb = d.live_ibeacons || [];
-            if (liveIb.length) {
-              diagHtml += `<br><b>Live iBeacons visible (${liveIb.length}):</b><br>`;
-              for (const ib of liveIb.slice(0, 5)) {
-                diagHtml += `&nbsp;&nbsp;${ib.name || ib.address} · RSSI ${ib.rssi || "?"} · ${ib.uuid.substring(0, 8)}...<br>`;
-              }
-              if (liveIb.length > 5) diagHtml += `&nbsp;&nbsp;... and ${liveIb.length - 5} more<br>`;
-            } else {
-              diagHtml += `<b>Live iBeacons:</b> None visible<br>`;
-            }
-            // Config entries summary
-            const cfgEntries = d.all_config_entries || [];
-            if (cfgEntries.length) {
-              const domains = cfgEntries.map(c => c.domain);
-              const uniq = [...new Set(domains)].sort();
-              diagHtml += `<br><b>All integrations (${uniq.length}):</b> ${uniq.join(", ")}<br>`;
-            }
-            diagHtml += `</div>`;
-            diagBox.innerHTML = diagHtml;
-            basicCompanionCard.appendChild(diagBox);
+            _bLoadMsg.textContent = "No phones detected. Enable the HA Companion App with BLE Transmitter.";
+            _bLoadMsg.style.color = "#64748b";
             return;
           }
 
@@ -2265,6 +2219,7 @@ export function render(ctx){
         bQuietRow,
       ]),
       summary,
+      basicCompanionCard,
       mapCard,
     ]);
     return section;
@@ -2355,50 +2310,8 @@ export function render(ctx){
         const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
         const phones = res.phones || [];
         if (!phones.length) {
-          _aLoadMsg.innerHTML = "";
-          const d = res.debug || {};
-          const diagBox = document.createElement("div");
-          diagBox.style.cssText = "background:#1e1b4b;border:1px solid #4338ca;border-radius:8px;padding:12px;margin-top:4px";
-          let diagHtml = `<div style="font-weight:600;color:#a5b4fc;font-size:13px;margin-bottom:8px">No phones detected — diagnostics</div>`;
-          diagHtml += `<div style="font-size:12px;color:#c7d2fe;line-height:1.6">`;
-          diagHtml += `<b>mobile_app loaded:</b> ${res.mobile_app_loaded ? "Yes" : "No"}<br>`;
-          diagHtml += `<b>mobile_app config entries:</b> ${res.mobile_app_entries || 0}<br>`;
-          diagHtml += `<b>mobile_app entities:</b> ${(d.mobile_app_entities || []).length}<br>`;
-          diagHtml += `<b>mobile_app devices:</b> ${(d.mobile_app_devices || []).length}<br>`;
-          diagHtml += `<b>notify.mobile_app_* services:</b> ${(d.notify_services || []).length ? (d.notify_services || []).join(", ") : "None"}<br>`;
-          diagHtml += `<b>device_tracker entities:</b> ${(d.device_trackers || []).length ? (d.device_trackers || []).join(", ") : "None"}<br>`;
-          const webhooks = d.webhooks || [];
-          if (webhooks.length) {
-            diagHtml += `<b>Webhook registrations:</b><br>`;
-            for (const wh of webhooks) diagHtml += `&nbsp;&nbsp;${wh.device_name || "?"} · ${wh.os_name || ""} ${wh.os_version || ""} · ${wh.model || ""}<br>`;
-          } else {
-            diagHtml += `<b>Webhook registrations:</b> None<br>`;
-          }
-          const phoneDevs = d.all_phone_devices || [];
-          if (phoneDevs.length) {
-            diagHtml += `<br><b>Phone-like devices (any integration):</b><br>`;
-            for (const pd of phoneDevs) {
-              diagHtml += `&nbsp;&nbsp;${pd.name || "?"} · ${pd.model || "?"} · ${pd.manufacturer || "?"} · [${(pd.integrations || []).join(", ")}]<br>`;
-            }
-          }
-          const liveIb = d.live_ibeacons || [];
-          if (liveIb.length) {
-            diagHtml += `<br><b>Live iBeacons visible (${liveIb.length}):</b><br>`;
-            for (const ib of liveIb.slice(0, 10)) {
-              diagHtml += `&nbsp;&nbsp;${ib.name || ib.address} · RSSI ${ib.rssi || "?"} · ${ib.uuid.substring(0, 8)}...<br>`;
-            }
-          } else {
-            diagHtml += `<b>Live iBeacons:</b> None visible<br>`;
-          }
-          const cfgEntries = d.all_config_entries || [];
-          if (cfgEntries.length) {
-            const domains = cfgEntries.map(c => c.domain);
-            const uniq = [...new Set(domains)].sort();
-            diagHtml += `<br><b>All integrations (${uniq.length}):</b> ${uniq.join(", ")}<br>`;
-          }
-          diagHtml += `</div>`;
-          diagBox.innerHTML = diagHtml;
-          companionCard.appendChild(diagBox);
+          _aLoadMsg.textContent = "No phones detected. Enable the HA Companion App with BLE Transmitter.";
+          _aLoadMsg.style.color = "#64748b";
           return;
         }
 
@@ -2626,6 +2539,7 @@ export function render(ctx){
     ]),
     el("div",{style:"color:#94a3b8;margin-top:2px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
   ]);
+  section.appendChild(companionCard);
   if(mapEl) section.appendChild(mapEl);
   section.appendChild(grid);
   return section;
