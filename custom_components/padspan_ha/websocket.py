@@ -5469,6 +5469,166 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
         except Exception as e:
             _LOGGER.debug("companion_discover device-registry scan: %s", e)
 
+        # ── Notify-service discovery ──────────────────────────────────────
+        # notify.mobile_app_<name> services are ALWAYS created when the
+        # Companion App registers, even if all sensors are disabled and
+        # no entities exist.  This is the most reliable indicator.
+        _debug_notify_services: list[str] = []
+        _phones_names_lc = {p.get("device_name", "").lower() for p in phones}
+        try:
+            all_services = hass.services.async_services()
+            notify_svcs = all_services.get("notify", {})
+            for svc_name in notify_svcs:
+                if svc_name.startswith("mobile_app_"):
+                    _debug_notify_services.append(svc_name)
+                    # Derive a human-readable device name
+                    dev_slug = svc_name[len("mobile_app_"):]
+                    dev_name = dev_slug.replace("_", " ").title()
+                    if dev_name.lower() in _phones_names_lc:
+                        continue  # already found via entity/device registry
+                    # Try to find matching device in device registry
+                    _dev_model = ""
+                    _dev_manufacturer = ""
+                    _dev_id = ""
+                    try:
+                        from homeassistant.helpers import device_registry as dr
+                        dev_reg = dr.async_get(hass)
+                        for device in dev_reg.devices.values():
+                            dn = (device.name or "").lower().replace(" ", "_")
+                            if dn == dev_slug or (device.name_by_user or "").lower().replace(" ", "_") == dev_slug:
+                                dev_name = device.name or device.name_by_user or dev_name
+                                _dev_model = device.model or ""
+                                _dev_manufacturer = device.manufacturer or ""
+                                _dev_id = device.id
+                                break
+                    except Exception:
+                        pass
+                    phones.append({
+                        "entity_id": "",
+                        "device_name": dev_name,
+                        "uuid": "",
+                        "major": 0,
+                        "minor": 0,
+                        "ibeacon_key": "",
+                        "transmitting_id": "",
+                        "is_transmitting": False,
+                        "is_visible": False,
+                        "is_followed": False,
+                        "is_disabled": False,
+                        "existing_label": "",
+                        "state": "sensor_not_registered",
+                        "attributes": {},
+                        "device_id": _dev_id,
+                        "model": _dev_model,
+                        "manufacturer": _dev_manufacturer,
+                        "found_via": "notify_service",
+                    })
+                    _phones_names_lc.add(dev_name.lower())
+        except Exception as e:
+            _LOGGER.debug("companion_discover notify scan: %s", e)
+
+        # ── Device-tracker entity discovery ───────────────────────────────
+        # device_tracker.* entities from mobile_app always exist even when
+        # all sensors are disabled.  They track the phone's GPS location.
+        _debug_device_trackers: list[str] = []
+        try:
+            for entity in ent_reg.entities.values():
+                if entity.platform != "mobile_app":
+                    continue
+                if not entity.entity_id.startswith("device_tracker."):
+                    continue
+                _debug_device_trackers.append(entity.entity_id)
+                # Derive device name from the entity
+                dev_name = ""
+                if entity.device_id:
+                    from homeassistant.helpers import device_registry as dr
+                    dev_reg = dr.async_get(hass)
+                    device = dev_reg.async_get(entity.device_id)
+                    if device:
+                        dev_name = device.name or device.name_by_user or ""
+                if not dev_name:
+                    dev_name = entity.entity_id.replace("device_tracker.", "").replace("_", " ").title()
+                if dev_name.lower() in _phones_names_lc:
+                    continue  # already found
+                phones.append({
+                    "entity_id": entity.entity_id,
+                    "device_name": dev_name,
+                    "uuid": "",
+                    "major": 0,
+                    "minor": 0,
+                    "ibeacon_key": "",
+                    "transmitting_id": "",
+                    "is_transmitting": False,
+                    "is_visible": False,
+                    "is_followed": False,
+                    "is_disabled": entity.disabled_by is not None,
+                    "existing_label": "",
+                    "state": "sensor_not_registered",
+                    "attributes": {},
+                    "device_id": entity.device_id or "",
+                    "model": "",
+                    "manufacturer": "",
+                    "found_via": "device_tracker",
+                })
+                _phones_names_lc.add(dev_name.lower())
+        except Exception as e:
+            _LOGGER.debug("companion_discover device-tracker scan: %s", e)
+
+        # ── Webhook / hass.data discovery ─────────────────────────────────
+        # The mobile_app integration stores webhook registrations in
+        # hass.data["mobile_app"].  This exists even with zero entities.
+        _debug_webhooks: list[dict] = []
+        try:
+            mobile_data = hass.data.get("mobile_app")
+            if mobile_data and isinstance(mobile_data, dict):
+                # mobile_app stores registrations keyed by webhook_id
+                for wh_key, wh_val in mobile_data.items():
+                    if isinstance(wh_val, dict):
+                        wh_name = wh_val.get("device_name") or wh_val.get("name") or ""
+                        _debug_webhooks.append({
+                            "webhook_id": str(wh_key)[:12],
+                            "device_name": wh_name,
+                            "os_name": wh_val.get("os_name", ""),
+                            "os_version": wh_val.get("os_version", ""),
+                            "app_version": wh_val.get("app_version", ""),
+                            "model": wh_val.get("model", ""),
+                            "manufacturer": wh_val.get("manufacturer", ""),
+                        })
+                        if wh_name and wh_name.lower() not in _phones_names_lc:
+                            phones.append({
+                                "entity_id": "",
+                                "device_name": wh_name,
+                                "uuid": "",
+                                "major": 0,
+                                "minor": 0,
+                                "ibeacon_key": "",
+                                "transmitting_id": "",
+                                "is_transmitting": False,
+                                "is_visible": False,
+                                "is_followed": False,
+                                "is_disabled": False,
+                                "existing_label": "",
+                                "state": "sensor_not_registered",
+                                "attributes": {},
+                                "device_id": "",
+                                "model": wh_val.get("model", ""),
+                                "manufacturer": wh_val.get("manufacturer", ""),
+                                "found_via": "webhook",
+                            })
+                            _phones_names_lc.add(wh_name.lower())
+            # Also try the mobile_app "registrations" storage key
+            mobile_reg = hass.data.get("mobile_app_registrations")
+            if mobile_reg and isinstance(mobile_reg, dict):
+                for rk, rv in mobile_reg.items():
+                    if isinstance(rv, dict):
+                        _debug_webhooks.append({
+                            "reg_key": str(rk)[:12],
+                            "device_name": rv.get("device_name", ""),
+                            "os_name": rv.get("os_name", ""),
+                        })
+        except Exception as e:
+            _LOGGER.debug("companion_discover webhook scan: %s", e)
+
         # Sort platforms by count descending, top 20
         _sorted_plats = dict(sorted(_debug_platforms.items(), key=lambda x: -x[1])[:20])
 
@@ -5557,6 +5717,9 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                 "platforms": _sorted_plats,
                 "ble_any_platform": _debug_ble_any,
                 "mobile_app_devices": _debug_devices,
+                "notify_services": _debug_notify_services,
+                "device_trackers": _debug_device_trackers,
+                "webhooks": _debug_webhooks,
                 "all_phone_devices": _debug_all_phone_devices[:20],
                 "all_config_entries": _debug_all_config_entries,
                 "live_ibeacons": _debug_live_ibeacons[:20],

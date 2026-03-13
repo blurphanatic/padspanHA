@@ -2031,18 +2031,24 @@ export function render(ctx){
             diagHtml += `<div style="font-size:12px;color:#c7d2fe;line-height:1.6">`;
             diagHtml += `<b>mobile_app loaded:</b> ${res.mobile_app_loaded ? "Yes" : "No"}<br>`;
             diagHtml += `<b>mobile_app config entries:</b> ${res.mobile_app_entries || 0}<br>`;
-            diagHtml += `<b>Total entities:</b> ${d.total_entities || 0}<br>`;
             diagHtml += `<b>mobile_app entities:</b> ${(d.mobile_app_entities || []).length}<br>`;
             diagHtml += `<b>mobile_app devices:</b> ${(d.mobile_app_devices || []).length}<br>`;
+            diagHtml += `<b>notify.mobile_app_* services:</b> ${(d.notify_services || []).length ? (d.notify_services || []).join(", ") : "None"}<br>`;
+            diagHtml += `<b>device_tracker entities:</b> ${(d.device_trackers || []).length ? (d.device_trackers || []).join(", ") : "None"}<br>`;
+            const webhooks = d.webhooks || [];
+            if (webhooks.length) {
+              diagHtml += `<b>Webhook registrations:</b><br>`;
+              for (const wh of webhooks) diagHtml += `&nbsp;&nbsp;${wh.device_name || "?"} · ${wh.os_name || ""} ${wh.os_version || ""} · ${wh.model || ""}<br>`;
+            } else {
+              diagHtml += `<b>Webhook registrations:</b> None<br>`;
+            }
             // Show phone-like devices from any integration
             const phoneDevs = d.all_phone_devices || [];
             if (phoneDevs.length) {
-              diagHtml += `<br><b>Phone-like devices found (any integration):</b><br>`;
+              diagHtml += `<br><b>Phone-like devices (any integration):</b><br>`;
               for (const pd of phoneDevs) {
                 diagHtml += `&nbsp;&nbsp;${pd.name || "?"} · ${pd.model || "?"} · ${pd.manufacturer || "?"} · [${(pd.integrations || []).join(", ")}]<br>`;
               }
-            } else {
-              diagHtml += `<b>Phone-like devices:</b> None found in any integration<br>`;
             }
             // Show live iBeacons
             const liveIb = d.live_ibeacons || [];
@@ -2054,12 +2060,6 @@ export function render(ctx){
               if (liveIb.length > 5) diagHtml += `&nbsp;&nbsp;... and ${liveIb.length - 5} more<br>`;
             } else {
               diagHtml += `<b>Live iBeacons:</b> None visible<br>`;
-            }
-            // Show BLE entities on any platform
-            const bleAny = d.ble_any_platform || [];
-            if (bleAny.length) {
-              diagHtml += `<br><b>BLE-related entities (any platform):</b><br>`;
-              for (const e of bleAny.slice(0, 5)) diagHtml += `&nbsp;&nbsp;${e}<br>`;
             }
             // Config entries summary
             const cfgEntries = d.all_config_entries || [];
@@ -2325,17 +2325,23 @@ export function render(ctx){
           diagHtml += `<div style="font-size:12px;color:#c7d2fe;line-height:1.6">`;
           diagHtml += `<b>mobile_app loaded:</b> ${res.mobile_app_loaded ? "Yes" : "No"}<br>`;
           diagHtml += `<b>mobile_app config entries:</b> ${res.mobile_app_entries || 0}<br>`;
-          diagHtml += `<b>Total entities:</b> ${d.total_entities || 0}<br>`;
           diagHtml += `<b>mobile_app entities:</b> ${(d.mobile_app_entities || []).length}<br>`;
           diagHtml += `<b>mobile_app devices:</b> ${(d.mobile_app_devices || []).length}<br>`;
+          diagHtml += `<b>notify.mobile_app_* services:</b> ${(d.notify_services || []).length ? (d.notify_services || []).join(", ") : "None"}<br>`;
+          diagHtml += `<b>device_tracker entities:</b> ${(d.device_trackers || []).length ? (d.device_trackers || []).join(", ") : "None"}<br>`;
+          const webhooks = d.webhooks || [];
+          if (webhooks.length) {
+            diagHtml += `<b>Webhook registrations:</b><br>`;
+            for (const wh of webhooks) diagHtml += `&nbsp;&nbsp;${wh.device_name || "?"} · ${wh.os_name || ""} ${wh.os_version || ""} · ${wh.model || ""}<br>`;
+          } else {
+            diagHtml += `<b>Webhook registrations:</b> None<br>`;
+          }
           const phoneDevs = d.all_phone_devices || [];
           if (phoneDevs.length) {
-            diagHtml += `<br><b>Phone-like devices found (any integration):</b><br>`;
+            diagHtml += `<br><b>Phone-like devices (any integration):</b><br>`;
             for (const pd of phoneDevs) {
               diagHtml += `&nbsp;&nbsp;${pd.name || "?"} · ${pd.model || "?"} · ${pd.manufacturer || "?"} · [${(pd.integrations || []).join(", ")}]<br>`;
             }
-          } else {
-            diagHtml += `<b>Phone-like devices:</b> None found in any integration<br>`;
           }
           const liveIb = d.live_ibeacons || [];
           if (liveIb.length) {
@@ -2345,11 +2351,6 @@ export function render(ctx){
             }
           } else {
             diagHtml += `<b>Live iBeacons:</b> None visible<br>`;
-          }
-          const bleAny = d.ble_any_platform || [];
-          if (bleAny.length) {
-            diagHtml += `<br><b>BLE-related entities (any platform):</b><br>`;
-            for (const e of bleAny.slice(0, 10)) diagHtml += `&nbsp;&nbsp;${e}<br>`;
           }
           const cfgEntries = d.all_config_entries || [];
           if (cfgEntries.length) {
