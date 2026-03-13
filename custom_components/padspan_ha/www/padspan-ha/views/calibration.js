@@ -2591,6 +2591,19 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     _liveTimers: {},       // bkId → { endTime, mapId, bk:{...}, readings:{}, timer, pollTimer, warning }
     _liveBeaconKeys: new Set(),  // beacon keys that completed calibration → show live position
     _calibRounds: {},      // bkKey → number of completed calibration rounds (weight increases)
+    // ── Calibration Guide (guided calibration) ──
+    _guideActive: false,
+    _guideBkKey: null,     // selected beacon key for guide
+    _guideTarget: null,    // {mapId, x, y, room} — suggested position
+    _guideSkipped: [],     // [{mapId, x, y}] — positions user skipped
+    _guideCapturing: false, // true while 60s capture is running
+    _guideTimerId: null,
+    _guidePollId: null,
+    _guideReadings: {},    // {source: {name, samples:[]}}
+    _guideEndTime: 0,
+    _guideResolvedAddr: null,
+    _guideAllAddrs: null,
+    _guideCanonical: null,
   };
   const bs = ctx.state._calibBeacon;
 
@@ -4719,13 +4732,457 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   }
   _refreshBeaconList();
 
+  // ── Calibration Guide — guided calibration at optimal positions ──────────
+  const guideCard = document.createElement("div");
+  guideCard.className = "card";
+  guideCard.style.cssText = "border-color:#3b82f6;background:rgba(59,130,246,.06)";
+
+  // Compute best next calibration position for a given beacon
+  // Prefers spots that: (1) lack calibration data, (2) overlap multiple radios,
+  // (3) are inside room polygons, (4) haven't been skipped
+  function _computeBestTarget(bkKey) {
+    const calPts = (calData?.points || []).filter(p => !bkKey || p.device_id === bkKey || p.label === bkKey);
+    const allPts = calData?.points || [];
+    const GRID = 12;
+    let bestScore = -1, bestTarget = null;
+
+    for (const m of sorted) {
+      const rooms = m.room_bounds || {};
+      if (!Object.keys(rooms).length) continue;
+      const rxList = m.receivers || [];
+      const mapPts = allPts.filter(p => p.map_id === m.id);
+      const bkPts = calPts.filter(p => p.map_id === m.id);
+
+      for (let gy = 0; gy < GRID; gy++) {
+        for (let gx = 0; gx < GRID; gx++) {
+          const x = (gx + 0.5) / GRID;
+          const y = (gy + 0.5) / GRID;
+
+          // Must be inside a room polygon
+          let inRoom = "";
+          for (const [room, b] of Object.entries(rooms)) {
+            if (b.type === "poly" && _pointInPoly(x, y, b.points || [])) { inRoom = room; break; }
+          }
+          if (!inRoom) continue;
+
+          // Skip if user already skipped this spot
+          const isSkipped = bs._guideSkipped.some(s =>
+            s.mapId === m.id && Math.abs(s.x - x) < 1 / GRID && Math.abs(s.y - y) < 1 / GRID
+          );
+          if (isSkipped) continue;
+
+          // Score: distance from nearest existing cal point (farther = better)
+          let minDistAll = 1.0;
+          for (const p of mapPts) {
+            const d = Math.hypot(p.x_frac - x, p.y_frac - y);
+            if (d < minDistAll) minDistAll = d;
+          }
+          // Extra bonus for distance from this beacon's own points
+          let minDistBk = 1.0;
+          for (const p of bkPts) {
+            const d = Math.hypot(p.x_frac - x, p.y_frac - y);
+            if (d < minDistBk) minDistBk = d;
+          }
+
+          // Radio overlap: count receivers within range (~0.35 map units)
+          let radioCount = 0;
+          for (const r of rxList) {
+            const d = Math.hypot((r.x || 0) - x, (r.y || 0) - y);
+            if (d < 0.4) radioCount++;
+          }
+          // Strong bonus for 2+ radios (user's key insight)
+          const radioScore = radioCount >= 2 ? 2.0 + radioCount * 0.5 : radioCount * 0.3;
+
+          const score = minDistAll * 1.5 + minDistBk * 1.0 + radioScore;
+          if (score > bestScore) {
+            bestScore = score;
+            bestTarget = { mapId: m.id, x, y, room: inRoom, radioCount, score };
+          }
+        }
+      }
+    }
+    return bestTarget;
+  }
+
+  function _refreshGuideCard() {
+    guideCard.innerHTML = "";
+    if (!bs._guideActive) {
+      // Collapsed: show activation button
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:10px;flex-wrap:wrap";
+      const icon = document.createElement("span");
+      icon.style.cssText = "font-size:18px";
+      icon.textContent = "\uD83C\uDFAF";
+      row.appendChild(icon);
+      const lbl = document.createElement("span");
+      lbl.style.cssText = "font-weight:700;font-size:14px;color:#3b82f6";
+      lbl.textContent = "Calibration Guide";
+      row.appendChild(lbl);
+      const desc = document.createElement("span");
+      desc.style.cssText = "font-size:12px;color:#94a3b8;flex:1";
+      desc.textContent = "Guided calibration — the system suggests where to place beacons for maximum location accuracy.";
+      row.appendChild(desc);
+      const startBtn = document.createElement("button");
+      startBtn.className = "btn inline";
+      startBtn.style.cssText = "color:#3b82f6;border-color:#3b82f6;font-weight:700";
+      startBtn.textContent = "Start Guide";
+      startBtn.addEventListener("click", () => {
+        bs._guideActive = true;
+        bs._guideSkipped = [];
+        _refreshGuideCard();
+      });
+      row.appendChild(startBtn);
+      guideCard.appendChild(row);
+      return;
+    }
+
+    // Active guide UI
+    const hdr = document.createElement("div");
+    hdr.style.cssText = "display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap";
+    const icon = document.createElement("span");
+    icon.style.cssText = "font-size:18px";
+    icon.textContent = "\uD83C\uDFAF";
+    hdr.appendChild(icon);
+    const title = document.createElement("span");
+    title.style.cssText = "font-weight:700;font-size:14px;color:#3b82f6";
+    title.textContent = "Calibration Guide";
+    hdr.appendChild(title);
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "btn inline";
+    closeBtn.style.cssText = "margin-left:auto;font-size:11px;color:#94a3b8";
+    closeBtn.textContent = "Close Guide";
+    closeBtn.addEventListener("click", () => {
+      bs._guideActive = false;
+      bs._guideTarget = null;
+      bs._guideCapturing = false;
+      if (bs._guideTimerId) { clearTimeout(bs._guideTimerId); bs._guideTimerId = null; }
+      if (bs._guidePollId) { clearTimeout(bs._guidePollId); bs._guidePollId = null; }
+      _refreshGuideCard();
+      _refreshSVG();
+    });
+    hdr.appendChild(closeBtn);
+    guideCard.appendChild(hdr);
+
+    // Beacon selector
+    const selRow = document.createElement("div");
+    selRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap";
+    const selLbl = document.createElement("span");
+    selLbl.style.cssText = "font-size:12px;color:#94a3b8";
+    selLbl.textContent = "Beacon:";
+    selRow.appendChild(selLbl);
+    const guideSel = document.createElement("select");
+    guideSel.style.cssText = "flex:1;min-width:160px;background:#071008;color:#e2e8f0;border:1px solid #1e40af;border-radius:4px;padding:3px 8px;font-size:12px";
+    // All tracked beacons on any map
+    const allBks = [];
+    for (const [mapId, bks] of Object.entries(bs.draftBeacons)) {
+      for (const bk of bks) allBks.push({ ...bk, mapId });
+    }
+    const ph2 = document.createElement("option");
+    ph2.value = ""; ph2.textContent = allBks.length ? "\u2014 select beacon \u2014" : "\u2014 no beacons placed \u2014";
+    guideSel.appendChild(ph2);
+    const seenKeys = new Set();
+    for (const bk of allBks) {
+      if (seenKeys.has(bk.key)) continue;
+      seenKeys.add(bk.key);
+      const opt = document.createElement("option");
+      opt.value = bk.key;
+      opt.textContent = bk.label || bk.key;
+      if (bs._guideBkKey === bk.key) opt.selected = true;
+      guideSel.appendChild(opt);
+    }
+    guideSel.addEventListener("change", () => {
+      bs._guideBkKey = guideSel.value || null;
+      bs._guideSkipped = [];
+      bs._guideTarget = bs._guideBkKey ? _computeBestTarget(bs._guideBkKey) : null;
+      _refreshGuideCard();
+      _refreshSVG();
+    });
+    selRow.appendChild(guideSel);
+    guideCard.appendChild(selRow);
+
+    if (!bs._guideBkKey) {
+      const hint = document.createElement("div");
+      hint.style.cssText = "font-size:12px;color:#64748b";
+      hint.textContent = "Select a beacon above. The system will calculate where calibration data is most needed.";
+      guideCard.appendChild(hint);
+      return;
+    }
+
+    // Compute target if not set
+    if (!bs._guideTarget && !bs._guideCapturing) {
+      bs._guideTarget = _computeBestTarget(bs._guideBkKey);
+    }
+
+    if (bs._guideCapturing) {
+      // Show capture in progress
+      const rem = Math.max(0, Math.ceil((bs._guideEndTime - Date.now()) / 1000));
+      const prog = document.createElement("div");
+      prog.style.cssText = "text-align:center;padding:12px;font-size:14px;color:#3b82f6;font-weight:700";
+      const scannerCount = Object.keys(bs._guideReadings).length;
+      prog.textContent = `Capturing... ${rem}s remaining \u2022 ${scannerCount} scanner${scannerCount !== 1 ? "s" : ""} detected`;
+      guideCard.appendChild(prog);
+      const stopBtn = document.createElement("button");
+      stopBtn.className = "btn inline";
+      stopBtn.style.cssText = "display:block;margin:6px auto 0;color:#f87171;border-color:#f87171;font-size:12px";
+      stopBtn.textContent = "Cancel Capture";
+      stopBtn.addEventListener("click", () => {
+        if (bs._guideTimerId) { clearTimeout(bs._guideTimerId); bs._guideTimerId = null; }
+        if (bs._guidePollId) { clearTimeout(bs._guidePollId); bs._guidePollId = null; }
+        bs._guideCapturing = false;
+        bs._guideTarget = _computeBestTarget(bs._guideBkKey);
+        _refreshGuideCard();
+        _refreshSVG();
+      });
+      guideCard.appendChild(stopBtn);
+      return;
+    }
+
+    if (!bs._guideTarget) {
+      const done = document.createElement("div");
+      done.style.cssText = "text-align:center;padding:12px;font-size:13px;color:#52b788";
+      done.innerHTML = "<b>All areas covered!</b> No more suggested positions. You can reset skipped spots or close the guide.";
+      guideCard.appendChild(done);
+      const resetBtn = document.createElement("button");
+      resetBtn.className = "btn inline";
+      resetBtn.style.cssText = "display:block;margin:6px auto 0;color:#3b82f6;border-color:#3b82f6;font-size:12px";
+      resetBtn.textContent = "Reset Skipped";
+      resetBtn.addEventListener("click", () => {
+        bs._guideSkipped = [];
+        bs._guideTarget = _computeBestTarget(bs._guideBkKey);
+        _refreshGuideCard();
+        _refreshSVG();
+      });
+      guideCard.appendChild(resetBtn);
+      return;
+    }
+
+    // Show suggested position
+    const tgt = bs._guideTarget;
+    const tgtMap = sorted.find(m => m.id === tgt.mapId);
+    const fl = ctx.state.model?.floors || [];
+    const flObj = fl.find(f => f.level === (tgtMap?.stack?.z_level ?? 0));
+    const flName = flObj ? (flObj.name || `Floor ${tgtMap?.stack?.z_level ?? 0}`) : "";
+
+    const suggest = document.createElement("div");
+    suggest.style.cssText = "background:rgba(59,130,246,.1);border-radius:8px;padding:10px 14px;margin-bottom:8px";
+    suggest.innerHTML = `<div style="font-weight:700;font-size:13px;color:#3b82f6;margin-bottom:4px">Suggested Position</div>`
+      + `<div style="font-size:12px;color:#e2e8f0">Room: <b style="color:#5eead4">${_esc(tgt.room)}</b>`
+      + (flName ? ` \u2022 ${_esc(flName)}` : "")
+      + ` \u2022 ${tgtMap ? _esc(tgtMap.name || tgtMap.id) : "?"}</div>`
+      + `<div style="font-size:11px;color:#94a3b8;margin-top:4px">`
+      + `${tgt.radioCount} scanner${tgt.radioCount !== 1 ? "s" : ""} in range \u2022 `
+      + `${bs._guideSkipped.length} spot${bs._guideSkipped.length !== 1 ? "s" : ""} skipped</div>`
+      + `<div style="font-size:11px;color:#60a5fa;margin-top:6px">Look for the <b>blue spiral</b> on the 3D map. Place the beacon at that location, then click the spiral or press Start below.</div>`;
+    guideCard.appendChild(suggest);
+
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex;gap:8px;justify-content:center";
+    const goBtn = document.createElement("button");
+    goBtn.className = "btn";
+    goBtn.style.cssText = "background:#1e3a5f;border-color:#3b82f6;color:#93c5fd;font-weight:700;padding:6px 20px";
+    goBtn.textContent = "Start Capture (60s)";
+    goBtn.addEventListener("click", () => _startGuideCapture());
+    btnRow.appendChild(goBtn);
+    const skipBtn = document.createElement("button");
+    skipBtn.className = "btn inline";
+    skipBtn.style.cssText = "color:#94a3b8;font-size:12px";
+    skipBtn.textContent = "Skip \u2192";
+    skipBtn.title = "Skip this location and suggest the next best spot";
+    skipBtn.addEventListener("click", () => {
+      bs._guideSkipped.push({ mapId: tgt.mapId, x: tgt.x, y: tgt.y });
+      bs._guideTarget = _computeBestTarget(bs._guideBkKey);
+      _refreshGuideCard();
+      _refreshSVG();
+    });
+    btnRow.appendChild(skipBtn);
+    guideCard.appendChild(btnRow);
+  }
+
+  // Start 60s RSSI capture at guide target position
+  async function _startGuideCapture() {
+    const tgt = bs._guideTarget;
+    if (!tgt) return;
+    const bkKey = bs._guideBkKey;
+    // Find beacon object in snapshot
+    const bkObj = (snap?.objects?.list || []).find(o => o.key === bkKey);
+    if (!bkObj) { console.warn("Guide: beacon not found in snapshot"); return; }
+
+    // Resolve stable address
+    let addr = bkObj.address || bkObj.entity_id || bkKey;
+    const allAddrs = new Set();
+    if (bkObj.address) allAddrs.add(bkObj.address.toUpperCase());
+    for (const a of (bkObj.all_addresses || [])) if (a) allAddrs.add(String(a).toUpperCase());
+    const canonical = bkObj.canonical_id || null;
+
+    bs._guideCapturing = true;
+    bs._guideReadings = {};
+    bs._guideEndTime = Date.now() + 60000;
+    bs._guideResolvedAddr = addr;
+    bs._guideAllAddrs = allAddrs;
+    bs._guideCanonical = canonical;
+
+    _refreshGuideCard();
+    _refreshSVG();
+
+    // Poll loop — collect RSSI each second
+    async function _guidePoll() {
+      if (!bs._guideCapturing) return;
+      try {
+        await ctx.actions.refreshSnapshotQuiet();
+        const snap2 = ctx.state.live?.snapshot;
+        const ads = snap2?.ble?.advertisements || [];
+        for (const ad of ads) {
+          const adAddr = String(ad.address || "").toUpperCase();
+          const src = String(ad.source || "");
+          if (!src) continue;
+          // Match by address, all_addresses, canonical_id, or key
+          let match = false;
+          if (allAddrs.has(adAddr)) match = true;
+          if (!match && canonical && ad.canonical_id === canonical) match = true;
+          if (!match && ad.key === bkKey) match = true;
+          if (!match) continue;
+          if (!bs._guideReadings[src]) {
+            const radioName = (snap2?.ble?.radios || []).find(r => r.source === src)?.name || src;
+            bs._guideReadings[src] = { name: radioName, samples: [] };
+          }
+          bs._guideReadings[src].samples.push(ad.rssi);
+        }
+      } catch (e) { /* ignore poll errors */ }
+      _refreshGuideCard();
+      _refreshSVG();
+      if (bs._guideCapturing) bs._guidePollId = setTimeout(_guidePoll, 1000);
+    }
+    bs._guidePollId = setTimeout(_guidePoll, 500);
+
+    // 60s timer — save calibration point
+    bs._guideTimerId = setTimeout(async () => {
+      bs._guideCapturing = false;
+      if (bs._guidePollId) { clearTimeout(bs._guidePollId); bs._guidePollId = null; }
+      bs._guideTimerId = null;
+
+      // Transform readings → scanner_readings array
+      const scannerReadings = Object.entries(bs._guideReadings).map(([source, rd]) => ({
+        source, name: rd.name || source, rssi_samples: rd.samples || [],
+      }));
+
+      if (!scannerReadings.length || scannerReadings.every(r => !r.rssi_samples.length)) {
+        console.warn("Guide: no RSSI data collected");
+        bs._guideTarget = _computeBestTarget(bs._guideBkKey);
+        _refreshGuideCard();
+        _refreshSVG();
+        return;
+      }
+
+      // Detect room from position
+      const tgtMap = maps_list.find(m => m.id === tgt.mapId);
+      const room = tgtMap ? _detectRoom(tgt.x, tgt.y, tgtMap) : "";
+
+      const deviceId = bkObj.address || bkObj.entity_id || bkKey;
+      const bkLabel = bkObj.user_label || bkObj.name || bkKey;
+      const rounds = (bs._calibRounds[bkKey] || 0) + 1;
+      bs._calibRounds[bkKey] = rounds;
+      const weight = Math.min(5.0, 1.0 + (rounds - 1) * 0.5);
+
+      try {
+        await ctx.actions.calibrationSavePoint({
+          map_id: tgt.mapId,
+          x_frac: tgt.x,
+          y_frac: tgt.y,
+          room: room,
+          device_id: deviceId,
+          label: bkLabel,
+          scanner_readings: scannerReadings,
+          weight: weight,
+        });
+      } catch (e) {
+        console.error("Guide save error:", e);
+      }
+
+      // Advance to next suggested position
+      bs._guideTarget = _computeBestTarget(bs._guideBkKey);
+      _refreshGuideCard();
+      _refreshSVG();
+    }, 60000);
+  }
+
+  _refreshGuideCard();
+
+  // ── Add blue spiral to SVG when guide target is active ───────────────────
+  const _origBuildBeaconSVG = buildBeaconSVG;
+  const buildBeaconSVGWrapped = (focusZ) => {
+    let s = _origBuildBeaconSVG(focusZ);
+    // Inject blue spiral before closing </svg>
+    if (bs._guideActive && bs._guideTarget && !bs._guideCapturing) {
+      const tgt = bs._guideTarget;
+      const xf = mapXforms[tgt.mapId];
+      if (xf) {
+        const [wx, wy] = xf.mapPt(tgt.x, tgt.y);
+        const [px, py] = iso(wx, wy, xf.z);
+        const tx = Math.round(px), ty = Math.round(py);
+        // Blue pulsing spiral
+        s = s.replace("</svg>",
+          `<g class="guide-target" style="cursor:pointer" data-action="guide-start">`
+          + `<circle cx="${tx}" cy="${ty}" r="30" fill="rgba(59,130,246,.12)"><animate attributeName="r" values="24;34;24" dur="2s" repeatCount="indefinite"/></circle>`
+          + `<circle cx="${tx}" cy="${ty}" r="18" fill="none" stroke="#3b82f6" stroke-width="2.5" stroke-dasharray="6,4" opacity="0.9"><animateTransform attributeName="transform" type="rotate" from="0 ${tx} ${ty}" to="360 ${tx} ${ty}" dur="2.5s" repeatCount="indefinite"/></circle>`
+          + `<circle cx="${tx}" cy="${ty}" r="10" fill="none" stroke="#60a5fa" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.7"><animateTransform attributeName="transform" type="rotate" from="360 ${tx} ${ty}" to="0 ${tx} ${ty}" dur="1.8s" repeatCount="indefinite"/></circle>`
+          + `<circle cx="${tx}" cy="${ty}" r="4" fill="#3b82f6" opacity="0.9"/>`
+          + `<text x="${tx}" y="${ty + 42}" text-anchor="middle" fill="#3b82f6" font-size="9" font-weight="700">PLACE HERE</text>`
+          + `</g></svg>`
+        );
+      }
+    }
+    // Amber ring during capture
+    if (bs._guideActive && bs._guideCapturing && bs._guideTarget) {
+      const tgt = bs._guideTarget;
+      const xf = mapXforms[tgt.mapId];
+      if (xf) {
+        const [wx, wy] = xf.mapPt(tgt.x, tgt.y);
+        const [px, py] = iso(wx, wy, xf.z);
+        const tx = Math.round(px), ty = Math.round(py);
+        const rem = Math.max(0, Math.ceil((bs._guideEndTime - Date.now()) / 1000));
+        const scanners = Object.keys(bs._guideReadings).length;
+        s = s.replace("</svg>",
+          `<circle cx="${tx}" cy="${ty}" r="28" fill="none" stroke="#3b82f6" stroke-width="2.5" stroke-dasharray="8,4" opacity="0.9">`
+          + `<animateTransform attributeName="transform" type="rotate" from="0 ${tx} ${ty}" to="360 ${tx} ${ty}" dur="3s" repeatCount="indefinite"/>`
+          + `</circle>`
+          + `<circle cx="${tx}" cy="${ty}" r="5" fill="#3b82f6" opacity="0.9"/>`
+          + `<text x="${tx}" y="${ty + 42}" text-anchor="middle" fill="#3b82f6" font-size="10" font-weight="700">${rem}s \u2022 ${scanners} radio${scanners !== 1 ? "s" : ""}</text>`
+          + `</svg>`
+        );
+      }
+    }
+    return s;
+  };
+
+  // Patch _refreshSVG to use wrapped builder
+  function _refreshSVGPatched() {
+    const scrollTop = isoDiv.scrollTop, scrollLeft = isoDiv.scrollLeft;
+    isoDiv.innerHTML = buildBeaconSVGWrapped(_getFocusZ(bs.focusIdx));
+    isoDiv.scrollTop = scrollTop;
+    isoDiv.scrollLeft = scrollLeft;
+    // Click handler for guide spiral
+    const guideG = isoDiv.querySelector("[data-action='guide-start']");
+    if (guideG) {
+      guideG.addEventListener("click", (e) => {
+        e.stopPropagation();
+        _startGuideCapture();
+      });
+    }
+  }
+  // Replace original _refreshSVG references used by assemble
+  const _origRefreshSVG = _refreshSVG;
+
   // ── Assemble ──────────────────────────────────────────────────────────────
   wrap.appendChild(ctrlRow);
   wrap.appendChild(isoWrap);
   wrap.appendChild(placeBanner);
+  wrap.appendChild(guideCard);
   wrap.appendChild(infoCard);
   wrap.appendChild(availCard);
   wrap.appendChild(beaconListCard);
+
+  // After assembly, patch SVG refresh to include guide overlay
+  isoDiv.innerHTML = buildBeaconSVGWrapped(_getFocusZ(bs.focusIdx));
 
   return wrap;
 }
