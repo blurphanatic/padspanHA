@@ -4362,73 +4362,87 @@ async def ws_notify_services_list(hass: HomeAssistant, connection, msg) -> None:
 
     Supports both the legacy notify.{name} services and the newer HA 2024+
     entity-based notify platform (notify.send_message + entity_id targeting).
-    Uses three discovery methods to be as thorough as possible.
     """
-    services = hass.services.async_services().get("notify", {})
-    # Legacy services (exclude 'send_message' — that's the new generic dispatcher)
-    legacy = [k for k in services if k != "send_message"]
+    result_set: set[str] = set()
 
-    # Method 1: notify entities from state machine
-    entity_ids: list[str] = []
+    # ── Method 1: hass.services — legacy YAML-configured services ────────
+    # async_services() returns {domain: {service_name: ...}}
+    # For YAML notify: name "Foo" → service "notify.foo" (lowered, spaces→_)
     try:
-        entity_ids = [s.entity_id for s in hass.states.async_all("notify")]
-    except Exception:
-        pass
+        all_svc = hass.services.async_services()
+        notify_svc = all_svc.get("notify", {})
+        for svc_name in notify_svc:
+            if svc_name == "send_message":
+                continue  # generic dispatcher, not a target
+            # Legacy services are called as notify.{svc_name}
+            result_set.add(f"notify.{svc_name}")
+        _LOGGER.debug("notify discovery method1 (services): %s", list(notify_svc.keys()))
+    except Exception as exc:
+        _LOGGER.warning("notify discovery method1 failed: %s", exc)
 
-    # Method 2: entity registry — catches entities that might not have a state yet
+    # ── Method 2: hass.services.async_services_for_domain (HA 2024.4+) ───
+    try:
+        if hasattr(hass.services, "async_services_for_domain"):
+            domain_svc = hass.services.async_services_for_domain("notify")
+            for svc_name in domain_svc:
+                if svc_name != "send_message":
+                    result_set.add(f"notify.{svc_name}")
+            _LOGGER.debug("notify discovery method2 (for_domain): %s", list(domain_svc.keys()))
+    except Exception as exc:
+        _LOGGER.warning("notify discovery method2 failed: %s", exc)
+
+    # ── Method 3: notify entities from state machine ─────────────────────
+    try:
+        for state in hass.states.async_all("notify"):
+            result_set.add(state.entity_id)
+        _LOGGER.debug("notify discovery method3 (states): %s",
+                       [s.entity_id for s in hass.states.async_all("notify")])
+    except Exception as exc:
+        _LOGGER.warning("notify discovery method3 failed: %s", exc)
+
+    # ── Method 4: entity registry (catches entities without state) ───────
     try:
         from homeassistant.helpers import entity_registry as er
         ent_reg = er.async_get(hass)
         for entry in ent_reg.entities.values():
-            if entry.domain == "notify" and entry.entity_id not in entity_ids:
-                if not entry.disabled_by:
-                    entity_ids.append(entry.entity_id)
-    except Exception:
-        pass
+            if entry.domain == "notify" and not entry.disabled_by:
+                result_set.add(entry.entity_id)
+    except Exception as exc:
+        _LOGGER.warning("notify discovery method4 failed: %s", exc)
 
-    # Method 3: also scan for any integration platforms that expose notify
-    # (catches SMTP etc. that register via the legacy platform adapter)
+    # ── Method 5: entity platforms ───────────────────────────────────────
     try:
         from homeassistant.helpers import entity_platform
         for platform in entity_platform.async_get_platforms(hass, "notify"):
             for entity in platform.entities.values():
-                if hasattr(entity, "entity_id") and entity.entity_id not in entity_ids:
-                    entity_ids.append(entity.entity_id)
-    except Exception:
-        pass
+                if hasattr(entity, "entity_id"):
+                    result_set.add(entity.entity_id)
+    except Exception as exc:
+        _LOGGER.warning("notify discovery method5 failed: %s", exc)
 
-    # Method 4: check config entries for known notification integrations
-    # and see if they registered any services we missed
+    # ── Method 6: scan ALL services for notify-like domains ──────────────
+    # Some integrations register under their own domain with send_message
     try:
-        for entry in hass.config_entries.async_entries():
-            if entry.domain in ("smtp", "email", "pushover", "telegram_bot",
-                                "slack", "discord", "mobile_app"):
-                # Check if there's a corresponding notify service or entity
-                slug = entry.title.lower().replace(" ", "_") if entry.title else entry.domain
-                possible_eid = f"notify.{slug}"
-                if possible_eid not in entity_ids:
-                    # Check if entity actually exists in state
-                    state = hass.states.get(possible_eid)
-                    if state:
-                        entity_ids.append(possible_eid)
-                # Also check domain-based entity
-                possible_eid2 = f"notify.{entry.domain}"
-                if possible_eid2 not in entity_ids:
-                    state = hass.states.get(possible_eid2)
-                    if state:
-                        entity_ids.append(possible_eid2)
+        all_svc = hass.services.async_services()
+        for domain, svcs in all_svc.items():
+            if domain == "notify":
+                continue
+            # Look for domains that have a "send_message" or "notify" service
+            if "send_message" in svcs or "notify" in svcs:
+                result_set.add(f"{domain}.send_message")
+    except Exception as exc:
+        _LOGGER.warning("notify discovery method6 failed: %s", exc)
+
+    has_send_message = False
+    try:
+        has_send_message = "send_message" in hass.services.async_services().get("notify", {})
     except Exception:
         pass
 
-    # Combine: entity IDs first (preferred), then legacy service names
-    # Deduplicate: if a legacy service matches an entity slug, skip the legacy one
-    entity_slugs = {eid.split(".", 1)[1] for eid in entity_ids if "." in eid}
-    legacy_unique = [s for s in legacy if s not in entity_slugs]
-    result = sorted(set(entity_ids)) + sorted(legacy_unique)
-    has_send_message = "send_message" in services
-    _LOGGER.debug(
-        "notify_services_list: entities=%s legacy=%s has_send_message=%s",
-        entity_ids, legacy_unique, has_send_message,
+    result = sorted(result_set)
+    _LOGGER.warning(
+        "notify_services_list result: %s (has_send_message=%s)",
+        result, has_send_message,
     )
     connection.send_result(msg["id"], {
         "services": result,
