@@ -4942,8 +4942,13 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     // Brief "Saved!" flash before showing next location
     if (bs._guideSaved) {
       const saved = document.createElement("div");
-      saved.style.cssText = "text-align:center;padding:16px;font-size:14px;color:#52b788;font-weight:700";
-      saved.innerHTML = "&#10003; Saved! Moving to next location\u2026";
+      if (bs._guideSaved === "no_signal") {
+        saved.style.cssText = "text-align:center;padding:16px;font-size:14px;color:#f59e0b;font-weight:700";
+        saved.innerHTML = "&#9888; No signal detected — skipping to next location\u2026";
+      } else {
+        saved.style.cssText = "text-align:center;padding:16px;font-size:14px;color:#52b788;font-weight:700";
+        saved.innerHTML = "&#10003; Saved! Moving to next location\u2026";
+      }
       guideCard.appendChild(saved);
       return;
     }
@@ -5078,22 +5083,13 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
       if (!scannerReadings.length || scannerReadings.every(r => !r.rssi_samples.length)) {
         console.warn("Guide: no RSSI data collected");
-        bs._guideSaved = true;
+        bs._guideSaved = "no_signal";
         bs._guideReadings = {};
-        // Override saved message to warn — will be cleared on advance
-        _refreshGuideCard();
-        // Patch the saved text to show warning instead
-        const savedEl = guideCard?.querySelector("div[style*='color:#52b788']");
-        if (savedEl) {
-          savedEl.style.color = "#f59e0b";
-          savedEl.innerHTML = "&#9888; No signal detected — skipping to next location\u2026";
-        }
-        _refreshSVG();
+        ctx.actions.renderRooms();
         setTimeout(() => {
           bs._guideSaved = false;
           bs._guideTarget = _computeBestTarget(bs._guideBkKey);
-          _refreshGuideCard();
-          _refreshSVG();
+          ctx.actions.renderRooms();
         }, 1500);
         return;
       }
@@ -5126,13 +5122,12 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       // Show "Saved!" briefly, then advance to next location
       bs._guideSaved = true;
       bs._guideReadings = {};
-      _refreshGuideCard();
-      _refreshSVG();
+      // Force full re-render so live DOM (not stale closure) updates
+      ctx.actions.renderRooms();
       setTimeout(() => {
         bs._guideSaved = false;
         bs._guideTarget = _computeBestTarget(bs._guideBkKey);
-        _refreshGuideCard();
-        _refreshSVG();
+        ctx.actions.renderRooms();
       }, 1200);
     }, 60000);
   }
