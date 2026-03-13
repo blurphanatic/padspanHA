@@ -2265,7 +2265,6 @@ export function render(ctx){
         bQuietRow,
       ]),
       summary,
-      basicCompanionCard,
       mapCard,
     ]);
     return section;
@@ -2627,7 +2626,6 @@ export function render(ctx){
     ]),
     el("div",{style:"color:#94a3b8;margin-top:2px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
   ]);
-  section.appendChild(companionCard);
   if(mapEl) section.appendChild(mapEl);
   section.appendChild(grid);
   return section;
