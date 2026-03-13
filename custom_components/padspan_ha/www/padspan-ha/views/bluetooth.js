@@ -92,53 +92,144 @@ export function render(ctx) {
   const _resolvedCount = _resolverDiag.resolved || 0;
   const _privateBleCount = (snap?.objects?.summary?.private_ble) || 0;
 
+  // ── Private BLE clickable card ──────────────────────────────────────────────
+  if (!ctx.state._pbleExpanded) ctx.state._pbleExpanded = false;
+  if (!ctx.state._pbleStatus)   ctx.state._pbleStatus = null;
+
   let privateBleCard = null;
-  if (_rpaCount > 0 && _irkCount === 0) {
-    // RPAs detected but no IRKs — user needs to set up Private BLE Device
-    privateBleCard = el("div", { class: "card", style: "border-color:#f59e0b;background:rgba(245,158,11,.06)" }, [
-      el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [
-        el("span", { style: "font-size:20px" }, "\u{1F4F1}"),
-        el("div", {}, [
-          el("div", { style: "font-weight:700;font-size:14px" }, `${_rpaCount} rotating-MAC device${_rpaCount !== 1 ? "s" : ""} detected but unresolvable`),
-          el("div", { class: "muted" }, "Phones and watches rotate their Bluetooth MAC address every ~15 min. To track them, you need to register their Identity Resolving Key (IRK)."),
-        ]),
-      ]),
-      el("div", { style: "background:rgba(0,0,0,.2);border-radius:8px;padding:12px;margin-bottom:10px" }, [
-        el("div", { style: "font-weight:700;margin-bottom:8px;font-size:13px" }, "Setup steps:"),
-        el("ol", { style: "margin:0;padding-left:20px;font-size:13px;line-height:1.8" }, [
-          el("li", {}, [
-            el("span", {}, "Install the "),
-            el("a", { href: "https://www.home-assistant.io/integrations/private_ble_device/", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "Private BLE Device"),
-            el("span", {}, " integration in HA (Settings \u2192 Devices & Services \u2192 Add Integration \u2192 search \"Private BLE Device\")"),
+  const _borderColor = _irkCount > 0 ? "#22c55e" : _rpaCount > 0 ? "#f59e0b" : "#334155";
+  const _bgColor = _irkCount > 0 ? "rgba(34,197,94,.06)" : _rpaCount > 0 ? "rgba(245,158,11,.06)" : "rgba(51,65,85,.06)";
+
+  // Summary line (always shown)
+  let _summaryText;
+  if (_irkCount > 0) {
+    _summaryText = `Private BLE: ${_irkCount} IRK${_irkCount !== 1 ? "s" : ""} loaded \u2022 ${_resolvedCount} address${_resolvedCount !== 1 ? "es" : ""} resolved \u2022 ${_privateBleCount} device${_privateBleCount !== 1 ? "s" : ""} tracked`;
+  } else if (_rpaCount > 0) {
+    _summaryText = `${_rpaCount} rotating-MAC device${_rpaCount !== 1 ? "s" : ""} detected but unresolvable \u2014 no IRKs configured`;
+  } else {
+    _summaryText = `Private BLE: no rotating-MAC devices detected yet`;
+  }
+
+  const _icon = _irkCount > 0 ? "\u2705" : _rpaCount > 0 ? "\u{1F4F1}" : "\u{1F50D}";
+
+  privateBleCard = el("div", { class: "card", style: `border-color:${_borderColor};background:${_bgColor};cursor:pointer` });
+
+  // Clickable header
+  const _pbleHdr = el("div", { style: "display:flex;align-items:center;gap:8px" }, [
+    el("span", { style: "font-size:18px" }, _icon),
+    el("div", { style: "flex:1" }, [
+      el("div", { style: "font-weight:700;font-size:13px" }, _summaryText),
+      _rpaCount > _resolvedCount && _irkCount > 0
+        ? el("div", { class: "muted", style: "font-size:12px" }, `${_rpaCount - _resolvedCount} additional RPA${_rpaCount - _resolvedCount !== 1 ? "s" : ""} seen but not matching any registered IRK`)
+        : null,
+    ].filter(Boolean)),
+    el("span", { style: "font-size:12px;color:#94a3b8" }, ctx.state._pbleExpanded ? "\u25BE details" : "\u25B8 details"),
+  ]);
+  privateBleCard.appendChild(_pbleHdr);
+
+  _pbleHdr.addEventListener("click", () => {
+    ctx.state._pbleExpanded = !ctx.state._pbleExpanded;
+    if (ctx.state._pbleExpanded && !ctx.state._pbleStatus) {
+      ctx.actions.wsCommand("padspan_ha/private_ble_status").then(res => {
+        ctx.state._pbleStatus = res;
+        ctx.actions.renderRooms();
+      }).catch(e => console.error("pble status:", e));
+    }
+    ctx.actions.renderRooms();
+  });
+
+  // Expanded detail panel
+  if (ctx.state._pbleExpanded) {
+    const detail = el("div", { style: "margin-top:12px;padding-top:10px;border-top:1px solid " + _borderColor });
+
+    const st = ctx.state._pbleStatus;
+    if (!st) {
+      detail.appendChild(el("div", { class: "muted" }, "Loading status\u2026"));
+    } else {
+      // ── Integration status ──
+      const intRow = el("div", { style: "display:flex;gap:16px;flex-wrap:wrap;font-size:12px;margin-bottom:10px" });
+      intRow.appendChild(el("span", { style: `color:${st.has_private_ble_integration ? "#4ade80" : "#fca5a5"}` },
+        st.has_private_ble_integration ? "\u2713 Private BLE Device integration installed" : "\u2717 Private BLE Device integration not installed"));
+      intRow.appendChild(el("span", { style: "color:#cbd5e1" }, `${st.total_ble_addresses || 0} total BLE addresses seen`));
+      intRow.appendChild(el("span", { style: "color:#cbd5e1" }, `${st.rpa_count || 0} rotating-MAC (RPA) addresses`));
+      detail.appendChild(intRow);
+
+      // ── Mobile apps ──
+      if (st.mobile_apps && st.mobile_apps.length > 0) {
+        const maRow = el("div", { style: "font-size:12px;margin-bottom:10px" });
+        maRow.appendChild(el("span", { style: "font-weight:600;color:#e2e8f0" }, "Companion Apps: "));
+        maRow.appendChild(el("span", { style: "color:#cbd5e1" }, st.mobile_apps.join(", ")));
+        detail.appendChild(maRow);
+      }
+
+      // ── Registered devices table ──
+      if (st.devices && st.devices.length > 0) {
+        detail.appendChild(el("div", { style: "font-weight:600;font-size:12px;color:#e2e8f0;margin-bottom:6px" },
+          `Registered IRK Devices (${st.devices.length})`));
+        const tbl = el("table", { style: "width:100%;border-collapse:collapse;font-size:11px" });
+        const thead = el("tr", { style: "color:#94a3b8;text-align:left;border-bottom:1px solid #334155" });
+        for (const h of ["Name", "Canonical ID", "Source"]) {
+          thead.appendChild(el("th", { style: "padding:4px 8px;font-weight:600" }, h));
+        }
+        tbl.appendChild(thead);
+        for (const d of st.devices) {
+          const tr = el("tr", { style: "border-bottom:1px solid #1e293b" });
+          tr.appendChild(el("td", { style: "padding:4px 8px;color:#e2e8f0;font-weight:600" }, d.name || "?"));
+          tr.appendChild(el("td", { style: "padding:4px 8px;color:#94a3b8;font-family:monospace;font-size:10px" }, d.canonical_id || ""));
+          tr.appendChild(el("td", { style: "padding:4px 8px;color:#cbd5e1" }, d.source || ""));
+          tbl.appendChild(tr);
+        }
+        detail.appendChild(tbl);
+      } else {
+        detail.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:8px" },
+          "No IRK devices registered. Phones and watches rotate their BLE MAC every ~15 min \u2014 to track them, you need their IRK."));
+      }
+
+      // ── Setup guidance (always shown when no IRKs) ──
+      if ((st.irk_count || 0) === 0) {
+        detail.appendChild(el("div", { style: "background:rgba(0,0,0,.2);border-radius:8px;padding:12px;margin-top:10px" }, [
+          el("div", { style: "font-weight:700;margin-bottom:8px;font-size:13px" }, "Setup steps:"),
+          el("ol", { style: "margin:0;padding-left:20px;font-size:13px;line-height:1.8" }, [
+            el("li", {}, [
+              el("span", {}, "Install the "),
+              el("a", { href: "https://www.home-assistant.io/integrations/private_ble_device/", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "Private BLE Device"),
+              el("span", {}, " integration in HA (Settings \u2192 Devices & Services \u2192 Add Integration)"),
+            ]),
+            el("li", {}, [
+              el("span", {}, "Install the "),
+              el("a", { href: "https://companion.home-assistant.io/", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "HA Companion App"),
+              el("span", {}, " on each phone/watch"),
+            ]),
+            el("li", {}, "In the Companion App: Settings \u2192 Companion App \u2192 BLE Transmitter \u2192 enable it"),
+            el("li", {}, "Copy the device's IRK and paste into the Private BLE Device integration config"),
+            el("li", {}, "PadSpan detects IRKs within 5 minutes and starts resolving rotating addresses"),
           ]),
-          el("li", {}, [
-            el("span", {}, "Install the "),
-            el("a", { href: "https://companion.home-assistant.io/", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "HA Companion App"),
-            el("span", {}, " on each phone/watch you want to track"),
-          ]),
-          el("li", {}, "In the Companion App, go to Settings \u2192 Companion App \u2192 BLE Transmitter \u2192 enable it"),
-          el("li", {}, "The app will show the device's IRK \u2014 copy it and paste it into the Private BLE Device integration config"),
-          el("li", {}, "PadSpan will automatically detect the IRK within 5 minutes and start resolving rotating addresses"),
-        ]),
-      ]),
-      el("div", { class: "muted", style: "font-size:12px" }, [
-        el("span", {}, "Tip: Apple devices (iPhone, Apple Watch) share IRKs during Bluetooth pairing. Android devices expose the IRK via the Companion App. "),
-        el("a", { href: "https://community.home-assistant.io/t/private-ble-device-apple-devices/546810", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "Community guide for Apple IRKs"),
-      ]),
-    ]);
-  } else if (_irkCount > 0) {
-    // IRKs configured — show success status
-    privateBleCard = el("div", { class: "card", style: "border-color:#22c55e;background:rgba(34,197,94,.06)" }, [
-      el("div", { style: "display:flex;align-items:center;gap:8px" }, [
-        el("span", { style: "font-size:18px" }, "\u2705"),
-        el("div", {}, [
-          el("div", { style: "font-weight:700;font-size:13px" }, `Private BLE: ${_irkCount} IRK${_irkCount !== 1 ? "s" : ""} loaded \u2022 ${_resolvedCount} address${_resolvedCount !== 1 ? "es" : ""} resolved \u2022 ${_privateBleCount} device${_privateBleCount !== 1 ? "s" : ""} tracked`),
-          _rpaCount > _resolvedCount
-            ? el("div", { class: "muted", style: "font-size:12px" }, `${_rpaCount - _resolvedCount} additional RPA${_rpaCount - _resolvedCount !== 1 ? "s" : ""} seen but not matching any registered IRK \u2014 these may be neighbors' devices or unregistered phones`)
-            : null,
-        ].filter(Boolean)),
-      ]),
-    ]);
+        ]));
+        detail.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-top:8px" }, [
+          el("span", {}, "Tip: Apple devices share IRKs during Bluetooth pairing. Android uses the Companion App. "),
+          el("a", { href: "https://community.home-assistant.io/t/private-ble-device-apple-devices/546810", target: "_blank", rel: "noopener", style: "color:#60a5fa" }, "Apple IRK guide"),
+        ]));
+      }
+
+      // ── Resolver errors ──
+      if (st.error) {
+        detail.appendChild(el("div", { style: "margin-top:8px;color:#fca5a5;font-size:12px" }, `Error: ${st.error}`));
+      }
+
+      // ── Refresh button ──
+      const refreshBtn = el("button", { class: "btn", style: "margin-top:10px;font-size:11px" }, "Refresh Status");
+      refreshBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        ctx.state._pbleStatus = null;
+        ctx.actions.wsCommand("padspan_ha/private_ble_status").then(res => {
+          ctx.state._pbleStatus = res;
+          ctx.actions.renderRooms();
+        });
+        ctx.actions.renderRooms();
+      });
+      detail.appendChild(refreshBtn);
+    }
+    privateBleCard.appendChild(detail);
   }
 
   const diagCard =
