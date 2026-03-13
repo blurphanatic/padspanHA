@@ -775,7 +775,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _KNN_LIVE_THRESHOLD,
                     )
                 if _knn and _knn.get("confidence", 0.0) >= _KNN_LIVE_THRESHOLD:
-                    _knn_room = _knn.get("nearest_room")
+                    _knn_room = _knn.get("nearest_room") or ""
                     # Room boundary check — use bounds from the map that k-NN
                     # coordinates belong to (they're in that map's coordinate space).
                     # Only fall back to master map bounds if k-NN is on the master.
@@ -796,11 +796,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             )
                             if _geo_room:
                                 _knn_room = _geo_room
+                    # Always store the k-NN position for map display when
+                    # confidence passes — even if room is empty.  The x/y
+                    # position on the map is valuable regardless.
+                    self._knn_position[key] = _knn
                     if _knn_room:
                         candidate = _knn_room
-                        self._knn_position[key] = _knn
-                    else:
-                        self._knn_position.pop(key, None)
                 else:
                     self._knn_position.pop(key, None)
             else:

@@ -10,7 +10,7 @@
 .btn:active:not(:disabled),.nav button:active:not(:disabled),.tab:active,.btn-help:active{transform:scale(0.95);filter:brightness(1.5)}
 .nav button.active{outline:2px solid #52b788;background:#1a3d2a}
 .nav button:hover{border-color:var(--accent);background:linear-gradient(180deg,#1e3d2a,#112918)}
-.main{padding:16px;overflow-y:auto;height:100vh}
+.main{padding:16px 16px 80px;overflow-y:auto;min-height:100vh}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
 .card{background:#0f1a12;border:1px solid var(--line);border-radius:12px;padding:12px}
 .kpi{font-size:24px;font-weight:700;margin-top:4px}
@@ -509,8 +509,8 @@
     padding:0 10px calc(72px + env(safe-area-inset-bottom,0px)) 10px;
     overflow-x:hidden;
     overflow-y:auto;
-    height:100vh;
-    height:100dvh; /* dynamic viewport height — shrinks when mobile browser chrome is visible */
+    min-height:100vh;
+    min-height:100dvh; /* dynamic viewport height — shrinks when mobile browser chrome is visible */
     min-width:0;
   }
 
