@@ -2023,25 +2023,54 @@ export function render(ctx){
           const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
           const phones = res.phones || [];
           if (!phones.length) {
-            if (!res.mobile_app_loaded) {
-              _bLoadMsg.innerHTML = "";
-              const warnBox = document.createElement("div");
-              warnBox.style.cssText = "background:#1e1b4b;border:1px solid #4338ca;border-radius:8px;padding:12px;margin-top:4px";
-              warnBox.innerHTML = `<div style="font-weight:600;color:#a5b4fc;font-size:13px;margin-bottom:6px">Mobile App integration not set up</div>` +
-                `<div style="font-size:12px;color:#c7d2fe;line-height:1.5">` +
-                `The Companion App on your phone may be connected, but the <b>Mobile App integration</b> is not registered in Home Assistant.<br><br>` +
-                `<b>To fix this:</b><br>` +
-                `1. On your phone, open the HA Companion App<br>` +
-                `2. Go to <b>Settings → Companion App</b><br>` +
-                `3. Tap your HA server name at the top<br>` +
-                `4. Tap <b>"Reset Registration"</b> (or delete and re-add the server)<br>` +
-                `5. Re-open the app — it will re-register with HA<br>` +
-                `6. Then enable <b>BLE Transmitter</b> in Manage Sensors<br><br>` +
-                `<span style="color:#94a3b8">After re-registering, restart Home Assistant and come back here.</span></div>`;
-              basicCompanionCard.appendChild(warnBox);
+            _bLoadMsg.innerHTML = "";
+            const d = res.debug || {};
+            const diagBox = document.createElement("div");
+            diagBox.style.cssText = "background:#1e1b4b;border:1px solid #4338ca;border-radius:8px;padding:12px;margin-top:4px";
+            let diagHtml = `<div style="font-weight:600;color:#a5b4fc;font-size:13px;margin-bottom:8px">No phones detected — diagnostics</div>`;
+            diagHtml += `<div style="font-size:12px;color:#c7d2fe;line-height:1.6">`;
+            diagHtml += `<b>mobile_app loaded:</b> ${res.mobile_app_loaded ? "Yes" : "No"}<br>`;
+            diagHtml += `<b>mobile_app config entries:</b> ${res.mobile_app_entries || 0}<br>`;
+            diagHtml += `<b>Total entities:</b> ${d.total_entities || 0}<br>`;
+            diagHtml += `<b>mobile_app entities:</b> ${(d.mobile_app_entities || []).length}<br>`;
+            diagHtml += `<b>mobile_app devices:</b> ${(d.mobile_app_devices || []).length}<br>`;
+            // Show phone-like devices from any integration
+            const phoneDevs = d.all_phone_devices || [];
+            if (phoneDevs.length) {
+              diagHtml += `<br><b>Phone-like devices found (any integration):</b><br>`;
+              for (const pd of phoneDevs) {
+                diagHtml += `&nbsp;&nbsp;${pd.name || "?"} · ${pd.model || "?"} · ${pd.manufacturer || "?"} · [${(pd.integrations || []).join(", ")}]<br>`;
+              }
             } else {
-              _bLoadMsg.textContent = "No phones found. Open Companion App → Settings → Manage Sensors → BLE Transmitter → Enable, then restart HA.";
+              diagHtml += `<b>Phone-like devices:</b> None found in any integration<br>`;
             }
+            // Show live iBeacons
+            const liveIb = d.live_ibeacons || [];
+            if (liveIb.length) {
+              diagHtml += `<br><b>Live iBeacons visible (${liveIb.length}):</b><br>`;
+              for (const ib of liveIb.slice(0, 5)) {
+                diagHtml += `&nbsp;&nbsp;${ib.name || ib.address} · RSSI ${ib.rssi || "?"} · ${ib.uuid.substring(0, 8)}...<br>`;
+              }
+              if (liveIb.length > 5) diagHtml += `&nbsp;&nbsp;... and ${liveIb.length - 5} more<br>`;
+            } else {
+              diagHtml += `<b>Live iBeacons:</b> None visible<br>`;
+            }
+            // Show BLE entities on any platform
+            const bleAny = d.ble_any_platform || [];
+            if (bleAny.length) {
+              diagHtml += `<br><b>BLE-related entities (any platform):</b><br>`;
+              for (const e of bleAny.slice(0, 5)) diagHtml += `&nbsp;&nbsp;${e}<br>`;
+            }
+            // Config entries summary
+            const cfgEntries = d.all_config_entries || [];
+            if (cfgEntries.length) {
+              const domains = cfgEntries.map(c => c.domain);
+              const uniq = [...new Set(domains)].sort();
+              diagHtml += `<br><b>All integrations (${uniq.length}):</b> ${uniq.join(", ")}<br>`;
+            }
+            diagHtml += `</div>`;
+            diagBox.innerHTML = diagHtml;
+            basicCompanionCard.appendChild(diagBox);
             return;
           }
 
@@ -2288,25 +2317,49 @@ export function render(ctx){
         const res = await ctx.actions.wsCall("padspan_ha/companion_discover", {});
         const phones = res.phones || [];
         if (!phones.length) {
-          if (!res.mobile_app_loaded) {
-            _aLoadMsg.innerHTML = "";
-            const warnBox = document.createElement("div");
-            warnBox.style.cssText = "background:#1e1b4b;border:1px solid #4338ca;border-radius:8px;padding:12px;margin-top:4px";
-            warnBox.innerHTML = `<div style="font-weight:600;color:#a5b4fc;font-size:13px;margin-bottom:6px">Mobile App integration not set up</div>` +
-              `<div style="font-size:12px;color:#c7d2fe;line-height:1.5">` +
-              `The Companion App on your phone may be connected, but the <b>Mobile App integration</b> is not registered in Home Assistant.<br><br>` +
-              `<b>To fix this:</b><br>` +
-              `1. On your phone, open the HA Companion App<br>` +
-              `2. Go to <b>Settings → Companion App</b><br>` +
-              `3. Tap your HA server name at the top<br>` +
-              `4. Tap <b>"Reset Registration"</b> (or delete and re-add the server)<br>` +
-              `5. Re-open the app — it will re-register with HA<br>` +
-              `6. Then enable <b>BLE Transmitter</b> in Manage Sensors<br><br>` +
-              `<span style="color:#94a3b8">After re-registering, restart Home Assistant and come back here.</span></div>`;
-            companionCard.appendChild(warnBox);
+          _aLoadMsg.innerHTML = "";
+          const d = res.debug || {};
+          const diagBox = document.createElement("div");
+          diagBox.style.cssText = "background:#1e1b4b;border:1px solid #4338ca;border-radius:8px;padding:12px;margin-top:4px";
+          let diagHtml = `<div style="font-weight:600;color:#a5b4fc;font-size:13px;margin-bottom:8px">No phones detected — diagnostics</div>`;
+          diagHtml += `<div style="font-size:12px;color:#c7d2fe;line-height:1.6">`;
+          diagHtml += `<b>mobile_app loaded:</b> ${res.mobile_app_loaded ? "Yes" : "No"}<br>`;
+          diagHtml += `<b>mobile_app config entries:</b> ${res.mobile_app_entries || 0}<br>`;
+          diagHtml += `<b>Total entities:</b> ${d.total_entities || 0}<br>`;
+          diagHtml += `<b>mobile_app entities:</b> ${(d.mobile_app_entities || []).length}<br>`;
+          diagHtml += `<b>mobile_app devices:</b> ${(d.mobile_app_devices || []).length}<br>`;
+          const phoneDevs = d.all_phone_devices || [];
+          if (phoneDevs.length) {
+            diagHtml += `<br><b>Phone-like devices found (any integration):</b><br>`;
+            for (const pd of phoneDevs) {
+              diagHtml += `&nbsp;&nbsp;${pd.name || "?"} · ${pd.model || "?"} · ${pd.manufacturer || "?"} · [${(pd.integrations || []).join(", ")}]<br>`;
+            }
           } else {
-            _aLoadMsg.textContent = "No phones found. Open Companion App → Settings → Manage Sensors → BLE Transmitter → Enable, then restart HA.";
+            diagHtml += `<b>Phone-like devices:</b> None found in any integration<br>`;
           }
+          const liveIb = d.live_ibeacons || [];
+          if (liveIb.length) {
+            diagHtml += `<br><b>Live iBeacons visible (${liveIb.length}):</b><br>`;
+            for (const ib of liveIb.slice(0, 10)) {
+              diagHtml += `&nbsp;&nbsp;${ib.name || ib.address} · RSSI ${ib.rssi || "?"} · ${ib.uuid.substring(0, 8)}...<br>`;
+            }
+          } else {
+            diagHtml += `<b>Live iBeacons:</b> None visible<br>`;
+          }
+          const bleAny = d.ble_any_platform || [];
+          if (bleAny.length) {
+            diagHtml += `<br><b>BLE-related entities (any platform):</b><br>`;
+            for (const e of bleAny.slice(0, 10)) diagHtml += `&nbsp;&nbsp;${e}<br>`;
+          }
+          const cfgEntries = d.all_config_entries || [];
+          if (cfgEntries.length) {
+            const domains = cfgEntries.map(c => c.domain);
+            const uniq = [...new Set(domains)].sort();
+            diagHtml += `<br><b>All integrations (${uniq.length}):</b> ${uniq.join(", ")}<br>`;
+          }
+          diagHtml += `</div>`;
+          diagBox.innerHTML = diagHtml;
+          companionCard.appendChild(diagBox);
           return;
         }
 

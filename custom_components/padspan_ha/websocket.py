@@ -5307,6 +5307,76 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
         _mobile_app_loaded = "mobile_app" in hass.config.components
         _mobile_app_entries = len(hass.config_entries.async_entries("mobile_app"))
 
+        # ── Broad device search ───────────────────────────────────────────
+        # If no phones found via mobile_app, look for phone-like devices
+        # across ALL integrations (the phone might be registered differently).
+        _debug_all_phone_devices: list[dict] = []
+        _debug_all_config_entries: list[dict] = []
+        if not phones:
+            try:
+                from homeassistant.helpers import device_registry as dr
+                dev_reg = dr.async_get(hass)
+
+                # Log all config entries so we can see what integrations exist
+                for ce in hass.config_entries.async_entries():
+                    _debug_all_config_entries.append({
+                        "domain": ce.domain,
+                        "title": ce.title,
+                        "entry_id": ce.entry_id[:8],
+                    })
+
+                # Search ALL devices for phone-like entries
+                _phone_hints = {"phone", "mobile", "android", "iphone", "pixel",
+                                "samsung", "galaxy", "oneplus", "xiaomi", "huawei",
+                                "companion", "app"}
+                for device in dev_reg.devices.values():
+                    name_lower = ((device.name or "") + " " + (device.name_by_user or "") +
+                                  " " + (device.model or "") + " " + (device.manufacturer or "")).lower()
+                    if any(h in name_lower for h in _phone_hints):
+                        # Find which config entry this device belongs to
+                        domains = []
+                        for ce_id in (device.config_entries or set()):
+                            ce = hass.config_entries.async_get_entry(ce_id)
+                            if ce:
+                                domains.append(ce.domain)
+                        _debug_all_phone_devices.append({
+                            "device_id": device.id,
+                            "name": device.name or "",
+                            "name_by_user": device.name_by_user or "",
+                            "model": device.model or "",
+                            "manufacturer": device.manufacturer or "",
+                            "integrations": domains,
+                            "identifiers": [list(i) for i in (device.identifiers or set())],
+                        })
+            except Exception as e:
+                _LOGGER.debug("companion_discover broad device scan: %s", e)
+
+        # ── iBeacon scan from live BLE ────────────────────────────────────
+        # If still no phones, show any iBeacons visible in BLE as
+        # potential companion app phones (user can identify theirs).
+        _debug_live_ibeacons: list[dict] = []
+        if not phones:
+            try:
+                ble_live = get_bluetooth_live(hass)
+                ble_snap = ble_live.get_snapshot(max_ads=2000, max_age_s=120)
+                from .private_ble_resolver import PrivateBLEResolver
+                for ad in (ble_snap.get("advertisements") or []):
+                    mfr = ad.get("manufacturer_data") or {}
+                    parsed = PrivateBLEResolver.parse_ibeacon(mfr)
+                    if parsed:
+                        ib_key = f"ibeacon:{parsed['uuid']}:{parsed['major']}:{parsed['minor']}"
+                        _debug_live_ibeacons.append({
+                            "address": ad.get("address", ""),
+                            "rssi": ad.get("rssi"),
+                            "uuid": parsed["uuid"],
+                            "major": parsed["major"],
+                            "minor": parsed["minor"],
+                            "ibeacon_key": ib_key,
+                            "name": ad.get("name", ""),
+                        })
+            except Exception as e:
+                _LOGGER.debug("companion_discover iBeacon scan: %s", e)
+
         connection.send_result(msg["id"], {
             "phones": phones,
             "mobile_app_loaded": _mobile_app_loaded,
@@ -5318,6 +5388,9 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                 "platforms": _sorted_plats,
                 "ble_any_platform": _debug_ble_any,
                 "mobile_app_devices": _debug_devices,
+                "all_phone_devices": _debug_all_phone_devices[:20],
+                "all_config_entries": _debug_all_config_entries,
+                "live_ibeacons": _debug_live_ibeacons[:20],
             },
         })
     except Exception as err:
