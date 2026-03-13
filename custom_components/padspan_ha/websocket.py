@@ -2453,6 +2453,9 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("tags_phone_autolink_enabled"): bool,
         vol.Optional("quiet_mode"): bool,
         vol.Optional("overview_2d_mode"): bool,
+        vol.Optional("beacon_profiling_enabled"): bool,
+        vol.Optional("beacon_tune_disabled"): list,
+        vol.Optional("beacon_group_overrides"): dict,
     }
 )
 @websocket_api.async_response
@@ -2540,9 +2543,15 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
                     "mqtt_publish_enabled", "lights_panel_enabled", "bermuda_ignore",
                     "tags_room_events_enabled", "tags_nfc_identify_enabled",
                     "tags_phone_autolink_enabled", "quiet_mode",
-                    "overview_2d_mode"):
+                    "overview_2d_mode", "beacon_profiling_enabled"):
             if key in msg:
                 payload[key] = bool(msg[key])
+        if "beacon_tune_disabled" in msg:
+            raw = msg["beacon_tune_disabled"]
+            payload["beacon_tune_disabled"] = [str(x) for x in raw] if isinstance(raw, list) else []
+        if "beacon_group_overrides" in msg:
+            raw = msg["beacon_group_overrides"]
+            payload["beacon_group_overrides"] = {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
         await st.async_set(**payload)
         # ── Toggle existing PadSpan entities in HA registry ──────────────────
         _entity_keys = {

@@ -68,6 +68,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "overview_2d_mode": False,
     # Followed BLE addresses (uppercase MAC/key strings)
     "followed_addrs": [],
+    # Beacon profiling / characteristics
+    "beacon_profiling_enabled": True,     # master toggle for beacon profiling feature
+    "beacon_tune_disabled": [],           # device_ids excluded from calibration tuning
+    "beacon_group_overrides": {},         # device_id → model_key override (ungroup/regroup)
 }
 
 

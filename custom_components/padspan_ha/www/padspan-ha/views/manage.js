@@ -1793,20 +1793,64 @@ function _logs(ctx, el) {
 // ── Beacon Characteristics tab ────────────────────────────────────────────────
 function _beaconChars(ctx, el){
   const wrap = el("div",{style:"max-width:900px"});
+  const settings = ctx.state.settings || {};
 
   // Header
   wrap.appendChild(el("div",{style:"font-weight:700;font-size:16px;color:#e2e8f0;margin-bottom:8px"},
     "Beacon Signal Profiles"));
-  wrap.appendChild(el("div",{style:"font-size:12px;color:#94a3b8;margin-bottom:16px;line-height:1.5"},
+  wrap.appendChild(el("div",{style:"font-size:12px;color:#94a3b8;margin-bottom:12px;line-height:1.5"},
     "Per-beacon signal characteristics computed from calibration data. "
     + "Beacons are automatically grouped by model (iBeacon UUID prefix, manufacturer, BLE name). "
     + "Model defaults apply to new beacons of the same type until they build their own profile."));
 
-  // State
+  // ── Master toggle ──
+  const masterEnabled = settings.beacon_profiling_enabled !== false;
+  const toggleRow = el("div",{style:"display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:10px 14px;border-radius:8px;"
+    + `background:${masterEnabled ? "rgba(22,163,74,.08)" : "rgba(220,38,38,.08)"};border:1px solid ${masterEnabled ? "#16a34a" : "#dc2626"}`});
+  toggleRow.appendChild(el("div",{style:"font-weight:700;font-size:13px;color:#e2e8f0;flex:1"},
+    "Beacon Profiling"));
+  const masterBtn = el("button",{
+    style:`font-size:12px;padding:4px 14px;border-radius:4px;cursor:pointer;font-weight:700;border:1px solid ${masterEnabled?"#16a34a":"#dc2626"};background:${masterEnabled?"#052e16":"#3d0c0c"};color:${masterEnabled?"#4ade80":"#fca5a5"}`,
+  }, masterEnabled ? "Enabled" : "Disabled");
+  masterBtn.addEventListener("click", () => {
+    const newVal = !masterEnabled;
+    ctx.actions.wsCommand("padspan_ha/settings_set", {
+      data_mode: settings.data_mode || "sample",
+      beacon_profiling_enabled: newVal,
+    }).then(() => {
+      ctx.state.settings = { ...settings, beacon_profiling_enabled: newVal };
+      ctx.actions.renderRooms();
+    });
+  });
+  toggleRow.appendChild(masterBtn);
+  toggleRow.appendChild(el("div",{style:"font-size:11px;color:#94a3b8"},
+    masterEnabled ? "Profiling active — model defaults applied to new beacons"
+                  : "Profiling disabled — all beacons use raw calibration data only"));
+  wrap.appendChild(toggleRow);
+
+  if (!masterEnabled) {
+    wrap.appendChild(el("div",{style:"color:#94a3b8;font-size:13px;padding:20px;text-align:center"},
+      "Enable beacon profiling above to see signal profiles and model grouping."));
+    return wrap;
+  }
+
+  // ── State (hydrate from settings on first load) ──
   if (!ctx.state._bcProfiles) ctx.state._bcProfiles = null;
   if (!ctx.state._bcLoading)  ctx.state._bcLoading = false;
-  if (!ctx.state._bcGroupOverrides) ctx.state._bcGroupOverrides = {};   // device_id → model_key override
-  if (!ctx.state._bcTuneDisabled) ctx.state._bcTuneDisabled = new Set(); // device_ids with tuning disabled
+  if (!ctx.state._bcStateHydrated) {
+    ctx.state._bcGroupOverrides = settings.beacon_group_overrides || {};
+    ctx.state._bcTuneDisabled = new Set(settings.beacon_tune_disabled || []);
+    ctx.state._bcStateHydrated = true;
+  }
+
+  // Helper to persist tune-disabled + group overrides to settings
+  const _saveBC = () => {
+    ctx.actions.wsCommand("padspan_ha/settings_set", {
+      data_mode: settings.data_mode || "sample",
+      beacon_tune_disabled: [...ctx.state._bcTuneDisabled],
+      beacon_group_overrides: ctx.state._bcGroupOverrides,
+    }).catch(e => console.error("save beacon settings:", e));
+  };
 
   const refresh = () => {
     ctx.state._bcLoading = true;
@@ -1919,6 +1963,7 @@ function _beaconChars(ctx, el){
       tuneBtn.addEventListener("click", () => {
         if (tuneOff) ctx.state._bcTuneDisabled.delete(b.device_id);
         else ctx.state._bcTuneDisabled.add(b.device_id);
+        _saveBC();
         ctx.actions.renderRooms();
       });
       tuneTd.appendChild(tuneBtn);
@@ -1929,22 +1974,22 @@ function _beaconChars(ctx, el){
       const isOverridden = !!overrides[b.device_id];
       if (group.length > 1 || isOverridden) {
         if (!isOverridden) {
-          // Ungroup — move to its own solo group
           const ungroupBtn = el("button",{
             style:"font-size:10px;padding:2px 6px;border-radius:3px;cursor:pointer;border:1px solid #f59e0b;background:#451a03;color:#fcd34d",
           },"Ungroup");
           ungroupBtn.addEventListener("click", () => {
             ctx.state._bcGroupOverrides[b.device_id] = `solo:${b.device_id.substring(0,12)}`;
+            _saveBC();
             ctx.actions.renderRooms();
           });
           grpTd.appendChild(ungroupBtn);
         } else {
-          // Regroup — restore original model_key
           const regroupBtn = el("button",{
             style:"font-size:10px;padding:2px 6px;border-radius:3px;cursor:pointer;border:1px solid #3b82f6;background:#1e3a5f;color:#93c5fd",
           },"Regroup");
           regroupBtn.addEventListener("click", () => {
             delete ctx.state._bcGroupOverrides[b.device_id];
+            _saveBC();
             ctx.actions.renderRooms();
           });
           grpTd.appendChild(regroupBtn);
