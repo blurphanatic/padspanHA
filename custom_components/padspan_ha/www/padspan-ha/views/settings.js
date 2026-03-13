@@ -566,7 +566,7 @@ function _settingsPresence(ctx, el){
       style: "width:180px;background:#0a150e;color:#e2e8f0;border:1px solid #2d5a3d;border-radius:6px;padding:4px 8px;font-size:13px",
     });
     const optKnn = el("option", { value: "knn" }, "k-NN (default)");
-    const optRf = el("option", { value: "rf" }, "Random Forest" + (rfReady ? "" : " (not trained)"));
+    const optRf = el("option", { value: "rf" }, "Random Forest (experimental)" + (rfReady ? "" : " — not trained"));
     if (curAlgo === "knn") optKnn.selected = true;
     else optRf.selected = true;
     algoSel.appendChild(optKnn);
@@ -586,8 +586,8 @@ function _settingsPresence(ctx, el){
           curAlgo === "rf" ? (rfReady ? "Active" : "Falling back to k-NN") : ""),
       ]),
       el("div", { class: "muted", style: "font-size:12px;line-height:1.6" },
-        "k-NN compares live signals to the nearest calibration points. " +
-        "Random Forest trains a decision-tree model for potentially better accuracy with enough data. " +
+        "k-NN compares live signals to the nearest calibration points — works well even with sparse scanner coverage. " +
+        "Random Forest (experimental) trains a decision-tree model — needs dense multi-scanner overlap per object to outperform k-NN. " +
         "Both use the same calibration dataset — switching is instant and safe."),
     ]));
   }

@@ -101,12 +101,19 @@ class _DecisionTree:
         best_right: list[int] = []
 
         for f in feat_candidates:
-            # Collect unique values for this feature
+            # Collect unique values for this feature, ignoring MISSING_RSSI
+            real_vals = [X[i][f] for i in indices if X[i][f] > MISSING_RSSI + 1]
+            if len(real_vals) < self.min_leaf:
+                continue  # too few real readings — skip this scanner
             fvals = sorted(set(X[i][f] for i in indices))
             if len(fvals) < 2:
                 continue
             # Try midpoints between sorted unique values
             for vi in range(len(fvals) - 1):
+                # Skip thresholds near MISSING_RSSI — splits "heard vs not heard"
+                # are uninformative and cause clumping
+                if fvals[vi] <= MISSING_RSSI + 1:
+                    continue
                 thresh = (fvals[vi] + fvals[vi + 1]) / 2.0
                 left_idx = [i for i in indices if X[i][f] <= thresh]
                 right_idx = [i for i in indices if X[i][f] > thresh]
@@ -205,13 +212,17 @@ class RandomForestLocator:
 
         self._points = valid
 
-        # Build feature index: one column per unique scanner source
-        src_set: set[str] = set()
+        # Build feature index: only use scanners that appear in ≥20% of points.
+        # Rare scanners are mostly MISSING_RSSI, which dominates tree splits
+        # and causes all predictions to converge to the majority room.
+        src_counts: dict[str, int] = {}
         for p in valid:
             for r in p.get("scanner_readings", []):
-                if r.get("source"):
-                    src_set.add(r["source"])
-        self._sources = sorted(src_set)
+                s = r.get("source", "")
+                if s:
+                    src_counts[s] = src_counts.get(s, 0) + 1
+        min_appearances = max(2, int(len(valid) * 0.15))
+        self._sources = sorted(s for s, c in src_counts.items() if c >= min_appearances)
         src_idx = {s: i for i, s in enumerate(self._sources)}
         n_feat = len(self._sources)
 
