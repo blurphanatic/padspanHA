@@ -886,21 +886,30 @@ function _settingsPresence(ctx, el){
 <div style="margin-bottom:16px">
   <div style="font-weight:700;color:#34d399;font-size:13px;margin-bottom:4px">Android Phones / Tablets</div>
 
-  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Method 1: Home Assistant Companion App (easiest)</div>
+  <div style="background:#0a1a2a;border:1px solid #2563eb;border-radius:6px;padding:8px 10px;margin-bottom:10px">
+    <div style="font-weight:600;color:#60a5fa;font-size:11px;margin-bottom:2px">Do you need an IRK for Android?</div>
+    <div style="font-size:11px;color:#a5c8d4">
+      If the HA Companion App's <b>BLE Transmitter</b> sensor is enabled, your phone already broadcasts an <b>iBeacon signal</b>
+      that PadSpan tracks automatically — no IRK needed. Check the <b>Overview → Track My Phone</b> section: if your phone
+      shows as "visible" or "BLE active", it's already being tracked. IRK adds enhanced tracking when iBeacon is not broadcasting
+      (screen off for extended periods, app killed, etc.).
+    </div>
+  </div>
+
+  <div style="font-weight:600;color:#a7f3d0;margin-bottom:4px">Method 1: HA Private BLE Device Integration (recommended)</div>
   <ol style="margin:0 0 8px;padding-left:20px">
-    <li>Install the <b>Home Assistant Companion App</b> on the Android device.</li>
-    <li>Open the app → <b>Settings</b> (gear icon) → <b>Companion App</b> → <b>Manage Sensors</b>.</li>
-    <li>Find and enable <b>BLE Transmitter</b>.</li>
-    <li>Once enabled, go back to <b>Companion App</b> → <b>Troubleshooting</b> → scroll to <b>BLE Transmitter</b> section.</li>
-    <li>The <b>IRK</b> is displayed as a hex string. Copy it.</li>
-    <li>Paste the IRK above and give the device a name (e.g., "Bob's Pixel 8").</li>
+    <li>In Home Assistant, go to <b>Settings → Devices & Services → Add Integration</b>.</li>
+    <li>Search for <b>"Private BLE Device"</b> and add it.</li>
+    <li>HA will scan for nearby BLE devices with rotating addresses and offer to add them.</li>
+    <li>Select your phone from the list — HA handles the IRK extraction automatically.</li>
+    <li>PadSpan picks up the IRK from this integration within 60 seconds.</li>
   </ol>
   <div style="background:#0a1a1a;border:1px solid #164e63;border-radius:6px;padding:8px 10px;margin-bottom:8px">
-    <div style="font-weight:600;color:#22d3ee;font-size:11px;margin-bottom:2px">Important: BLE Transmitter must stay enabled</div>
+    <div style="font-weight:600;color:#22d3ee;font-size:11px;margin-bottom:2px">Important: BLE Transmitter should be enabled</div>
     <div style="font-size:11px;color:#a5c8d4">
-      The HA Companion App's BLE Transmitter makes Android broadcast a consistent BLE identity that can be resolved
-      with the IRK. Without it enabled, Android's BLE privacy will still rotate addresses but without a resolvable IRK.
-      Keep it enabled for continuous tracking. Battery impact is minimal (~1-2%).
+      Enable the HA Companion App's <b>BLE Transmitter</b> sensor for the best tracking coverage.
+      This makes Android broadcast a consistent iBeacon identity that PadSpan tracks natively.
+      Battery impact is minimal (~1-2%).
     </div>
   </div>
 

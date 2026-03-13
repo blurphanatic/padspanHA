@@ -2134,7 +2134,7 @@ export function render(ctx){
               // Help text
               const helpText = document.createElement("div");
               helpText.style.cssText = "font-size:9px;color:#64748b;width:100%;margin-top:2px;display:none";
-              helpText.textContent = "Find IRK in Companion App: Settings \u2192 Companion App \u2192 Manage Sensors \u2192 BLE Transmitter. Copy the IRK value and paste above.";
+              helpText.textContent = "IRK is optional — your phone is already tracked via iBeacon. For IRK (enhanced tracking), see Settings \u2192 Phone Tracking for extraction methods.";
               irkRow.appendChild(helpText);
               addIrkBtn.addEventListener("click", () => { helpText.style.display = "block"; });
 
@@ -2479,7 +2479,7 @@ export function render(ctx){
             irkRow.appendChild(irkSaveBtn);
             const irkHelp = document.createElement("div");
             irkHelp.style.cssText = "font-size:9px;color:#64748b;width:100%;margin-top:2px;display:none";
-            irkHelp.textContent = "Find IRK in Companion App: Settings \u2192 Companion App \u2192 Manage Sensors \u2192 BLE Transmitter. Copy the IRK value and paste above.";
+            irkHelp.textContent = "IRK is optional — your phone is already tracked via iBeacon. For IRK (enhanced tracking), see Settings \u2192 Phone Tracking for extraction methods.";
             irkRow.appendChild(irkHelp);
             info.appendChild(irkRow);
           }
