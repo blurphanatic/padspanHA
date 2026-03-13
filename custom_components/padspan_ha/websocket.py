@@ -2841,6 +2841,7 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                             "room": _result.get("nearest_room") if _result else None,
                             "map_id": (_result.get("map_id") or "")[:20] if _result else None,
                             "k_used": _result.get("k_used") if _result else None,
+                            "shared_scanners": _result.get("shared_scanners") if _result else None,
                         } if _result else None,
                     })
             snap["calibration_status"] = {

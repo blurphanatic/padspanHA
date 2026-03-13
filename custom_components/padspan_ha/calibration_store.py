@@ -419,15 +419,22 @@ class CalibrationStore:
         # Confidence: two components multiplied together:
         #   1. RSSI accuracy — how close the fingerprint matches.
         #      conf_rssi = 1 / (1 + mean_sq / REF_VARIANCE)
-        #   2. Scanner coverage — how many scanners contributed.
-        #      1 scanner = 25%, 2 = 50%, 3 = 75%, 4+ = 100%.
-        #      A single scanner can only estimate distance (a ring), not position.
+        #   2. Scanner coverage — how many query scanners overlap with any
+        #      top-k calibration point.  Using only the best match's shared
+        #      count is too pessimistic: the query might be heard by 5 scanners
+        #      but the best-matching point only had 1 of those 5.
         _best_dist_sq = scored[0][0]
-        _best_n_shared = max(scored[0][1], 1)
-        _mean_sq = _best_dist_sq / _best_n_shared
+        # Count unique query scanners that appear in ANY top-k point
+        _topk_sources: set[str] = set()
+        for _d, _ns, _pt in top_k:
+            for _r in _pt.get("scanner_readings", []):
+                _topk_sources.add(_r.get("source", ""))
+        _shared_total = len(set(query_rssi.keys()) & _topk_sources)
+        _shared_total = max(_shared_total, 1)
+        _mean_sq = _best_dist_sq / _shared_total
         _REF_VARIANCE = 25.0  # 5 dBm per scanner → 50% rssi confidence
         _conf_rssi = 1.0 / (1.0 + _mean_sq / _REF_VARIANCE)
-        _conf_coverage = min(_best_n_shared, 4) / 4.0
+        _conf_coverage = min(_shared_total, 4) / 4.0
         confidence = round(_conf_rssi * _conf_coverage, 3)
 
         return {
@@ -437,7 +444,7 @@ class CalibrationStore:
             "nearest_room": scored[0][2].get("room", ""),
             "map_id": best_map,
             "k_used": len(top_k),
-            "shared_scanners": _best_n_shared,
+            "shared_scanners": _shared_total,
         }
 
     # ── Random Forest positioning ─────────────────────────────────────────────

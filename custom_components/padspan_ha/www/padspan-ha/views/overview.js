@@ -2394,9 +2394,9 @@ export function render(ctx){
             el("div",{style:"color:#f59e0b;margin-top:3px"},
               `Cal: ${(cs.cal_sources||[]).slice(0,3).join(", ")} · Live: ${(cs.ema_sources||[]).slice(0,3).join(", ")}`) : null,
           ...(cs.knn_diag||[]).map(d => el("div",{style:"margin-top:3px;border-top:1px solid #1e293b;padding-top:3px"}, [
-            el("div",{}, `${d.key}: ${d.ema_scanners} scanners, ${d.shared_with_cal} shared`),
+            el("div",{}, `${d.key}: ${d.ema_scanners} EMA, ${d.shared_with_cal} overlap cal`),
             d.knn_result ? el("div",{style:"color:#52b788"},
-              `→ conf=${(d.knn_result.confidence*100).toFixed(0)}% room=${d.knn_result.room} k=${d.knn_result.k_used}`) :
+              `→ conf=${(d.knn_result.confidence*100).toFixed(0)}% room=${d.knn_result.room} k=${d.knn_result.k_used} shared=${d.knn_result.shared_scanners||"?"}`) :
               el("div",{style:"color:#f87171"}, d.shared_with_cal > 0 ? "→ knn_locate returned null" : "→ no shared scanners"),
           ])),
         ].filter(Boolean)) : null,
