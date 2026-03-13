@@ -1099,36 +1099,43 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const svgWrap = document.createElement("div");
   svgWrap.innerHTML = s;
 
-  // Click handlers — attach directly to each clickable <g> node for reliable
-  // SVG click handling (closest() can be unreliable on SVG elements in WebViews)
-  for (const g of svgWrap.querySelectorAll(".bt-viz-click")) {
-    g.addEventListener("click", () => {
-      const type = g.getAttribute("data-type");
-      const id = g.getAttribute("data-id");
-      if (!id) return;
-      if (type === "scanner") {
-        const radio = radios.find(r => String(r.source || "") === id);
-        if (radio) ctx.actions.showScannerDetail(radio);
-      } else if (type === "device") {
-        const obj = objIndex.get(id.toUpperCase());
-        if (obj) {
-          ctx.actions.showObjectDetail(obj);
-        } else {
-          const ad = ads.find(a => String(a.address || "") === id || String(a.name || "") === id);
-          if (ad) {
-            ctx.actions.showObjectDetail({
-              address: ad.address || id,
-              name: ad.name || ad.address || id,
-              kind: "ble",
-              room: ad.area_name || "",
-              rssi: ad.rssi,
-              source: ad.source || "",
-            });
-          }
+  // Click handler — event delegation on the wrapper div.  Walk up from the
+  // click target to find the nearest <g> with data-type.  This is more reliable
+  // than querySelectorAll(".class") on SVG elements created via innerHTML,
+  // which can miss elements due to HTML/SVG namespace mismatches in WebViews.
+  svgWrap.addEventListener("click", (e) => {
+    let node = e.target;
+    // Walk up from click target to find the <g> with data-type
+    while (node && node !== svgWrap) {
+      if (node.getAttribute && node.getAttribute("data-type")) break;
+      node = node.parentNode;
+    }
+    if (!node || node === svgWrap) return;
+    const type = node.getAttribute("data-type");
+    const id = node.getAttribute("data-id");
+    if (!id) return;
+    if (type === "scanner") {
+      const radio = radios.find(r => String(r.source || "") === id);
+      if (radio) ctx.actions.showScannerDetail(radio);
+    } else if (type === "device") {
+      const obj = objIndex.get(id.toUpperCase());
+      if (obj) {
+        ctx.actions.showObjectDetail(obj);
+      } else {
+        const ad = ads.find(a => String(a.address || "") === id || String(a.name || "") === id);
+        if (ad) {
+          ctx.actions.showObjectDetail({
+            address: ad.address || id,
+            name: ad.name || ad.address || id,
+            kind: "ble",
+            room: ad.area_name || "",
+            rssi: ad.rssi,
+            source: ad.source || "",
+          });
         }
       }
-    });
-  }
+    }
+  });
 
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),
