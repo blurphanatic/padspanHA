@@ -5534,6 +5534,8 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                     "existing_label": "",
                     "state": "disabled",
                     "attributes": {},
+                    "has_irk": False,
+                    "irk_canonical": "",
                 })
                 continue
 
@@ -5573,49 +5575,55 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
             followed = settings.get("followed_addrs") or []
             is_followed = ibeacon_key in followed or ibeacon_key.upper() in [f.upper() for f in followed]
 
-            # Check if the iBeacon is currently visible in BLE
+            # Check if the phone is currently visible in BLE.
+            # Method 1: iBeacon advertisement matches UUID:major:minor.
+            # Method 2: Any RPA resolves via IRK to a device matching this phone.
             is_visible = False
+            has_irk = False
+            irk_canonical = ""
+            _vis_scanner_count = 0
+            _vis_rssi = None
             try:
                 ble_live = get_bluetooth_live(hass)
                 ble_snap = ble_live.get_snapshot(max_ads=2000, max_age_s=600)
+                _irk_resolver = await _get_ble_resolver(hass)
+                from .private_ble_resolver import PrivateBLEResolver
+
+                # First check: does the resolver have an IRK device matching
+                # this phone's name?  This works even without any live ads.
+                for _dev in _irk_resolver._devices:
+                    _dev_name = (_dev.get("name") or "").lower()
+                    if device_name.lower() in _dev_name or _dev_name in device_name.lower():
+                        has_irk = True
+                        irk_canonical = _dev["canonical_id"]
+                        break
+
+                # Scan all BLE advertisements for this phone
+                _irk_match_cid = irk_canonical  # canonical_id to match for IRK visibility
                 for ad in (ble_snap.get("advertisements") or []):
+                    ad_addr = (ad.get("address") or "").upper()
                     mfr = ad.get("manufacturer_data") or {}
-                    from .private_ble_resolver import PrivateBLEResolver
                     parsed = PrivateBLEResolver.parse_ibeacon(mfr)
+                    # iBeacon match
                     if parsed and parsed["uuid"].lower() == uuid_clean and parsed["major"] == major and parsed["minor"] == minor:
                         is_visible = True
-                        break
-            except Exception:
-                pass
-
-            # Check if this phone has an IRK configured
-            has_irk = False
-            irk_canonical = ""
-            try:
-                _irk_resolver = await _get_ble_resolver(hass)
-                _irk_ble_live = get_bluetooth_live(hass)
-                _irk_snap = _irk_ble_live.get_snapshot(max_ads=2000, max_age_s=600)
-                for _irk_ad in (_irk_snap.get("advertisements") or []):
-                    _irk_ib = _irk_resolver.parse_ibeacon(_irk_ad.get("manufacturer_data") or {})
-                    if not _irk_ib:
+                        # Also check IRK on this specific ad
+                        if not has_irk and _is_rpa_addr(ad_addr):
+                            _irk_res = _irk_resolver.resolve_address(ad_addr)
+                            if _irk_res and _irk_res.get("canonical_id"):
+                                has_irk = True
+                                irk_canonical = _irk_res["canonical_id"]
+                                _irk_match_cid = irk_canonical
                         continue
-                    _irk_ib_key = f"ibeacon:{_irk_ib['uuid']}:{_irk_ib['major']}:{_irk_ib['minor']}"
-                    if _irk_ib_key.lower() != ibeacon_key.lower():
-                        continue
-                    _irk_addr = (_irk_ad.get("address") or "").upper()
-                    _irk_res = _irk_resolver.resolve_address(_irk_addr)
-                    if _irk_res and _irk_res.get("canonical_id"):
-                        has_irk = True
-                        irk_canonical = _irk_res["canonical_id"]
-                    break
-                # Also check: does the resolver have ANY device matching
-                # this phone's device name?
-                if not has_irk:
-                    for _dev in _irk_resolver._devices:
-                        if device_name.lower() in (_dev.get("name") or "").lower():
-                            has_irk = True
-                            irk_canonical = _dev["canonical_id"]
-                            break
+                    # IRK-only match: RPA resolves to the same canonical_id
+                    if _irk_match_cid and _is_rpa_addr(ad_addr):
+                        _irk_res = _irk_resolver.resolve_address(ad_addr)
+                        if _irk_res and _irk_res.get("canonical_id") == _irk_match_cid:
+                            is_visible = True
+                            _rssi = ad.get("rssi")
+                            if _rssi is not None and (_vis_rssi is None or _rssi > _vis_rssi):
+                                _vis_rssi = _rssi
+                            _vis_scanner_count += 1
             except Exception:
                 pass
 
@@ -5667,6 +5675,19 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                         continue
                     # No BLE transmitter entity — phone is registered but sensor
                     # is not enabled.  Show it so the UI can prompt the user.
+                    # Check if phone has IRK by name match
+                    _fb_has_irk = False
+                    _fb_irk_cid = ""
+                    try:
+                        _fb_resolver = await _get_ble_resolver(hass)
+                        for _fb_dev in _fb_resolver._devices:
+                            _fb_n = (_fb_dev.get("name") or "").lower()
+                            if device_name.lower() in _fb_n or _fb_n in device_name.lower():
+                                _fb_has_irk = True
+                                _fb_irk_cid = _fb_dev["canonical_id"]
+                                break
+                    except Exception:
+                        pass
                     phones.append({
                         "entity_id": "",
                         "device_name": device_name,
@@ -5685,6 +5706,8 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                         "device_id": device.id,
                         "model": device.model or "",
                         "manufacturer": device.manufacturer or "",
+                        "has_irk": _fb_has_irk,
+                        "irk_canonical": _fb_irk_cid,
                     })
         except Exception as e:
             _LOGGER.debug("companion_discover device-registry scan: %s", e)
@@ -5742,6 +5765,8 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                         "model": _dev_model,
                         "manufacturer": _dev_manufacturer,
                         "found_via": "notify_service",
+                        "has_irk": False,
+                        "irk_canonical": "",
                     })
                     _phones_names_lc.add(dev_name.lower())
         except Exception as e:
@@ -5789,6 +5814,8 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                     "model": "",
                     "manufacturer": "",
                     "found_via": "device_tracker",
+                    "has_irk": False,
+                    "irk_canonical": "",
                 })
                 _phones_names_lc.add(dev_name.lower())
         except Exception as e:
@@ -5834,6 +5861,8 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                                 "model": wh_val.get("model", ""),
                                 "manufacturer": wh_val.get("manufacturer", ""),
                                 "found_via": "webhook",
+                                "has_irk": False,
+                                "irk_canonical": "",
                             })
                             _phones_names_lc.add(wh_name.lower())
             # Also try the mobile_app "registrations" storage key
