@@ -201,6 +201,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._rssi_margin_confidence: dict[str, float] = {}
         # {key: dict}  — latest k-NN fingerprint result (x_frac, y_frac, confidence, nearest_room)
         self._knn_position: dict[str, dict] = {}
+        # {key: (x, y)}  — EMA-smoothed position for stable map display
+        self._smooth_xy: dict[str, tuple[float, float]] = {}
         # Throttle: {key: monotonic_ts} — last alert sent time per object
         self._alert_last_sent: dict[str, float] = {}
         _ALERT_COOLDOWN_S = 60  # min seconds between alerts for same device
@@ -354,6 +356,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._room_votes.pop(key, None)
                 self._room_confidence.pop(key, None)
                 self._knn_position.pop(key, None)
+                self._smooth_xy.pop(key, None)
                 if obj.get("kind") in ("ble", "private_ble"):
                     # For private_ble, use canonical_id as Kalman key
                     _raw_addr = str(obj.get("address") or "").upper()
@@ -808,19 +811,39 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             )
                             if _geo_room:
                                 _knn_room = _geo_room
-                    # Always store the k-NN position for map display when
-                    # confidence passes — even if room is empty.  The x/y
-                    # position on the map is valuable regardless.
-                    self._knn_position[key] = _knn
+                    # Smooth x/y position with EMA to prevent map dot jumping.
+                    # Higher confidence → faster tracking (alpha up to 0.5);
+                    # lower confidence → more smoothing (alpha down to 0.15).
+                    # Reset when the result switches maps (different coordinate space).
+                    _raw_x = float(_knn.get("x_frac", 0.0))
+                    _raw_y = float(_knn.get("y_frac", 0.0))
+                    _prev = self._smooth_xy.get(key)
+                    _prev_map = (self._knn_position.get(key) or {}).get("map_id", "")
+                    _new_map = _knn.get("map_id", "")
+                    _conf = float(_knn.get("confidence", 0.0))
+                    _alpha = 0.15 + 0.35 * min(_conf, 1.0)  # 0.15–0.50
+                    if _prev is not None and _prev_map == _new_map:
+                        _sx = _prev[0] + _alpha * (_raw_x - _prev[0])
+                        _sy = _prev[1] + _alpha * (_raw_y - _prev[1])
+                    else:
+                        _sx, _sy = _raw_x, _raw_y  # new map or first time — no smoothing
+                    self._smooth_xy[key] = (_sx, _sy)
+                    _knn_smoothed = dict(_knn)
+                    _knn_smoothed["x_frac"] = round(_sx, 4)
+                    _knn_smoothed["y_frac"] = round(_sy, 4)
+                    self._knn_position[key] = _knn_smoothed
                     if _knn_room:
                         candidate = _knn_room
                 else:
                     self._knn_position.pop(key, None)
+                    self._smooth_xy.pop(key, None)
             else:
                 self._knn_position.pop(key, None)
+                self._smooth_xy.pop(key, None)
         except Exception as _knn_err:
             _LOGGER.warning("k-NN error for %s: %s", key[:30], _knn_err, exc_info=True)
             self._knn_position.pop(key, None)
+            self._smooth_xy.pop(key, None)
 
         # ── Stage 2: majority-vote window (size adjusts to room_change_delay_s) ──
         existing = self._room_votes.get(key)
