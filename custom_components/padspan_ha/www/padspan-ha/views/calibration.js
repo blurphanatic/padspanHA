@@ -2597,6 +2597,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     _guideTarget: null,    // {mapId, x, y, room} — suggested position
     _guideSkipped: [],     // [{mapId, x, y}] — positions user skipped
     _guideCapturing: false, // true while 60s capture is running
+    _guideSaved: false,    // brief "Saved!" flash before advancing to next location
     _guideTimerId: null,
     _guidePollId: null,
     _guideReadings: {},    // {source: {name, samples:[]}}
@@ -4855,6 +4856,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       bs._guideActive = false;
       bs._guideTarget = null;
       bs._guideCapturing = false;
+      bs._guideSaved = false;
       if (bs._guideTimerId) { clearTimeout(bs._guideTimerId); bs._guideTimerId = null; }
       if (bs._guidePollId) { clearTimeout(bs._guidePollId); bs._guidePollId = null; }
       _refreshGuideCard();
@@ -4934,6 +4936,15 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         _refreshSVG();
       });
       guideCard.appendChild(stopBtn);
+      return;
+    }
+
+    // Brief "Saved!" flash before showing next location
+    if (bs._guideSaved) {
+      const saved = document.createElement("div");
+      saved.style.cssText = "text-align:center;padding:16px;font-size:14px;color:#52b788;font-weight:700";
+      saved.innerHTML = "&#10003; Saved! Moving to next location\u2026";
+      guideCard.appendChild(saved);
       return;
     }
 
@@ -5067,9 +5078,23 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
       if (!scannerReadings.length || scannerReadings.every(r => !r.rssi_samples.length)) {
         console.warn("Guide: no RSSI data collected");
-        bs._guideTarget = _computeBestTarget(bs._guideBkKey);
+        bs._guideSaved = true;
+        bs._guideReadings = {};
+        // Override saved message to warn — will be cleared on advance
         _refreshGuideCard();
+        // Patch the saved text to show warning instead
+        const savedEl = guideCard?.querySelector("div[style*='color:#52b788']");
+        if (savedEl) {
+          savedEl.style.color = "#f59e0b";
+          savedEl.innerHTML = "&#9888; No signal detected — skipping to next location\u2026";
+        }
         _refreshSVG();
+        setTimeout(() => {
+          bs._guideSaved = false;
+          bs._guideTarget = _computeBestTarget(bs._guideBkKey);
+          _refreshGuideCard();
+          _refreshSVG();
+        }, 1500);
         return;
       }
 
@@ -5098,10 +5123,17 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         console.error("Guide save error:", e);
       }
 
-      // Advance to next suggested position
-      bs._guideTarget = _computeBestTarget(bs._guideBkKey);
+      // Show "Saved!" briefly, then advance to next location
+      bs._guideSaved = true;
+      bs._guideReadings = {};
       _refreshGuideCard();
       _refreshSVG();
+      setTimeout(() => {
+        bs._guideSaved = false;
+        bs._guideTarget = _computeBestTarget(bs._guideBkKey);
+        _refreshGuideCard();
+        _refreshSVG();
+      }, 1200);
     }, 60000);
   }
 
