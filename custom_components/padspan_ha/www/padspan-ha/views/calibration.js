@@ -3045,14 +3045,43 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
   const pickerRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
 
-  // Map selector for beacon placement
+  // Map selector for beacon placement (with floor groups, matching Setup tab)
   const bkMapSel = document.createElement("select");
   bkMapSel.style.cssText = "min-width:120px;";
-  for (const m of sorted) {
-    const opt = document.createElement("option");
-    opt.value = m.id;
-    opt.textContent = m.name || m.id;
-    bkMapSel.appendChild(opt);
+  {
+    const _fl = ctx.state.model?.floors || [];
+    const _floorMaps = new Map();
+    for (const m of sorted) {
+      const z = m.stack?.z_level ?? 0;
+      if (!_floorMaps.has(z)) _floorMaps.set(z, []);
+      _floorMaps.get(z).push(m);
+    }
+    const _sortedZ = [..._floorMaps.keys()].sort((a, b) => a - b);
+    if (_sortedZ.length > 1) {
+      const floorGroup = document.createElement("optgroup");
+      floorGroup.label = "Floors";
+      for (const z of _sortedZ) {
+        const fObj = _fl.find(f => f.level === z);
+        const fName = fObj ? (fObj.name || `Floor ${z}`) : `Floor ${z}`;
+        const opt = document.createElement("option");
+        opt.value = `__floor__${z}`;
+        opt.textContent = `${fName} (${_floorMaps.get(z).length} map${_floorMaps.get(z).length > 1 ? "s" : ""})`;
+        floorGroup.appendChild(opt);
+      }
+      bkMapSel.appendChild(floorGroup);
+    }
+    const mapGroup = _sortedZ.length > 1 ? document.createElement("optgroup") : null;
+    if (mapGroup) mapGroup.label = "Maps";
+    for (const m of sorted) {
+      const z = m.stack?.z_level ?? 0;
+      const fObj = _fl.find(f => f.level === z);
+      const fLabel = fObj ? ` (${fObj.name || `Floor ${z}`})` : "";
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = (m.name || m.id) + fLabel;
+      (mapGroup || bkMapSel).appendChild(opt);
+    }
+    if (mapGroup) bkMapSel.appendChild(mapGroup);
   }
 
   const bkSel = document.createElement("select");
@@ -3075,7 +3104,19 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     if (!selKey) return;
     const obj = (snap?.objects?.list || []).find(o => o.key === selKey);
     if (!obj) return;
-    const targetMapId = bkMapSel.value;
+    let targetMapId = bkMapSel.value;
+    // Resolve floor selection to best map on that floor
+    if (targetMapId.startsWith("__floor__")) {
+      const z = Number(targetMapId.replace("__floor__", ""));
+      const candidates = sorted.filter(m => (m.stack?.z_level ?? 0) === z);
+      const best = candidates.slice().sort((a, b) => {
+        const ra = (a.receivers || []).length + Object.keys(a.room_bounds || {}).length;
+        const rb = (b.receivers || []).length + Object.keys(b.room_bounds || {}).length;
+        return rb - ra;
+      })[0];
+      targetMapId = best ? best.id : "";
+      if (!targetMapId) return;
+    }
     const newBk = {
       id: "bk_" + Math.random().toString(16).slice(2, 10),
       label: obj.user_label || obj.name || selKey,

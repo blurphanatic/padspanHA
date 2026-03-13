@@ -1897,13 +1897,6 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                                     )
                                 break
 
-                    # For iBeacon objects, also check if any of their MACs have a label
-                    if not entry and kind == "ibeacon":
-                        for mac in _ibeacon_to_macs.get(lookup_key, []):
-                            entry = obj_store.get(mac)
-                            if entry:
-                                break
-
                     if entry:
                         label = entry.get("label", "")
                         if label:
@@ -1924,8 +1917,6 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                             elif kind == "ibeacon":
                                 # iBeacon label → also register under uppercase variant
                                 _device_labels[lookup_key.upper()] = label
-                            elif kind == "ble" and addr in _mac_to_ibeacon_key:
-                                _device_labels[_mac_to_ibeacon_key[addr]] = label
                             # Propagate to canonical_id for entity→private_ble cross-ref
                             _ent_cid = obj.get("canonical_id")
                             if _ent_cid and _ent_cid not in _device_labels:
@@ -1955,15 +1946,6 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         ib_key = obj.get("ibeacon_key")
                         if ib_key:
                             label = _device_labels.get(ib_key)
-                    # For iBeacon: check if any of its MACs belong to a labelled
-                    # regular BLE device (non-rotating MAC with a label)
-                    if not label and kind == "ibeacon":
-                        for mac in _ibeacon_to_macs.get(lookup_key, []):
-                            mac_entry = obj_store.get(mac) if obj_store else None
-                            if mac_entry and mac_entry.get("label"):
-                                label = mac_entry["label"]
-                                break
-
                     if label:
                         obj["user_label"] = label
                         if kind in ("ble", "ibeacon", "private_ble"):
