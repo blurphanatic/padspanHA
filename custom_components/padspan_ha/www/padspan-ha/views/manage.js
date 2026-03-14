@@ -1355,7 +1355,15 @@ function _events(ctx, el){
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
 
   // ── Email Notifications card ──────────────────────────────────────────────
-  wrap.appendChild(_buildNotifications(ctx, el));
+  try {
+    wrap.appendChild(_buildNotifications(ctx, el));
+  } catch(e) {
+    console.error("_buildNotifications crashed:", e);
+    wrap.appendChild(el("div",{class:"card",style:"border-color:#7f1d1d"},[
+      el("div",{style:"font-weight:700;color:#fca5a5"},"Email Notifications — Error"),
+      el("div",{style:"font-size:11px;color:#f87171;font-family:monospace;word-break:break-all;margin-top:4px"}, String(e?.message || e)),
+    ]));
+  }
 
   wrap.appendChild(el("div",{class:"muted",style:"font-size:12px"},
     "Session event log — room transitions for all tracked tags, newest first. Clears on page reload."
@@ -1558,11 +1566,14 @@ function _buildNotifications(ctx, el){
   if(!ctx.state._notifyServices) ctx.state._notifyServices = [];
   ctx.actions.wsCall("padspan_ha/notify_services_list", {}).then(r => {
     ctx.state._notifyServices = (r && r.services) || [];
+    ctx.state._notifySvcDebug = r ? JSON.stringify(r) : "null response";
     // Re-render if list changed (new service added, or still empty on first load)
     if(JSON.stringify(ctx.state._notifyServices) !== _prevServices){
       ctx.actions.renderRooms();
     }
-  }).catch(() => {});
+  }).catch(e => {
+    ctx.state._notifySvcDebug = "WS error: " + (e?.message || String(e));
+  });
 
   const editCard = el("div",{class:"card"});
   editCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;margin-bottom:4px"},"Configure Alerts"));
@@ -1584,6 +1595,7 @@ function _buildNotifications(ctx, el){
     ctx.actions.renderRooms();
   });
   if(_svcList.length === 0){
+    const _dbg = ctx.state._notifySvcDebug || "loading…";
     editCard.appendChild(el("div",{style:"background:#1a0a0a;border:1px solid #7f1d1d;border-radius:8px;padding:12px 14px;margin-bottom:12px"},[
       el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
         el("div",{style:"font-weight:700;font-size:13px;color:#fca5a5"},"No notification services found"),
@@ -1598,6 +1610,7 @@ function _buildNotifications(ctx, el){
         "3. Configure it with your email/credentials\n" +
         "4. Restart HA, then click Refresh Services above"
       ),
+      el("div",{style:"font-size:10px;color:#475569;margin-top:8px;font-family:monospace;word-break:break-all"}, "Debug: " + _dbg + " | UI: v" + (ctx.state.version||"?") + " | Backend: v" + (ctx.state.versionInfo?.version||"?") + " | Mode: " + (ctx.state.dataMode||"?")),
     ]));
   } else {
     editCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap"},[
