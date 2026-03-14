@@ -1247,6 +1247,17 @@ function _history(ctx, el){
   const { roomColor } = ctx.helpers;
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
 
+  // Ensure object labels are loaded for friendly names
+  if(!ctx.state._objectLabelsLoaded){
+    ctx.state._objectLabelsLoaded = true;
+    ctx.actions.objectLabelList().then(r => {
+      if(r && r.labels && Object.keys(r.labels).length){
+        ctx.state._objectLabels = r.labels;
+        ctx.actions.renderRooms();
+      }
+    }).catch(()=>{});
+  }
+
   // Load persisted movement history from backend
   if(!ctx.state._manageMovementLoaded){
     ctx.state._manageMovementLoaded = true;
@@ -1260,6 +1271,30 @@ function _history(ctx, el){
   }
 
   const entries = ctx.state._manageMovementEntries || [];
+
+  // Build a lookup for friendly names from all available sources
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const _nameMap = {};
+  // From snapshot objects (BLE devices)
+  const _objs = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
+  for(const o of _objs){
+    const addr = o.address || o.entity_id || "";
+    if(addr && (o.user_label || o.name)) _nameMap[addr] = o.user_label || o.name;
+  }
+  // From snapshot tags (entity trackers)
+  const _tags = (snap && Array.isArray(snap.tags)) ? snap.tags : [];
+  for(const t of _tags){
+    if(t.entity_id && (t.name || t.entity_id)){
+      if(!_nameMap[t.entity_id]) _nameMap[t.entity_id] = t.name || t.entity_id;
+    }
+  }
+  // From stored object labels
+  const _storedLabels = ctx.state._objectLabels || {};
+  for(const [addr, info] of Object.entries(_storedLabels)){
+    if(addr && !_nameMap[addr]){
+      _nameMap[addr] = (typeof info === "string") ? info : (info && info.label) || addr;
+    }
+  }
 
   // Toolbar
   const toolbar = el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:8px"});
@@ -1297,7 +1332,8 @@ function _history(ctx, el){
         dateStr = `${ts.getMonth()+1}/${ts.getDate()} `;
       }
     }
-    const label = entry.label || entry.device || "Unknown";
+    const _dev = entry.device || "";
+    const label = entry.label || _nameMap[_dev] || _dev || "Unknown";
     const fromRoom = entry.from || "?";
     const toRoom = entry.to || "?";
     const rc = roomColor ? roomColor(toRoom) : "#52b788";
