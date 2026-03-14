@@ -101,8 +101,11 @@ export function render(ctx) {
     return true;
   });
 
-  // Sort: tagged/entities first, then by name
+  // Sort: followed first, then tagged/entities, then by name
   filtered.sort((a, b) => {
+    const aFol = _followedAddrs.has(a.address || "") || _followedAddrs.has(a.entity_id || "") || _followedAddrs.has(a.key || "") ? 0 : 1;
+    const bFol = _followedAddrs.has(b.address || "") || _followedAddrs.has(b.entity_id || "") || _followedAddrs.has(b.key || "") ? 0 : 1;
+    if (aFol !== bFol) return aFol - bFol;
     const aRank = (a.tagged || a.type === "entity") ? 0 : 1;
     const bRank = (b.tagged || b.type === "entity") ? 0 : 1;
     if (aRank !== bRank) return aRank - bRank;
