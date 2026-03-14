@@ -393,7 +393,7 @@ function _insights(ctx, el, _sid){
   const sortedRC = Object.entries(roomCounts).sort((a,b)=>b[1]-a[1]);
   const maxCount = sortedRC.length ? sortedRC[0][1] : 1;
 
-  const occCard = el("div",{class:"card"});
+  const occCard = el("div",{class:"card",style:"overflow:hidden;min-width:0"});
   occCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Room Occupancy"));
   if(sortedRC.length === 0){
     occCard.appendChild(el("div",{class:"muted"},"No objects assigned to rooms."));
@@ -478,7 +478,7 @@ function _insights(ctx, el, _sid){
     if(!_mobRooms[k]) _mobRooms[k] = new Set();
     _mobRooms[k].add(obj.room);
   }
-  const mobCard = el("div",{class:"card"});
+  const mobCard = el("div",{class:"card",style:"overflow:hidden;min-width:0"});
   mobCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Object Mobility"));
   const topMobile = Object.entries(_mobRooms)
     .map(([t, rs])=>({t, n: rs.size, rooms: [...rs]}))
@@ -506,7 +506,7 @@ function _insights(ctx, el, _sid){
   grid.appendChild(mobCard);
 
   // ── Coverage Gaps ──
-  const gapCard = el("div",{class:"card"});
+  const gapCard = el("div",{class:"card",style:"overflow:hidden;min-width:0"});
   gapCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Coverage Gaps"));
   const gapItems = [];
 
@@ -551,7 +551,7 @@ function _insights(ctx, el, _sid){
 
   // ── Device Breakdown ──
   const summary = snap.objects && snap.objects.summary;
-  const brkCard = el("div",{class:"card"});
+  const brkCard = el("div",{class:"card",style:"overflow:hidden;min-width:0"});
   brkCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Device Breakdown"));
   if(!summary){
     brkCard.appendChild(el("div",{class:"muted"},"No object summary available."));
@@ -579,7 +579,7 @@ function _insights(ctx, el, _sid){
   grid.appendChild(brkCard);
 
   // ── Dashboard Card Preview ──
-  const dashCard = el("div",{class:"card"});
+  const dashCard = el("div",{class:"card",style:"overflow:hidden;min-width:0"});
   dashCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Dashboard Card Preview"));
   dashCard.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:10px"}, "What a Lovelace card could look like with your current data."));
 
@@ -589,10 +589,10 @@ function _insights(ctx, el, _sid){
     dashCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},"No room data to preview."));
   } else {
     const cols = Math.min(3, roomCells.length);
-    const miniGrid = el("div",{style:`display:grid;grid-template-columns:repeat(${cols},1fr);gap:6px;max-width:320px`});
+    const miniGrid = el("div",{style:`display:grid;grid-template-columns:repeat(${cols},1fr);gap:6px;max-width:100%`});
     for(const [room, count] of roomCells){
       const rc = ctx.helpers.roomColor ? ctx.helpers.roomColor(room) : "#52b788";
-      const cell = el("div",{style:`background:${rc}18;border:1px solid ${rc}44;border-radius:6px;padding:8px;text-align:center`},[
+      const cell = el("div",{style:`background:${rc}18;border:1px solid ${rc}44;border-radius:6px;padding:8px;text-align:center;overflow:hidden;min-width:0`},[
         el("div",{style:"font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, room),
         el("div",{style:`font-size:20px;font-weight:800;color:${rc}`}, String(count)),
         el("div",{style:"display:flex;justify-content:center;gap:2px;margin-top:4px"},
