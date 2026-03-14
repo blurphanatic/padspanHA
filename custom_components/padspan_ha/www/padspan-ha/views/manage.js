@@ -1246,52 +1246,70 @@ function _haMqttSection(ctx, el, settings){
 function _history(ctx, el){
   const { roomColor } = ctx.helpers;
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
-  wrap.appendChild(el("div",{class:"muted",style:"font-size:12px"},
-    "Movement history tracked in this browser session. Reloading the page clears the history. Track a tag from the Follow tab to populate this."
-  ));
 
-  const followHistory = ctx.state.followHistory || {};
-  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
-  const allObjects = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
-  const addrs = Object.keys(followHistory).filter(a => followHistory[a] && followHistory[a].length > 0);
+  // Load persisted movement history from backend
+  if(!ctx.state._manageMovementLoaded){
+    ctx.state._manageMovementLoaded = true;
+    ctx.state._manageMovementEntries = [];
+    ctx.actions.wsCall("padspan_ha/movement_history_get", {limit: 500}).then(r => {
+      ctx.state._manageMovementEntries = (r && r.entries) || [];
+      ctx.actions.renderRooms();
+    }).catch(e => {
+      console.error("Movement history load failed:", e);
+    });
+  }
 
-  if(!addrs.length){
+  const entries = ctx.state._manageMovementEntries || [];
+
+  // Toolbar
+  const toolbar = el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:8px"});
+  toolbar.appendChild(el("div",{class:"muted",style:"font-size:12px"}, `${entries.length} room transitions (persisted)`));
+  toolbar.appendChild(el("div",{style:"flex:1"}));
+  const refreshBtn = el("button",{class:"btn inline",style:"font-size:11px;padding:2px 8px"}, "Refresh");
+  refreshBtn.addEventListener("click", ()=>{
+    ctx.state._manageMovementLoaded = false;
+    ctx.actions.renderRooms();
+  });
+  toolbar.appendChild(refreshBtn);
+  wrap.appendChild(toolbar);
+
+  if(entries.length === 0){
     wrap.appendChild(el("div",{class:"card"},[
-      el("div",{class:"muted"},"No movement history yet. Open the Follow tab and track a tag to see its room transitions here."),
+      el("div",{class:"muted"},"No movement history recorded yet. Room transitions are automatically saved when tracked devices move between rooms."),
     ]));
     return wrap;
   }
 
-  for(const addr of addrs){
-    const history = followHistory[addr];
-    const obj = allObjects.find(o => (o.address||o.entity_id||"")===addr);
-    const label = (obj && (obj.user_label||obj.name||obj.entity_id)) || addr;
-    const card = el("div",{class:"card"});
-    card.appendChild(el("div",{class:"row",style:"margin-bottom:8px"},[
-      el("div",{style:"font-weight:700"},label),
-      el("span",{class:"badge",style:"margin-left:8px"},`${history.length} transitions`),
-    ]));
-    const timeline = el("div",{style:"display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto"});
-    for(let i=history.length-1; i>=0; i--){
-      const entry = history[i];
-      const prev  = history[i-1];
-      const timeStr = new Date(entry.ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-      const durSec  = prev ? Math.round((entry.ts-prev.ts)/1000) : null;
-      const durStr  = durSec!=null ? (durSec>=60?`${Math.floor(durSec/60)}m ${durSec%60}s`:`${durSec}s`) : "";
-      const isLatest = i===history.length-1;
-      const rc = roomColor(entry.room||"");
-      const row = el("div",{style:"display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;background:#0a150e;border:1px solid #1b3526"},[
-        el("span",{style:"color:#94a3b8;font-size:11px;font-family:monospace;white-space:nowrap"},timeStr),
-        el("span",{class:"dot",style:`background:${rc};flex-shrink:0`}),
-        el("span",{style:"flex:1;font-weight:600"},entry.room||"(unknown)"),
-        durStr ? el("span",{class:"muted",style:"font-size:11px;white-space:nowrap"},durStr) : null,
-        isLatest ? el("span",{class:"badge",style:"margin-left:4px"},"current") : null,
-      ].filter(Boolean));
-      timeline.appendChild(row);
+  // Timeline (newest first)
+  const listContainer = el("div",{style:"max-height:500px;overflow-y:auto;display:flex;flex-direction:column;gap:2px"});
+  const sorted = [...entries].reverse();
+  for(const entry of sorted){
+    const ts = entry.ts ? new Date(entry.ts * 1000) : null;
+    let timeStr = "\u2014";
+    let dateStr = "";
+    if(ts){
+      const hh = String(ts.getHours()).padStart(2, "0");
+      const mm = String(ts.getMinutes()).padStart(2, "0");
+      const ss = String(ts.getSeconds()).padStart(2, "0");
+      timeStr = `${hh}:${mm}:${ss}`;
+      const today = new Date();
+      if(ts.toDateString() !== today.toDateString()){
+        dateStr = `${ts.getMonth()+1}/${ts.getDate()} `;
+      }
     }
-    card.appendChild(timeline);
-    wrap.appendChild(card);
+    const label = entry.label || entry.device || "Unknown";
+    const fromRoom = entry.from || "?";
+    const toRoom = entry.to || "?";
+    const rc = roomColor ? roomColor(toRoom) : "#52b788";
+    const row = el("div",{style:"display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:4px;background:rgba(255,255,255,0.02);border-left:3px solid " + rc});
+    row.appendChild(el("span",{style:"font-family:monospace;font-size:11px;color:#64748b;flex-shrink:0;width:72px"}, dateStr + timeStr));
+    row.appendChild(el("span",{style:"font-size:12px;font-weight:600;color:#e2e8f0;min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0"}, label));
+    row.appendChild(el("span",{style:"font-size:11px;color:#94a3b8;flex-shrink:0"}, fromRoom));
+    row.appendChild(el("span",{style:"font-size:11px;color:#5eead4"}, "\u2192"));
+    row.appendChild(el("span",{style:`font-size:11px;color:${rc};font-weight:600`}, toRoom));
+    listContainer.appendChild(row);
   }
+  wrap.appendChild(listContainer);
   return wrap;
 }
 

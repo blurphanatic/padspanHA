@@ -141,8 +141,8 @@ export function render(ctx){
         if(st.radio) ctx.actions.showScannerDetail(st.radio);
       });
       const _rn1 = ctx.helpers.radioName(src);
-      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",title:(_rn1?_rn1+" \u00b7 ":"")+src}, _sid(src)));
-      tr.appendChild(el("td",{style:"padding:4px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, st.name));
+      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7dd3fc",title:(_rn1?_rn1+" \u00b7 ":"")+src}, _sid(src)));
+      tr.appendChild(el("td",{style:"padding:4px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7dd3fc;text-decoration:underline;text-decoration-color:rgba(125,211,252,0.35);text-underline-offset:2px"}, st.name));
       tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right"}, String(st.devs)));
       tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "\u2014"));
       tr.appendChild(el("td",{style:`padding:4px 6px;color:${qColor};font-weight:600`}, quality));
@@ -457,8 +457,8 @@ function _insights(ctx, el, _sid){
         if(radio) ctx.actions.showScannerDetail(radio);
       });
       const _rn2 = ctx.helpers.radioName(src);
-      tr.appendChild(el("td",{style:"padding:4px 4px;font-family:monospace;font-weight:700;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",title:(_rn2?_rn2+" \u00b7 ":"")+src}, _sid(src)));
-      tr.appendChild(el("td",{style:"padding:4px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",title:name}, name));
+      tr.appendChild(el("td",{style:"padding:4px 4px;font-family:monospace;font-weight:700;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7dd3fc",title:(_rn2?_rn2+" \u00b7 ":"")+src}, _sid(src)));
+      tr.appendChild(el("td",{style:"padding:4px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7dd3fc;text-decoration:underline;text-decoration-color:rgba(125,211,252,0.35);text-underline-offset:2px",title:name}, name));
       tr.appendChild(el("td",{style:"padding:4px 4px;text-align:right"}, String(st.total)));
       tr.appendChild(el("td",{style:"padding:4px 4px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "\u2014"));
       tr.appendChild(el("td",{style:`padding:4px 4px;color:${gradeColor};font-weight:600`}, grade));
