@@ -187,6 +187,48 @@ export function render(ctx){
   } else {
     for(const iss of issues) consistCard.appendChild(iss);
   }
+  // ── Quick Actions (merged into Data Consistency card) ──
+  consistCard.appendChild(el("div",{style:"font-weight:700;margin-top:14px;padding-top:10px;border-top:1px solid #1e293b;margin-bottom:8px"},"Quick Actions"));
+  {
+    const btnRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap"});
+    const refreshBtn = el("button",{class:"btn"}, "Refresh Snapshot");
+    refreshBtn.addEventListener("click", async ()=>{
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = "Refreshing\u2026";
+      try { await ctx.actions.refreshSnapshot(); } catch(e){}
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = "Refresh Snapshot";
+    });
+    btnRow.appendChild(refreshBtn);
+    const exportBtn = el("button",{class:"btn inline"}, "Export State");
+    exportBtn.addEventListener("click", ()=>{
+      const data = {
+        snapshot: snap,
+        settings: ctx.state.settings,
+        roomTagMap: ctx.state.roomTagMap,
+        maps: ctx.state.maps,
+        wsCounts: ctx.state.wsCounts,
+        timing: ctx.state.timing,
+        exportedAt: new Date().toISOString(),
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `padspan-state-${new Date().toISOString().replace(/[:.]/g,"-")}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      ctx.toast("State exported.");
+    });
+    btnRow.appendChild(exportBtn);
+    const diagBtn = el("button",{class:"btn inline"}, "Go to Diagnostics");
+    diagBtn.addEventListener("click", ()=>{
+      ctx.state.view = "diagnostics";
+      ctx.actions.renderRooms();
+    });
+    btnRow.appendChild(diagBtn);
+    consistCard.appendChild(btnRow);
+  }
   grid.appendChild(consistCard);
 
   // ── Propagation Health ──
@@ -449,8 +491,8 @@ export function render(ctx){
   backupCard.appendChild(bkListDiv);
   grid.appendChild(backupCard);
 
-  // ── Radio Analysis ──
-  const radioCard = el("div",{class:"card"});
+  // ── Radio Analysis ── (full width)
+  const radioCard = el("div",{class:"card",style:"grid-column:1/-1"});
   radioCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
     el("div",{style:"font-weight:700"},"Radio Analysis"),
     helpBtn("qa_radio_analysis"),
@@ -844,53 +886,7 @@ export function render(ctx){
   }
   grid.appendChild(radioCard);
 
-  // ── Quick Actions ──
-  const actionsCard = el("div",{class:"card"});
-  actionsCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Quick Actions"));
-
-  const btnRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap"});
-
-  const refreshBtn = el("button",{class:"btn"}, "Refresh Snapshot");
-  refreshBtn.addEventListener("click", async ()=>{
-    refreshBtn.disabled = true;
-    refreshBtn.textContent = "Refreshing\u2026";
-    try { await ctx.actions.refreshSnapshot(); } catch(e){}
-    refreshBtn.disabled = false;
-    refreshBtn.textContent = "Refresh Snapshot";
-  });
-  btnRow.appendChild(refreshBtn);
-
-  const exportBtn = el("button",{class:"btn inline"}, "Export State");
-  exportBtn.addEventListener("click", ()=>{
-    const data = {
-      snapshot: snap,
-      settings: ctx.state.settings,
-      roomTagMap: ctx.state.roomTagMap,
-      maps: ctx.state.maps,
-      wsCounts: ctx.state.wsCounts,
-      timing: ctx.state.timing,
-      exportedAt: new Date().toISOString(),
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `padspan-state-${new Date().toISOString().replace(/[:.]/g,"-")}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    ctx.toast("State exported.");
-  });
-  btnRow.appendChild(exportBtn);
-
-  const diagBtn = el("button",{class:"btn inline"}, "Go to Diagnostics");
-  diagBtn.addEventListener("click", ()=>{
-    ctx.state.view = "diagnostics";
-    ctx.actions.renderRooms();
-  });
-  btnRow.appendChild(diagBtn);
-
-  actionsCard.appendChild(btnRow);
-  grid.appendChild(actionsCard);
+  // Quick Actions merged into Data Consistency card above
 
   root.appendChild(grid);
   return root;
