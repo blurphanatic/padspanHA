@@ -232,7 +232,7 @@ export function render(ctx){
   grid.appendChild(consistCard);
 
   // ── Propagation Health ──
-  const propCard = el("div",{class:"card"});
+  const propCard = el("div",{class:"card",style:"overflow:hidden;min-width:0"});
   propCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"},[
     el("div",{style:"font-weight:700"},"Propagation Health"),
     helpBtn("qa_propagation"),
@@ -268,7 +268,7 @@ export function render(ctx){
     // Grade badge
     propStatusDiv.appendChild(el("div",{style:"display:flex;align-items:center;gap:12px;margin-bottom:12px"},[
       el("div",{style:`width:48px;height:48px;border-radius:12px;background:${gc}22;border:2px solid ${gc};display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:${gc}`}, ph.grade),
-      el("div",{},[
+      el("div",{style:"min-width:0;flex:1"},[
         el("div",{style:"font-weight:600;color:#e2e8f0;font-size:14px"}, `Propagation Model: Grade ${ph.grade}`),
         el("div",{class:"muted",style:"font-size:12px"}, ph.grade==="A"?"Excellent — model is well-calibrated":ph.grade==="B"?"Good — model is performing well":ph.grade==="C"?"Fair — room for improvement":ph.grade==="D"?"Developing — needs more data":"Insufficient — enable adaptive learning or add calibration"),
       ]),
@@ -322,7 +322,7 @@ export function render(ctx){
       // Per-room fingerprint table
       if(ph.per_room && ph.per_room.length > 0){
         detailDiv.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin-bottom:6px;color:#94a3b8"},"Per-Room Fingerprint Quality"));
-        const tbl = el("div",{style:"font-size:11px"});
+        const tbl = el("div",{style:"font-size:11px;overflow-x:auto"});
         tbl.appendChild(el("div",{style:"display:grid;grid-template-columns:1fr 60px 70px 60px 70px;gap:4px;padding:4px 0;border-bottom:1px solid #1e293b;font-weight:600;color:#94a3b8"},
           ["Room","Scanners","Observations","Avg Var","Status"].map(h=>el("span",{},h))));
         for(const r of ph.per_room.slice(0,15)){
@@ -340,7 +340,7 @@ export function render(ctx){
       // Per-scanner path-loss table
       if(ph.per_scanner_pl && ph.per_scanner_pl.length > 0){
         detailDiv.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin:12px 0 6px;color:#94a3b8"},"Per-Scanner Path-Loss Model"));
-        const tbl2 = el("div",{style:"font-size:11px"});
+        const tbl2 = el("div",{style:"font-size:11px;overflow-x:auto"});
         tbl2.appendChild(el("div",{style:"display:grid;grid-template-columns:1fr 50px 55px 45px 55px;gap:4px;padding:4px 0;border-bottom:1px solid #1e293b;font-weight:600;color:#94a3b8"},
           ["Scanner","n","RSSI@1m","R\u00b2","Quality"].map(h=>el("span",{},h))));
         for(const pl of ph.per_scanner_pl){
@@ -364,7 +364,7 @@ export function render(ctx){
       detailDiv.appendChild(mathToggle);
       if(ctx.state._qaExpandedMath){
         const s = ph.settings || {};
-        const mathDiv = el("div",{style:"margin-top:8px;padding:10px;background:#0a1a0d;border-radius:8px;font-size:11px;font-family:monospace;line-height:1.8;color:#94a3b8"});
+        const mathDiv = el("div",{style:"margin-top:8px;padding:10px;background:#0a1a0d;border-radius:8px;font-size:11px;font-family:monospace;line-height:1.8;color:#94a3b8;overflow-x:auto;word-break:break-word"});
         mathDiv.innerHTML = [
           `<b style="color:#e2e8f0">Path-Loss Formula:</b>`,
           `  distance(m) = 10 ^ ((ref_power - rssi) / (10 \u00d7 n))`,

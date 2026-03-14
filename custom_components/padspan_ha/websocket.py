@@ -4783,6 +4783,8 @@ _ALL_STORE_KEYS = [
     MODEL_STORE_KEY,
     ALERTS_STORE_KEY,
     MOVEMENT_STORE_KEY,
+    TRACEBACK_STORE_KEY,
+    OBJECT_HISTORY_STORE_KEY,
 ]
 
 _DATA_KEY_MAP = {
@@ -4794,6 +4796,8 @@ _DATA_KEY_MAP = {
     MODEL_STORE_KEY: DATA_MODEL,
     ALERTS_STORE_KEY: DATA_ALERTS,
     MOVEMENT_STORE_KEY: DATA_MOVEMENT,
+    TRACEBACK_STORE_KEY: DATA_TRACEBACK,
+    OBJECT_HISTORY_STORE_KEY: DATA_OBJECT_HISTORY,
 }
 
 _MAX_BACKUPS = 3
@@ -4827,10 +4831,34 @@ async def ws_store_backup_create(hass: HomeAssistant, connection, msg) -> None:
 
     for store_key, data_key in _DATA_KEY_MAP.items():
         store_obj = domain.get(data_key)
-        if store_obj and hasattr(store_obj, "data"):
+        if not store_obj:
+            # Fall back to reading directly from HA storage
+            try:
+                from homeassistant.helpers.storage import Store as _St
+                _st = _St(hass, 1, store_key)
+                _loaded = await _st.async_load()
+                stores_data[store_key] = _loaded if _loaded is not None else {}
+            except Exception:
+                stores_data[store_key] = {}
+            continue
+        # Each store class uses different attribute names for its data
+        if hasattr(store_obj, "data"):
             stores_data[store_key] = store_obj.data
+        elif hasattr(store_obj, "_data"):
+            stores_data[store_key] = store_obj._data
+        elif hasattr(store_obj, "entries"):
+            stores_data[store_key] = store_obj.entries
+        elif hasattr(store_obj, "frames"):
+            stores_data[store_key] = store_obj.frames
         else:
-            stores_data[store_key] = {}
+            # Last resort: read from disk
+            try:
+                from homeassistant.helpers.storage import Store as _St
+                _st = _St(hass, 1, store_key)
+                _loaded = await _st.async_load()
+                stores_data[store_key] = _loaded if _loaded is not None else {}
+            except Exception:
+                stores_data[store_key] = {}
 
     backup_id = f"bk_{os.urandom(6).hex()}"
     backup = {
@@ -4895,18 +4923,25 @@ async def ws_store_backup_restore(hass: HomeAssistant, connection, msg) -> None:
     stores_data = backup.get("stores", {})
     restored = 0
     for store_key, data in stores_data.items():
-        if not isinstance(data, dict):
+        if data is None:
             continue
         try:
             st = _St(hass, 1, store_key)
             await st.async_save(data)
             restored += 1
-            # Reload in-memory store
+            # Reload in-memory store object
             data_key = _DATA_KEY_MAP.get(store_key)
             if data_key:
                 store_obj = hass.data.get(DOMAIN, {}).get(data_key)
-                if store_obj and hasattr(store_obj, "data"):
-                    store_obj.data = data
+                if store_obj:
+                    if hasattr(store_obj, "data") and isinstance(data, dict):
+                        store_obj.data = data
+                    elif hasattr(store_obj, "_data") and isinstance(data, dict):
+                        store_obj._data = data
+                    elif hasattr(store_obj, "entries") and isinstance(data, list):
+                        store_obj.entries = data
+                    elif hasattr(store_obj, "frames") and isinstance(data, list):
+                        store_obj.frames = data
         except Exception as e:
             _LOGGER.warning("Failed to restore %s: %s", store_key, e)
 
