@@ -98,18 +98,57 @@ export function render(ctx){
   const uptimeMs = Date.now() - (ctx.state._sessionStart || Date.now());
   const uptimeMin = Math.floor(uptimeMs / 60000);
 
-  grid.appendChild(el("div",{class:"card"},[
-    el("div",{style:"font-weight:700;margin-bottom:8px"},"State Inspector"),
-    el("div",{style:"display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:12px"},[
-      el("div",{}, [el("span",{class:"muted"},"Mode: "), el("span",{style:"font-weight:600"}, ctx.state.dataMode.toUpperCase())]),
-      el("div",{}, [el("span",{class:"muted"},"Session: "), el("span",{style:"font-weight:600"}, `${uptimeMin}m`)]),
-      el("div",{}, [el("span",{class:"muted"},"Objects: "), el("span",{style:"font-weight:600"}, String(objects.length))]),
-      el("div",{}, [el("span",{class:"muted"},"Radios: "), el("span",{style:"font-weight:600"}, String(radios.length))]),
-      el("div",{}, [el("span",{class:"muted"},"Rooms: "), el("span",{style:"font-weight:600"}, String(rooms.length))]),
-      el("div",{}, [el("span",{class:"muted"},"Ads: "), el("span",{style:"font-weight:600"}, String(ads.length))]),
-      el("div",{style:"grid-column:1/-1"}, [el("span",{class:"muted"},"Snapshot: "), el("span",{style:"font-weight:600;font-size:11px"}, genAt)]),
-    ]),
+  const inspectorCard = el("div",{class:"card"});
+  inspectorCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:8px"},"State Inspector"));
+  inspectorCard.appendChild(el("div",{style:"display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:12px"},[
+    el("div",{}, [el("span",{class:"muted"},"Mode: "), el("span",{style:"font-weight:600"}, ctx.state.dataMode.toUpperCase())]),
+    el("div",{}, [el("span",{class:"muted"},"Session: "), el("span",{style:"font-weight:600"}, `${uptimeMin}m`)]),
+    el("div",{}, [el("span",{class:"muted"},"Objects: "), el("span",{style:"font-weight:600"}, String(objects.length))]),
+    el("div",{}, [el("span",{class:"muted"},"Radios: "), el("span",{style:"font-weight:600"}, String(radios.length))]),
+    el("div",{}, [el("span",{class:"muted"},"Rooms: "), el("span",{style:"font-weight:600"}, String(rooms.length))]),
+    el("div",{}, [el("span",{class:"muted"},"Ads: "), el("span",{style:"font-weight:600"}, String(ads.length))]),
+    el("div",{style:"grid-column:1/-1"}, [el("span",{class:"muted"},"Snapshot: "), el("span",{style:"font-weight:600;font-size:11px"}, genAt)]),
   ]));
+
+  // RSSI Distribution (merged into State Inspector card)
+  if(ads.length > 0){
+    const buckets = {};
+    for(const ad of ads){
+      if(ad.rssi == null) continue;
+      const bucket = Math.floor(ad.rssi / 10) * 10;
+      buckets[bucket] = (buckets[bucket] || 0) + 1;
+    }
+    const sortedBuckets = Object.entries(buckets)
+      .map(([k,v])=>([Number(k),v]))
+      .sort((a,b)=>a[0]-b[0]);
+    const maxBucket = Math.max(...sortedBuckets.map(x=>x[1]), 1);
+    const totalAds = sortedBuckets.reduce((s,b)=>s+b[1], 0);
+    const avgRssi = totalAds > 0
+      ? Math.round(ads.reduce((s,a)=>s+(a.rssi||0),0) / ads.filter(a=>a.rssi!=null).length)
+      : 0;
+
+    inspectorCard.appendChild(el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:1px solid #1e293b;margin-bottom:8px"},[
+      el("div",{style:"font-weight:700"},"RSSI Distribution"),
+      el("div",{style:"font-size:11px;color:#94a3b8"}, `avg ${avgRssi} dBm`),
+    ]));
+
+    const chart = el("div",{style:"display:flex;align-items:flex-end;gap:4px;height:80px;overflow:hidden"});
+    for(const [range, count] of sortedBuckets){
+      const barH = Math.round((count / maxBucket) * 60);
+      let barColor = "#52b788";
+      if(range < -80) barColor = "#ef5350";
+      else if(range < -70) barColor = "#ffd54f";
+      else if(range < -60) barColor = "#81c784";
+      const col = el("div",{style:"display:flex;flex-direction:column;align-items:center;flex:1;min-width:0"});
+      col.appendChild(el("div",{style:`font-size:9px;color:${barColor};font-weight:600;margin-bottom:2px`}, String(count)));
+      col.appendChild(el("div",{style:`height:${barH}px;width:100%;background:${barColor};border-radius:2px 2px 0 0;min-height:2px`}));
+      col.appendChild(el("div",{style:"font-size:9px;color:#64748b;margin-top:2px;white-space:nowrap"}, `${range}`));
+      chart.appendChild(col);
+    }
+    inspectorCard.appendChild(chart);
+    inspectorCard.appendChild(el("div",{class:"muted",style:"font-size:10px;margin-top:6px;text-align:center"}, "dBm ranges (10 dBm buckets)"));
+  }
+  grid.appendChild(inspectorCard);
 
   // ── Floor Color Stack (rooms grouped by floor, each floor a column) ─────
   if(rooms.length > 0){
@@ -246,47 +285,7 @@ export function render(ctx){
     grid.appendChild(floorCard);
   }
 
-  // ── RSSI Distribution ─────────────────────────────────────────────────────
-  if(ads.length > 0){
-    const buckets = {};
-    for(const ad of ads){
-      if(ad.rssi == null) continue;
-      const bucket = Math.floor(ad.rssi / 10) * 10;
-      buckets[bucket] = (buckets[bucket] || 0) + 1;
-    }
-    const sortedBuckets = Object.entries(buckets)
-      .map(([k,v])=>([Number(k),v]))
-      .sort((a,b)=>a[0]-b[0]);
-    const maxBucket = Math.max(...sortedBuckets.map(x=>x[1]), 1);
-    const totalAds = sortedBuckets.reduce((s,b)=>s+b[1], 0);
-    const avgRssi = totalAds > 0
-      ? Math.round(ads.reduce((s,a)=>s+(a.rssi||0),0) / ads.filter(a=>a.rssi!=null).length)
-      : 0;
-
-    const histCard = el("div",{class:"card"});
-    histCard.appendChild(el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"},[
-      el("div",{style:"font-weight:700"},"RSSI Distribution"),
-      el("div",{style:"font-size:11px;color:#94a3b8"}, `avg ${avgRssi} dBm`),
-    ]));
-
-    const chart = el("div",{style:"display:flex;align-items:flex-end;gap:4px;height:80px;overflow:hidden"});
-    for(const [range, count] of sortedBuckets){
-      const barH = Math.round((count / maxBucket) * 60);
-      let barColor = "#52b788";
-      if(range < -80) barColor = "#ef5350";
-      else if(range < -70) barColor = "#ffd54f";
-      else if(range < -60) barColor = "#81c784";
-
-      const col = el("div",{style:"display:flex;flex-direction:column;align-items:center;flex:1;min-width:0"});
-      col.appendChild(el("div",{style:`font-size:9px;color:${barColor};font-weight:600;margin-bottom:2px`}, String(count)));
-      col.appendChild(el("div",{style:`height:${barH}px;width:100%;background:${barColor};border-radius:2px 2px 0 0;min-height:2px`}));
-      col.appendChild(el("div",{style:"font-size:9px;color:#64748b;margin-top:2px;white-space:nowrap"}, `${range}`));
-      chart.appendChild(col);
-    }
-    histCard.appendChild(chart);
-    histCard.appendChild(el("div",{class:"muted",style:"font-size:10px;margin-top:6px;text-align:center"}, "dBm ranges (10 dBm buckets)"));
-    grid.appendChild(histCard);
-  }
+  // RSSI Distribution merged into State Inspector card above
 
   // ── Live Signal Bars ──────────────────────────────────────────────────────
   if(radios.length > 0){
