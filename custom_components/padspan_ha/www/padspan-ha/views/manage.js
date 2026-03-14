@@ -1394,9 +1394,18 @@ function _buildNotifications(ctx, el){
   const configs = ctx.state.followAlertConfig || {};
   const seen = new Set();
   const allObjects = [];
+  // Include entity trackers from snap.tags
+  const snapTags = (snap && Array.isArray(snap.tags)) ? snap.tags : [];
+  for(const t of snapTags){
+    const addr = t.entity_id || "";
+    if(addr && !seen.has(addr)){
+      seen.add(addr);
+      allObjects.push({ address: addr, entity_id: addr, user_label: t.name || addr, name: t.name || addr, kind: "entity" });
+    }
+  }
   for(const o of snapObjects){
     const addr = o.address || o.entity_id || "";
-    if(addr){ seen.add(addr); allObjects.push(o); }
+    if(addr && !seen.has(addr)){ seen.add(addr); allObjects.push(o); }
   }
   // Add devices from saved alert configs that aren't in the snapshot
   for(const [addr, cfg] of Object.entries(configs)){
@@ -1503,30 +1512,11 @@ function _buildNotifications(ctx, el){
   wrap.appendChild(savedCard);
 
   // ── Per-device alert editor ─────────────────────────────────────────────────
-  // Tagged BLE/iBeacon objects that can receive alerts
+  // Tagged BLE/iBeacon objects + entity trackers that can receive alerts
   const trackable = allObjects.filter(o =>
-    (o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon") && o.user_label
+    ((o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon") && o.user_label)
+    || o.kind === "entity"
   );
-
-  const editCard = el("div",{class:"card"});
-  editCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;margin-bottom:4px"},"Configure Alerts"));
-  editCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:14px"},
-    "Set up or edit email alerts for tagged devices. You can also configure per-device alerts in the Follow tab."
-  ));
-
-  if(disabled){
-    editCard.appendChild(el("div",{style:"font-size:12px;color:#fbbf24;margin-bottom:10px"},
-      "Switch to Live mode to configure and save alert settings."
-    ));
-  }
-
-  if(!trackable.length){
-    editCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},
-      "No tagged BLE devices found. Tag devices in the Objects tab to set up notifications."
-    ));
-    wrap.appendChild(editCard);
-    return wrap;
-  }
 
   // Always refresh notify services (user may add SMTP mid-session)
   const _prevServices = JSON.stringify(ctx.state._notifyServices || []);
@@ -1538,6 +1528,26 @@ function _buildNotifications(ctx, el){
       ctx.actions.renderRooms();
     }
   }).catch(() => {});
+
+  const editCard = el("div",{class:"card"});
+  editCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;margin-bottom:4px"},"Configure Alerts"));
+  editCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:14px"},
+    "Set up or edit email alerts for tracked devices. You can also configure per-device alerts in the Follow tab."
+  ));
+
+  if(disabled){
+    editCard.appendChild(el("div",{style:"font-size:12px;color:#fbbf24;margin-bottom:10px"},
+      "Switch to Live mode to configure and save alert settings."
+    ));
+  }
+
+  if(!trackable.length){
+    editCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},
+      "No tracked devices found. Tag BLE devices in Objects or add device trackers to set up notifications."
+    ));
+    wrap.appendChild(editCard);
+    return wrap;
+  }
 
   // Service discovery info + refresh
   const _svcList = ctx.state._notifyServices || [];
@@ -1603,7 +1613,7 @@ function _buildNotifications(ctx, el){
     });
 
     const serviceSelect = el("select",{class:"input",style:"max-width:180px"});
-    serviceSelect.appendChild(el("option",{value:""},"Default"));
+    serviceSelect.appendChild(el("option",{value:""},"Auto-detect"));
     for(const svc of (ctx.state._notifyServices || [])){
       const opt = el("option",{value:svc},svc);
       if(cfg.notify_service === svc) opt.selected = true;
