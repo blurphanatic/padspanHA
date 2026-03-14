@@ -1512,10 +1512,9 @@ function _buildNotifications(ctx, el){
   wrap.appendChild(savedCard);
 
   // ── Per-device alert editor ─────────────────────────────────────────────────
-  // Tagged BLE/iBeacon objects + entity trackers that can receive alerts
+  // Any device with a label/name can receive alerts: tagged BLE, entities, followed
   const trackable = allObjects.filter(o =>
-    ((o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon") && o.user_label)
-    || o.kind === "entity"
+    o.user_label || o.name || o.kind === "entity" || o._fromConfig || o._fromFollowed || o._fromStore
   );
 
   // Always refresh notify services (user may add SMTP mid-session)
@@ -1539,14 +1538,6 @@ function _buildNotifications(ctx, el){
     editCard.appendChild(el("div",{style:"font-size:12px;color:#fbbf24;margin-bottom:10px"},
       "Switch to Live mode to configure and save alert settings."
     ));
-  }
-
-  if(!trackable.length){
-    editCard.appendChild(el("div",{class:"muted",style:"font-size:12px"},
-      "No tracked devices found. Tag BLE devices in Objects or add device trackers to set up notifications."
-    ));
-    wrap.appendChild(editCard);
-    return wrap;
   }
 
   // Service discovery info + refresh
@@ -1578,6 +1569,14 @@ function _buildNotifications(ctx, el){
       el("span",{class:"muted",style:"font-size:10px"}, _svcList.join(", ")),
       refreshBtn,
     ]));
+  }
+
+  if(!trackable.length){
+    editCard.appendChild(el("div",{class:"muted",style:"font-size:12px;padding:8px 0"},
+      "No tracked devices found. Tag BLE devices in Objects or add device trackers to set up notifications."
+    ));
+    wrap.appendChild(editCard);
+    return wrap;
   }
 
   const roomNames = haAreas.map(a => a.name).sort();
