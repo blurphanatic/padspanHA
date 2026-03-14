@@ -51,7 +51,7 @@ export function render(ctx) {
   }
   const sortedIsoLevels = [...byLevel.keys()].sort((a, b) => a - b);
   const levelColor = (z) => LAYER_PAL[sortedIsoLevels.indexOf(z) % LAYER_PAL.length];
-  const LEGEND_H = sortedIsoLevels.length * 30 + 24;
+  const LEGEND_H = 30;  // single-row compact legend (matches overview)
 
   // Build room centroid iso positions (rebuilt when sliders change)
   const roomIsoPos = {};
@@ -171,17 +171,28 @@ export function render(ctx) {
     let s = `<svg viewBox="0 ${viewY} ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
     s += `<rect x="0" y="${viewY}" width="${W}" height="${HTOTAL}" fill="#071008"/>`;
 
-    // Defs
+    // Defs — floor surface patterns (matches overview)
     s += `<defs>`;
     sortedIsoLevels.forEach((z2, li) => {
       const c2 = levelColor(z2);
-      if (li === 0) {
+      if(li === 0){
         s += `<pattern id="tbpat_${li}" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">`;
         s += `<path d="M12,2 C16,2 19,6 19,11 C19,16 16,21 12,22 C8,21 5,16 5,11 C5,6 8,2 12,2 Z" fill="none" stroke="${c2}" stroke-width="0.7" opacity="0.14"/>`;
+        s += `<path d="M12,2 C13.5,0 15.5,0.5 14.5,2.5 C13.5,1.5 12,2 12,2 Z" fill="${c2}" opacity="0.11"/>`;
+        s += `<circle cx="12" cy="15" r="1.4" fill="${c2}" opacity="0.1"/>`;
         s += `</pattern>`;
-      } else if (li === 2) {
+      } else if(li === 1){
+        s += `<pattern id="tbpat_${li}" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">`;
+        s += `<rect x="2" y="2" width="7" height="16" rx="1" fill="none" stroke="${c2}" stroke-width="0.5" opacity="0.13"/>`;
+        s += `<rect x="11" y="2" width="7" height="16" rx="1" fill="none" stroke="${c2}" stroke-width="0.5" opacity="0.13"/>`;
+        s += `</pattern>`;
+      } else if(li === 2){
         s += `<pattern id="tbpat_${li}" x="0" y="0" width="12" height="12" patternUnits="userSpaceOnUse">`;
         s += `<line x1="0" y1="12" x2="12" y2="0" stroke="${c2}" stroke-width="0.6" opacity="0.18"/>`;
+        s += `</pattern>`;
+      } else {
+        s += `<pattern id="tbpat_${li}" x="0" y="0" width="16" height="16" patternUnits="userSpaceOnUse">`;
+        s += `<circle cx="8" cy="8" r="2" fill="none" stroke="${c2}" stroke-width="0.5" opacity="0.15"/>`;
         s += `</pattern>`;
       }
     });
@@ -206,7 +217,7 @@ export function render(ctx) {
       if (!isFinite(x0)) { x0 = 0; y0_ = 0; x1 = 1; y1_ = 0.75; }
       const TL = iso(x0, y0_, z), TR = iso(x1, y0_, z), BR = iso(x1, y1_, z), BL = iso(x0, y1_, z);
       s += `<g opacity="${go}">`;
-      s += `<polygon points="${pts([TL, TR, BR, BL])}" fill="#0f2017" fill-opacity="0.06" stroke="${lyrColor}" stroke-width="1.2" stroke-dasharray="10,5" opacity="0.5"/>`;
+      s += `<polygon points="${pts([TL, TR, BR, BL])}" fill="url(#tbpat_${lidx})" stroke="${lyrColor}" stroke-width="1.2" stroke-dasharray="10,5" opacity="0.5"/>`;
 
       // Room polygons
       for (const m of group) {
@@ -219,12 +230,12 @@ export function render(ctx) {
           if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
           const color = roomColorFn(room);
           const pp = b.points.map(p => { const [wx, wy] = mapPt(p[0], p[1]); return pt(iso(wx, wy, z)); }).join(" ");
-          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.15" stroke="${color}" stroke-width="1" opacity="0.8"/>`;
+          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.18" stroke="${color}" stroke-width="1.2" opacity="0.85"/>`;
           const cx2 = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
           const cy2 = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
           const [lwx, lwy] = mapPt(cx2, cy2);
           const [lix, liy] = iso(lwx, lwy, z);
-          s += `<text x="${Math.round(lix)}" y="${Math.round(liy) + lidx * 2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7" opacity="0.7">${_esc(room)}</text>`;
+          s += `<text x="${Math.round(lix)}" y="${Math.round(liy)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" font-weight="600" opacity="0.85">${_esc(room)}</text>`;
         }
         // Receivers
         for (const r of (m.receivers || [])) {
@@ -330,16 +341,24 @@ export function render(ctx) {
       s += `<text x="${W - 102}" y="${viewY + 19}" text-anchor="middle" fill="#fbbf24" font-size="13" font-weight="700">${_esc(timeStr)}</text>`;
     }
 
-    // Legend
+    // Legend — compact single row (matches overview)
     s += `<line x1="10" y1="${BASE_H + 4}" x2="${W - 10}" y2="${BASE_H + 4}" stroke="#1b3526" stroke-width="0.8"/>`;
-    sortedIsoLevels.forEach((z, i) => {
-      const ly = BASE_H + 10 + i * 30;
-      const color = levelColor(z);
-      const groupLabel = byLevel.get(z).map(m => m.name || m.id).join(" + ");
-      s += `<circle cx="18" cy="${ly + 11}" r="11" fill="${color}" opacity="0.7"/>`;
-      s += `<text x="18" y="${ly + 15}" text-anchor="middle" fill="#071008" font-size="12" font-weight="700">${i + 1}</text>`;
-      s += `<text x="36" y="${ly + 15}" fill="${color}" font-size="14" font-weight="500">${_esc(groupLabel)}</text>`;
-    });
+    {
+      const ly = BASE_H + 10;
+      let lx = 12;
+      sortedIsoLevels.forEach((z, i) => {
+        const color = levelColor(z);
+        const groupLabel = byLevel.get(z).map(m => m.name || m.id).join("+");
+        s += `<circle cx="${lx+7}" cy="${ly+7}" r="7" fill="${color}" opacity="0.9"/>`;
+        s += `<text x="${lx+7}" y="${ly+10}" text-anchor="middle" fill="#071008" font-size="9" font-weight="700">${i+1}</text>`;
+        s += `<text x="${lx+18}" y="${ly+10}" fill="${color}" font-size="11" font-weight="500">${_esc(groupLabel)}</text>`;
+        lx += 22 + groupLabel.length * 6;
+        if (i < sortedIsoLevels.length - 1) {
+          s += `<text x="${lx}" y="${ly+10}" fill="#4a6052" font-size="10">\u00B7</text>`;
+          lx += 10;
+        }
+      });
+    }
 
     s += `</svg>`;
     return s;

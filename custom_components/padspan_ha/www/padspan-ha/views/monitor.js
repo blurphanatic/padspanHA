@@ -426,18 +426,18 @@ function _insights(ctx, el, _sid){
     if(ad.rssi != null){ scannerStats[src].rssiSum += ad.rssi; scannerStats[src].count++; }
   }
 
-  const sigCard = el("div",{class:"card"});
+  const sigCard = el("div",{class:"card",style:"overflow:hidden"});
   sigCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Signal Quality"));
   if(Object.keys(scannerStats).length === 0){
     sigCard.appendChild(el("div",{class:"muted"},"No scanner data available."));
   } else {
-    const tbl = el("table",{style:"width:100%;font-size:12px;border-collapse:collapse"});
+    const tbl = el("table",{style:"width:100%;font-size:12px;border-collapse:collapse;table-layout:fixed"});
     tbl.appendChild(el("tr",{},[
-      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600"},"ID"),
-      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600"},"Scanner"),
-      el("th",{style:"text-align:right;padding:4px 6px;color:#94a3b8;font-weight:600"},"Devices"),
-      el("th",{style:"text-align:right;padding:4px 6px;color:#94a3b8;font-weight:600"},"Avg RSSI"),
-      el("th",{style:"text-align:left;padding:4px 6px;color:#94a3b8;font-weight:600"},"Grade"),
+      el("th",{style:"text-align:left;padding:4px 4px;color:#94a3b8;font-weight:600;width:15%"},"ID"),
+      el("th",{style:"text-align:left;padding:4px 4px;color:#94a3b8;font-weight:600;width:32%;overflow:hidden;text-overflow:ellipsis"},"Scanner"),
+      el("th",{style:"text-align:right;padding:4px 4px;color:#94a3b8;font-weight:600;width:16%"},"Devices"),
+      el("th",{style:"text-align:right;padding:4px 4px;color:#94a3b8;font-weight:600;width:18%"},"Avg RSSI"),
+      el("th",{style:"text-align:left;padding:4px 4px;color:#94a3b8;font-weight:600;width:19%"},"Grade"),
     ]));
     for(const [src, st] of Object.entries(scannerStats).sort((a,b)=>b[1].total-a[1].total)){
       const avg = st.count > 0 ? Math.round(st.rssiSum / st.count) : null;
@@ -457,11 +457,11 @@ function _insights(ctx, el, _sid){
         if(radio) ctx.actions.showScannerDetail(radio);
       });
       const _rn2 = ctx.helpers.radioName(src);
-      tr.appendChild(el("td",{style:"padding:4px 6px;font-family:monospace;font-weight:700;font-size:11px;letter-spacing:.04em",title:(_rn2?_rn2+" \u00b7 ":"")+src}, _sid(src)));
-      tr.appendChild(el("td",{style:"padding:4px 6px;max-width:120px;overflow:hidden;text-overflow:ellipsis"}, name));
-      tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right"}, String(st.total)));
-      tr.appendChild(el("td",{style:"padding:4px 6px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "\u2014"));
-      tr.appendChild(el("td",{style:`padding:4px 6px;color:${gradeColor};font-weight:600`}, grade));
+      tr.appendChild(el("td",{style:"padding:4px 4px;font-family:monospace;font-weight:700;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",title:(_rn2?_rn2+" \u00b7 ":"")+src}, _sid(src)));
+      tr.appendChild(el("td",{style:"padding:4px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",title:name}, name));
+      tr.appendChild(el("td",{style:"padding:4px 4px;text-align:right"}, String(st.total)));
+      tr.appendChild(el("td",{style:"padding:4px 4px;text-align:right;font-family:monospace"}, avg !== null ? `${avg}` : "\u2014"));
+      tr.appendChild(el("td",{style:`padding:4px 4px;color:${gradeColor};font-weight:600`}, grade));
       tbl.appendChild(tr);
     }
     sigCard.appendChild(tbl);
@@ -469,35 +469,36 @@ function _insights(ctx, el, _sid){
   grid.appendChild(sigCard);
 
   // ── Object Mobility ──
-  const tagRooms = {};
-  for(const [room, tags] of Object.entries(roomTagMap)){
-    for(const t of (tags || [])){
-      const k = String(t);
-      if(!tagRooms[k]) tagRooms[k] = new Set();
-      tagRooms[k].add(room);
-    }
+  // Accumulate rooms-seen across polls in session state
+  if(!ctx.state._mobilityRooms) ctx.state._mobilityRooms = {};
+  const _mobRooms = ctx.state._mobilityRooms;
+  for(const obj of objects){
+    const k = obj.key || obj.entity_id || "";
+    if(!k || !obj.room) continue;
+    if(!_mobRooms[k]) _mobRooms[k] = new Set();
+    _mobRooms[k].add(obj.room);
   }
   const mobCard = el("div",{class:"card"});
   mobCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:10px"},"Object Mobility"));
-  const topMobile = Object.entries(tagRooms)
-    .map(([t, rs])=>({t, n: rs.size}))
+  const topMobile = Object.entries(_mobRooms)
+    .map(([t, rs])=>({t, n: rs.size, rooms: [...rs]}))
     .filter(x=>x.n > 1)
     .sort((a,b)=>b.n-a.n)
     .slice(0, 10);
   if(topMobile.length === 0){
-    mobCard.appendChild(el("div",{class:"muted"},"No objects seen in multiple rooms yet."));
+    mobCard.appendChild(el("div",{class:"muted"},"No objects seen in multiple rooms yet. Data accumulates across polls — check back in a few minutes."));
   } else {
     const list = el("div",{style:"display:flex;flex-direction:column;gap:4px"});
     for(const x of topMobile){
-      const obj = objects.find(o => o.entity_id === x.t || o.key === x.t);
-      const row = el("div",{style:"font-size:12px;display:flex;justify-content:space-between;align-items:center;padding:3px 4px;border-radius:3px;" + (obj ? "cursor:pointer;" : "")});
+      const obj = objects.find(o => o.key === x.t || o.entity_id === x.t);
+      const row = el("div",{style:"font-size:12px;display:flex;justify-content:space-between;align-items:center;padding:3px 4px;border-radius:3px;gap:6px;" + (obj ? "cursor:pointer;" : "")});
       if(obj){
         row.addEventListener("mouseenter", ()=>{ row.style.background = "rgba(255,255,255,0.04)"; });
         row.addEventListener("mouseleave", ()=>{ row.style.background = ""; });
         row.addEventListener("click", ()=>ctx.actions.showObjectDetail(obj));
       }
-      row.appendChild(el("span",{}, obj ? (obj.user_label || obj.name || x.t) : x.t));
-      row.appendChild(el("span",{class:"badge"}, `${x.n} rooms`));
+      row.appendChild(el("span",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0"}, obj ? (obj.user_label || obj.name || x.t) : x.t));
+      row.appendChild(el("span",{class:"badge",style:"flex-shrink:0",title:x.rooms.join(", ")}, `${x.n} rooms`));
       list.appendChild(row);
     }
     mobCard.appendChild(list);
