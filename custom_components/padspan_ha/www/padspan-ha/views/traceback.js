@@ -452,21 +452,59 @@ export function render(ctx) {
     }
 
     // Overlay: discovered objects at their room positions
+    // Objects with a valid room go to that room's iso position.
+    // Objects without a room (common for new/unidentified BLE) go to an
+    // "unplaced" floating cluster so they're still visible on the map.
     const DISCO_COLORS = ["#e879f9", "#60a5fa", "#f87171", "#34d399", "#fbbf24", "#fb923c", "#5eead4", "#f472b6", "#a3e635", "#818cf8"];
     const _roomCount = {};
+    let unplacedCount = 0;
+
+    // Try to resolve room from source scanner's area if obj.room is missing
+    const _radioAreaMap = {};
+    for (const r of ((liveSnap?.ble?.radios) || [])) {
+      if (r.source && r.area_name) _radioAreaMap[r.source] = r.area_name;
+      if (r.name && r.area_name) _radioAreaMap[r.name] = r.area_name;
+    }
+
+    const _resolveRoom = (obj) => {
+      // 1. Direct room field
+      if (obj.room && obj.room !== "unknown" && obj.room !== "not_home") return obj.room;
+      // 2. Try to get room from strongest source scanner
+      const sources = obj.sources || [];
+      for (const src of sources) {
+        const srcName = typeof src === "string" ? src : (src.source || "");
+        if (srcName && _radioAreaMap[srcName]) return _radioAreaMap[srcName];
+      }
+      if (obj.source && _radioAreaMap[obj.source]) return _radioAreaMap[obj.source];
+      return null;
+    };
+
+    // Unplaced cluster position — above the top-left of the map
+    const unplacedBaseX = 80;
+    const unplacedBaseY = viewY + 50;
+
     for (let di = 0; di < results.length; di++) {
       const obj = results[di];
-      const room = obj.room || obj._discoRoom || "";
-      if (!room || !roomIsoPos[room]) continue;
-      const pos = roomIsoPos[room];
-      const idx = (_roomCount[room] || 0);
-      _roomCount[room] = idx + 1;
-      const angle = idx * 2.4;
-      const radius = 6 + idx * 5;
-      const offX = Math.cos(angle) * Math.min(radius, 35);
-      const offY = Math.sin(angle) * Math.min(radius, 22);
-      const px = Math.round(pos[0] + offX);
-      const py = Math.round(pos[1] + offY);
+      const room = _resolveRoom(obj);
+      let px, py;
+
+      if (room && roomIsoPos[room]) {
+        const pos = roomIsoPos[room];
+        const idx = (_roomCount[room] || 0);
+        _roomCount[room] = idx + 1;
+        const angle = idx * 2.4;
+        const radius = 6 + idx * 5;
+        px = Math.round(pos[0] + Math.cos(angle) * Math.min(radius, 35));
+        py = Math.round(pos[1] + Math.sin(angle) * Math.min(radius, 22));
+      } else {
+        // Unplaced: arrange in a grid cluster
+        const col2 = unplacedCount % 6;
+        const row2 = Math.floor(unplacedCount / 6);
+        px = unplacedBaseX + col2 * 80;
+        py = unplacedBaseY + row2 * 40;
+        unplacedCount++;
+      }
+
       const col = DISCO_COLORS[di % DISCO_COLORS.length];
       const isSelected = tb.discoSelected === (obj.key || obj.address);
       const lbl = (obj.user_label || obj.name || obj.address || "?").substring(0, 14);
@@ -481,19 +519,27 @@ export function render(ctx) {
       s += `<g data-disco="${di}" style="cursor:pointer">`;
       s += `<circle cx="${px}" cy="${py}" r="18" fill="${col}" opacity="0.12" pointer-events="all"/>`;
       s += `<circle cx="${px}" cy="${py}" r="10" fill="${col}" stroke="#071008" stroke-width="1.5" opacity="0.95" pointer-events="all"/>`;
-      // Kind badge inside dot
       s += `<text x="${px}" y="${py + 3}" text-anchor="middle" fill="#071008" font-size="6" font-weight="700" pointer-events="none">${kindBadge}</text>`;
-      // Label above
       const lblW = Math.min(lbl.length * 5.5 + 10, 100);
       s += `<rect x="${px - lblW / 2}" y="${py - 26}" width="${lblW}" height="14" rx="3" fill="#071008" opacity="0.85" pointer-events="all"/>`;
       s += `<text x="${px}" y="${py - 16}" text-anchor="middle" fill="${col}" font-size="9" font-weight="700" pointer-events="none">${_esc(lbl)}</text>`;
       s += `</g>`;
     }
 
+    // Unplaced label
+    if (unplacedCount > 0) {
+      s += `<text x="${unplacedBaseX}" y="${unplacedBaseY - 14}" fill="#94a3b8" font-size="10" font-weight="600">Unplaced (${unplacedCount})</text>`;
+    }
+
     // Count badge
+    const placedCount = results.length - unplacedCount;
     if (results.length) {
-      s += `<rect x="6" y="${viewY + 4}" width="200" height="22" rx="4" fill="#071008" opacity="0.85"/>`;
-      s += `<text x="106" y="${viewY + 19}" text-anchor="middle" fill="#e879f9" font-size="12" font-weight="700">${results.length} new object${results.length !== 1 ? "s" : ""} discovered</text>`;
+      const badgeW = 240;
+      s += `<rect x="6" y="${viewY + 4}" width="${badgeW}" height="22" rx="4" fill="#071008" opacity="0.85"/>`;
+      const badgeTxt = placedCount === results.length
+        ? `${results.length} new object${results.length !== 1 ? "s" : ""} discovered`
+        : `${results.length} discovered (${placedCount} placed, ${unplacedCount} unplaced)`;
+      s += `<text x="${badgeW / 2 + 6}" y="${viewY + 19}" text-anchor="middle" fill="#e879f9" font-size="11" font-weight="700">${badgeTxt}</text>`;
     }
 
     // Legend
