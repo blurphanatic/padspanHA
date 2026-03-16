@@ -17,9 +17,9 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.13.4";
+const APP_VERSION = "0.13.5";
 // Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260316T171155Z";
+const BUILD_ID = "20260316T171551Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -2014,6 +2014,8 @@ class PadSpanHaApp extends HTMLElement {
     if(this.state._calibTune?._dragging || this.state._calibBeacon?._dragging || this.state._calibTune?._confirming || this.state._calibBeacon?._confirming) return;
     // Skip re-render during active drag on 3D Stack alignment, Edit tab, or Trim tool
     if(this.state.maps?._stackDragging || this.state.maps?._editDragging) return;
+    // Skip ALL re-renders while Point Align mode is active (side-by-side maps)
+    if(this.state.maps?._ptAlign?.active) return;
     // Skip ALL re-renders while traceback tab is active (prevents flicker/DOM destruction)
     if(this.state._traceback?.active && this.state.view === "traceback") return;
     // Skip poll-triggered re-renders while on the maps upload/stack/edit tabs.
