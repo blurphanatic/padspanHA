@@ -1173,16 +1173,24 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const _deviceClicks = [];   // index → callback
 
   // ── Scanner nodes + labels (left column) ───────────────────────────────────
+  // Labels are right-aligned just before the circle (text-anchor:end) so the
+  // gap matches the device side (~10px between text edge and circle edge).
   for (let si = 0; si < scannerNodes.length; si++) {
     const sn = scannerNodes[si];
+    const textX = sn.x - 12;  // 12px left of circle centre (7r + 5px gap)
     s += `<g data-vs="${si}" class="bt-viz-click" style="cursor:pointer">`;
-    s += `<rect x="${scannerLabelX - 4}" y="${sn.y - 10}" width="${sn.x - scannerLabelX + 18}" height="20" fill="rgba(0,0,0,0)" pointer-events="all"/>`;
+    s += `<rect x="${Math.max(0, textX - 280)}" y="${sn.y - 10}" width="${280 + 24}" height="20" fill="rgba(0,0,0,0)" pointer-events="all"/>`;
     s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner" pointer-events="all"/>`;
-    s += `<text x="${scannerLabelX}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle" pointer-events="all">${_escSvg(trunc(sn.label))}</text>`;
+    s += `<text x="${textX}" y="${sn.y}" class="bt-viz-label" text-anchor="end" dominant-baseline="middle" pointer-events="all">${_escSvg(trunc(sn.label))}</text>`;
     s += `</g>`;
     _scannerClicks[si] = () => {
       const radio = radios.find(r => String(r.source || "") === sn.id);
-      if (radio) ctx.actions.showScannerDetail(radio);
+      if (radio) {
+        ctx.actions.showScannerDetail(radio);
+      } else {
+        // Fallback: construct a minimal scanner object from available data
+        ctx.actions.showScannerDetail({ source: sn.id, name: sn.label.replace(/^\[\w+\]\s*/, "") });
+      }
     };
   }
 
@@ -1216,7 +1224,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   }
 
   // Column titles at the top of the SVG
-  s += `<text x="${scannerLabelX}" y="${pad}" class="bt-viz-title" text-anchor="start" dominant-baseline="middle">Scanners</text>`;
+  s += `<text x="${scannerNodeX - 12}" y="${pad}" class="bt-viz-title" text-anchor="end" dominant-baseline="middle">Scanners</text>`;
   s += `<text x="${deviceNodeX + 10}" y="${pad}" class="bt-viz-title" text-anchor="start" dominant-baseline="middle">Devices</text>`;
 
   s += `</svg>`;
