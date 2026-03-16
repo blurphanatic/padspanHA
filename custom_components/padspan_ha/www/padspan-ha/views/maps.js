@@ -3333,7 +3333,7 @@ function _stack(ctx, maps, helpBtn){
       const ih = map.image?.height || 600;
       const ar2 = ih / iw;
 
-      const stage = el("div",{style:`position:relative;width:100%;padding-bottom:${ar2*100}%;height:0;background:#071008;cursor:crosshair`});
+      const stage = el("div",{style:`position:relative;width:100%;padding-bottom:${ar2*100}%;height:0;background:#071008`});
 
       // Map image
       const _v = (map.updated||map.image?.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
@@ -3341,12 +3341,12 @@ function _stack(ctx, maps, helpBtn){
       if(url){
         const img = document.createElement("img");
         img.src = url;
-        img.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill;display:block";
+        img.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill;display:block;pointer-events:none";
         stage.appendChild(img);
       }
       // SVG room bounds
       const svgDiv = document.createElement("div");
-      svgDiv.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%";
+      svgDiv.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none";
       svgDiv.innerHTML = _stackMapSVGStr(map, ctx, which === "tgt", !url);
       stage.appendChild(svgDiv);
 
@@ -3359,10 +3359,15 @@ function _stack(ctx, maps, helpBtn){
       markerDiv.innerHTML = mSvg;
       stage.appendChild(markerDiv);
 
-      // Click handler for placing points
-      stage.addEventListener("click", (ev) => {
+      // Transparent click-catcher on top of all layers — ensures clicks always register
+      const clickLayer = document.createElement("div");
+      clickLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;z-index:10";
+      stage.appendChild(clickLayer);
+
+      // Click handler on the topmost layer
+      clickLayer.addEventListener("click", (ev) => {
         if(!_pta.active) return;
-        const rect = stage.getBoundingClientRect();
+        const rect = clickLayer.getBoundingClientRect();
         if(!rect.width || !rect.height) return;
         const px = (ev.clientX - rect.left) / rect.width;
         const py = (ev.clientY - rect.top) / rect.height;
