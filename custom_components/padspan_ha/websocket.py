@@ -2228,10 +2228,11 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         except Exception:
             pass
 
-        # ── Same-label dedup ──────────────────────────────────────────────
-        # If two objects ended up with the same user_label, they're the same
-        # physical device seen under different identities (e.g. ble MAC +
-        # ibeacon key, or cached + live).  Merge them to prevent splitting.
+        # ── Same-label dedup (post-labelling safety net) ───────────────────
+        # WHY: A device can exist as multiple object kinds simultaneously
+        # (e.g. ble MAC + ibeacon key, or cached stale + fresh live).
+        # If the user labelled both halves, they'd see the same name twice.
+        # This pass merges objects sharing the same user_label into one.
         try:
             _label_groups: dict[str, list[dict]] = {}
             for obj in objects:
@@ -2414,9 +2415,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     if "radios" not in snapshot:
         snapshot["radios"] = (snapshot.get("ble") or {}).get("radios") or []
 
-    # --- BLE room assignment ---
-    # BLE objects don't get a room from entity state.  Assign it here: the room is
-    # the HA area of whichever scanner hears the device with the strongest RSSI.
+    # --- BLE room assignment (strongest-scanner heuristic) ---
+    # Unlike entity-based objects (which get their room from HA state), raw BLE
+    # objects have no inherent room.  We assign one by finding which scanner
+    # hears the device with the strongest RSSI, then using that scanner's HA area.
+    # Scanner RSSI offsets (user-configured corrections for hot/cold scanners)
+    # are applied before comparison.
     try:
         radios = (snapshot.get("ble") or {}).get("radios") or []
         source_to_area: dict[str, str] = {}
@@ -3988,10 +3992,15 @@ async def ws_radio_disabled_set(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_radio_reset(hass: HomeAssistant, connection, msg) -> None:
-    """Reset ALL data for a specific BLE scanner/radio.
+    """Nuclear reset for a single BLE scanner — clears ALL associated data.
 
-    Clears: settings (offset/lost/disabled), map placements, calibration
-    readings, adaptive fingerprints, Kalman smoothing, and BLE cache.
+    Used when a scanner is replaced or relocated.  Clears across 6 subsystems:
+      1. Settings: RSSI offset, lost flag, disabled flag
+      2. Maps: receiver pin placements on all maps
+      3. Calibration: removes all scanner_readings entries + prunes empty points
+      4. Adaptive: removes room fingerprint observations from this scanner
+      5. Presence coordinator: clears Kalman/EMA smoothing state
+      6. Bluetooth live: clears advertisement cache entries from this scanner
     """
     source = str(msg.get("source") or "").strip()
     if not source:
@@ -4059,10 +4068,12 @@ async def ws_radio_reset(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], {"ok": True, "source": source, "summary": summary})
 
 
+# ── Follow / Alert Configuration ───────────────────────────────────────────────
+
 @websocket_api.websocket_command({"type": "padspan_ha/follow_alert_get"})
 @websocket_api.async_response
 async def ws_follow_alert_get(hass: HomeAssistant, connection, msg) -> None:
-    """Return all saved follow-alert configurations."""
+    """Return all saved follow-alert configurations (persisted in AlertStore)."""
     from .const import DATA_ALERTS
     alert_store = hass.data.get(DOMAIN, {}).get(DATA_ALERTS)
     configs = alert_store.all() if alert_store else {}

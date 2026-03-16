@@ -1931,11 +1931,13 @@ function _makeDraggable(node, receiver, container, onMoved=null, isEnabled=null,
   window.addEventListener("touchend", onUp);
 }
 
+// Format receiver list as a numbered text summary (for debug display).
 function _receiversText(receivers){
   if(!receivers || !receivers.length) return "No receivers placed yet.";
   return receivers.map((r,i)=>`${i+1}. ${r.label||r.id} @ (${(r.x||0).toFixed(3)}, ${(r.y||0).toFixed(3)})`).join("\n");
 }
 
+// Clamp a value to [0, 1] — all map coordinates are stored normalized.
 function clamp01(x){
   if(!isFinite(x)) return 0;
   return Math.max(0, Math.min(1, x));
@@ -2628,6 +2630,9 @@ function _help(ctx){
 }
 
 // ─── Sample Mode Demo Floor Plan ────────────────────────────────────────────
+// When in sample/demo mode, the Library tab shows a hardcoded "Smith Residence"
+// SVG floor plan with fake rooms, scanners, and objects. This gives new users
+// a fully-functional preview of the system without needing any real hardware.
 
 function _sampleDemo(ctx){
   const { el } = ctx.helpers;
@@ -3664,26 +3669,35 @@ function _stack(ctx, maps, helpBtn){
     // Compute
     const canCompute = pairs >= 3;
     const computeBtn = el("button",{class:"btn",style:`font-size:11px;padding:3px 12px;${canCompute?"background:#1b4a2e;border-color:#52b788":"opacity:0.4"}`, disabled:!canCompute, onclick: async ()=>{
-      const refMap = maps.find(m=>m.id===refSel.value);
-      const tgtMap = maps.find(m=>m.id===tgtSel.value);
-      const solveAr = refMap ? (refMap.image?.height||600)/(refMap.image?.width||800) : stageAr;
-      const result = _solvePtAlign(_pta.refPts, _pta.tgtPts, solveAr);
-      if(!result){ ctx.toast("Could not compute alignment — points may be collinear",true); return; }
-      const rScale    = Math.round(result.scale * 10000) / 10000;
-      const rRotation = Math.round(result.rotation * 100) / 100;
-      const rStretch  = Math.round((result.scaleX_adj || 1.0) * 10000) / 10000;
-      const rDx       = Math.round(result.x_offset * 10000) / 10000;
-      const rDy       = Math.round(result.y_offset * 10000) / 10000;
+      // Show immediate progress feedback and disable to prevent double-click
+      const origLabel = computeBtn.textContent;
+      computeBtn.disabled = true;
+      computeBtn.textContent = "Computing…";
+      try {
+        const refMap = maps.find(m=>m.id===refSel.value);
+        const tgtMap = maps.find(m=>m.id===tgtSel.value);
+        const solveAr = refMap ? (refMap.image?.height||600)/(refMap.image?.width||800) : stageAr;
+        const result = _solvePtAlign(_pta.refPts, _pta.tgtPts, solveAr);
+        if(!result){
+          ctx.toast("Could not compute alignment — points may be collinear", true);
+          // Exit cleanly instead of leaving UI locked
+          _exitPtAlign();
+          return;
+        }
+        const rScale    = Math.round(result.scale * 10000) / 10000;
+        const rRotation = Math.round(result.rotation * 100) / 100;
+        const rStretch  = Math.round((result.scaleX_adj || 1.0) * 10000) / 10000;
+        const rDx       = Math.round(result.x_offset * 10000) / 10000;
+        const rDy       = Math.round(result.y_offset * 10000) / 10000;
 
-      // ── Bake into image ──
-      // When "Bake" is checked, rotation/scale/stretch are rendered onto a new
-      // canvas image and uploaded to replace the target map's file. The stored
-      // transform is then reset to translation-only (rotation=0, scale=1,
-      // scaleX_adj=1). This "burns in" the geometric correction so future
-      // alignment only needs a simple translate, making the stack more robust.
-      if(_pta.bake && tgtMap && tgtMap.image?.filename){
-        computeBtn.disabled = true; computeBtn.textContent = "Baking…";
-        try {
+        // ── Bake into image ──
+        // When "Bake" is checked, rotation/scale/stretch are rendered onto a new
+        // canvas image and uploaded to replace the target map's file. The stored
+        // transform is then reset to translation-only (rotation=0, scale=1,
+        // scaleX_adj=1). This "burns in" the geometric correction so future
+        // alignment only needs a simple translate, making the stack more robust.
+        if(_pta.bake && tgtMap && tgtMap.image?.filename){
+          computeBtn.textContent = "Baking…";
           const _tv = (tgtMap.updated||tgtMap.image?.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
           const imgUrl = `/local/padspan_ha/maps/${tgtMap.image.filename}${_tv ? '?v='+_tv : ''}`;
           const img = new Image();
@@ -3716,32 +3730,29 @@ function _stack(ctx, maps, helpBtn){
           alignState.scale      = 1.0;
           alignState.rotation   = 0;
           alignState.scaleX_adj = 1.0;
-          applyCurrentTransform();
+          try { applyCurrentTransform(); } catch(_e){}
           const resPct = Math.round(result.residual * 1000) / 10;
-          ctx.toast(`Baked into image ✔ (${pairs} pairs, residual: ${resPct}%). Rotation/scale/stretch written to file; only translation remains.`);
-        } catch(bakeErr) {
-          ctx.toast("Bake failed: " + String(bakeErr), true);
-          // Fall back to normal transform application
-          alignState.x_offset = rDx; alignState.y_offset = rDy;
-          alignState.scale = rScale; alignState.rotation = rRotation;
-          alignState.scaleX_adj = rStretch;
-          applyCurrentTransform();
+          ctx.toast(`Baked into image (${pairs} pairs, residual: ${resPct}%). Rotation/scale/stretch written to file; only translation remains.`);
+          _exitPtAlign();
+          return;
         }
-        _exitPtAlign();
-        return;
-      }
 
-      // Normal mode — apply transform parameters
-      alignState.x_offset   = rDx;
-      alignState.y_offset   = rDy;
-      alignState.scale      = rScale;
-      alignState.rotation   = rRotation;
-      alignState.scaleX_adj = rStretch;
-      applyCurrentTransform();
-      const resPct = Math.round(result.residual * 1000) / 10;
-      const stretchPct = Math.round(rStretch * 100);
-      ctx.toast(`Point alignment applied (${pairs} pairs, residual: ${resPct}%, stretch: ${stretchPct}%)`);
-      _exitPtAlign();
+        // Normal mode — apply transform parameters directly
+        alignState.x_offset   = rDx;
+        alignState.y_offset   = rDy;
+        alignState.scale      = rScale;
+        alignState.rotation   = rRotation;
+        alignState.scaleX_adj = rStretch;
+        try { applyCurrentTransform(); } catch(_e){}
+        const resPct = Math.round(result.residual * 1000) / 10;
+        const stretchPct = Math.round(rStretch * 100);
+        ctx.toast(`Point alignment applied (${pairs} pairs, residual: ${resPct}%, stretch: ${stretchPct}%)`);
+        _exitPtAlign();
+      } catch(err) {
+        // Catch-all: any unexpected error must not leave the UI locked
+        ctx.toast("Point Align error: " + String(err), true);
+        _exitPtAlign();
+      }
     }}, canCompute ? `Compute (${pairs} pairs)` : "Need 3+ pairs");
     row2.appendChild(computeBtn);
 
@@ -4218,8 +4229,10 @@ function _stack(ctx, maps, helpBtn){
       isoResetBtn.disabled = false;
     }
   }, "Reset");
-  // Clean stale receivers button
-  // Build lookup maps from live BLE radios
+  // ── Stale Receiver Cleanup ──
+  // A receiver is "stale" if its source MAC / label doesn't match any currently
+  // active BLE scanner in HA. This can happen when scanners are removed or
+  // renamed. The cleanup button removes stale receivers from all maps.
   const snap_rx = (ctx.state.live?.snapshot?.ble?.radios) || [];
   const liveSourceSet = new Set(snap_rx.map(r => r.source).filter(Boolean));
   // name→source and source→name lookups for backfill matching
@@ -4443,6 +4456,21 @@ function _persistent2dPinsSVGStr(roomBounds, awayObjs){
   return s;
 }
 
+// ── 3D Isometric SVG Renderer ─────────────────────────────────────────────────
+// Generates a complete isometric building visualization as an SVG string.
+// Each z_level becomes a "slab" (3D tile) rendered with an isometric
+// projection: iso(wx,wy,wz) = (CX + (wx-wy)*TILE*0.866 + wz*horizGap,
+//                               CY + (wx+wy)*TILE*0.5 - wz*FLOOR_GAP).
+// The 0.866 factor (≈cos(30°)) and 0.5 (sin(30°)) give the standard
+// isometric 30° viewing angle. FLOOR_GAP controls vertical separation
+// between levels, horizGap shifts higher floors left/right.
+//
+// Each map's room bounds are projected through its stack transform
+// (translate + rotate + scale) to world coordinates, then through the
+// isometric projection to SVG pixel coordinates.
+//
+// Outside maps are special: they're fitted inside the indoor bounding box
+// rather than getting their own slab, so they overlay naturally.
 function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, horizGap=0){
   const TILE=260, FLOOR_GAP=floorGap, CX=390, CY=740, W=780, BASE_H=1060;
   const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
@@ -4458,6 +4486,7 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
         typeof o.age_s === "number" && o.age_s > 30)
     : [];
 
+  // Isometric projection: world (wx,wy,wz) → SVG pixel (x,y)
   const iso = (wx, wy, wz)=>[
     CX + (wx-wy)*TILE*0.866 + wz*horizGap,
     CY + (wx+wy)*TILE*0.5 - wz*FLOOR_GAP,
@@ -4479,8 +4508,12 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
   }
   const sortedLevels = [...byLevel.keys()].sort((a,b)=>a-b);
 
-  // ── Outside map: rendered as overlay inside indoor bounding box, not its own slab ──
-  // Compute per-level indoor bounding boxes so outside maps can be fit inside them.
+  // ── Outside map handling ──
+  // Outside maps don't get their own slab in the 3D stack. Instead they're
+  // rendered as an overlay fitted inside the indoor bounding box of their
+  // z_level. This means their 0–1 coordinates map to the physical extent
+  // of the indoor floors, so outdoor room bounds (garden, driveway) appear
+  // in the right relative position.
   const _indoorBBByLevel = new Map();
   for(const m of visMaps){
     if(_isOutsideMap(m)) continue;
@@ -4682,12 +4715,14 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
   return s;
 }
 
+// Escape a string for safe inclusion in SVG text content.
 function _escSVG(s){
   return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
 // ─── Export Helpers ───────────────────────────────────────────────────────────
 
+// Trigger a browser download of a Blob with the given filename.
 function _downloadBlob(blob, filename){
   const u = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -4695,6 +4730,8 @@ function _downloadBlob(blob, filename){
   setTimeout(()=>URL.revokeObjectURL(u), 3000);
 }
 
+// Build a standalone SVG of room boundaries + receiver dots in pixel coordinates.
+// Used for SVG export and as an overlay layer in the combined PNG render.
 function _buildRoomBoundsSVG(map, ctx, transparent=false){
   const iw = map.image?.width || 800;
   const ih = map.image?.height || 600;
@@ -4725,6 +4762,8 @@ function _buildRoomBoundsSVG(map, ctx, transparent=false){
   return s;
 }
 
+// Render a combined PNG: floor plan image + room bounds overlay composited
+// via an offscreen <canvas>. The SVG overlay is drawn at 80% opacity.
 async function _combinedMapPng(map, ctx){
   const iw = map.image?.width || 800;
   const ih = map.image?.height || 600;
@@ -4743,6 +4782,7 @@ async function _combinedMapPng(map, ctx){
   return new Promise(resolve=>canvas.toBlob(resolve,"image/png",0.92));
 }
 
+// Render an SVG string to a PNG Blob via an offscreen canvas.
 async function _svgStringToPng(svgStr, w, h){
   const canvas = document.createElement("canvas");
   canvas.width = w; canvas.height = h;
@@ -4752,6 +4792,8 @@ async function _svgStringToPng(svgStr, w, h){
   return new Promise(resolve=>canvas.toBlob(resolve,"image/png",0.95));
 }
 
+// Draw an SVG string onto an existing canvas context at the given alpha.
+// Creates a temporary Blob URL, loads it as an Image, then drawImage().
 async function _drawSvgOnCanvas(g, svgStr, w, h, alpha=1.0){
   const blob = new Blob([svgStr],{type:"image/svg+xml;charset=utf-8"});
   const url = URL.createObjectURL(blob);
@@ -4808,7 +4850,9 @@ function _hexCluster(n, r) {
   });
 }
 
-// Load entity_id → area_name for all lights; cached on ctx.state._lightsReg (60 s)
+// Fetch the HA entity registry and build entity_id → area_name lookup for all
+// light entities. Cached on ctx.state._lightsReg for 60s to avoid hammering
+// the WS API on every 5s poll cycle.
 async function _loadLightsReg(ctx) {
   try {
     const reg   = await ctx.hass.callWS({ type: "config/entity_registry/list" });
