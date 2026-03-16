@@ -1056,7 +1056,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // Build SVG as an HTML string — avoids the HTML-namespace issue that makes
   // document.createElement("circle") / ("line") render as invisible elements.
   let s = `<svg class="bt-viz" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
-  s += `<style>.bt-viz-click text{fill:#7dd3fc;text-decoration:underline}.bt-viz-click:hover text{fill:#5eead4!important}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}</style>`;
+  s += `<style>.bt-viz-click{cursor:pointer;pointer-events:all}.bt-viz-click text.bt-viz-label{fill:#7dd3fc}.bt-viz-click:hover text.bt-viz-label{fill:#5eead4}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}.bt-viz-uline{stroke:#7dd3fc;stroke-width:0.5;opacity:0.7}.bt-viz-click:hover .bt-viz-uline{stroke:#5eead4}</style>`;
 
   // Lines first (back layer) — connect between the node circles only
   for (const d of deviceNodes) {
@@ -1073,20 +1073,24 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // Scanner nodes + labels (left-aligned, growing rightward toward node) — clickable
   // Invisible hit-area rect behind each row so clicks land reliably on the <g>
   for (const sn of scannerNodes) {
+    const _lblLen = Math.min(trunc(sn.label).length * 7.2, sn.x - scannerLabelX - 10);
     s += `<g class="bt-viz-click" data-type="scanner" data-id="${_escSvg(sn.id)}" style="cursor:pointer" pointer-events="all">`;
     s += `<rect x="${scannerLabelX - 4}" y="${sn.y - 10}" width="${sn.x - scannerLabelX + 18}" height="20" fill="transparent"/>`;
     s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner"/>`;
     s += `<text x="${scannerLabelX}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(sn.label))}</text>`;
+    s += `<line x1="${scannerLabelX}" y1="${sn.y + 7}" x2="${scannerLabelX + _lblLen}" y2="${sn.y + 7}" class="bt-viz-uline"/>`;
     s += `</g>`;
   }
 
   // Device nodes + labels (left-aligned, growing rightward from node) — clickable
   for (const d of deviceNodes) {
     const rc = rssiClass(d.rssi);
+    const _dLblLen = Math.min(trunc(d.label).length * 6.6, deviceLabelX - d.x - 18);
     s += `<g class="bt-viz-click" data-type="device" data-id="${_escSvg(d.id)}" style="cursor:pointer" pointer-events="all">`;
     s += `<rect x="${d.x - 8}" y="${d.y - 9}" width="${deviceLabelX - d.x + 18}" height="18" fill="transparent"/>`;
     s += `<circle cx="${d.x}" cy="${d.y}" r="5" class="bt-viz-node device ${rc}"/>`;
     s += `<text x="${d.x + 10}" y="${d.y}" class="bt-viz-label" font-size="11" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(d.label))}</text>`;
+    s += `<line x1="${d.x + 10}" y1="${d.y + 6}" x2="${d.x + 10 + _dLblLen}" y2="${d.y + 6}" class="bt-viz-uline"/>`;
     s += `</g>`;
   }
 
