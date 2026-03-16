@@ -3728,6 +3728,7 @@ function _stack(ctx, maps, helpBtn){
             alignState.x_offset = rDx; alignState.y_offset = rDy;
             alignState.scale = 1.0; alignState.rotation = 0; alignState.scaleX_adj = 1.0;
             _close();
+            buildStage(); // Apply new values to the overlay immediately
             const bakeImg = new Image();
             bakeImg.crossOrigin = "anonymous";
             bakeImg.onload = () => {
@@ -3752,13 +3753,16 @@ function _stack(ctx, maps, helpBtn){
             bakeImg.onerror = () => ctx.toast("Bake failed — image load error", true);
             bakeImg.src = _mapUrl(tgtMap);
           } else {
-            // Normal: write alignment and close
+            // Normal: write alignment and close, then refresh the overlay
             alignState.x_offset   = rDx;
             alignState.y_offset   = rDy;
             alignState.scale      = rScale;
             alignState.rotation   = rRotation;
             alignState.scaleX_adj = rStretch;
+            console.log("[PtAlign] Result: dx=" + rDx + " dy=" + rDy + " scale=" + rScale +
+              " rot=" + rRotation + " stretch=" + rStretch + " residual=" + resPct + "%");
             _close();
+            buildStage(); // Apply new values to the overlay immediately
             ctx.toast("Aligned (" + pairs + " pairs, residual " + resPct + "%, stretch " + Math.round(rStretch * 100) + "%)");
           }
         } catch (err) {
