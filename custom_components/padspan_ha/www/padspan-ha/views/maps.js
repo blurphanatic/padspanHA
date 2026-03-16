@@ -3401,17 +3401,10 @@ function _stack(ctx, maps, helpBtn){
   ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; alignState.rotation=0; alignState.scaleX_adj=1.0; applyCurrentTransform(); }},"Reset"));
 
   // ── Point Align ────────────────────────────────────────────────────────────
-  // An alternative to manual drag-align: shows ref & tgt maps SIDE BY SIDE
-  // (not overlaid). User clicks matching real-world locations on each map,
-  // alternating between ref and tgt. After 3+ matched pairs, a least-squares
-  // affine transform is computed to determine the optimal alignment.
-  //
-  // When _ptAlign.active is true, the overlay stage and normal controls are
-  // hidden and replaced with the side-by-side panels. This flag also acts as
-  // a re-render guard — the 5s poll cycle skips _renderCurrentView() when
-  // active to prevent destroying the point-picking UI mid-interaction.
-  if(!ctx.state.maps._ptAlign) ctx.state.maps._ptAlign = { active: false, refPts: [], tgtPts: [], phase: "ref" };
-  const _pta = ctx.state.maps._ptAlign;
+  // Opens a MODAL OVERLAY (position:fixed) for side-by-side point matching.
+  // Completely decoupled from the maps view render cycle — no re-render guard
+  // needed. The modal manages its own DOM and state; on Compute or Cancel it
+  // simply removes itself and writes results to alignState.
 
   // ── Affine Transform Solver (_solvePtAlign) ───────────────────────────────
   //
@@ -3509,298 +3502,302 @@ function _stack(ctx, maps, helpBtn){
   };
 
   // Container for the side-by-side point-picking UI (hidden until activated)
-  const _ptAlignContainer = el("div",{style:"display:none;margin-top:10px"});
-  const _ptAlignToolbar = el("div",{style:"display:none;margin-top:8px;padding:10px 12px;border-radius:8px;background:#0a1a2a;border:1px solid #1e4976"});
+  // ── Point Align Modal ─────────────────────────────────────────────────────
+  // Opens a full-screen fixed overlay for side-by-side point matching.
+  // Completely self-contained — owns its own DOM, state, and lifecycle.
+  // No re-render guard needed; the modal sits on top of everything and
+  // removes itself on Compute or Cancel. The maps view never knows it existed.
+  const _openPointAlignModal = () => {
+    const refMap = maps.find(m => m.id === refSel.value);
+    const tgtMap = maps.find(m => m.id === tgtSel.value);
+    if (!refMap) { ctx.toast("Select a reference map first", true); return; }
+    if (!tgtMap || tgtMap.id === refMap.id) { ctx.toast("Select a different target map", true); return; }
 
-  // Build numbered circle markers for the Point Align side-by-side panels.
-  // Each point gets a numbered label so the user can verify correspondence.
-  const _ptAlignMarkerSVG = (pts, color, ar2) => {
-    let svg = "";
-    for(let i=0;i<pts.length;i++){
-      const p = pts[i]; const r = 0.012;
-      svg += `<circle cx="${p.x}" cy="${p.y*ar2}" r="${r}" fill="${color}44" stroke="${color}" stroke-width="0.003"/>`;
-      svg += `<text x="${p.x}" y="${p.y*ar2+r*0.35}" text-anchor="middle" font-size="${r*1.4}" fill="${color}" font-weight="700" font-family="sans-serif">${i+1}</text>`;
-    }
-    return svg;
-  };
+    // ── Local state (lives only while modal is open) ──
+    const refPts = [];
+    const tgtPts = [];
+    let phase = "ref";
+    let bake = false;
 
-  // Rebuild the side-by-side map panels with current point markers.
-  // Uses a 2-column CSS grid layout. Each panel has the map image, SVG room
-  // bounds, numbered point markers, and a transparent click-catcher layer on
-  // top. Clicking auto-alternates between ref and tgt panels.
-  const _rebuildPtAlignPanels = () => {
-    _ptAlignContainer.innerHTML = "";
-    const refMap = maps.find(m=>m.id===refSel.value) || null;
-    const tgtMap = maps.find(m=>m.id===tgtSel.value) || null;
-    if(!refMap) return;
+    // ── Modal root (position:fixed covers the viewport) ──
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;" +
+      "background:#0a0f0a;display:flex;flex-direction:column;color:#e2e8f0;" +
+      "font-family:var(--ha-font-family,Roboto,sans-serif);font-size:13px";
 
-    const grid = el("div",{style:"display:grid;grid-template-columns:1fr 1fr;gap:12px"});
-
-    // Helper: build one map panel with image + SVG room bounds + point markers
-    const _buildPanel = (map, label, color, pts, which) => {
-      const panel = el("div",{style:"border-radius:8px;overflow:hidden;border:2px solid " + color});
-      const header = el("div",{style:`padding:6px 10px;background:${color}18;display:flex;align-items:center;gap:8px`});
-      header.appendChild(el("span",{style:`font-weight:700;font-size:12px;color:${color}`}, label));
-      header.appendChild(el("span",{style:"font-size:11px;color:#94a3b8"}, map.name||map.id));
-      const ptCount = pts.length;
-      header.appendChild(el("span",{class:"badge",style:"font-size:10px"}, `${ptCount} pt${ptCount!==1?"s":""}`));
-      if(_pta.phase === which){
-        header.appendChild(el("span",{style:`font-size:10px;color:${color};font-weight:700;border:1px solid ${color};padding:1px 6px;border-radius:4px`}, "← Click here"));
-      }
-      panel.appendChild(header);
-
-      const iw = map.image?.width || 800;
-      const ih = map.image?.height || 600;
-      const ar2 = ih / iw;
-
-      const stage = el("div",{style:`position:relative;width:100%;padding-bottom:${ar2*100}%;height:0;background:#071008`});
-
-      // Map image
-      const _v = (map.updated||map.image?.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
-      const url = map.image?.filename ? `/local/padspan_ha/maps/${map.image.filename}${_v ? '?v='+_v : ''}` : null;
-      if(url){
-        const img = document.createElement("img");
-        img.src = url;
-        img.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill;display:block;pointer-events:none";
-        stage.appendChild(img);
-      }
-      // SVG room bounds
-      const svgDiv = document.createElement("div");
-      svgDiv.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none";
-      svgDiv.innerHTML = _stackMapSVGStr(map, ctx, which === "tgt", !url);
-      stage.appendChild(svgDiv);
-
-      // Point markers SVG overlay
-      const markerDiv = document.createElement("div");
-      markerDiv.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none";
-      let mSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 ${ar2}" style="width:100%;height:100%">`;
-      mSvg += _ptAlignMarkerSVG(pts, color, ar2);
-      mSvg += `</svg>`;
-      markerDiv.innerHTML = mSvg;
-      stage.appendChild(markerDiv);
-
-      // Transparent click-catcher on top of all layers — ensures clicks always register
-      const clickLayer = document.createElement("div");
-      clickLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;z-index:10";
-      stage.appendChild(clickLayer);
-
-      // Click handler on the topmost layer
-      clickLayer.addEventListener("click", (ev) => {
-        try {
-          if(!_pta.active) return;
-          const rect = clickLayer.getBoundingClientRect();
-          if(!rect.width || !rect.height) return;
-          const px = (ev.clientX - rect.left) / rect.width;
-          const py = (ev.clientY - rect.top) / rect.height;
-          if(px < 0 || px > 1 || py < 0 || py > 1) return;
-          if(which === "ref"){
-            if(_pta.refPts.length >= 8){ ctx.toast("Max 8 points"); return; }
-            _pta.refPts.push({x: px, y: py});
-            _pta.phase = "tgt"; // auto-switch to target
-          } else {
-            if(_pta.tgtPts.length >= 8){ ctx.toast("Max 8 points"); return; }
-            _pta.tgtPts.push({x: px, y: py});
-            _pta.phase = "ref"; // auto-switch to reference
-          }
-          _rebuildPtAlignPanels();
-          _renderPtAlignToolbar();
-        } catch(clickErr) {
-          ctx.toast("Point Align click error: " + String(clickErr), true);
-          _exitPtAlign();
-        }
-      });
-
-      panel.appendChild(stage);
-      return panel;
+    // Helper: get map image URL with cache-buster
+    const _mapUrl = (map) => {
+      if (!map.image || !map.image.filename) return null;
+      const v = (map.updated || map.image.sha256 || "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 16);
+      return "/local/padspan_ha/maps/" + map.image.filename + (v ? "?v=" + v : "");
     };
 
-    grid.appendChild(_buildPanel(refMap, "Reference", "#52b788", _pta.refPts, "ref"));
-    if(tgtMap && tgtMap.id !== refMap.id){
-      grid.appendChild(_buildPanel(tgtMap, "Target", "#f59e0b", _pta.tgtPts, "tgt"));
-    }
-    _ptAlignContainer.appendChild(grid);
-  };
+    // Helper: close modal
+    const _close = () => { try { overlay.remove(); } catch (_e) {} };
 
-  const _exitPtAlign = () => {
-    // Idempotent — safe to call multiple times (finally blocks, error paths, etc.)
-    _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref"; _pta._ts = 0;
-    _pta.active = false;
-    try { _ptAlignToolbar.style.display = "none"; } catch(_e){}
-    try { _ptAlignContainer.style.display = "none"; } catch(_e){}
-    try { stageOuter.style.display = ""; } catch(_e){}
-    try { ctrlRow.style.display = ""; } catch(_e){}
-  };
+    // ── Toolbar (top bar) ──
+    const toolbar = document.createElement("div");
+    toolbar.style.cssText = "padding:10px 16px;background:#071210;border-bottom:1px solid #1e4976;" +
+      "display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0";
 
-  const _renderPtAlignToolbar = () => {
-    _ptAlignToolbar.innerHTML = "";
-    const pairs = Math.min(_pta.refPts.length, _pta.tgtPts.length);
-    const placing = _pta.phase === "ref" ? "Reference" : "Target";
-    const nextPt = _pta.phase === "ref" ? _pta.refPts.length + 1 : _pta.tgtPts.length + 1;
-    const phaseColor = _pta.phase === "ref" ? "#52b788" : "#f59e0b";
+    // ── Map panels container ──
+    const panelsRow = document.createElement("div");
+    panelsRow.style.cssText = "flex:1;display:flex;gap:8px;padding:8px;overflow:auto;min-height:0";
 
-    const row1 = el("div",{style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"});
-    row1.appendChild(el("span",{style:"font-weight:700;font-size:13px;color:#7dd3fc"},"Point Align"));
-    row1.appendChild(el("span",{style:`font-size:12px;font-weight:600;color:${phaseColor}`}, `Placing point ${nextPt} on ${placing} map`));
-    row1.appendChild(el("span",{class:"badge",style:"font-size:10px"}, `${pairs} pair${pairs!==1?"s":""} matched`));
-    _ptAlignToolbar.appendChild(row1);
+    // ── Rebuild UI (called after every point click, undo, clear) ──
+    const _rebuild = () => {
+      // -- Toolbar --
+      toolbar.innerHTML = "";
+      const pairs = Math.min(refPts.length, tgtPts.length);
+      const placing = phase === "ref" ? "Reference" : "Target";
+      const nextPt = phase === "ref" ? refPts.length + 1 : tgtPts.length + 1;
+      const phaseColor = phase === "ref" ? "#52b788" : "#f59e0b";
 
-    const row2 = el("div",{style:"display:flex;align-items:center;gap:6px;flex-wrap:wrap"});
+      const title = document.createElement("span");
+      title.style.cssText = "font-weight:700;font-size:14px;color:#7dd3fc";
+      title.textContent = "Point Align";
+      toolbar.appendChild(title);
 
-    // Undo
-    row2.appendChild(el("button",{class:"btn inline",style:"font-size:11px", onclick:()=>{
-      if(_pta.phase==="ref" && _pta.refPts.length > 0) _pta.refPts.pop();
-      else if(_pta.phase==="tgt" && _pta.tgtPts.length > 0) _pta.tgtPts.pop();
-      else if(_pta.refPts.length >= _pta.tgtPts.length && _pta.refPts.length > 0) _pta.refPts.pop();
-      else if(_pta.tgtPts.length > 0) _pta.tgtPts.pop();
-      _rebuildPtAlignPanels(); _renderPtAlignToolbar();
-    }}, "Undo"));
+      const status = document.createElement("span");
+      status.style.cssText = "font-size:12px;font-weight:600;color:" + phaseColor;
+      status.textContent = "Place point " + nextPt + " on " + placing;
+      toolbar.appendChild(status);
 
-    // Clear
-    row2.appendChild(el("button",{class:"btn inline",style:"font-size:11px", onclick:()=>{
-      _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref";
-      _rebuildPtAlignPanels(); _renderPtAlignToolbar();
-    }}, "Clear All"));
+      const badge = document.createElement("span");
+      badge.style.cssText = "font-size:10px;padding:2px 8px;border-radius:4px;background:#1a2e1a;color:#52b788";
+      badge.textContent = pairs + " pair" + (pairs !== 1 ? "s" : "");
+      toolbar.appendChild(badge);
 
-    // Bake toggle — when ON, Compute writes a new image file with rotation/scale/stretch
-    // burned in, so future alignment starts clean (only translation remains).
-    if(_pta.bake === undefined) _pta.bake = false;
-    const bakeLabel = el("label",{style:"display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8;cursor:pointer;user-select:none"});
-    const bakeCb = document.createElement("input");
-    bakeCb.type = "checkbox"; bakeCb.checked = _pta.bake;
-    bakeCb.style.cssText = "width:14px;height:14px;accent-color:#52b788;cursor:pointer";
-    bakeCb.addEventListener("change", ()=>{ _pta.bake = bakeCb.checked; });
-    bakeLabel.appendChild(bakeCb);
-    bakeLabel.appendChild(document.createTextNode("Bake into image"));
-    row2.appendChild(bakeLabel);
+      // Spacer
+      const spacer = document.createElement("div");
+      spacer.style.cssText = "flex:1";
+      toolbar.appendChild(spacer);
 
-    // Compute — solves the affine transform then exits Point Align.
-    // IMPORTANT: NOT async — prevents unhandled promise rejections that kill HA panels.
-    // The Bake path uses .then()/.catch() for its async work.
-    // Single outer try/catch/finally ensures _exitPtAlign() ALWAYS runs.
-    const canCompute = pairs >= 3;
-    const computeBtn = el("button",{class:"btn",style:`font-size:11px;padding:3px 12px;${canCompute?"background:#1b4a2e;border-color:#52b788":"opacity:0.4"}`, disabled:!canCompute, onclick: ()=>{
-      console.log("[PtAlign] Compute clicked, pairs:", pairs);
-      try {
-        computeBtn.disabled = true;
-        computeBtn.textContent = "Computing…";
+      // Undo button
+      const undoBtn = document.createElement("button");
+      undoBtn.className = "btn inline";
+      undoBtn.style.cssText = "font-size:11px;padding:3px 10px;color:#e2e8f0;background:#162016;border:1px solid #2d5a2d;border-radius:4px;cursor:pointer";
+      undoBtn.textContent = "Undo";
+      undoBtn.onclick = () => {
+        if (phase === "ref" && refPts.length > 0) refPts.pop();
+        else if (phase === "tgt" && tgtPts.length > 0) tgtPts.pop();
+        else if (refPts.length >= tgtPts.length && refPts.length > 0) refPts.pop();
+        else if (tgtPts.length > 0) tgtPts.pop();
+        _rebuild();
+      };
+      toolbar.appendChild(undoBtn);
 
-        // ── Solve ──
-        const refMapS = maps.find(m=>m.id===refSel.value);
-        const solveAr = refMapS ? (refMapS.image?.height||600)/(refMapS.image?.width||800) : stageAr;
-        const result = _solvePtAlign(_pta.refPts, _pta.tgtPts, solveAr);
-        console.log("[PtAlign] Solver result:", result);
+      // Clear button
+      const clearBtn = document.createElement("button");
+      clearBtn.className = "btn inline";
+      clearBtn.style.cssText = "font-size:11px;padding:3px 10px;color:#e2e8f0;background:#162016;border:1px solid #2d5a2d;border-radius:4px;cursor:pointer";
+      clearBtn.textContent = "Clear";
+      clearBtn.onclick = () => { refPts.length = 0; tgtPts.length = 0; phase = "ref"; _rebuild(); };
+      toolbar.appendChild(clearBtn);
 
-        if(!result){
-          ctx.toast("Could not compute alignment — points may be collinear", true);
-          return; // finally block handles _exitPtAlign()
+      // Bake checkbox
+      const bakeLabel = document.createElement("label");
+      bakeLabel.style.cssText = "display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8;cursor:pointer;user-select:none";
+      const bakeCb = document.createElement("input");
+      bakeCb.type = "checkbox";
+      bakeCb.checked = bake;
+      bakeCb.style.cssText = "width:14px;height:14px;accent-color:#52b788;cursor:pointer";
+      bakeCb.onchange = () => { bake = bakeCb.checked; };
+      bakeLabel.appendChild(bakeCb);
+      bakeLabel.appendChild(document.createTextNode("Bake"));
+      toolbar.appendChild(bakeLabel);
+
+      // Compute button
+      const canCompute = pairs >= 3;
+      const computeBtn = document.createElement("button");
+      computeBtn.style.cssText = "font-size:12px;padding:4px 16px;font-weight:600;border-radius:4px;cursor:pointer;border:1px solid " +
+        (canCompute ? "#52b788;background:#1b4a2e;color:#e2e8f0" : "#333;background:#1a1a1a;color:#555");
+      computeBtn.disabled = !canCompute;
+      computeBtn.textContent = canCompute ? "Compute (" + pairs + " pairs)" : "Need 3+ pairs";
+      computeBtn.onclick = () => {
+        try {
+          computeBtn.disabled = true;
+          computeBtn.textContent = "Computing...";
+          const solveAr = refMap ? (refMap.image?.height || 600) / (refMap.image?.width || 800) : 0.75;
+          const result = _solvePtAlign(refPts, tgtPts, solveAr);
+          if (!result) {
+            ctx.toast("Could not compute — points may be collinear", true);
+            _close();
+            return;
+          }
+          // Sanitize
+          const _sane = (v, def, lo, hi) => { const n = Number(v); return (isFinite(n) && n >= lo && n <= hi) ? n : def; };
+          const rScale    = _sane(Math.round(result.scale * 10000) / 10000, 1.0, 0.01, 100);
+          const rRotation = _sane(Math.round(result.rotation * 100) / 100, 0, -360, 360);
+          const rStretch  = _sane(Math.round((result.scaleX_adj || 1.0) * 10000) / 10000, 1.0, 0.01, 100);
+          const rDx       = _sane(Math.round(result.x_offset * 10000) / 10000, 0, -10, 10);
+          const rDy       = _sane(Math.round(result.y_offset * 10000) / 10000, 0, -10, 10);
+          const resPct    = _sane(Math.round((result.residual || 0) * 1000) / 10, 0, 0, 999);
+
+          if (bake && tgtMap.image && tgtMap.image.filename) {
+            // Bake: write flat alignment, close modal, then async upload
+            alignState.x_offset = rDx; alignState.y_offset = rDy;
+            alignState.scale = 1.0; alignState.rotation = 0; alignState.scaleX_adj = 1.0;
+            _close();
+            const bakeImg = new Image();
+            bakeImg.crossOrigin = "anonymous";
+            bakeImg.onload = () => {
+              try {
+                const ow = bakeImg.naturalWidth, oh = bakeImg.naturalHeight;
+                const rad = rRotation * Math.PI / 180;
+                const cosA = Math.abs(Math.cos(rad)), sinA = Math.abs(Math.sin(rad));
+                const sx = rScale * rStretch, sy = rScale;
+                const nw = Math.ceil(ow * sx * cosA + oh * sy * sinA);
+                const nh = Math.ceil(ow * sx * sinA + oh * sy * cosA);
+                const canvas = document.createElement("canvas");
+                canvas.width = nw; canvas.height = nh;
+                const cc = canvas.getContext("2d");
+                cc.translate(nw / 2, nh / 2); cc.rotate(rad); cc.scale(sx, sy);
+                cc.drawImage(bakeImg, -ow / 2, -oh / 2);
+                const b64 = canvas.toDataURL("image/png").split(",")[1];
+                ctx.actions.mapsReplaceImage({ map_id: tgtMap.id, png_base64: b64, width: nw, height: nh })
+                  .then(() => ctx.toast("Baked (" + pairs + " pairs, residual " + resPct + "%)"))
+                  .catch(e => ctx.toast("Bake upload failed: " + e, true));
+              } catch (de) { ctx.toast("Bake draw failed: " + de, true); }
+            };
+            bakeImg.onerror = () => ctx.toast("Bake failed — image load error", true);
+            bakeImg.src = _mapUrl(tgtMap);
+          } else {
+            // Normal: write alignment and close
+            alignState.x_offset   = rDx;
+            alignState.y_offset   = rDy;
+            alignState.scale      = rScale;
+            alignState.rotation   = rRotation;
+            alignState.scaleX_adj = rStretch;
+            _close();
+            ctx.toast("Aligned (" + pairs + " pairs, residual " + resPct + "%, stretch " + Math.round(rStretch * 100) + "%)");
+          }
+        } catch (err) {
+          console.error("[PtAlign] Compute error:", err);
+          ctx.toast("Compute error: " + String(err), true);
+          _close();
+        }
+      };
+      toolbar.appendChild(computeBtn);
+
+      // Cancel button
+      const cancelBtn = document.createElement("button");
+      cancelBtn.style.cssText = "font-size:11px;padding:3px 10px;color:#f87171;background:#1a0808;border:1px solid #7f1d1d;border-radius:4px;cursor:pointer";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.onclick = _close;
+      toolbar.appendChild(cancelBtn);
+
+      // -- Panels --
+      panelsRow.innerHTML = "";
+
+      const _buildPanel = (map, label, color, pts, which) => {
+        const panel = document.createElement("div");
+        panel.style.cssText = "flex:1;display:flex;flex-direction:column;border:2px solid " + color +
+          ";border-radius:8px;overflow:hidden;min-width:200px;background:#071008";
+
+        // Header
+        const hdr = document.createElement("div");
+        hdr.style.cssText = "padding:6px 10px;background:" + color + "15;display:flex;align-items:center;gap:8px;flex-shrink:0";
+        const lbl = document.createElement("span");
+        lbl.style.cssText = "font-weight:700;font-size:12px;color:" + color;
+        lbl.textContent = label;
+        hdr.appendChild(lbl);
+        const nm = document.createElement("span");
+        nm.style.cssText = "font-size:11px;color:#94a3b8";
+        nm.textContent = map.name || map.id;
+        hdr.appendChild(nm);
+        if (phase === which) {
+          const arrow = document.createElement("span");
+          arrow.style.cssText = "font-size:10px;color:" + color + ";font-weight:700;border:1px solid " + color + ";padding:1px 6px;border-radius:4px";
+          arrow.textContent = "Click here";
+          hdr.appendChild(arrow);
+        }
+        panel.appendChild(hdr);
+
+        // Map stage — aspect-ratio preserved via padding-bottom trick
+        const iw = map.image?.width || 800;
+        const ih = map.image?.height || 600;
+        const ar = ih / iw;
+        const stage = document.createElement("div");
+        stage.style.cssText = "position:relative;width:100%;padding-bottom:" + (ar * 100) + "%;height:0;flex-shrink:0";
+
+        // Image
+        const url = _mapUrl(map);
+        if (url) {
+          const img = document.createElement("img");
+          img.src = url;
+          img.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill;display:block;pointer-events:none";
+          stage.appendChild(img);
         }
 
-        // Sanitize outputs — clamp to sane ranges, replace NaN/Infinity with defaults
-        const _sane = (v, def, lo, hi) => { const n = Number(v); return (isFinite(n) && n >= lo && n <= hi) ? n : def; };
-        const rScale    = _sane(Math.round(result.scale * 10000) / 10000, 1.0, 0.01, 100);
-        const rRotation = _sane(Math.round(result.rotation * 100) / 100, 0, -360, 360);
-        const rStretch  = _sane(Math.round((result.scaleX_adj || 1.0) * 10000) / 10000, 1.0, 0.01, 100);
-        const rDx       = _sane(Math.round(result.x_offset * 10000) / 10000, 0, -10, 10);
-        const rDy       = _sane(Math.round(result.y_offset * 10000) / 10000, 0, -10, 10);
-        const resPct    = _sane(Math.round((result.residual||0) * 1000) / 10, 0, 0, 999);
-        console.log("[PtAlign] Sanitized: scale="+rScale+" rot="+rRotation+" dx="+rDx+" dy="+rDy);
-
-        // ── Bake into image ──
-        const tgtMap = maps.find(m=>m.id===tgtSel.value);
-        if(_pta.bake && tgtMap && tgtMap.image && tgtMap.image.filename){
-          computeBtn.textContent = "Baking…";
-          // Write alignment state and exit BEFORE async work
-          alignState.x_offset = rDx; alignState.y_offset = rDy;
-          alignState.scale = 1.0; alignState.rotation = 0; alignState.scaleX_adj = 1.0;
-          _exitPtAlign();
-          // Async bake via .then/.catch — NO unhandled rejections
-          const _tv = (tgtMap.updated||tgtMap.image.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
-          const imgUrl = "/local/padspan_ha/maps/" + tgtMap.image.filename + (_tv ? "?v="+_tv : "");
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          img.onload = () => {
-            try {
-              const ow = img.naturalWidth, oh = img.naturalHeight;
-              const radians = rRotation * Math.PI / 180;
-              const cosA = Math.abs(Math.cos(radians)), sinA = Math.abs(Math.sin(radians));
-              const sx = rScale * rStretch, sy = rScale;
-              const scaledW = ow * sx, scaledH = oh * sy;
-              const nw = Math.ceil(scaledW * cosA + scaledH * sinA);
-              const nh = Math.ceil(scaledW * sinA + scaledH * cosA);
-              const canvas = document.createElement("canvas");
-              canvas.width = nw; canvas.height = nh;
-              const cc = canvas.getContext("2d");
-              cc.translate(nw / 2, nh / 2);
-              cc.rotate(radians);
-              cc.scale(sx, sy);
-              cc.drawImage(img, -ow / 2, -oh / 2);
-              const dataUrl = canvas.toDataURL("image/png");
-              const b64 = dataUrl.split(",")[1];
-              ctx.actions.mapsReplaceImage({ map_id: tgtMap.id, png_base64: b64, width: nw, height: nh })
-                .then(() => ctx.toast("Baked into image ("+pairs+" pairs, residual: "+resPct+"%). Only translation remains."))
-                .catch(e => { console.error("[PtAlign] Bake upload error:", e); ctx.toast("Bake upload failed: "+e, true); });
-            } catch(drawErr) {
-              console.error("[PtAlign] Bake draw error:", drawErr);
-              ctx.toast("Bake draw failed: "+drawErr, true);
-            }
-          };
-          img.onerror = () => {
-            console.error("[PtAlign] Bake image load failed");
-            alignState.scale = rScale; alignState.rotation = rRotation; alignState.scaleX_adj = rStretch;
-            ctx.toast("Bake failed — could not load map image", true);
-          };
-          img.src = imgUrl;
-          return; // _exitPtAlign already called above
+        // Point markers — simple numbered circles using absolutely positioned divs
+        for (let i = 0; i < pts.length; i++) {
+          const p = pts[i];
+          const marker = document.createElement("div");
+          marker.style.cssText = "position:absolute;width:20px;height:20px;border-radius:50%;" +
+            "background:" + color + "44;border:2px solid " + color + ";display:flex;align-items:center;" +
+            "justify-content:center;font-size:10px;font-weight:700;color:" + color + ";pointer-events:none;" +
+            "transform:translate(-50%,-50%);left:" + (p.x * 100) + "%;top:" + (p.y * 100) + "%";
+          marker.textContent = String(i + 1);
+          stage.appendChild(marker);
         }
 
-        // ── Normal mode — write alignment state ──
-        alignState.x_offset   = rDx;
-        alignState.y_offset   = rDy;
-        alignState.scale      = rScale;
-        alignState.rotation   = rRotation;
-        alignState.scaleX_adj = rStretch;
-        console.log("[PtAlign] Normal mode complete, calling _exitPtAlign");
-        _exitPtAlign();
-        ctx.toast("Point alignment applied ("+pairs+" pairs, residual: "+resPct+"%, stretch: "+Math.round(rStretch * 100)+"%)");
-      } catch(err) {
-        console.error("[PtAlign] Compute FATAL:", err);
-        try { ctx.toast("Point Align error: " + String(err), true); } catch(_e2) {}
-      } finally {
-        // Belt-and-suspenders: _exitPtAlign is idempotent, safe to call again
-        try { _exitPtAlign(); } catch(_e3) {}
-        console.log("[PtAlign] Compute handler finished, _pta.active:", _pta.active);
-      }
-    }}, canCompute ? `Compute (${pairs} pairs)` : "Need 3+ pairs");
-    row2.appendChild(computeBtn);
+        // Click catcher
+        const catcher = document.createElement("div");
+        catcher.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;z-index:5";
+        catcher.addEventListener("click", (ev) => {
+          const rect = catcher.getBoundingClientRect();
+          if (!rect.width || !rect.height) return;
+          const px = (ev.clientX - rect.left) / rect.width;
+          const py = (ev.clientY - rect.top) / rect.height;
+          if (px < 0 || px > 1 || py < 0 || py > 1) return;
+          if (which === "ref") {
+            if (refPts.length >= 8) { ctx.toast("Max 8 points"); return; }
+            refPts.push({ x: px, y: py });
+            phase = "tgt";
+          } else {
+            if (tgtPts.length >= 8) { ctx.toast("Max 8 points"); return; }
+            tgtPts.push({ x: px, y: py });
+            phase = "ref";
+          }
+          _rebuild();
+        });
+        stage.appendChild(catcher);
 
-    // Cancel
-    row2.appendChild(el("button",{class:"btn inline",style:"font-size:11px;color:#f87171;border-color:#7f1d1d", onclick:()=>{
-      _exitPtAlign();
-    }}, "Cancel"));
+        panel.appendChild(stage);
+        return panel;
+      };
 
-    _ptAlignToolbar.appendChild(row2);
+      panelsRow.appendChild(_buildPanel(refMap, "Reference", "#52b788", refPts, "ref"));
+      panelsRow.appendChild(_buildPanel(tgtMap, "Target", "#f59e0b", tgtPts, "tgt"));
 
-    // Help text
-    _ptAlignToolbar.appendChild(el("div",{class:"muted",style:"font-size:10px;margin-top:6px"},
-      "Click the same real-world location on both maps. Point 1 on Reference = Point 1 on Target. Auto-alternates between maps. After 3+ pairs, click Compute."));
+      // Help text at the bottom of toolbar
+      const help = document.createElement("div");
+      help.style.cssText = "width:100%;font-size:10px;color:#64748b;margin-top:4px";
+      help.textContent = "Click the same real-world point on both maps. Auto-alternates. 3+ pairs required to Compute.";
+      toolbar.appendChild(help);
+    };
+
+    // Assemble modal and render
+    overlay.appendChild(toolbar);
+    overlay.appendChild(panelsRow);
+    _rebuild();
+
+    // Escape key closes modal
+    const _onKey = (e) => { if (e.key === "Escape") { _close(); document.removeEventListener("keydown", _onKey); } };
+    document.addEventListener("keydown", _onKey);
+
+    // Attach to the nearest shadow root (HA custom panel) or body as fallback
+    const root = card.getRootNode();
+    if (root && root !== document) {
+      root.appendChild(overlay);
+    } else {
+      document.body.appendChild(overlay);
+    }
   };
 
-  // Point Align button — placed in the Alignment Overlay header row
-  const ptAlignBtn = el("button",{class:"btn inline",style:"background:#0a1a2a;border-color:#1e4976;color:#7dd3fc;font-size:11px;padding:3px 12px", onclick:()=>{
-    try {
-      _pta.active = true; _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref"; _pta._ts = Date.now();
-      // Hide the overlay stage and normal controls, show side-by-side panels
-      stageOuter.style.display = "none";
-      ctrlRow.style.display = "none";
-      _ptAlignToolbar.style.display = "block";
-      _ptAlignContainer.style.display = "block";
-      _renderPtAlignToolbar();
-      _rebuildPtAlignPanels();
-    } catch(initErr) {
-      ctx.toast("Point Align init error: " + String(initErr), true);
-      _exitPtAlign();
-    }
-  }}, "Point Align");
+  // Point Align button — opens the modal overlay
+  const ptAlignBtn = el("button",{class:"btn inline",style:"background:#0a1a2a;border-color:#1e4976;color:#7dd3fc;font-size:11px;padding:3px 12px", onclick: _openPointAlignModal}, "Point Align");
   alignHdrRow.appendChild(ptAlignBtn);
 
   // Conflict warning div (created early so save/tie-in closures can reference it)
@@ -4059,8 +4056,6 @@ function _stack(ctx, maps, helpBtn){
   ctrlRow.appendChild(addTieInBtn);
 
   card.appendChild(ctrlRow);
-  card.appendChild(_ptAlignToolbar);
-  card.appendChild(_ptAlignContainer);
   card.appendChild(warnDiv);
   card.appendChild(tieInListDiv);
   renderTieIns();
