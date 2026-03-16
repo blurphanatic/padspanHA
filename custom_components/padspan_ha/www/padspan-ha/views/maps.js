@@ -3406,142 +3406,16 @@ function _stack(ctx, maps, helpBtn){
   // needed. The modal manages its own DOM and state; on Compute or Cancel it
   // simply removes itself and writes results to alignState.
 
-  // ── Affine Transform Solver (_solvePtAlign) ───────────────────────────────
-  //
-  // Given N >= 3 matched point pairs (ref[i], tgt[i]), solves for the 6-DOF
-  // affine transform that best maps target coordinates to reference coordinates.
-  //
-  // MODEL (centred at 0.5, 0.5):
-  //   ref_x - 0.5 = a*(tgt_x - 0.5) + b*(tgt_y - 0.5) + dx
-  //   ref_y - 0.5 = c*(tgt_x - 0.5) + d*(tgt_y - 0.5) + dy
-  //
-  // This gives 2N equations in 6 unknowns [a, b, c, d, dx, dy].
-  //
-  // SOLUTION: Assemble the normal equations AᵀA·x = Aᵀb (6×6 system), then
-  // solve via Gaussian elimination with partial pivoting. This is the standard
-  // least-squares approach — efficient and numerically stable for small N.
-  //
-  // DECOMPOSITION: The 2×2 matrix [[a,b],[c,d]] is decomposed into:
-  //   sx = √(a² + c²)  — X-axis scale (includes stretch)
-  //   sy = √(b² + d²)  — Y-axis scale (the "uniform" scale)
-  //   θ  = atan2(c, a)  — rotation angle
-  //   scale     = sy
-  //   scaleX_adj = sx / sy  — non-uniform X stretch relative to Y
-  //
-  // RESIDUAL: RMS distance between predicted and actual reference points.
-  // Low residual (<1%) means the maps align well; high residual suggests
-  // mismatched points or non-affine distortion (e.g., lens warp).
-  //
-  // Returns {x_offset, y_offset, scale, rotation, scaleX_adj, residual}
-  const _solvePtAlign = (refPts, tgtPts, ar) => {
-    const n = Math.min(refPts.length, tgtPts.length);
-    if(n < 3) return null;  // Need at least 3 pairs for a unique 6-DOF solution
-    // Scale Y by aspect ratio so distances are isotropic (pixels, not fractions).
-    // Without this, a 16:9 map would weight X-distance more than Y-distance.
-    const rp = refPts.slice(0,n).map(p=>({x:p.x, y:p.y*ar}));
-    const tp = tgtPts.slice(0,n).map(p=>({x:p.x, y:p.y*ar}));
-    const cx = 0.5, cy = 0.5*ar;
-    // Build normal equations AᵀA · params = Aᵀb (6×6 symmetric positive-definite)
-    const K = 6;
-    const ATA = Array.from({length:K},()=>Array(K).fill(0));
-    const ATb = Array(K).fill(0);
-    for(let i=0;i<n;i++){
-      const u = tp[i].x - cx, v = tp[i].y - cy;
-      const bx = rp[i].x - cx, by = rp[i].y - cy;
-      // Each point pair contributes two rows to the design matrix A:
-      //   x-equation: [u, v, 0, 0, 1, 0] · [a,b,c,d,dx,dy]ᵀ = bx
-      //   y-equation: [0, 0, u, v, 0, 1] · [a,b,c,d,dx,dy]ᵀ = by
-      const r1 = [u, v, 0, 0, 1, 0];
-      const r2 = [0, 0, u, v, 0, 1];
-      for(let j=0;j<K;j++){
-        for(let k=0;k<K;k++) ATA[j][k] += r1[j]*r1[k] + r2[j]*r2[k];
-        ATb[j] += r1[j]*bx + r2[j]*by;
-      }
-    }
-    // Gaussian elimination with partial pivoting on the augmented matrix [AᵀA | Aᵀb].
-    // Partial pivoting (swapping rows to put the largest absolute value on the
-    // diagonal) prevents division by near-zero and improves numerical stability.
-    const M = ATA.map((r,i)=>[...r, ATb[i]]);
-    for(let col=0;col<K;col++){
-      let maxR=col;
-      for(let r=col+1;r<K;r++) if(Math.abs(M[r][col])>Math.abs(M[maxR][col])) maxR=r;
-      [M[col],M[maxR]]=[M[maxR],M[col]];
-      if(Math.abs(M[col][col])<1e-12) return null;
-      for(let r=col+1;r<K;r++){
-        const f=M[r][col]/M[col][col];
-        for(let c2=col;c2<=K;c2++) M[r][c2]-=f*M[col][c2];
-      }
-    }
-    // Back-substitution: solve the upper-triangular system from bottom to top
-    const x=Array(K).fill(0);
-    for(let r=K-1;r>=0;r--){
-      x[r]=M[r][K];
-      for(let c2=r+1;c2<K;c2++) x[r]-=M[r][c2]*x[c2];
-      x[r]/=M[r][r];
-    }
-    // Extract the 6 parameters; dy is de-corrected for the AR scaling
-    const a=x[0], b=x[1], c=x[2], d=x[3], dx=x[4], dy=x[5]/ar;
-    // Decompose the 2×2 affine matrix [[a,b],[c,d]] via polar decomposition:
-    //   Column 1 (a,c) represents how the X-axis is transformed
-    //   Column 2 (b,d) represents how the Y-axis is transformed
-    const sx = Math.sqrt(a*a + c*c);  // X-axis scale magnitude
-    const sy = Math.sqrt(b*b + d*d);  // Y-axis scale magnitude
-    const rotation = Math.atan2(c, a) * 180 / Math.PI;  // rotation from X-axis column
-    const scale = sy;                 // uniform scale = Y scale (convention)
-    const scaleX_adj = sx > 0 && sy > 0 ? sx / sy : 1.0;  // non-uniform X stretch
-    // Compute RMS residual: how well the affine model fits the point pairs
-    let res = 0;
-    for(let i=0;i<n;i++){
-      const u = tp[i].x - cx, v = tp[i].y - cy;
-      const predX = a*u + b*v + cx + dx;
-      const predY = (c*u + d*v + cy)/ar + dy;  // de-correct AR
-      res += (predX - refPts[i].x)**2 + (predY - refPts[i].y)**2;
-    }
-    res = Math.sqrt(res/n);
-    return { x_offset: dx, y_offset: dy, scale, rotation, scaleX_adj, residual: res };
-  };
-
-  // ── Similarity Transform Solver (_solvePtAlignRigid) ──────────────────────
-  //
-  // Restricted version of _solvePtAlign: only translation + rotation + uniform
-  // scale (4-DOF). No skew or non-uniform stretch — output is always a "rigid"
-  // rectangle, never a leaning parallelogram.
-  //
-  // MODEL (centred at 0.5, 0.5):
-  //   ref_x - cx = a*(tgt_x - cx) - b*(tgt_y - cy) + dx
-  //   ref_y - cy = b*(tgt_x - cx) + a*(tgt_y - cy) + dy
-  //
-  // where a = s*cos(θ), b = s*sin(θ). Only 4 unknowns [a, b, dx, dy].
-  // Needs >= 2 pairs (but we keep the 3-pair minimum for consistency).
-  //
-  // Returns same shape as _solvePtAlign with scaleX_adj = 1.0.
-  const _solvePtAlignRigid = (refPts, tgtPts, ar) => {
-    const n = Math.min(refPts.length, tgtPts.length);
-    if (n < 2) return null;
-    const rp = refPts.slice(0, n).map(p => ({ x: p.x, y: p.y * ar }));
-    const tp = tgtPts.slice(0, n).map(p => ({ x: p.x, y: p.y * ar }));
-    const cx = 0.5, cy = 0.5 * ar;
-    // Build normal equations for 4 unknowns [a, b, dx, dy]
-    const K = 4;
-    const ATA = Array.from({ length: K }, () => Array(K).fill(0));
-    const ATb = Array(K).fill(0);
-    for (let i = 0; i < n; i++) {
-      const u = tp[i].x - cx, v = tp[i].y - cy;
-      const bx = rp[i].x - cx, by = rp[i].y - cy;
-      // x-equation: a*u - b*v + dx = bx  →  row [u, -v, 1, 0]
-      // y-equation: b*u + a*v + dy = by  →  row [v,  u, 0, 1]
-      const r1 = [u, -v, 1, 0];
-      const r2 = [v,  u, 0, 1];
-      for (let j = 0; j < K; j++) {
-        for (let k = 0; k < K; k++) ATA[j][k] += r1[j] * r1[k] + r2[j] * r2[k];
-        ATb[j] += r1[j] * bx + r2[j] * by;
-      }
-    }
-    // Gaussian elimination with partial pivoting
+  // ── Gaussian Elimination Helper ────────────────────────────────────────────
+  // Solves the normal equations AᵀA·x = Aᵀb via partial-pivot Gaussian elim.
+  // Returns solution array of length K, or null if singular.
+  const _gaussSolve = (ATA, ATb) => {
+    const K = ATA.length;
     const M = ATA.map((r, i) => [...r, ATb[i]]);
     for (let col = 0; col < K; col++) {
       let maxR = col;
-      for (let r = col + 1; r < K; r++) if (Math.abs(M[r][col]) > Math.abs(M[maxR][col])) maxR = r;
+      for (let r = col + 1; r < K; r++)
+        if (Math.abs(M[r][col]) > Math.abs(M[maxR][col])) maxR = r;
       [M[col], M[maxR]] = [M[maxR], M[col]];
       if (Math.abs(M[col][col]) < 1e-12) return null;
       for (let r = col + 1; r < K; r++) {
@@ -3555,19 +3429,107 @@ function _stack(ctx, maps, helpBtn){
       for (let c2 = r + 1; c2 < K; c2++) x[r] -= M[r][c2] * x[c2];
       x[r] /= M[r][r];
     }
-    const a = x[0], b = x[1], dx = x[2], dy = x[3] / ar;
-    const scale = Math.sqrt(a * a + b * b);
-    const rotation = Math.atan2(b, a) * 180 / Math.PI;
-    // Residual
+    return x;
+  };
+
+  // ── Affine Transform Solver (_solvePtAlign) ───────────────────────────────
+  //
+  // Given N >= 3 matched point pairs (ref[i], tgt[i]) in normalised [0,1]²
+  // coordinates, solves for the 6-DOF affine that maps target → reference.
+  //
+  // IMPORTANT: Works in the SAME normalised coordinate space as CSS transforms
+  // (no aspect-ratio correction). Both panels in the Point Align modal share
+  // the reference map's AR, so click coords are already in a consistent space.
+  // The solver output (dx, dy, scale, rotation, scaleX_adj) maps directly to
+  // CSS translate/rotate/scale without any conversion.
+  //
+  // MODEL (centred at 0.5, 0.5):
+  //   ref_x - 0.5 = a·(tgt_x - 0.5) + b·(tgt_y - 0.5) + dx
+  //   ref_y - 0.5 = c·(tgt_x - 0.5) + d·(tgt_y - 0.5) + dy
+  //
+  // Returns {x_offset, y_offset, scale, rotation, scaleX_adj, residual}
+  const _solvePtAlign = (refPts, tgtPts) => {
+    const n = Math.min(refPts.length, tgtPts.length);
+    if (n < 3) return null;
+    const cx = 0.5, cy = 0.5;
+    const K = 6;
+    const ATA = Array.from({ length: K }, () => Array(K).fill(0));
+    const ATb = Array(K).fill(0);
+    for (let i = 0; i < n; i++) {
+      const u = tgtPts[i].x - cx, v = tgtPts[i].y - cy;
+      const bx = refPts[i].x - cx, by = refPts[i].y - cy;
+      const r1 = [u, v, 0, 0, 1, 0];
+      const r2 = [0, 0, u, v, 0, 1];
+      for (let j = 0; j < K; j++) {
+        for (let k = 0; k < K; k++) ATA[j][k] += r1[j] * r1[k] + r2[j] * r2[k];
+        ATb[j] += r1[j] * bx + r2[j] * by;
+      }
+    }
+    const x = _gaussSolve(ATA, ATb);
+    if (!x) return null;
+    const a = x[0], b = x[1], c = x[2], d = x[3], dx = x[4], dy = x[5];
+    // Decompose [[a,b],[c,d]] → rotation + scale + stretch
+    const sx = Math.sqrt(a * a + c * c);
+    const sy = Math.sqrt(b * b + d * d);
+    const rotation = Math.atan2(c, a) * 180 / Math.PI;
+    const scale = sy;
+    const scaleX_adj = sx > 0 && sy > 0 ? sx / sy : 1.0;
+    // RMS residual in normalised coords
     let res = 0;
     for (let i = 0; i < n; i++) {
-      const u = tp[i].x - cx, v = tp[i].y - cy;
-      const predX = a * u - b * v + cx + dx;
-      const predY = (b * u + a * v + cy) / ar + dy;
+      const u = tgtPts[i].x - cx, v = tgtPts[i].y - cy;
+      const predX = a * u + b * v + cx + dx;
+      const predY = c * u + d * v + cy + dy;
       res += (predX - refPts[i].x) ** 2 + (predY - refPts[i].y) ** 2;
     }
-    res = Math.sqrt(res / n);
-    return { x_offset: dx, y_offset: dy, scale, rotation, scaleX_adj: 1.0, residual: res };
+    return { x_offset: dx, y_offset: dy, scale, rotation, scaleX_adj, residual: Math.sqrt(res / n) };
+  };
+
+  // ── Similarity Transform Solver (_solvePtAlignRigid) ──────────────────────
+  //
+  // 4-DOF rigid similarity: translation + rotation + uniform scale only.
+  // No skew/stretch — output is always a rectangle, never a parallelogram.
+  //
+  // Works in the same normalised [0,1]² space as CSS (no AR correction).
+  //
+  // MODEL (centred at 0.5, 0.5):
+  //   ref_x - 0.5 = a·(tgt_x - 0.5) - b·(tgt_y - 0.5) + dx
+  //   ref_y - 0.5 = b·(tgt_x - 0.5) + a·(tgt_y - 0.5) + dy
+  //
+  // where a = s·cos(θ), b = s·sin(θ). 4 unknowns [a, b, dx, dy].
+  //
+  // Returns same shape as _solvePtAlign with scaleX_adj = 1.0.
+  const _solvePtAlignRigid = (refPts, tgtPts) => {
+    const n = Math.min(refPts.length, tgtPts.length);
+    if (n < 2) return null;
+    const cx = 0.5, cy = 0.5;
+    const K = 4;
+    const ATA = Array.from({ length: K }, () => Array(K).fill(0));
+    const ATb = Array(K).fill(0);
+    for (let i = 0; i < n; i++) {
+      const u = tgtPts[i].x - cx, v = tgtPts[i].y - cy;
+      const bx = refPts[i].x - cx, by = refPts[i].y - cy;
+      const r1 = [u, -v, 1, 0];
+      const r2 = [v,  u, 0, 1];
+      for (let j = 0; j < K; j++) {
+        for (let k = 0; k < K; k++) ATA[j][k] += r1[j] * r1[k] + r2[j] * r2[k];
+        ATb[j] += r1[j] * bx + r2[j] * by;
+      }
+    }
+    const x = _gaussSolve(ATA, ATb);
+    if (!x) return null;
+    const a = x[0], b = x[1], dx = x[2], dy = x[3];
+    const scale = Math.sqrt(a * a + b * b);
+    const rotation = Math.atan2(b, a) * 180 / Math.PI;
+    // RMS residual
+    let res = 0;
+    for (let i = 0; i < n; i++) {
+      const u = tgtPts[i].x - cx, v = tgtPts[i].y - cy;
+      const predX = a * u - b * v + cx + dx;
+      const predY = b * u + a * v + cy + dy;
+      res += (predX - refPts[i].x) ** 2 + (predY - refPts[i].y) ** 2;
+    }
+    return { x_offset: dx, y_offset: dy, scale, rotation, scaleX_adj: 1.0, residual: Math.sqrt(res / n) };
   };
 
   // ── Point Align Modal ─────────────────────────────────────────────────────
@@ -3705,17 +3667,17 @@ function _stack(ctx, maps, helpBtn){
         try {
           computeBtn.disabled = true;
           computeBtn.textContent = "Computing...";
-          const solveAr = _refIH / _refIW;  // height/width ratio for the solver
           const result = fullTransform
-            ? _solvePtAlign(refPts, tgtPts, solveAr)       // 6-DOF affine (allows skew)
-            : _solvePtAlignRigid(refPts, tgtPts, solveAr); // 4-DOF rigid (no skew)
+            ? _solvePtAlign(refPts, tgtPts)       // 6-DOF affine (allows skew)
+            : _solvePtAlignRigid(refPts, tgtPts); // 4-DOF rigid (no skew)
           if (!result) {
             ctx.toast("Could not compute — points may be collinear", true);
-            _close();
+            computeBtn.disabled = false;
+            computeBtn.textContent = "Compute (" + pairs + " pairs)";
             return;
           }
           // Sanitize
-          const _sane = (v, def, lo, hi) => { const n = Number(v); return (isFinite(n) && n >= lo && n <= hi) ? n : def; };
+          const _sane = (v, def, lo, hi) => { const nn = Number(v); return (isFinite(nn) && nn >= lo && nn <= hi) ? nn : def; };
           const rScale    = _sane(Math.round(result.scale * 10000) / 10000, 1.0, 0.01, 100);
           const rRotation = _sane(Math.round(result.rotation * 100) / 100, 0, -360, 360);
           const rStretch  = _sane(Math.round((result.scaleX_adj || 1.0) * 10000) / 10000, 1.0, 0.01, 100);
@@ -3723,52 +3685,16 @@ function _stack(ctx, maps, helpBtn){
           const rDy       = _sane(Math.round(result.y_offset * 10000) / 10000, 0, -10, 10);
           const resPct    = _sane(Math.round((result.residual || 0) * 1000) / 10, 0, 0, 999);
 
-          if (bake && tgtMap.image && tgtMap.image.filename) {
-            // Bake: write flat alignment, close modal, then async upload
-            alignState.x_offset = rDx; alignState.y_offset = rDy;
-            alignState.scale = 1.0; alignState.rotation = 0; alignState.scaleX_adj = 1.0;
-            _close();
-            buildStage(); // Apply new values to the overlay immediately
-            const bakeImg = new Image();
-            bakeImg.crossOrigin = "anonymous";
-            bakeImg.onload = () => {
-              try {
-                const ow = bakeImg.naturalWidth, oh = bakeImg.naturalHeight;
-                const rad = rRotation * Math.PI / 180;
-                const cosA = Math.abs(Math.cos(rad)), sinA = Math.abs(Math.sin(rad));
-                const sx = rScale * rStretch, sy = rScale;
-                const nw = Math.ceil(ow * sx * cosA + oh * sy * sinA);
-                const nh = Math.ceil(ow * sx * sinA + oh * sy * cosA);
-                const canvas = document.createElement("canvas");
-                canvas.width = nw; canvas.height = nh;
-                const cc = canvas.getContext("2d");
-                cc.translate(nw / 2, nh / 2); cc.rotate(rad); cc.scale(sx, sy);
-                cc.drawImage(bakeImg, -ow / 2, -oh / 2);
-                const b64 = canvas.toDataURL("image/png").split(",")[1];
-                ctx.actions.mapsReplaceImage({ map_id: tgtMap.id, png_base64: b64, width: nw, height: nh })
-                  .then(() => ctx.toast("Baked (" + pairs + " pairs, residual " + resPct + "%)"))
-                  .catch(e => ctx.toast("Bake upload failed: " + e, true));
-              } catch (de) { ctx.toast("Bake draw failed: " + de, true); }
-            };
-            bakeImg.onerror = () => ctx.toast("Bake failed — image load error", true);
-            bakeImg.src = _mapUrl(tgtMap);
-          } else {
-            // Normal: write alignment and close, then refresh the overlay
-            alignState.x_offset   = rDx;
-            alignState.y_offset   = rDy;
-            alignState.scale      = rScale;
-            alignState.rotation   = rRotation;
-            alignState.scaleX_adj = rStretch;
-            console.log("[PtAlign] Result: dx=" + rDx + " dy=" + rDy + " scale=" + rScale +
-              " rot=" + rRotation + " stretch=" + rStretch + " residual=" + resPct + "%");
-            _close();
-            buildStage(); // Apply new values to the overlay immediately
-            ctx.toast("Aligned (" + pairs + " pairs, residual " + resPct + "%, stretch " + Math.round(rStretch * 100) + "%)");
-          }
+          console.log("[PtAlign] Result: dx=" + rDx + " dy=" + rDy + " scale=" + rScale +
+            " rot=" + rRotation + " stretch=" + rStretch + " residual=" + resPct + "%");
+
+          // ── Show preview instead of immediately applying ──
+          _showPreview(rDx, rDy, rScale, rRotation, rStretch, resPct, pairs);
         } catch (err) {
           console.error("[PtAlign] Compute error:", err);
           ctx.toast("Compute error: " + String(err), true);
-          _close();
+          computeBtn.disabled = false;
+          computeBtn.textContent = "Compute (" + pairs + " pairs)";
         }
       };
       toolbar.appendChild(computeBtn);
@@ -3869,6 +3795,153 @@ function _stack(ctx, maps, helpBtn){
       help.style.cssText = "width:100%;font-size:10px;color:#64748b;margin-top:4px";
       help.textContent = "Click the same real-world point on both maps. Auto-alternates. 3+ pairs required to Compute.";
       toolbar.appendChild(help);
+    };
+
+    // ── Preview screen — shows the computed alignment before applying ──────
+    const _showPreview = (rDx, rDy, rScale, rRotation, rStretch, resPct, pairs) => {
+      // Replace the point-picking UI with a preview of the result
+      toolbar.innerHTML = "";
+      panelsRow.innerHTML = "";
+
+      // -- Toolbar: result summary + Apply/Discard buttons --
+      const title = document.createElement("span");
+      title.style.cssText = "font-weight:700;font-size:14px;color:#7dd3fc";
+      title.textContent = "Preview";
+      toolbar.appendChild(title);
+
+      const stats = document.createElement("span");
+      stats.style.cssText = "font-size:11px;color:#94a3b8";
+      stats.textContent = pairs + " pairs | residual " + resPct + "% | scale " +
+        rScale.toFixed(3) + " | rot " + rRotation.toFixed(1) + "\u00b0" +
+        (Math.abs(rStretch - 1.0) > 0.005 ? " | stretch " + Math.round(rStretch * 100) + "%" : "");
+      toolbar.appendChild(stats);
+
+      // Residual quality badge
+      const qBadge = document.createElement("span");
+      const qColor = resPct < 2 ? "#52b788" : resPct < 5 ? "#f59e0b" : "#f87171";
+      const qLabel = resPct < 2 ? "Excellent" : resPct < 5 ? "Fair" : "Poor";
+      qBadge.style.cssText = "font-size:10px;padding:2px 8px;border-radius:4px;background:" + qColor + "22;color:" + qColor + ";border:1px solid " + qColor + "44";
+      qBadge.textContent = qLabel;
+      toolbar.appendChild(qBadge);
+
+      const spacer = document.createElement("div");
+      spacer.style.cssText = "flex:1";
+      toolbar.appendChild(spacer);
+
+      // Back button — go back to point placement
+      const backBtn = document.createElement("button");
+      backBtn.style.cssText = "font-size:11px;padding:3px 12px;color:#e2e8f0;background:#162016;border:1px solid #2d5a2d;border-radius:4px;cursor:pointer";
+      backBtn.textContent = "Back";
+      backBtn.onclick = () => _rebuild();
+      toolbar.appendChild(backBtn);
+
+      // Apply button
+      const applyBtn = document.createElement("button");
+      applyBtn.style.cssText = "font-size:12px;padding:4px 16px;font-weight:600;border-radius:4px;cursor:pointer;" +
+        "border:1px solid #52b788;background:#1b4a2e;color:#e2e8f0";
+      applyBtn.textContent = bake ? "Bake & Apply" : "Apply";
+      applyBtn.onclick = () => {
+        if (bake && tgtMap.image && tgtMap.image.filename) {
+          alignState.x_offset = rDx; alignState.y_offset = rDy;
+          alignState.scale = 1.0; alignState.rotation = 0; alignState.scaleX_adj = 1.0;
+          _close();
+          buildStage();
+          const bakeImg = new Image();
+          bakeImg.crossOrigin = "anonymous";
+          bakeImg.onload = () => {
+            try {
+              const ow = bakeImg.naturalWidth, oh = bakeImg.naturalHeight;
+              const rad = rRotation * Math.PI / 180;
+              const cosA = Math.abs(Math.cos(rad)), sinA = Math.abs(Math.sin(rad));
+              const bsx = rScale * rStretch, bsy = rScale;
+              const nw = Math.ceil(ow * bsx * cosA + oh * bsy * sinA);
+              const nh = Math.ceil(ow * bsx * sinA + oh * bsy * cosA);
+              const canvas = document.createElement("canvas");
+              canvas.width = nw; canvas.height = nh;
+              const cc = canvas.getContext("2d");
+              cc.translate(nw / 2, nh / 2); cc.rotate(rad); cc.scale(bsx, bsy);
+              cc.drawImage(bakeImg, -ow / 2, -oh / 2);
+              const b64 = canvas.toDataURL("image/png").split(",")[1];
+              ctx.actions.mapsReplaceImage({ map_id: tgtMap.id, png_base64: b64, width: nw, height: nh })
+                .then(() => ctx.toast("Baked (" + pairs + " pairs, residual " + resPct + "%)"))
+                .catch(e => ctx.toast("Bake upload failed: " + e, true));
+            } catch (de) { ctx.toast("Bake draw failed: " + de, true); }
+          };
+          bakeImg.onerror = () => ctx.toast("Bake failed — image load error", true);
+          bakeImg.src = _mapUrl(tgtMap);
+        } else {
+          alignState.x_offset   = rDx;
+          alignState.y_offset   = rDy;
+          alignState.scale      = rScale;
+          alignState.rotation   = rRotation;
+          alignState.scaleX_adj = rStretch;
+          _close();
+          buildStage();
+          ctx.toast("Aligned (" + pairs + " pairs, residual " + resPct + "%)");
+        }
+      };
+      toolbar.appendChild(applyBtn);
+
+      // Discard button
+      const discardBtn = document.createElement("button");
+      discardBtn.style.cssText = "font-size:11px;padding:3px 10px;color:#f87171;background:#1a0808;border:1px solid #7f1d1d;border-radius:4px;cursor:pointer";
+      discardBtn.textContent = "Discard";
+      discardBtn.onclick = _close;
+      toolbar.appendChild(discardBtn);
+
+      // -- Preview panel: both maps overlaid with the computed transform --
+      const previewPanel = document.createElement("div");
+      previewPanel.style.cssText = "flex:1;display:flex;flex-direction:column;align-items:center;" +
+        "justify-content:center;padding:16px;overflow:hidden;min-height:0";
+
+      const previewStage = document.createElement("div");
+      previewStage.style.cssText = "position:relative;width:100%;max-width:900px;aspect-ratio:" + _refAR +
+        ";max-height:calc(100vh - 120px);background:#071008;border:2px solid #1e4976;border-radius:8px;overflow:hidden";
+
+      // Reference map layer (bottom)
+      const refUrl = _mapUrl(refMap);
+      if (refUrl) {
+        const ri = document.createElement("img");
+        ri.src = refUrl;
+        ri.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill;display:block;pointer-events:none;opacity:0.6";
+        previewStage.appendChild(ri);
+      }
+      const refLabel = document.createElement("div");
+      refLabel.style.cssText = "position:absolute;top:4px;left:6px;font-size:10px;color:#52b788;font-weight:700;z-index:3;background:#071008aa;padding:1px 6px;border-radius:3px";
+      refLabel.textContent = "Ref: " + (refMap.name || refMap.id);
+      previewStage.appendChild(refLabel);
+
+      // Target map layer (top, with computed transform)
+      const tgtUrl = _mapUrl(tgtMap);
+      if (tgtUrl) {
+        const tgtLayer = document.createElement("div");
+        tgtLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;" +
+          "transform-origin:50% 50%;opacity:0.55;pointer-events:none";
+        const csssx = rScale * rStretch;
+        const csssy = rScale;
+        tgtLayer.style.transform = "translate(" + (rDx * 100) + "%," + (rDy * 100) + "%) rotate(" + rRotation + "deg) scale(" + csssx + "," + csssy + ")";
+        const ti = document.createElement("img");
+        ti.src = tgtUrl;
+        ti.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill;display:block";
+        tgtLayer.appendChild(ti);
+        previewStage.appendChild(tgtLayer);
+      }
+      const tgtLabel = document.createElement("div");
+      tgtLabel.style.cssText = "position:absolute;top:4px;right:6px;font-size:10px;color:#f59e0b;font-weight:700;z-index:3;background:#071008aa;padding:1px 6px;border-radius:3px";
+      tgtLabel.textContent = "Tgt: " + (tgtMap.name || tgtMap.id);
+      previewStage.appendChild(tgtLabel);
+
+      previewPanel.appendChild(previewStage);
+
+      // Parameter readout below preview
+      const readout = document.createElement("div");
+      readout.style.cssText = "margin-top:8px;font-size:11px;color:#64748b;text-align:center;font-family:monospace";
+      readout.textContent = "X:" + rDx.toFixed(4) + "  Y:" + rDy.toFixed(4) +
+        "  Scale:" + rScale.toFixed(4) + "  Rot:" + rRotation.toFixed(1) + "\u00b0" +
+        (Math.abs(rStretch - 1.0) > 0.005 ? "  Stretch:" + rStretch.toFixed(4) : "");
+      previewPanel.appendChild(readout);
+
+      panelsRow.appendChild(previewPanel);
     };
 
     // Assemble modal and render
