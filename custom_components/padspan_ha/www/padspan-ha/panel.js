@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.14.3";
-const BUILD_ID = "20260316T180007Z";
+const APP_VERSION = "0.14.4";
+const BUILD_ID = "20260316T180720Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -2189,7 +2189,14 @@ class PadSpanHaApp extends HTMLElement {
     if(this.state._factoryResetInProgress) return;
     if(this.state._calibTune?._dragging || this.state._calibBeacon?._dragging || this.state._calibTune?._confirming || this.state._calibBeacon?._confirming) return;
     if(this.state.maps?._stackDragging || this.state.maps?._editDragging) return;
-    if(this.state.maps?._ptAlign?.active) return;
+    // Point Align: only block poll re-renders (not user-initiated), and auto-expire
+    // after 2 minutes to prevent permanent UI lock if something goes wrong.
+    if(fromPoll && this.state.maps?._ptAlign?.active){
+      if(!this.state.maps._ptAlign._ts) this.state.maps._ptAlign._ts = Date.now();
+      if(Date.now() - this.state.maps._ptAlign._ts < 120000) return;
+      // Safety: force-clear a stuck Point Align after 2 minutes
+      this.state.maps._ptAlign.active = false;
+    }
     if(this.state._traceback?.active && this.state.view === "traceback") return;
     // Maps upload/stack/edit tabs have fragile state (file inputs, drag handles)
     if(fromPoll && this.state.view === "maps" && (this.state.mapsTab === "upload" || this.state.mapsTab === "stack" || this.state.mapsTab === "edit")) return;

@@ -3586,23 +3586,28 @@ function _stack(ctx, maps, helpBtn){
 
       // Click handler on the topmost layer
       clickLayer.addEventListener("click", (ev) => {
-        if(!_pta.active) return;
-        const rect = clickLayer.getBoundingClientRect();
-        if(!rect.width || !rect.height) return;
-        const px = (ev.clientX - rect.left) / rect.width;
-        const py = (ev.clientY - rect.top) / rect.height;
-        if(px < 0 || px > 1 || py < 0 || py > 1) return;
-        if(which === "ref"){
-          if(_pta.refPts.length >= 8){ ctx.toast("Max 8 points"); return; }
-          _pta.refPts.push({x: px, y: py});
-          _pta.phase = "tgt"; // auto-switch to target
-        } else {
-          if(_pta.tgtPts.length >= 8){ ctx.toast("Max 8 points"); return; }
-          _pta.tgtPts.push({x: px, y: py});
-          _pta.phase = "ref"; // auto-switch to reference
+        try {
+          if(!_pta.active) return;
+          const rect = clickLayer.getBoundingClientRect();
+          if(!rect.width || !rect.height) return;
+          const px = (ev.clientX - rect.left) / rect.width;
+          const py = (ev.clientY - rect.top) / rect.height;
+          if(px < 0 || px > 1 || py < 0 || py > 1) return;
+          if(which === "ref"){
+            if(_pta.refPts.length >= 8){ ctx.toast("Max 8 points"); return; }
+            _pta.refPts.push({x: px, y: py});
+            _pta.phase = "tgt"; // auto-switch to target
+          } else {
+            if(_pta.tgtPts.length >= 8){ ctx.toast("Max 8 points"); return; }
+            _pta.tgtPts.push({x: px, y: py});
+            _pta.phase = "ref"; // auto-switch to reference
+          }
+          _rebuildPtAlignPanels();
+          _renderPtAlignToolbar();
+        } catch(clickErr) {
+          ctx.toast("Point Align click error: " + String(clickErr), true);
+          _exitPtAlign();
         }
-        _rebuildPtAlignPanels();
-        _renderPtAlignToolbar();
       });
 
       panel.appendChild(stage);
@@ -3617,11 +3622,11 @@ function _stack(ctx, maps, helpBtn){
   };
 
   const _exitPtAlign = () => {
-    _pta.active = false; _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref";
-    _ptAlignToolbar.style.display = "none";
-    _ptAlignContainer.style.display = "none";
-    stageOuter.style.display = "";
-    ctrlRow.style.display = "";
+    _pta.active = false; _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref"; _pta._ts = 0;
+    try { _ptAlignToolbar.style.display = "none"; } catch(_e){}
+    try { _ptAlignContainer.style.display = "none"; } catch(_e){}
+    try { stageOuter.style.display = ""; } catch(_e){}
+    try { ctrlRow.style.display = ""; } catch(_e){}
   };
 
   const _renderPtAlignToolbar = () => {
@@ -3770,14 +3775,19 @@ function _stack(ctx, maps, helpBtn){
 
   // Point Align button — placed in the Alignment Overlay header row
   const ptAlignBtn = el("button",{class:"btn inline",style:"background:#0a1a2a;border-color:#1e4976;color:#7dd3fc;font-size:11px;padding:3px 12px", onclick:()=>{
-    _pta.active = true; _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref";
-    // Hide the overlay stage and normal controls, show side-by-side panels
-    stageOuter.style.display = "none";
-    ctrlRow.style.display = "none";
-    _ptAlignToolbar.style.display = "block";
-    _ptAlignContainer.style.display = "block";
-    _renderPtAlignToolbar();
-    _rebuildPtAlignPanels();
+    try {
+      _pta.active = true; _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref"; _pta._ts = Date.now();
+      // Hide the overlay stage and normal controls, show side-by-side panels
+      stageOuter.style.display = "none";
+      ctrlRow.style.display = "none";
+      _ptAlignToolbar.style.display = "block";
+      _ptAlignContainer.style.display = "block";
+      _renderPtAlignToolbar();
+      _rebuildPtAlignPanels();
+    } catch(initErr) {
+      ctx.toast("Point Align init error: " + String(initErr), true);
+      _exitPtAlign();
+    }
   }}, "Point Align");
   alignHdrRow.appendChild(ptAlignBtn);
 
