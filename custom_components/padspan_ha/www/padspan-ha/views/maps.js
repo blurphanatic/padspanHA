@@ -3540,9 +3540,14 @@ function _stack(ctx, maps, helpBtn){
     toolbar.style.cssText = "padding:10px 16px;background:#071210;border-bottom:1px solid #1e4976;" +
       "display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0";
 
+    // Reference aspect ratio — used for BOTH panels so coordinates share the same space.
+    const _refIW = refMap.image?.width || 800;
+    const _refIH = refMap.image?.height || 600;
+    const _refAR = _refIW / _refIH;  // width/height ratio (e.g. 1.33 for 800x600)
+
     // ── Map panels container ──
     const panelsRow = document.createElement("div");
-    panelsRow.style.cssText = "flex:1;display:flex;gap:8px;padding:8px;overflow:auto;min-height:0";
+    panelsRow.style.cssText = "flex:1;display:flex;gap:8px;padding:8px;overflow:hidden;min-height:0;align-items:start";
 
     // ── Rebuild UI (called after every point click, undo, clear) ──
     const _rebuild = () => {
@@ -3618,7 +3623,7 @@ function _stack(ctx, maps, helpBtn){
         try {
           computeBtn.disabled = true;
           computeBtn.textContent = "Computing...";
-          const solveAr = refMap ? (refMap.image?.height || 600) / (refMap.image?.width || 800) : 0.75;
+          const solveAr = _refIH / _refIW;  // height/width ratio for the solver
           const result = _solvePtAlign(refPts, tgtPts, solveAr);
           if (!result) {
             ctx.toast("Could not compute — points may be collinear", true);
@@ -3714,14 +3719,14 @@ function _stack(ctx, maps, helpBtn){
         }
         panel.appendChild(hdr);
 
-        // Map stage — aspect-ratio preserved via padding-bottom trick
-        const iw = map.image?.width || 800;
-        const ih = map.image?.height || 600;
-        const ar = ih / iw;
+        // Map stage — BOTH panels use the REFERENCE map's aspect ratio so
+        // click coordinates share the same coordinate space for the solver.
+        // Images are stretched with object-fit:fill to match.
         const stage = document.createElement("div");
-        stage.style.cssText = "position:relative;width:100%;padding-bottom:" + (ar * 100) + "%;height:0;flex-shrink:0";
+        stage.style.cssText = "position:relative;width:100%;aspect-ratio:" + _refAR +
+          ";max-height:calc(100vh - 100px);background:#071008";
 
-        // Image
+        // Image — stretched to fill the shared-AR container
         const url = _mapUrl(map);
         if (url) {
           const img = document.createElement("img");
@@ -3742,7 +3747,7 @@ function _stack(ctx, maps, helpBtn){
           stage.appendChild(marker);
         }
 
-        // Click catcher
+        // Click catcher — covers the stage exactly
         const catcher = document.createElement("div");
         catcher.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;z-index:5";
         catcher.addEventListener("click", (ev) => {
