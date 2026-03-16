@@ -3966,7 +3966,7 @@ function _stack(ctx, maps, helpBtn){
       // -- Preview panel: both maps overlaid with the computed transform --
       const previewPanel = document.createElement("div");
       previewPanel.style.cssText = "flex:1;display:flex;flex-direction:column;align-items:center;" +
-        "justify-content:center;padding:16px;overflow:hidden;min-height:0";
+        "padding:16px;overflow:auto;min-height:0";
 
       const previewStage = document.createElement("div");
       previewStage.style.cssText = "position:relative;width:100%;max-width:900px;aspect-ratio:" + _refAR +
@@ -4043,15 +4043,10 @@ function _stack(ctx, maps, helpBtn){
       }
       previewStage.appendChild(markerLayer);
 
-      // Wrap previewStage in a scrollable container for zoom
-      const previewWrap = document.createElement("div");
-      previewWrap.style.cssText = "overflow:auto;max-width:100%;max-height:calc(100vh - 180px);border-radius:8px";
-      previewStage.style.transformOrigin = "50% 50%";
-      previewWrap.appendChild(previewStage);
-      previewPanel.appendChild(previewWrap);
+      previewPanel.appendChild(previewStage);
 
-      // Zoom controls for preview
-      let pvZoom = 1.0;
+      // Zoom controls — changes max-width to physically resize the stage
+      let pvMaxW = 900;
       const zoomRow = document.createElement("div");
       zoomRow.style.cssText = "margin-top:6px;display:flex;gap:6px;justify-content:center;align-items:center";
       const _pvZoomBtn = (label, fn) => {
@@ -4062,16 +4057,16 @@ function _stack(ctx, maps, helpBtn){
         return b;
       };
       zoomRow.appendChild(_pvZoomBtn("Zoom \u2212", () => {
-        pvZoom = Math.max(0.5, pvZoom - 0.25);
-        previewStage.style.transform = "scale(" + pvZoom + ")";
+        pvMaxW = Math.max(300, pvMaxW - 200);
+        previewStage.style.maxWidth = pvMaxW + "px";
       }));
-      zoomRow.appendChild(_pvZoomBtn("100%", () => {
-        pvZoom = 1.0;
-        previewStage.style.transform = "";
+      zoomRow.appendChild(_pvZoomBtn("Fit", () => {
+        pvMaxW = 900;
+        previewStage.style.maxWidth = "900px";
       }));
       zoomRow.appendChild(_pvZoomBtn("Zoom +", () => {
-        pvZoom = Math.min(4.0, pvZoom + 0.25);
-        previewStage.style.transform = "scale(" + pvZoom + ")";
+        pvMaxW = Math.min(3000, pvMaxW + 300);
+        previewStage.style.maxWidth = pvMaxW + "px";
       }));
       previewPanel.appendChild(zoomRow);
 
