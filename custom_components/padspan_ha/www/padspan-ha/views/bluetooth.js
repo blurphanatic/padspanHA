@@ -1232,30 +1232,31 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const svgWrap = document.createElement("div");
   svgWrap.innerHTML = s;
 
-  // ── Attach click handlers via event delegation ──────────────────────────────
-  // Single listener on the wrapper; walk up from click target to find the
-  // nearest <g> with data-vs or data-vd. This avoids querySelectorAll with
-  // attribute selectors which can fail on SVG namespace elements in WebViews.
-  svgWrap.addEventListener("click", (e) => {
-    let node = e.target;
-    while (node && node !== svgWrap) {
-      if (node.tagName === "g" || node.tagName === "G") {
-        const vs = node.getAttribute("data-vs");
-        if (vs !== null) {
-          const idx = parseInt(vs, 10);
-          if (_scannerClicks[idx]) _scannerClicks[idx]();
-          return;
-        }
-        const vd = node.getAttribute("data-vd");
-        if (vd !== null) {
-          const idx = parseInt(vd, 10);
-          if (_deviceClicks[idx]) _deviceClicks[idx]();
-          return;
-        }
-      }
-      node = node.parentNode;
+  // ── Attach click handlers directly to each <g> element ──────────────────────
+  // getElementsByTagName("g") is the most reliable DOM method for SVG elements
+  // across all browsers/WebViews. We attach individual listeners to each <g>
+  // that has a data-vs or data-vd attribute.
+  const _allGs = svgWrap.getElementsByTagName("g");
+  for (let _gi = 0; _gi < _allGs.length; _gi++) {
+    const _g = _allGs[_gi];
+    const _vs = _g.getAttribute("data-vs");
+    if (_vs !== null) {
+      _g.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const idx = parseInt(_vs, 10);
+        if (_scannerClicks[idx]) _scannerClicks[idx]();
+      });
+      continue;
     }
-  });
+    const _vd = _g.getAttribute("data-vd");
+    if (_vd !== null) {
+      _g.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const idx = parseInt(_vd, 10);
+        if (_deviceClicks[idx]) _deviceClicks[idx]();
+      });
+    }
+  }
 
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),
