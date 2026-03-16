@@ -1150,7 +1150,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // created in the HTML namespace are invisible in HA's WebView.
   // Embedded <style> provides hover effects: labels turn teal, circles glow.
   let s = `<svg class="bt-viz" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
-  s += `<style>.bt-viz-click{cursor:pointer;pointer-events:all}.bt-viz-click text.bt-viz-label{fill:#7dd3fc}.bt-viz-click:hover text.bt-viz-label{fill:#5eead4}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}.bt-viz-uline{stroke:#7dd3fc;stroke-width:0.5;opacity:0.7}.bt-viz-click:hover .bt-viz-uline{stroke:#5eead4}</style>`;
+  s += `<style>.bt-viz-click{cursor:pointer}.bt-viz-click text.bt-viz-label{fill:#7dd3fc}.bt-viz-click:hover text.bt-viz-label{fill:#5eead4}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}</style>`;
 
   // Lines first (back layer) — RSSI-colored connections between scanner and device circles
   for (const d of deviceNodes) {
@@ -1164,30 +1164,30 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const MAX_LABEL = 38;
   const trunc = (s) => s.length > MAX_LABEL ? s.slice(0, MAX_LABEL - 1) + "…" : s;
 
+  // Build lookup maps so click handlers can find data by index (avoids
+  // reliance on getAttribute which can fail in some HA WebView contexts).
+  const _scannerById = new Map(scannerNodes.map(sn => [sn.id, sn]));
+  const _deviceById = new Map(deviceNodes.map(d => [d.id, d]));
+
   // ── Scanner nodes + labels (left column) ───────────────────────────────────
-  // Each scanner is a <g> with data-type="scanner" for event delegation.
-  // Blue text label with subtle underline, circle node, and an invisible rect
-  // hit-area so clicks land reliably even between the label and circle.
-  for (const sn of scannerNodes) {
-    const _lblLen = Math.min(trunc(sn.label).length * 7.2, sn.x - scannerLabelX - 10);
-    s += `<g class="bt-viz-click" data-type="scanner" data-id="${_escSvg(sn.id)}" style="cursor:pointer" pointer-events="all">`;
-    s += `<rect x="${scannerLabelX - 4}" y="${sn.y - 10}" width="${sn.x - scannerLabelX + 18}" height="20" fill="transparent"/>`;
+  // Each scanner is wrapped in a <g> with a unique ID for post-render listener binding.
+  for (let si = 0; si < scannerNodes.length; si++) {
+    const sn = scannerNodes[si];
+    s += `<g id="_vs${si}" class="bt-viz-click" style="cursor:pointer">`;
+    s += `<rect x="${scannerLabelX - 4}" y="${sn.y - 10}" width="${sn.x - scannerLabelX + 18}" height="20" fill="rgba(0,0,0,0)" pointer-events="all"/>`;
     s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner"/>`;
     s += `<text x="${scannerLabelX}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(sn.label))}</text>`;
-    s += `<line x1="${scannerLabelX}" y1="${sn.y + 7}" x2="${scannerLabelX + _lblLen}" y2="${sn.y + 7}" class="bt-viz-uline"/>`;
     s += `</g>`;
   }
 
   // ── Device nodes + labels (right column) ───────────────────────────────────
-  // Same pattern as scanners: <g data-type="device">, blue label, underline, circle.
-  for (const d of deviceNodes) {
+  for (let di = 0; di < deviceNodes.length; di++) {
+    const d = deviceNodes[di];
     const rc = rssiClass(d.rssi);
-    const _dLblLen = Math.min(trunc(d.label).length * 6.6, deviceLabelX - d.x - 18);
-    s += `<g class="bt-viz-click" data-type="device" data-id="${_escSvg(d.id)}" style="cursor:pointer" pointer-events="all">`;
-    s += `<rect x="${d.x - 8}" y="${d.y - 9}" width="${deviceLabelX - d.x + 18}" height="18" fill="transparent"/>`;
+    s += `<g id="_vd${di}" class="bt-viz-click" style="cursor:pointer">`;
+    s += `<rect x="${d.x - 8}" y="${d.y - 9}" width="${deviceLabelX - d.x + 18}" height="18" fill="rgba(0,0,0,0)" pointer-events="all"/>`;
     s += `<circle cx="${d.x}" cy="${d.y}" r="5" class="bt-viz-node device ${rc}"/>`;
     s += `<text x="${d.x + 10}" y="${d.y}" class="bt-viz-label" font-size="11" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(d.label))}</text>`;
-    s += `<line x1="${d.x + 10}" y1="${d.y + 6}" x2="${d.x + 10 + _dLblLen}" y2="${d.y + 6}" class="bt-viz-uline"/>`;
     s += `</g>`;
   }
 
@@ -1199,47 +1199,45 @@ function renderVisualization(ctx, radios, ads, objIndex) {
 
   const svgWrap = document.createElement("div");
   svgWrap.innerHTML = s;
+  const svgEl = svgWrap.querySelector("svg");
 
-  // ── Click handler (event delegation) ──────────────────────────────────────
-  // Walk up from the click target to find the nearest <g data-type="...">.
-  // Event delegation is used instead of per-element listeners because
-  // querySelectorAll on SVG elements created via innerHTML is unreliable
-  // in HA's WebView due to HTML/SVG namespace mismatches.
-  svgWrap.addEventListener("click", (e) => {
-    let node = e.target;
-    // Walk up from click target to find the <g> with data-type
-    while (node && node !== svgWrap) {
-      if (node.getAttribute && node.getAttribute("data-type")) break;
-      node = node.parentNode;
+  // ── Bind click handlers directly to each <g> by ID ────────────────────────
+  // Using per-element listeners (not event delegation) avoids getAttribute
+  // issues with SVG namespace in HA's WebView shadow DOM.
+  if (svgEl) {
+    for (let si = 0; si < scannerNodes.length; si++) {
+      const gEl = svgEl.getElementById("_vs" + si);
+      if (!gEl) continue;
+      const sn = scannerNodes[si];
+      gEl.addEventListener("click", () => {
+        const radio = radios.find(r => String(r.source || "") === sn.id);
+        if (radio) ctx.actions.showScannerDetail(radio);
+      });
     }
-    if (!node || node === svgWrap) return;
-    const type = node.getAttribute("data-type");
-    const id = node.getAttribute("data-id");
-    if (!id) return;
-    if (type === "scanner") {
-      // Open scanner detail modal
-      const radio = radios.find(r => String(r.source || "") === id);
-      if (radio) ctx.actions.showScannerDetail(radio);
-    } else if (type === "device") {
-      // Open object detail modal — prefer tracked object, fall back to ad-based stub
-      const obj = objIndex.get(id.toUpperCase());
-      if (obj) {
-        ctx.actions.showObjectDetail(obj);
-      } else {
-        const ad = ads.find(a => String(a.address || "") === id || String(a.name || "") === id);
-        if (ad) {
-          ctx.actions.showObjectDetail({
-            address: ad.address || id,
-            name: ad.name || ad.address || id,
-            kind: "ble",
-            room: ad.area_name || "",
-            rssi: ad.rssi,
-            source: ad.source || "",
-          });
+    for (let di = 0; di < deviceNodes.length; di++) {
+      const gEl = svgEl.getElementById("_vd" + di);
+      if (!gEl) continue;
+      const d = deviceNodes[di];
+      gEl.addEventListener("click", () => {
+        const obj = objIndex.get(d.id.toUpperCase());
+        if (obj) {
+          ctx.actions.showObjectDetail(obj);
+        } else {
+          const ad = ads.find(a => String(a.address || "") === d.id || String(a.name || "") === d.id);
+          if (ad) {
+            ctx.actions.showObjectDetail({
+              address: ad.address || d.id,
+              name: ad.name || ad.address || d.id,
+              kind: "ble",
+              room: ad.area_name || "",
+              rssi: ad.rssi,
+              source: ad.source || "",
+            });
+          }
         }
-      }
+      });
     }
-  });
+  }
 
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),
