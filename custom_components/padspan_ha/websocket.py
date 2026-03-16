@@ -4513,13 +4513,18 @@ async def ws_traceback_objects(hass: HomeAssistant, connection, msg) -> None:
 # Notify services list
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ── Notification Service Discovery ─────────────────────────────────────────────
+
 @websocket_api.websocket_command({"type": "padspan_ha/notify_services_list"})
 @websocket_api.async_response
 async def ws_notify_services_list(hass: HomeAssistant, connection, msg) -> None:
-    """Return all available HA notify service/entity names.
+    """Discover all available HA notification services/entities.
 
-    Supports both the legacy notify.{name} services and the newer HA 2024+
-    entity-based notify platform (notify.send_message + entity_id targeting).
+    WHY so many methods: HA's notify landscape is fragmented across versions.
+    Legacy YAML services, entity-based platform (2024+), entity registry entries,
+    entity platforms, and cross-domain services all need checking to reliably
+    find every notification target.  The UI uses this to populate the alert
+    service picker dropdown.
     """
     result_set: set[str] = set()
 
@@ -5432,8 +5437,16 @@ async def ws_ha_entities_audit(hass: HomeAssistant, connection, msg) -> None:
     })
 
 
+# ── Geometry Helpers ───────────────────────────────────────────────────────────
+
 def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
-    """Point-in-polygon / point-in-circle test against room_bounds. Returns room name or ''."""
+    """Determine which room a point (x,y) falls in using room boundary shapes.
+
+    Supports two shape types:
+      - "circle": center (cx,cy) + radius r — simple distance check
+      - "poly": list of [x,y] vertices — ray-casting point-in-polygon test
+    Returns the room name or '' if the point is outside all boundaries.
+    """
     for room_name, b in room_bounds.items():
         if not isinstance(b, dict):
             continue
@@ -5463,10 +5476,19 @@ def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
     return ""
 
 
+# ── Private BLE / IRK Management ───────────────────────────────────────────────
+# IRKs (Identity Resolving Keys) let PadSpan identify phones/watches whose BLE
+# MAC address rotates every ~15 minutes.  IRKs can come from HA's private_ble_device
+# integration or be managed directly via PadSpan settings (irk_add/irk_remove).
+
 @websocket_api.websocket_command({"type": "padspan_ha/private_ble_status"})
 @websocket_api.async_response
 async def ws_private_ble_status(hass: HomeAssistant, connection, msg) -> None:
-    """Return Private BLE Device resolver status for UI setup guidance."""
+    """Return Private BLE Device resolver status for the UI setup wizard.
+
+    Includes: IRK count, registered devices, RPA count in live BLE cache,
+    and whether the private_ble_device integration is available.
+    """
     try:
         resolver = await _get_ble_resolver(hass)
         status = resolver.get_status()
@@ -5502,10 +5524,12 @@ async def ws_private_ble_status(hass: HomeAssistant, connection, msg) -> None:
 )
 @websocket_api.async_response
 async def ws_irk_add(hass: HomeAssistant, connection, msg) -> None:
-    """Add an IRK directly via PadSpan — no separate HA integration needed.
+    """Add an IRK directly via PadSpan settings (no private_ble_device integration needed).
 
-    Stores in PadSpan settings and reloads the resolver immediately.
-    The IRK can be pasted as hex (32 chars), base64, or colon-separated.
+    Accepts IRK in multiple formats: 32 hex chars, base64 (24 chars = 16 bytes),
+    or colon/dash/space-separated hex.  Normalises to lowercase hex, checks for
+    duplicates, stores in settings.irk_devices, and reloads the resolver
+    immediately so the IRK takes effect without restart.
     """
     name = str(msg["name"]).strip()
     irk_raw = str(msg["irk_hex"]).strip()

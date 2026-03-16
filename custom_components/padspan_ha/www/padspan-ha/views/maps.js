@@ -3053,7 +3053,11 @@ function _stack(ctx, maps, helpBtn){
   tgtSel.addEventListener("change", _updateMasterWarn);
   _updateMasterWarn();
 
-  // Dual-master conflict: shown when BOTH ref and target are masters and scale/rotation has changed
+  // ── Dual-master conflict resolution ──
+  // When both the reference and target maps are masters and scale/rotation has
+  // been changed, only one can remain as master after saving. The user must
+  // explicitly choose which to keep. 'ref' = keep reference as master and
+  // revoke target, 'tgt' = keep target and revoke reference.
   const dualMasterWarnDiv = el("div",{style:"display:none;margin-top:6px;padding:10px 12px;border-radius:6px;background:#0f0a1a;border:1px solid #7c3aed;font-size:12px"});
   card.appendChild(dualMasterWarnDiv);
   let dualMasterChoice = null; // 'ref' | 'tgt' | null
@@ -3515,7 +3519,10 @@ function _stack(ctx, maps, helpBtn){
     return svg;
   };
 
-  // Rebuild the two side-by-side map panels with markers
+  // Rebuild the side-by-side map panels with current point markers.
+  // Uses a 2-column CSS grid layout. Each panel has the map image, SVG room
+  // bounds, numbered point markers, and a transparent click-catcher layer on
+  // top. Clicking auto-alternates between ref and tgt panels.
   const _rebuildPtAlignPanels = () => {
     _ptAlignContainer.innerHTML = "";
     const refMap = maps.find(m=>m.id===refSel.value) || null;
@@ -3981,7 +3988,13 @@ function _stack(ctx, maps, helpBtn){
   }},"Save Alignment");
   ctrlRow.appendChild(saveAlignBtn);
 
-  // Add Tie-in button — stores current position as an extra alignment constraint
+  // ── Add Tie-in Button ──
+  // Tie-ins are stored alignment snapshots that serve as persistent constraints.
+  // Each tie-in records (x_offset, y_offset, scale, rotation) relative to a
+  // specific reference map + a date stamp. Multiple tie-ins from different
+  // reference maps create a constraint network. When the user saves a new
+  // alignment that conflicts with existing tie-ins, the conflict resolver
+  // either auto-averages (minor variance) or warns (significant variance).
   const addTieInBtn = el("button",{class:"btn inline",style:"margin-left:4px;background:#0a2a1a;border-color:#2d6a4f",
     onclick: async()=>{
       const tId = alignState.targetId || tgtSel.value;
@@ -4344,6 +4357,10 @@ function _stack(ctx, maps, helpBtn){
   return card;
 }
 
+// Render a single map's room bounds + receivers as an SVG string.
+// Used in the Alignment Overlay (both ref and tgt layers) and in Point Align
+// panels. viewBox="0 0 1 1" with preserveAspectRatio="none" matches the
+// normalized coordinate system used by room bounds and receivers.
 function _stackMapSVGStr(map, ctx, isTarget, showBg=true){
   const roomColor = ctx.helpers.roomColor;
   const rb = map.room_bounds || {};
@@ -4388,7 +4405,8 @@ function _stackMapSVGStr(map, ctx, isTarget, showBg=true){
   return s;
 }
 
-// Generates the persistent-pins SVG overlay for the 2D alignment view.
+// Persistent-pins SVG overlay for the 2D alignment view: shows red target
+// crosshairs at room centroids for objects that are "away" (stale age > 30s).
 // Uses viewBox="0 0 1 1" / preserveAspectRatio="none" to match the room_bounds
 // coordinate system (same as _stackMapSVGStr).
 function _persistent2dPinsSVGStr(roomBounds, awayObjs){
