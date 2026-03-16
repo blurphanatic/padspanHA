@@ -737,9 +737,79 @@ function _settingsPresence(ctx, el){
     const irkCard = el("div", { class: "card" });
     irkCard.appendChild(el("div", { class: "h2" }, "Phone Tracking (Private BLE)"));
     irkCard.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
-      "Track phones and watches with rotating MAC addresses by pasting their IRK (Identity Resolving Key). " +
-      "PadSpan creates the Private BLE Device entry automatically."
+      "Track phones and watches with rotating MAC addresses using their IRK (Identity Resolving Key). " +
+      "PadSpan scans system Bluetooth bonds automatically, or you can paste an IRK manually."
     ));
+
+    // ── Auto-Detect section ──────────────────────────────────────────────
+    const autoDetectRow = el("div", { style: "margin-bottom:14px" });
+    const autoBtn = el("button", { class: "btn", style: "margin-right:8px" }, "Auto-Detect IRKs");
+    const autoMsg = el("span", { style: "font-size:12px;color:#94a3b8" });
+    autoDetectRow.appendChild(autoBtn);
+    autoDetectRow.appendChild(autoMsg);
+    const autoResults = el("div", { style: "margin-top:8px" });
+    autoDetectRow.appendChild(autoResults);
+
+    autoBtn.addEventListener("click", async () => {
+      autoBtn.disabled = true;
+      autoBtn.textContent = "Scanning...";
+      autoMsg.textContent = "";
+      autoResults.innerHTML = "";
+      try {
+        const res = await ctx.actions.wsCall("padspan_ha/irk_auto_detect", {});
+        const found = res.found || [];
+        const newOnes = found.filter(f => !f.already_registered);
+        if (!found.length) {
+          autoMsg.style.color = "#94a3b8";
+          autoMsg.textContent = "No IRKs found in system Bluetooth bonds. Pair your phone via Bluetooth first, or paste the IRK manually below.";
+        } else if (!newOnes.length) {
+          autoMsg.style.color = "#52b788";
+          autoMsg.textContent = "All " + found.length + " bonded device(s) are already registered.";
+        } else {
+          autoMsg.style.color = "#fbbf24";
+          autoMsg.textContent = newOnes.length + " new IRK(s) found! " + (res.rpa_count > 0 ? "Verifying against live BLE..." : "");
+          // Show each found IRK with an "Add" button
+          for (const item of newOnes) {
+            const row = el("div", { style: "display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #1b3526" });
+            const badge = el("span", { style: "font-size:10px;padding:1px 6px;border-radius:3px;font-weight:600;" +
+              (item.verified ? "background:#052e16;color:#52b788;border:1px solid #2d6a4f" : "background:#1a0d00;color:#fbbf24;border:1px solid #92400e") },
+              item.verified ? "Verified" : "Unverified");
+            const nameLbl = el("span", { style: "font-weight:600;color:#e2e8f0;font-size:13px" }, item.name || item.device_mac || "Unknown");
+            const srcLbl = el("span", { style: "font-size:11px;color:#64748b" }, item.source === "bluetooth_bond" ? "System BT bond" : item.source);
+            const matchLbl = el("span", { style: "font-size:11px;color:#94a3b8" },
+              item.matched_count > 0 ? item.matched_count + " RPA match(es)" : "");
+            const addIrkBtn = el("button", { class: "btn inline", style: "margin-left:auto;font-size:11px;padding:2px 10px" }, "Add");
+            addIrkBtn.addEventListener("click", async () => {
+              addIrkBtn.disabled = true;
+              addIrkBtn.textContent = "Adding...";
+              try {
+                await ctx.actions.wsCall("padspan_ha/private_ble_add_irk", { irk: item.irk_hex, name: item.name || "Phone" });
+                addIrkBtn.textContent = "Added";
+                addIrkBtn.style.color = "#52b788";
+                await _refreshIrkStatus();
+              } catch(e) {
+                addIrkBtn.textContent = "Error";
+                addIrkBtn.style.color = "#f87171";
+                addIrkBtn.title = e.message || String(e);
+                setTimeout(() => { addIrkBtn.textContent = "Add"; addIrkBtn.disabled = false; addIrkBtn.style.color = ""; }, 3000);
+              }
+            });
+            row.appendChild(badge);
+            row.appendChild(nameLbl);
+            row.appendChild(srcLbl);
+            row.appendChild(matchLbl);
+            row.appendChild(addIrkBtn);
+            autoResults.appendChild(row);
+          }
+        }
+      } catch(e) {
+        autoMsg.style.color = "#f87171";
+        autoMsg.textContent = "Auto-detect failed: " + (e.message || String(e));
+      }
+      autoBtn.disabled = false;
+      autoBtn.textContent = "Auto-Detect IRKs";
+    });
+    irkCard.appendChild(autoDetectRow);
 
     // Status: load current IRKs
     const irkStatus = el("div", { style: "margin-bottom:12px" });
@@ -924,12 +994,14 @@ function _settingsPresence(ctx, el){
       irkProgress.style.display = "none";
 
       if (matched) {
-        // Key verified — save immediately
+        // Key verified — save using the exact hex that matched
         const n = lastResult.matched_count;
+        const validatedHex = lastResult.irk_hex || irk;
         progressLabel.textContent = "";
         irkMsg.style.color = "#52b788";
-        irkMsg.textContent = `Verified — matched ${n} rotating address${n !== 1 ? "es" : ""}. Saving...`;
-        await _commitIrk(irk, name);
+        const fmtNote = lastResult.matched_format ? ` (format: ${lastResult.matched_format})` : "";
+        irkMsg.textContent = `Verified — matched ${n} rotating address${n !== 1 ? "es" : ""}${fmtNote}. Saving...`;
+        await _commitIrk(validatedHex, name);
         addBtn.disabled = false;
         addBtn.textContent = "Add IRK";
       } else {

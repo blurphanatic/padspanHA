@@ -168,6 +168,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_private_ble_status)
     websocket_api.async_register_command(hass, ws_irk_add)
     websocket_api.async_register_command(hass, ws_irk_validate)
+    websocket_api.async_register_command(hass, ws_irk_auto_detect)
     websocket_api.async_register_command(hass, ws_irk_remove)
     websocket_api.async_register_command(hass, ws_private_ble_add_irk)
     websocket_api.async_register_command(hass, ws_private_ble_delete_irk)
@@ -5543,6 +5544,8 @@ async def ws_irk_add(hass: HomeAssistant, connection, msg) -> None:
     duplicates, stores in settings.irk_devices, and reloads the resolver
     immediately so the IRK takes effect without restart.
     """
+    from .private_ble_resolver import _parse_irk  # noqa: PLC0415
+
     name = str(msg["name"]).strip()
     irk_raw = str(msg["irk_hex"]).strip()
     if not name:
@@ -5552,23 +5555,13 @@ async def ws_irk_add(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "invalid", "irk_hex is required")
         return
 
-    # Normalise IRK to plain hex
-    irk_clean = irk_raw.replace(":", "").replace("-", "").replace(" ", "")
-    # Try base64 decode if it doesn't look like hex
-    if len(irk_clean) not in (32,) or not all(c in "0123456789abcdefABCDEF" for c in irk_clean):
-        try:
-            import base64
-            irk_bytes = base64.b64decode(irk_raw)
-            if len(irk_bytes) == 16:
-                irk_clean = irk_bytes.hex()
-            else:
-                connection.send_error(msg["id"], "invalid", f"IRK must be 16 bytes, got {len(irk_bytes)}")
-                return
-        except Exception:
-            connection.send_error(msg["id"], "invalid", "Could not parse IRK. Enter 32 hex chars or base64.")
-            return
+    # Use _parse_irk for consistent handling (same path as resolver + validation)
+    irk_bytes = _parse_irk(irk_raw)
+    if not irk_bytes:
+        connection.send_error(msg["id"], "invalid", "Could not parse IRK. Enter 32 hex chars or base64.")
+        return
 
-    irk_clean = irk_clean.lower()
+    irk_clean = irk_bytes.hex().lower()
 
     # Store in settings
     st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
@@ -5615,12 +5608,64 @@ async def ws_irk_validate(hass: HomeAssistant, connection, msg) -> None:
 
     Returns the number of matched addresses so the UI can confirm the key is
     valid before saving.  Does NOT persist anything — purely a read-only check.
+
+    Tries the IRK in multiple byte orders and base64 vs hex interpretations
+    to maximise the chance of finding a match.
     """
     from .private_ble_resolver import _parse_irk, _address_matches_irk, _is_rpa  # noqa: PLC0415
+    import base64 as _b64  # noqa: PLC0415
 
     irk_raw = str(msg["irk_hex"]).strip()
+
+    # Build a set of candidate IRK byte arrays to try
+    candidates: list[tuple[bytes, str]] = []  # (irk_bytes, description)
+    seen_hex: set[str] = set()
+
+    def _add_candidate(b: bytes, desc: str) -> None:
+        h = b.hex()
+        if h not in seen_hex:
+            seen_hex.add(h)
+            candidates.append((b, desc))
+
+    # Primary parse
     irk_bytes = _parse_irk(irk_raw)
-    if not irk_bytes:
+    if irk_bytes:
+        _add_candidate(irk_bytes, "parsed")
+        _add_candidate(bytes(reversed(irk_bytes)), "parsed_reversed")
+
+    # Also try raw base64 without any reversal (in case _parse_irk applied reversal)
+    stripped = irk_raw.strip()
+    if stripped.lower().startswith("irk:"):
+        stripped = stripped[4:]
+    try:
+        raw_b64 = _b64.b64decode(stripped)
+        if len(raw_b64) == 16:
+            _add_candidate(raw_b64, "base64_raw")
+            _add_candidate(bytes(reversed(raw_b64)), "base64_reversed")
+    except Exception:
+        pass
+    # Try with padding
+    for pad in ("=", "=="):
+        try:
+            raw_b64p = _b64.b64decode(stripped + pad)
+            if len(raw_b64p) == 16:
+                _add_candidate(raw_b64p, "base64_padded")
+                _add_candidate(bytes(reversed(raw_b64p)), "base64_padded_reversed")
+        except Exception:
+            pass
+
+    # Try hex with separator stripping
+    import re as _re  # noqa: PLC0415
+    cleaned = _re.sub(r"[:\-\s]", "", stripped)
+    if len(cleaned) == 32:
+        try:
+            h_bytes = bytes.fromhex(cleaned)
+            _add_candidate(h_bytes, "hex")
+            _add_candidate(bytes(reversed(h_bytes)), "hex_reversed")
+        except ValueError:
+            pass
+
+    if not candidates:
         connection.send_error(msg["id"], "invalid", "Could not parse IRK. Enter 32 hex chars or base64.")
         return
 
@@ -5637,21 +5682,111 @@ async def ws_irk_validate(hass: HomeAssistant, connection, msg) -> None:
         _LOGGER.warning("irk_validate: BLE snapshot error: %s", err)
         rpas = set()
 
-    # Test the IRK against every RPA
-    matched: list[str] = []
-    for addr in rpas:
+    # Test ALL candidate byte orders against every RPA
+    best_matched: list[str] = []
+    best_irk: bytes | None = None
+    best_desc: str = ""
+
+    for cand_bytes, cand_desc in candidates:
+        matched: list[str] = []
+        for addr in rpas:
+            try:
+                if _address_matches_irk(addr, cand_bytes):
+                    matched.append(addr)
+            except Exception:
+                pass
+        if len(matched) > len(best_matched):
+            best_matched = matched
+            best_irk = cand_bytes
+            best_desc = cand_desc
+        if best_matched:
+            break  # Found matches, no need to try more candidates
+
+    result_irk = best_irk or (candidates[0][0] if candidates else irk_bytes)
+    connection.send_result(msg["id"], {
+        "valid": len(best_matched) > 0,
+        "matched_count": len(best_matched),
+        "matched_addresses": best_matched[:10],
+        "rpa_count": len(rpas),
+        "irk_hex": result_irk.hex() if result_irk else "",
+        "matched_format": best_desc,
+        "candidates_tried": len(candidates),
+    })
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/irk_auto_detect"})
+@websocket_api.async_response
+async def ws_irk_auto_detect(hass: HomeAssistant, connection, msg) -> None:
+    """Scan system Bluetooth bonds and live BLE cache to find IRKs automatically.
+
+    Checks:
+    1. Linux Bluetooth bonded device files (/var/lib/bluetooth/...)
+    2. HA private_ble_device config entries (already loaded by resolver)
+    3. Live BLE advertisements — tests found IRKs against visible RPAs
+    """
+    from .private_ble_resolver import (  # noqa: PLC0415
+        _read_system_bluetooth_irks, _parse_irk, _address_matches_irk, _is_rpa,
+    )
+
+    found: list[dict[str, Any]] = []
+    already_registered: set[str] = set()
+
+    # Get currently registered IRKs to mark duplicates
+    try:
+        resolver = await _get_ble_resolver(hass)
+        for dev in resolver._devices:
+            already_registered.add(dev["irk_bytes"].hex())
+            already_registered.add(bytes(reversed(dev["irk_bytes"])).hex())
+    except Exception:
+        pass
+
+    # 1. System Bluetooth bonds
+    try:
+        sys_irks = await hass.async_add_executor_job(_read_system_bluetooth_irks)
+        for si in sys_irks:
+            irk_hex = si["irk_bytes"].hex()
+            is_dup = irk_hex in already_registered
+            found.append({
+                "name": si["name"],
+                "irk_hex": irk_hex,
+                "source": "bluetooth_bond",
+                "device_mac": si.get("device_mac", ""),
+                "already_registered": is_dup,
+            })
+    except Exception as err:
+        _LOGGER.debug("IRK auto-detect system scan: %s", err)
+
+    # 2. Gather RPAs from live BLE to verify found IRKs
+    rpas: set[str] = set()
+    try:
+        ble_live = get_bluetooth_live(hass)
+        snap = ble_live.get_snapshot(max_ads=5000, max_age_s=3600)
+        for ad in (snap.get("advertisements") or []):
+            addr = (ad.get("address") or "").upper()
+            if addr and _is_rpa(addr):
+                rpas.add(addr)
+    except Exception:
+        pass
+
+    # Test each found IRK against live RPAs
+    for item in found:
+        if item["already_registered"]:
+            item["verified"] = True
+            item["matched_count"] = -1  # already tracked
+            continue
         try:
-            if _address_matches_irk(addr, irk_bytes):
-                matched.append(addr)
+            irk_bytes = bytes.fromhex(item["irk_hex"])
+            matched = sum(1 for addr in rpas if _address_matches_irk(addr, irk_bytes))
+            item["verified"] = matched > 0
+            item["matched_count"] = matched
         except Exception:
-            pass
+            item["verified"] = False
+            item["matched_count"] = 0
 
     connection.send_result(msg["id"], {
-        "valid": len(matched) > 0,
-        "matched_count": len(matched),
-        "matched_addresses": matched[:10],  # cap for payload size
+        "found": found,
         "rpa_count": len(rpas),
-        "irk_hex": irk_bytes.hex(),
+        "system_bond_count": len([f for f in found if f["source"] == "bluetooth_bond"]),
     })
 
 

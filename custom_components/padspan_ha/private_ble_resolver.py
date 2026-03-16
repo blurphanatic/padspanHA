@@ -75,10 +75,33 @@ class PrivateBLEResolver:
     # ── public interface ──────────────────────────────────────────────────────
 
     async def async_load(self) -> None:
-        """Read IRKs from private_ble_device + mobile_app config entries."""
+        """Read IRKs from private_ble_device, system Bluetooth bonds, mobile_app, and PadSpan settings."""
         self._devices.clear()
         self._source_info: list[dict[str, Any]] = []  # for UI status
         seen_irk_hex: set[str] = set()
+
+        def _add_device(irk_bytes: bytes, name: str, source: str, entry_id: str = "") -> None:
+            """Register a device if its IRK hasn't been seen yet."""
+            # Normalise: we always store the hex of the byte order that actually matches.
+            # Since _address_matches_irk tries both orders, either order is fine,
+            # but we canonicalise to what we were given.
+            h = irk_bytes.hex()
+            h_rev = bytes(reversed(irk_bytes)).hex()
+            if h in seen_irk_hex or h_rev in seen_irk_hex:
+                return
+            seen_irk_hex.add(h)
+            seen_irk_hex.add(h_rev)
+            canonical_id = f"irk:{h}"
+            self._devices.append({
+                "canonical_id": canonical_id,
+                "name": name,
+                "irk_bytes": irk_bytes,
+            })
+            self._source_info.append({
+                "name": name, "source": source,
+                "entry_id": entry_id,
+            })
+
         try:
             # 1) private_ble_device entries (the standard HA integration)
             for entry in self._hass.config_entries.async_entries("private_ble_device"):
@@ -86,43 +109,58 @@ class PrivateBLEResolver:
                 if not irk_raw:
                     continue
                 irk_bytes = _parse_irk(irk_raw)
-                if irk_bytes and irk_bytes.hex() not in seen_irk_hex:
-                    seen_irk_hex.add(irk_bytes.hex())
-                    canonical_id = f"irk:{irk_bytes.hex()}"
-                    name = entry.title or entry.entry_id
-                    self._devices.append({
-                        "canonical_id": canonical_id,
-                        "name": name,
-                        "irk_bytes": irk_bytes,
-                    })
-                    self._source_info.append({
-                        "name": name, "source": "private_ble_device",
-                        "entry_id": entry.entry_id,
-                    })
+                if irk_bytes:
+                    _add_device(irk_bytes, entry.title or entry.entry_id, "private_ble_device", entry.entry_id)
 
-            # 2) mobile_app entries — some companion apps expose IRK
+            # 2) System Bluetooth bonded devices — reads IRKs from the host OS
+            #    Linux: /var/lib/bluetooth/<adapter>/<device>/info has [IdentityResolvingKey] Key=...
+            #    HAOS/containers mount this path; works on all HA Linux installs.
+            try:
+                _sys_irks = await self._hass.async_add_executor_job(_read_system_bluetooth_irks)
+                for si in _sys_irks:
+                    irk_bytes = si["irk_bytes"]
+                    _add_device(irk_bytes, si["name"], "bluetooth_bond")
+                if _sys_irks:
+                    _LOGGER.info("Found %d IRK(s) from system Bluetooth bonds", len(_sys_irks))
+            except Exception as _sys_err:
+                _LOGGER.debug("System Bluetooth IRK scan: %s", _sys_err)
+
+            # 3) mobile_app entries — companion app config entry data
+            #    Also check deeper: webhook data, app_data, device attributes
             for entry in self._hass.config_entries.async_entries("mobile_app"):
                 data = entry.data or {}
-                # Check common IRK key names the companion app might use
-                irk_raw = data.get("ble_irk") or data.get("irk")
+                # Check all possible IRK key names (varies by app version/platform)
+                irk_raw = (
+                    data.get("ble_irk")
+                    or data.get("irk")
+                    or data.get("identity_resolving_key")
+                    or data.get("bluetooth_irk")
+                    or (data.get("app_data") or {}).get("irk")
+                    or (data.get("app_data") or {}).get("ble_irk")
+                )
+                if not irk_raw:
+                    # Check webhook registration data (deeper storage)
+                    try:
+                        webhook_id = data.get("webhook_id")
+                        if webhook_id and "mobile_app" in self._hass.data:
+                            for reg in self._hass.data["mobile_app"].values():
+                                if hasattr(reg, "data") and reg.data.get("webhook_id") == webhook_id:
+                                    irk_raw = (
+                                        reg.data.get("ble_irk")
+                                        or reg.data.get("irk")
+                                        or reg.data.get("identity_resolving_key")
+                                    )
+                                    if irk_raw:
+                                        break
+                    except Exception:
+                        pass
                 if not irk_raw:
                     continue
                 irk_bytes = _parse_irk(irk_raw)
-                if irk_bytes and irk_bytes.hex() not in seen_irk_hex:
-                    seen_irk_hex.add(irk_bytes.hex())
-                    canonical_id = f"irk:{irk_bytes.hex()}"
-                    name = entry.title or entry.entry_id
-                    self._devices.append({
-                        "canonical_id": canonical_id,
-                        "name": name,
-                        "irk_bytes": irk_bytes,
-                    })
-                    self._source_info.append({
-                        "name": name, "source": "mobile_app",
-                        "entry_id": entry.entry_id,
-                    })
+                if irk_bytes:
+                    _add_device(irk_bytes, entry.title or entry.entry_id, "mobile_app", entry.entry_id)
 
-            # 3) PadSpan settings — IRKs added directly via PadSpan UI
+            # 4) PadSpan settings — IRKs added directly via PadSpan UI
             try:
                 from .const import DOMAIN
                 _settings = self._hass.data.get(DOMAIN, {}).get("settings")
@@ -133,18 +171,8 @@ class PrivateBLEResolver:
                         if not irk_raw:
                             continue
                         irk_bytes = _parse_irk(irk_raw)
-                        if irk_bytes and irk_bytes.hex() not in seen_irk_hex:
-                            seen_irk_hex.add(irk_bytes.hex())
-                            canonical_id = f"irk:{irk_bytes.hex()}"
-                            self._devices.append({
-                                "canonical_id": canonical_id,
-                                "name": irk_name,
-                                "irk_bytes": irk_bytes,
-                            })
-                            self._source_info.append({
-                                "name": irk_name, "source": "padspan",
-                                "entry_id": "",
-                            })
+                        if irk_bytes:
+                            _add_device(irk_bytes, irk_name, "padspan")
             except Exception as _ps_err:
                 _LOGGER.debug("PadSpan IRK load: %s", _ps_err)
 
@@ -351,8 +379,8 @@ def _address_matches_irk(address: str, irk: bytes) -> bool:
         ct         = AES-128-ECB(irk, plaintext)
         match      = (ct[13:16] == hash_value)  — least-significant 24 bits of ct
 
-    Tries BOTH the given byte order and the reversed byte order to handle
-    LE/BE ambiguity — iOS/Android provide LE IRKs, but storage format varies.
+    Tries FOUR byte order permutations to handle LE/BE ambiguity across
+    iOS, Android, HA storage, Apple Keychain, and nRF Connect exports.
     """
     try:
         import binascii  # noqa: PLC0415
@@ -366,20 +394,24 @@ def _address_matches_irk(address: str, irk: bytes) -> bool:
         hash_value = rpa[3:]
         plaintext = b"\x00" * 13 + prand
 
-        # Try IRK as-is first
-        cipher = Cipher(algorithms.AES(irk), modes.ECB(), backend=default_backend())
-        enc = cipher.encryptor()
-        ct = enc.update(plaintext) + enc.finalize()
-        if ct[13:] == hash_value:
-            return True
+        def _test(key: bytes) -> bool:
+            cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=default_backend())
+            enc = cipher.encryptor()
+            ct = enc.update(plaintext) + enc.finalize()
+            return ct[13:] == hash_value
 
-        # Try reversed byte order (handles LE vs BE ambiguity)
+        # Build unique set of byte order permutations
         irk_rev = bytes(reversed(irk))
-        if irk_rev != irk:
-            cipher2 = Cipher(algorithms.AES(irk_rev), modes.ECB(), backend=default_backend())
-            enc2 = cipher2.encryptor()
-            ct2 = enc2.update(plaintext) + enc2.finalize()
-            if ct2[13:] == hash_value:
+        # Swap 8-byte halves (seen in some Android exports)
+        irk_swap = irk[8:] + irk[:8]
+        irk_swap_rev = bytes(reversed(irk_swap))
+
+        tested: set[bytes] = set()
+        for candidate in (irk, irk_rev, irk_swap, irk_swap_rev):
+            if candidate in tested:
+                continue
+            tested.add(candidate)
+            if _test(candidate):
                 return True
 
         return False
@@ -388,7 +420,11 @@ def _address_matches_irk(address: str, irk: bytes) -> bool:
 
 
 def _parse_irk(raw: Any) -> bytes | None:
-    """Parse IRK from whatever format HA stored it (bytes, hex string, base64 string, irk:-prefixed base64)."""
+    """Parse IRK from whatever format HA stored it (bytes, hex string, base64 string, irk:-prefixed base64).
+
+    Returns the 16-byte IRK.  _address_matches_irk handles byte order
+    permutations, so we return the bytes as-decoded without guessing endianness.
+    """
     try:
         if isinstance(raw, (bytes, bytearray)):
             b = bytes(raw)
@@ -399,31 +435,98 @@ def _parse_irk(raw: Any) -> bytes | None:
             # Strip "irk:" prefix (HA's private_ble_device stores IRKs this way)
             if s.lower().startswith("irk:"):
                 s = s[4:]
-            # Try hex (32 hex chars)
-            if len(s) == 32:
+            # Try hex (32 hex chars, with or without separators)
+            clean = s.replace(":", "").replace("-", "").replace(" ", "")
+            if len(clean) == 32:
                 try:
-                    b = bytes.fromhex(s)
+                    b = bytes.fromhex(clean)
                     if len(b) == 16:
                         return b
                 except ValueError:
                     pass
-            # Try hex with spaces or colons
-            try:
-                clean = s.replace(":", "").replace(" ", "")
-                if len(clean) == 32:
-                    b = bytes.fromhex(clean)
-                    if len(b) == 16:
-                        return b
-            except ValueError:
-                pass
-            # Try base64 — Apple/Android IRKs are little-endian; reverse to
-            # big-endian for AES (matches HA's private_ble_device coordinator).
+            # Try base64 — return bytes as decoded; _address_matches_irk tries
+            # both byte orders so we don't need to guess endianness here.
             try:
                 b = base64.b64decode(s)
                 if len(b) == 16:
-                    return bytes(reversed(b))
+                    return b
             except Exception:
                 pass
+            # Some base64 strings have padding stripped
+            for pad in ("=", "==", "==="):
+                try:
+                    b = base64.b64decode(s + pad)
+                    if len(b) == 16:
+                        return b
+                except Exception:
+                    pass
     except Exception:
         pass
     return None
+
+
+def _read_system_bluetooth_irks() -> list[dict[str, Any]]:
+    """Read IRKs from Linux Bluetooth bonded device info files.
+
+    On HAOS / Debian / Ubuntu, bonded device info is stored at:
+        /var/lib/bluetooth/<adapter_mac>/<device_mac>/info
+
+    The [IdentityResolvingKey] section contains:
+        Key=AABBCCDDEEFF00112233445566778899  (32 hex chars)
+
+    This runs in the executor (blocking I/O).
+    """
+    import os
+    import re as _re
+
+    results: list[dict[str, Any]] = []
+    bt_base = "/var/lib/bluetooth"
+
+    if not os.path.isdir(bt_base):
+        return results
+
+    try:
+        for adapter in os.listdir(bt_base):
+            adapter_dir = os.path.join(bt_base, adapter)
+            if not os.path.isdir(adapter_dir):
+                continue
+            for device in os.listdir(adapter_dir):
+                device_dir = os.path.join(adapter_dir, device)
+                info_file = os.path.join(device_dir, "info")
+                if not os.path.isfile(info_file):
+                    continue
+                try:
+                    with open(info_file, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+
+                    # Parse [IdentityResolvingKey] section
+                    irk_match = _re.search(
+                        r"\[IdentityResolvingKey\]\s*\n(?:.*\n)*?Key=([0-9A-Fa-f]{32})",
+                        content,
+                    )
+                    if not irk_match:
+                        continue
+
+                    irk_hex = irk_match.group(1)
+                    irk_bytes = bytes.fromhex(irk_hex)
+
+                    # Try to get device name from [General] section
+                    name_match = _re.search(r"\[General\]\s*\n(?:.*\n)*?Name=(.+)", content)
+                    name = name_match.group(1).strip() if name_match else device
+
+                    results.append({
+                        "irk_bytes": irk_bytes,
+                        "name": name,
+                        "device_mac": device,
+                        "adapter": adapter,
+                    })
+                    _LOGGER.debug(
+                        "System BT IRK found: %s (%s) adapter=%s",
+                        name, device, adapter,
+                    )
+                except Exception as _fe:
+                    _LOGGER.debug("Error reading BT info %s: %s", info_file, _fe)
+    except Exception as _de:
+        _LOGGER.debug("Error scanning %s: %s", bt_base, _de)
+
+    return results
