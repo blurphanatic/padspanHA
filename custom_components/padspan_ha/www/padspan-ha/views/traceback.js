@@ -89,8 +89,9 @@ export function render(ctx) {
 
   // ── Traceback state ────────────────────────────────────────────────────
   if (!ctx.state._traceback) ctx.state._traceback = {
+    mode: "playback",     // "playback" | "discovery"
     playing: false,
-    playDurationS: 300,  // how long full playback takes (1 min to 1 hr slider)
+    playDurationS: 300,   // how long full playback takes (1 min to 1 hr slider)
     frameIdx: 0,
     frames: [],
     range: null,
@@ -101,7 +102,13 @@ export function render(ctx) {
     startTs: null,
     endTs: null,
     _animTimer: null,
+    // Discovery mode state
+    discoFromMin: 60,     // search from X minutes ago
+    discoToMin: 0,        // search to Y minutes ago (0 = now)
+    discoResults: [],     // filtered objects
+    discoSelected: null,  // selected object key for highlighting
   };
+  if (!ctx.state._traceback.mode) ctx.state._traceback.mode = "playback";
   const tb = ctx.state._traceback;
 
   function _fmtTime(ts) {
@@ -362,6 +369,177 @@ export function render(ctx) {
 
     s += `</svg>`;
     return s;
+  }
+
+  // ── Discovery SVG builder ──────────────────────────────────────────────
+  // Renders the same iso map but plots discovered objects instead of playback frames.
+  // Each object gets a data-disco attribute for click handling.
+  function _buildDiscoverySVG(results) {
+    const maxIsoZ = sortedIsoLevels.length ? sortedIsoLevels[sortedIsoLevels.length - 1] : 0;
+    const viewY = Math.min(0, CY - maxIsoZ * _ovFG - 50);
+    const HTOTAL = BASE_H + LEGEND_H - viewY;
+    let s = `<svg viewBox="0 ${viewY} ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
+    s += `<rect x="0" y="${viewY}" width="${W}" height="${HTOTAL}" fill="#071008"/>`;
+
+    // Defs — reuse same patterns
+    s += `<defs>`;
+    sortedIsoLevels.forEach((z2, li) => {
+      const c2 = levelColor(z2);
+      if(li === 0){
+        s += `<pattern id="dpat_${li}" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">`;
+        s += `<path d="M12,2 C16,2 19,6 19,11 C19,16 16,21 12,22 C8,21 5,16 5,11 C5,6 8,2 12,2 Z" fill="none" stroke="${c2}" stroke-width="0.7" opacity="0.14"/>`;
+        s += `<circle cx="12" cy="15" r="1.4" fill="${c2}" opacity="0.1"/>`;
+        s += `</pattern>`;
+      } else if(li === 1){
+        s += `<pattern id="dpat_${li}" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">`;
+        s += `<rect x="2" y="2" width="7" height="16" rx="1" fill="none" stroke="${c2}" stroke-width="0.5" opacity="0.13"/>`;
+        s += `<rect x="11" y="2" width="7" height="16" rx="1" fill="none" stroke="${c2}" stroke-width="0.5" opacity="0.13"/>`;
+        s += `</pattern>`;
+      } else if(li === 2){
+        s += `<pattern id="dpat_${li}" x="0" y="0" width="12" height="12" patternUnits="userSpaceOnUse">`;
+        s += `<line x1="0" y1="12" x2="12" y2="0" stroke="${c2}" stroke-width="0.6" opacity="0.18"/>`;
+        s += `</pattern>`;
+      } else {
+        s += `<pattern id="dpat_${li}" x="0" y="0" width="16" height="16" patternUnits="userSpaceOnUse">`;
+        s += `<circle cx="8" cy="8" r="2" fill="none" stroke="${c2}" stroke-width="0.5" opacity="0.15"/>`;
+        s += `</pattern>`;
+      }
+    });
+    s += `</defs>`;
+
+    // Floor slabs + room polygons (same as playback)
+    for (const [z, group] of [...byLevel.entries()].sort((a, b) => a[0] - b[0])) {
+      const isFocused = focusZ === null || (Array.isArray(focusZ) ? focusZ.includes(z) : focusZ === z);
+      const go = isFocused ? 0.7 : 0.08;
+      const lyrColor = levelColor(z);
+      const lidx = sortedIsoLevels.indexOf(z);
+
+      let x0 = Infinity, y0_ = Infinity, x1 = -Infinity, y1_ = -Infinity;
+      for (const m of group) {
+        const stk = m.stack || {}, ox = stk.x_offset || 0, oy_ = stk.y_offset || 0, sc = stk.scale || 1.0;
+        const ar = (m.image?.height || 600) / (m.image?.width || 800);
+        const arRef = stk.ref_ar || ar, sxAdj = stk.scale_x_adj || 1.0;
+        const rot = (stk.rotation || 0) * Math.PI / 180;
+        const bbPt = (px, py) => { const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef; return [(0.5 + ox) + dx * Math.cos(rot) - dy * Math.sin(rot), arRef * (0.5 + oy_) + dx * Math.sin(rot) + dy * Math.cos(rot)]; };
+        for (const [cx2, cy2] of [[0, 0], [1, 0], [1, 1], [0, 1]]) { const [wx, wy] = bbPt(cx2, cy2); x0 = Math.min(x0, wx); y0_ = Math.min(y0_, wy); x1 = Math.max(x1, wx); y1_ = Math.max(y1_, wy); }
+      }
+      if (!isFinite(x0)) { x0 = 0; y0_ = 0; x1 = 1; y1_ = 0.75; }
+      const TL = iso(x0, y0_, z), TR = iso(x1, y0_, z), BR = iso(x1, y1_, z), BL = iso(x0, y1_, z);
+      s += `<g opacity="${go}">`;
+      s += `<polygon points="${pts([TL, TR, BR, BL])}" fill="url(#dpat_${lidx})" stroke="${lyrColor}" stroke-width="1.2" stroke-dasharray="10,5" opacity="0.5"/>`;
+
+      for (const m of group) {
+        const stk = m.stack || {}, ox = stk.x_offset || 0, oy_ = stk.y_offset || 0, sc = stk.scale || 1.0;
+        const ar = (m.image?.height || 600) / (m.image?.width || 800);
+        const arRef = stk.ref_ar || ar, sxAdj = stk.scale_x_adj || 1.0;
+        const rotRad = (stk.rotation || 0) * Math.PI / 180;
+        const mapPt = (px, py) => { const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef, rx = dx * Math.cos(rotRad) - dy * Math.sin(rotRad), ry = dx * Math.sin(rotRad) + dy * Math.cos(rotRad); return [(0.5 + ox) + rx, arRef * (0.5 + oy_) + ry]; };
+        for (const [room, b] of Object.entries(m.room_bounds || {})) {
+          if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
+          const color = roomColorFn(room);
+          const pp = b.points.map(p => { const [wx, wy] = mapPt(p[0], p[1]); return pt(iso(wx, wy, z)); }).join(" ");
+          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.18" stroke="${color}" stroke-width="1.2" opacity="0.85"/>`;
+          const ccx = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
+          const ccy = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
+          const [lwx, lwy] = mapPt(ccx, ccy);
+          const [lix, liy] = iso(lwx, lwy, z);
+          s += `<text x="${Math.round(lix)}" y="${Math.round(liy)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" font-weight="600" opacity="0.85">${_esc(room)}</text>`;
+        }
+      }
+      s += `<circle cx="${Math.round(BL[0])}" cy="${Math.round(BL[1])}" r="12" fill="${lyrColor}" opacity="0.7"/>`;
+      s += `<text x="${Math.round(BL[0])}" y="${Math.round(BL[1]) + 5}" text-anchor="middle" fill="#071008" font-size="11" font-weight="700">${lidx + 1}</text>`;
+      s += `</g>`;
+    }
+
+    // Overlay: discovered objects at their room positions
+    const DISCO_COLORS = ["#e879f9", "#60a5fa", "#f87171", "#34d399", "#fbbf24", "#fb923c", "#5eead4", "#f472b6", "#a3e635", "#818cf8"];
+    const _roomCount = {};
+    for (let di = 0; di < results.length; di++) {
+      const obj = results[di];
+      const room = obj.room || obj._discoRoom || "";
+      if (!room || !roomIsoPos[room]) continue;
+      const pos = roomIsoPos[room];
+      const idx = (_roomCount[room] || 0);
+      _roomCount[room] = idx + 1;
+      const angle = idx * 2.4;
+      const radius = 6 + idx * 5;
+      const offX = Math.cos(angle) * Math.min(radius, 35);
+      const offY = Math.sin(angle) * Math.min(radius, 22);
+      const px = Math.round(pos[0] + offX);
+      const py = Math.round(pos[1] + offY);
+      const col = DISCO_COLORS[di % DISCO_COLORS.length];
+      const isSelected = tb.discoSelected === (obj.key || obj.address);
+      const lbl = (obj.user_label || obj.name || obj.address || "?").substring(0, 14);
+      const kindBadge = obj.kind === "ibeacon" ? "iB" : obj.kind === "private_ble" ? "pBLE" : obj.kind === "entity" ? "ent" : "BLE";
+
+      // Glow ring for selected
+      if (isSelected) {
+        s += `<circle cx="${px}" cy="${py}" r="22" fill="none" stroke="${col}" stroke-width="2" opacity="0.6">`;
+        s += `<animate attributeName="r" values="18;24;18" dur="1.5s" repeatCount="indefinite"/>`;
+        s += `</circle>`;
+      }
+      s += `<g data-disco="${di}" style="cursor:pointer">`;
+      s += `<circle cx="${px}" cy="${py}" r="18" fill="${col}" opacity="0.12" pointer-events="all"/>`;
+      s += `<circle cx="${px}" cy="${py}" r="10" fill="${col}" stroke="#071008" stroke-width="1.5" opacity="0.95" pointer-events="all"/>`;
+      // Kind badge inside dot
+      s += `<text x="${px}" y="${py + 3}" text-anchor="middle" fill="#071008" font-size="6" font-weight="700" pointer-events="none">${kindBadge}</text>`;
+      // Label above
+      const lblW = Math.min(lbl.length * 5.5 + 10, 100);
+      s += `<rect x="${px - lblW / 2}" y="${py - 26}" width="${lblW}" height="14" rx="3" fill="#071008" opacity="0.85" pointer-events="all"/>`;
+      s += `<text x="${px}" y="${py - 16}" text-anchor="middle" fill="${col}" font-size="9" font-weight="700" pointer-events="none">${_esc(lbl)}</text>`;
+      s += `</g>`;
+    }
+
+    // Count badge
+    if (results.length) {
+      s += `<rect x="6" y="${viewY + 4}" width="200" height="22" rx="4" fill="#071008" opacity="0.85"/>`;
+      s += `<text x="106" y="${viewY + 19}" text-anchor="middle" fill="#e879f9" font-size="12" font-weight="700">${results.length} new object${results.length !== 1 ? "s" : ""} discovered</text>`;
+    }
+
+    // Legend
+    s += `<line x1="10" y1="${BASE_H + 4}" x2="${W - 10}" y2="${BASE_H + 4}" stroke="#1b3526" stroke-width="0.8"/>`;
+    {
+      const ly = BASE_H + 10;
+      let lx = 12;
+      sortedIsoLevels.forEach((z, i) => {
+        const color = levelColor(z);
+        const groupLabel = byLevel.get(z).map(m => m.name || m.id).join("+");
+        s += `<circle cx="${lx+7}" cy="${ly+7}" r="7" fill="${color}" opacity="0.9"/>`;
+        s += `<text x="${lx+7}" y="${ly+10}" text-anchor="middle" fill="#071008" font-size="9" font-weight="700">${i+1}</text>`;
+        s += `<text x="${lx+18}" y="${ly+10}" fill="${color}" font-size="11" font-weight="500">${_esc(groupLabel)}</text>`;
+        lx += 22 + groupLabel.length * 6;
+        if (i < sortedIsoLevels.length - 1) {
+          s += `<text x="${lx}" y="${ly+10}" fill="#4a6052" font-size="10">\u00B7</text>`;
+          lx += 10;
+        }
+      });
+    }
+    s += `</svg>`;
+    return s;
+  }
+
+  // ── Discovery search ────────────────────────────────────────────────────
+  function _runDiscoverySearch() {
+    const nowTs = Date.now() / 1000;
+    const fromMin = Math.max(tb.discoFromMin, tb.discoToMin);
+    const toMin = Math.min(tb.discoFromMin, tb.discoToMin);
+    const startTs = nowTs - (fromMin * 60);
+    const endTs = nowTs - (toMin * 60);
+
+    const allObjs = liveSnap?.objects?.list || [];
+    const results = allObjs.filter(o => {
+      if (!o.first_seen) return false;
+      const fs = new Date(o.first_seen).getTime() / 1000;
+      return fs >= startTs && fs <= endTs;
+    });
+    // Sort newest first
+    results.sort((a, b) => {
+      const fa = new Date(a.first_seen).getTime();
+      const fb = new Date(b.first_seen).getTime();
+      return fb - fa;
+    });
+    tb.discoResults = results;
+    tb.discoSelected = null;
   }
 
   // ── Map display div ────────────────────────────────────────────────────
@@ -791,19 +969,361 @@ export function render(ctx) {
   isoCtrlRow.appendChild(ovResetBtn);
   isoCtrlRow.appendChild(ovSaveLbl);
 
+  // ── Discovery controls card ───────────────────────────────────────────
+  const discoCard = document.createElement("div");
+  discoCard.className = "card";
+  discoCard.style.cssText = "border-color:#7c3aed;background:#0f000f";
+
+  function _renderDiscoMap() {
+    mapDiv.innerHTML = _buildDiscoverySVG(tb.discoResults);
+    // Attach click handlers via event delegation
+    mapDiv.addEventListener("click", _discoMapClick);
+  }
+
+  function _discoMapClick(e) {
+    let node = e.target;
+    while (node && node !== mapDiv) {
+      if (node.tagName === "g" || node.tagName === "G") {
+        const idx = node.getAttribute("data-disco");
+        if (idx !== null) {
+          const obj = tb.discoResults[parseInt(idx, 10)];
+          if (obj) {
+            tb.discoSelected = obj.key || obj.address;
+            ctx.actions.showObjectDetail(obj);
+            _renderDiscoMap();
+          }
+          return;
+        }
+      }
+      node = node.parentNode;
+    }
+  }
+
+  function _buildDiscoControls() {
+    discoCard.innerHTML = "";
+
+    // Header
+    const hdr = document.createElement("div");
+    hdr.style.cssText = "display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap";
+    const title = document.createElement("span");
+    title.style.cssText = "font-weight:700;font-size:15px;color:#e879f9";
+    title.textContent = "New Objects Heard";
+    hdr.appendChild(title);
+    const desc = document.createElement("span");
+    desc.style.cssText = "font-size:11px;color:#94a3b8";
+    desc.textContent = "Find objects first discovered in a time window";
+    hdr.appendChild(desc);
+    discoCard.appendChild(hdr);
+
+    // Time range inputs
+    const rangeRow = document.createElement("div");
+    rangeRow.style.cssText = "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px";
+
+    const fromLbl = document.createElement("span");
+    fromLbl.style.cssText = "font-size:12px;color:#94a3b8";
+    fromLbl.textContent = "From";
+    rangeRow.appendChild(fromLbl);
+
+    const fromInput = document.createElement("input");
+    fromInput.type = "number";
+    fromInput.min = "0";
+    fromInput.max = "10080"; // 7 days in minutes
+    fromInput.value = String(tb.discoFromMin);
+    fromInput.style.cssText = "width:70px;background:#071008;color:#e2e8f0;border:1px solid #7c3aed;border-radius:4px;padding:4px 6px;font-size:13px;text-align:center";
+    fromInput.addEventListener("change", () => { tb.discoFromMin = Math.max(0, parseInt(fromInput.value, 10) || 0); });
+    rangeRow.appendChild(fromInput);
+
+    const fromUnit = document.createElement("span");
+    fromUnit.style.cssText = "font-size:12px;color:#94a3b8";
+    fromUnit.textContent = "min ago";
+    rangeRow.appendChild(fromUnit);
+
+    const toLbl = document.createElement("span");
+    toLbl.style.cssText = "font-size:12px;color:#94a3b8;margin-left:6px";
+    toLbl.textContent = "to";
+    rangeRow.appendChild(toLbl);
+
+    const toInput = document.createElement("input");
+    toInput.type = "number";
+    toInput.min = "0";
+    toInput.max = "10080";
+    toInput.value = String(tb.discoToMin);
+    toInput.style.cssText = "width:70px;background:#071008;color:#e2e8f0;border:1px solid #7c3aed;border-radius:4px;padding:4px 6px;font-size:13px;text-align:center";
+    toInput.addEventListener("change", () => { tb.discoToMin = Math.max(0, parseInt(toInput.value, 10) || 0); });
+    rangeRow.appendChild(toInput);
+
+    const toUnit = document.createElement("span");
+    toUnit.style.cssText = "font-size:12px;color:#94a3b8";
+    toUnit.textContent = "min ago";
+    rangeRow.appendChild(toUnit);
+
+    // Search button
+    const searchBtn = document.createElement("button");
+    searchBtn.className = "btn inline";
+    searchBtn.style.cssText = "margin-left:8px;padding:4px 16px;font-size:12px;font-weight:600;background:#2d1854;border-color:#7c3aed;color:#e879f9";
+    searchBtn.textContent = "Search";
+    searchBtn.addEventListener("click", () => {
+      tb.discoFromMin = Math.max(0, parseInt(fromInput.value, 10) || 0);
+      tb.discoToMin = Math.max(0, parseInt(toInput.value, 10) || 0);
+      _runDiscoverySearch();
+      _buildDiscoControls();
+      _renderDiscoMap();
+    });
+    rangeRow.appendChild(searchBtn);
+
+    discoCard.appendChild(rangeRow);
+
+    // Quick presets
+    const presetRow = document.createElement("div");
+    presetRow.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px";
+    const presetLbl = document.createElement("span");
+    presetLbl.style.cssText = "font-size:11px;color:#64748b";
+    presetLbl.textContent = "Quick:";
+    presetRow.appendChild(presetLbl);
+
+    const presets = [
+      { label: "Last 5 min", from: 5, to: 0 },
+      { label: "Last 15 min", from: 15, to: 0 },
+      { label: "Last 30 min", from: 30, to: 0 },
+      { label: "Last 1 hr", from: 60, to: 0 },
+      { label: "Last 4 hr", from: 240, to: 0 },
+      { label: "30-60 min ago", from: 60, to: 30 },
+      { label: "1-2 hr ago", from: 120, to: 60 },
+      { label: "2-4 hr ago", from: 240, to: 120 },
+    ];
+    for (const p of presets) {
+      const btn = document.createElement("button");
+      btn.className = "btn inline";
+      const isActive = tb.discoFromMin === p.from && tb.discoToMin === p.to;
+      btn.style.cssText = isActive
+        ? "font-size:10px;padding:2px 8px;background:#7c3aed;color:#fff;border-color:#e879f9;font-weight:700"
+        : "font-size:10px;padding:2px 8px;color:#94a3b8";
+      btn.textContent = p.label;
+      btn.addEventListener("click", () => {
+        tb.discoFromMin = p.from;
+        tb.discoToMin = p.to;
+        fromInput.value = String(p.from);
+        toInput.value = String(p.to);
+        _runDiscoverySearch();
+        _buildDiscoControls();
+        _renderDiscoMap();
+      });
+      presetRow.appendChild(btn);
+    }
+    discoCard.appendChild(presetRow);
+
+    // Results
+    if (!tb.discoResults.length) {
+      const empty = document.createElement("div");
+      empty.style.cssText = "text-align:center;padding:16px;color:#64748b;font-size:13px";
+      empty.textContent = "No new objects discovered in this time window. Try a wider range or check that objects are within scanner range.";
+      discoCard.appendChild(empty);
+      return;
+    }
+
+    // Results summary
+    const summRow = document.createElement("div");
+    summRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap";
+    const summLbl = document.createElement("span");
+    summLbl.style.cssText = "font-size:13px;font-weight:600;color:#e879f9";
+    summLbl.textContent = `${tb.discoResults.length} object${tb.discoResults.length !== 1 ? "s" : ""} found`;
+    summRow.appendChild(summLbl);
+    // Kind breakdown
+    const kindCounts = {};
+    for (const o of tb.discoResults) { kindCounts[o.kind || "ble"] = (kindCounts[o.kind || "ble"] || 0) + 1; }
+    const kindStr = Object.entries(kindCounts).map(([k, v]) => `${v} ${k}`).join(", ");
+    const kindLbl = document.createElement("span");
+    kindLbl.style.cssText = "font-size:11px;color:#94a3b8";
+    kindLbl.textContent = "(" + kindStr + ")";
+    summRow.appendChild(kindLbl);
+    discoCard.appendChild(summRow);
+
+    // Results table
+    const table = document.createElement("div");
+    table.style.cssText = "max-height:300px;overflow-y:auto;border:1px solid #2d1854;border-radius:6px";
+
+    const tbl = document.createElement("table");
+    tbl.className = "table";
+    tbl.style.cssText = "width:100%;font-size:12px";
+    const thead = document.createElement("thead");
+    thead.innerHTML = `<tr><th style="width:50px">Kind</th><th>Name / Address</th><th>Room</th><th>First Seen</th><th>RSSI</th><th>Source</th></tr>`;
+    tbl.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    const DISCO_COLORS = ["#e879f9", "#60a5fa", "#f87171", "#34d399", "#fbbf24", "#fb923c", "#5eead4", "#f472b6", "#a3e635", "#818cf8"];
+    for (let i = 0; i < tb.discoResults.length; i++) {
+      const obj = tb.discoResults[i];
+      const col = DISCO_COLORS[i % DISCO_COLORS.length];
+      const isSelected = tb.discoSelected === (obj.key || obj.address);
+      const tr = document.createElement("tr");
+      tr.style.cssText = "cursor:pointer;" + (isSelected ? "background:#1a0a2e;" : "") + "border-bottom:1px solid #1a0a2e";
+      tr.addEventListener("click", () => {
+        tb.discoSelected = obj.key || obj.address;
+        ctx.actions.showObjectDetail(obj);
+        _renderDiscoMap();
+        // Re-highlight in table
+        for (const row of tbody.children) {
+          row.style.background = "";
+        }
+        tr.style.background = "#1a0a2e";
+      });
+      // Hover
+      tr.addEventListener("mouseenter", () => { if (!isSelected) tr.style.background = "#0f051f"; });
+      tr.addEventListener("mouseleave", () => { if (tb.discoSelected !== (obj.key || obj.address)) tr.style.background = ""; });
+
+      // Kind
+      const kindTd = document.createElement("td");
+      const kindBadge = document.createElement("span");
+      kindBadge.style.cssText = "font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600;" +
+        "background:" + col + "22;color:" + col + ";border:1px solid " + col + "44";
+      kindBadge.textContent = obj.kind === "ibeacon" ? "iBeacon" : obj.kind === "private_ble" ? "pBLE" : obj.kind === "entity" ? "Entity" : "BLE";
+      kindTd.appendChild(kindBadge);
+      tr.appendChild(kindTd);
+
+      // Name/Address
+      const nameTd = document.createElement("td");
+      nameTd.style.cssText = "max-width:200px;overflow:hidden;text-overflow:ellipsis";
+      const nameMain = document.createElement("div");
+      nameMain.style.cssText = "font-weight:600;color:" + col;
+      nameMain.textContent = obj.user_label || obj.name || obj.address || "?";
+      nameTd.appendChild(nameMain);
+      if (obj.address && obj.address !== (obj.user_label || obj.name)) {
+        const addrSub = document.createElement("div");
+        addrSub.style.cssText = "font-size:10px;color:#64748b;font-family:monospace";
+        addrSub.textContent = obj.address;
+        nameTd.appendChild(addrSub);
+      }
+      if (obj.company_name) {
+        const compSub = document.createElement("div");
+        compSub.style.cssText = "font-size:10px;color:#94a3b8";
+        compSub.textContent = obj.company_name;
+        nameTd.appendChild(compSub);
+      }
+      tr.appendChild(nameTd);
+
+      // Room
+      const roomTd = document.createElement("td");
+      roomTd.style.cssText = "color:" + (obj.room ? roomColorFn(obj.room) : "#64748b");
+      roomTd.textContent = obj.room || "—";
+      tr.appendChild(roomTd);
+
+      // First Seen
+      const fsTd = document.createElement("td");
+      fsTd.style.cssText = "font-size:11px;white-space:nowrap";
+      if (obj.first_seen) {
+        const fsDate = new Date(obj.first_seen);
+        const agoMs = Date.now() - fsDate.getTime();
+        const agoMin = Math.round(agoMs / 60000);
+        fsTd.textContent = agoMin < 1 ? "just now" : agoMin < 60 ? `${agoMin}m ago` : `${(agoMin / 60).toFixed(1)}h ago`;
+        fsTd.title = fsDate.toLocaleString();
+      } else {
+        fsTd.textContent = "—";
+      }
+      tr.appendChild(fsTd);
+
+      // RSSI
+      const rssiTd = document.createElement("td");
+      rssiTd.style.cssText = "font-family:monospace;font-size:11px";
+      rssiTd.textContent = obj.rssi != null ? `${obj.rssi}` : "—";
+      tr.appendChild(rssiTd);
+
+      // Source scanner
+      const srcTd = document.createElement("td");
+      srcTd.style.cssText = "font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis";
+      const sources = obj.sources || [];
+      if (sources.length) {
+        const srcName = typeof sources[0] === "string" ? sources[0] : (sources[0].source || "");
+        // Try to find friendly name from radios
+        const radio = radios.find(r => r.source === srcName);
+        srcTd.textContent = radio?.name || srcName || "—";
+        if (sources.length > 1) srcTd.textContent += ` +${sources.length - 1}`;
+      } else {
+        srcTd.textContent = obj.source || "—";
+      }
+      tr.appendChild(srcTd);
+
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    table.appendChild(tbl);
+    discoCard.appendChild(table);
+
+    // Tip
+    const tip = document.createElement("div");
+    tip.style.cssText = "font-size:10px;color:#64748b;margin-top:8px";
+    tip.textContent = "Click any row or map pin to view full object details (manufacturer data, services, signal sources, etc.)";
+    discoCard.appendChild(tip);
+  }
+
+  // ── Mode toggle ─────────────────────────────────────────────────────────
+  const modeRow = document.createElement("div");
+  modeRow.style.cssText = "display:flex;align-items:center;gap:4px;margin-bottom:8px";
+
+  const _makeModeBtn = (label, mode, color) => {
+    const btn = document.createElement("button");
+    btn.className = "btn inline";
+    const isActive = tb.mode === mode;
+    btn.style.cssText = isActive
+      ? `font-size:12px;padding:4px 14px;font-weight:700;background:${color}22;color:${color};border-color:${color}`
+      : "font-size:12px;padding:4px 14px;color:#94a3b8;border-color:#1b3526";
+    btn.textContent = label;
+    btn.addEventListener("click", () => {
+      tb.mode = mode;
+      _stopPlayback();
+      // Show/hide the right controls card
+      ctrlCard.style.display = mode === "playback" ? "" : "none";
+      discoCard.style.display = mode === "discovery" ? "" : "none";
+      // Update mode button styles
+      for (const c of modeRow.children) {
+        const m = c.getAttribute("data-mode");
+        if (m === mode) {
+          const mCol = m === "playback" ? "#fbbf24" : "#e879f9";
+          c.style.cssText = `font-size:12px;padding:4px 14px;font-weight:700;background:${mCol}22;color:${mCol};border-color:${mCol}`;
+        } else {
+          c.style.cssText = "font-size:12px;padding:4px 14px;color:#94a3b8;border-color:#1b3526";
+        }
+      }
+      // Re-render map for current mode
+      if (mode === "playback") {
+        _renderFrame();
+      } else {
+        _runDiscoverySearch();
+        _buildDiscoControls();
+        _renderDiscoMap();
+      }
+    });
+    btn.setAttribute("data-mode", mode);
+    return btn;
+  };
+
+  modeRow.appendChild(_makeModeBtn("Playback", "playback", "#fbbf24"));
+  modeRow.appendChild(_makeModeBtn("New Objects", "discovery", "#e879f9"));
+
   // ── Assemble ───────────────────────────────────────────────────────────
+  outer.appendChild(modeRow);
   outer.appendChild(isoCtrlRow);
   outer.appendChild(mapDiv);
+
+  // Both cards are appended but only the active mode's card is visible
+  ctrlCard.style.display = tb.mode === "playback" ? "" : "none";
+  discoCard.style.display = tb.mode === "discovery" ? "" : "none";
   outer.appendChild(ctrlCard);
+  outer.appendChild(discoCard);
 
   // Mark traceback as active to suppress poll re-renders (panel.js checks this)
   tb.active = true;
 
   // Auto-load data on tab open
-  _loadTracebackData().then(() => {
-    _buildControls();
-    _renderFrame();
-  });
+  if (tb.mode === "playback") {
+    _loadTracebackData().then(() => {
+      _buildControls();
+      _renderFrame();
+    });
+  } else {
+    _runDiscoverySearch();
+    _buildDiscoControls();
+    _renderDiscoMap();
+  }
 
   return outer;
 }
