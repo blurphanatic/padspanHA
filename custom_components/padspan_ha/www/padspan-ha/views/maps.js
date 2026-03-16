@@ -3242,54 +3242,72 @@ function _stack(ctx, maps, helpBtn){
   if(!ctx.state.maps._ptAlign) ctx.state.maps._ptAlign = { active: false, refPts: [], tgtPts: [], phase: "ref" };
   const _pta = ctx.state.maps._ptAlign;
 
-  // Solve similarity transform from point pairs: returns {x_offset, y_offset, scale, rotation, residual}
+  // Solve affine transform from point pairs (translate + rotate + scale + stretch).
+  // Returns {x_offset, y_offset, scale, rotation, scaleX_adj, residual}
+  // Model: ref = Affine(tgt centered at 0.5, 0.5) + translate
+  //   ref_x - 0.5 = a*u + b*v + dx    where u = tgt_x - 0.5, v = tgt_y - 0.5
+  //   ref_y - 0.5 = c*u + d*v + dy
+  // 6 unknowns: a, b, c, d, dx, dy → least-squares via 6×6 normal equations
+  // Decompose: sx = sqrt(a²+c²), sy = sqrt(b²+d²), θ = atan2(c,a)
+  //            scale = sy, scaleX_adj = sx/sy, rotation = θ
   const _solvePtAlign = (refPts, tgtPts, ar) => {
     const n = Math.min(refPts.length, tgtPts.length);
     if(n < 3) return null;
+    // Work in aspect-ratio-corrected space for Y
     const rp = refPts.slice(0,n).map(p=>({x:p.x, y:p.y*ar}));
     const tp = tgtPts.slice(0,n).map(p=>({x:p.x, y:p.y*ar}));
     const cx = 0.5, cy = 0.5*ar;
-    let ATA = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
-    let ATb = [0,0,0,0];
+    // Build 6×6 normal equations: ATA * [a,b,c,d,dx,dy]^T = ATb
+    const K = 6;
+    const ATA = Array.from({length:K},()=>Array(K).fill(0));
+    const ATb = Array(K).fill(0);
     for(let i=0;i<n;i++){
       const u = tp[i].x - cx, v = tp[i].y - cy;
       const bx = rp[i].x - cx, by = rp[i].y - cy;
-      const r1 = [u, -v, 1, 0], r2 = [v, u, 0, 1];
-      for(let j=0;j<4;j++){
-        for(let k=0;k<4;k++) ATA[j][k] += r1[j]*r1[k] + r2[j]*r2[k];
+      // Row for x-equation: [u, v, 0, 0, 1, 0] · params = bx
+      const r1 = [u, v, 0, 0, 1, 0];
+      // Row for y-equation: [0, 0, u, v, 0, 1] · params = by
+      const r2 = [0, 0, u, v, 0, 1];
+      for(let j=0;j<K;j++){
+        for(let k=0;k<K;k++) ATA[j][k] += r1[j]*r1[k] + r2[j]*r2[k];
         ATb[j] += r1[j]*bx + r2[j]*by;
       }
     }
+    // Gaussian elimination with partial pivoting
     const M = ATA.map((r,i)=>[...r, ATb[i]]);
-    for(let col=0;col<4;col++){
+    for(let col=0;col<K;col++){
       let maxR=col;
-      for(let r=col+1;r<4;r++) if(Math.abs(M[r][col])>Math.abs(M[maxR][col])) maxR=r;
+      for(let r=col+1;r<K;r++) if(Math.abs(M[r][col])>Math.abs(M[maxR][col])) maxR=r;
       [M[col],M[maxR]]=[M[maxR],M[col]];
       if(Math.abs(M[col][col])<1e-12) return null;
-      for(let r=col+1;r<4;r++){
+      for(let r=col+1;r<K;r++){
         const f=M[r][col]/M[col][col];
-        for(let c=col;c<=4;c++) M[r][c]-=f*M[col][c];
+        for(let c2=col;c2<=K;c2++) M[r][c2]-=f*M[col][c2];
       }
     }
-    const x=[0,0,0,0];
-    for(let r=3;r>=0;r--){
-      x[r]=M[r][4];
-      for(let c=r+1;c<4;c++) x[r]-=M[r][c]*x[c];
+    const x=Array(K).fill(0);
+    for(let r=K-1;r>=0;r--){
+      x[r]=M[r][K];
+      for(let c2=r+1;c2<K;c2++) x[r]-=M[r][c2]*x[c2];
       x[r]/=M[r][r];
     }
-    const a=x[0], b=x[1], dx=x[2], dy=x[3]/ar;
-    const scale = Math.sqrt(a*a+b*b);
-    const rotation = Math.atan2(b,a)*180/Math.PI;
+    const a=x[0], b=x[1], c=x[2], d=x[3], dx=x[4], dy=x[5]/ar;
+    // Decompose affine [[a,b],[c,d]] into rotation + non-uniform scale
+    const sx = Math.sqrt(a*a + c*c);  // X scale
+    const sy = Math.sqrt(b*b + d*d);  // Y scale
+    const rotation = Math.atan2(c, a) * 180 / Math.PI;
+    const scale = sy;                 // uniform scale = Y scale
+    const scaleX_adj = sx > 0 && sy > 0 ? sx / sy : 1.0;  // X stretch relative to uniform
+    // Compute residual using full affine
     let res = 0;
-    const cosR = Math.cos(rotation*Math.PI/180), sinR = Math.sin(rotation*Math.PI/180);
     for(let i=0;i<n;i++){
-      const u = tgtPts[i].x - 0.5, v = tgtPts[i].y - 0.5;
-      const px = scale*(cosR*u - sinR*v) + 0.5 + dx;
-      const py = scale*(sinR*u + cosR*v) + 0.5 + dy;
-      res += (px-refPts[i].x)**2 + (py-refPts[i].y)**2;
+      const u = tp[i].x - cx, v = tp[i].y - cy;
+      const predX = a*u + b*v + cx + dx;
+      const predY = (c*u + d*v + cy)/ar + dy;  // de-correct AR
+      res += (predX - refPts[i].x)**2 + (predY - refPts[i].y)**2;
     }
     res = Math.sqrt(res/n);
-    return { x_offset: dx, y_offset: dy, scale, rotation, residual: res };
+    return { x_offset: dx, y_offset: dy, scale, rotation, scaleX_adj, residual: res };
   };
 
   // Container for the side-by-side point-picking UI (hidden until activated)
@@ -3441,13 +3459,15 @@ function _stack(ctx, maps, helpBtn){
       const solveAr = refMap ? (refMap.image?.height||600)/(refMap.image?.width||800) : stageAr;
       const result = _solvePtAlign(_pta.refPts, _pta.tgtPts, solveAr);
       if(!result){ ctx.toast("Could not compute alignment — points may be collinear",true); return; }
-      alignState.x_offset = Math.round(result.x_offset * 10000) / 10000;
-      alignState.y_offset = Math.round(result.y_offset * 10000) / 10000;
-      alignState.scale    = Math.round(result.scale * 10000) / 10000;
-      alignState.rotation = Math.round(result.rotation * 100) / 100;
+      alignState.x_offset   = Math.round(result.x_offset * 10000) / 10000;
+      alignState.y_offset   = Math.round(result.y_offset * 10000) / 10000;
+      alignState.scale      = Math.round(result.scale * 10000) / 10000;
+      alignState.rotation   = Math.round(result.rotation * 100) / 100;
+      alignState.scaleX_adj = Math.round((result.scaleX_adj || 1.0) * 10000) / 10000;
       applyCurrentTransform();
       const resPct = Math.round(result.residual * 1000) / 10;
-      ctx.toast(`Point alignment applied (${pairs} pairs, residual: ${resPct}%)`);
+      const stretchPct = Math.round((result.scaleX_adj || 1.0) * 100);
+      ctx.toast(`Point alignment applied (${pairs} pairs, residual: ${resPct}%, stretch: ${stretchPct}%)`);
       _exitPtAlign();
     }}, canCompute ? `Compute (${pairs} pairs)` : "Need 3+ pairs");
     row2.appendChild(computeBtn);
