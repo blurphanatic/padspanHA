@@ -815,15 +815,14 @@ function _settingsPresence(ctx, el){
       style: "flex:1;min-width:160px;background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:13px",
     });
     const addBtn = el("button", { class: "btn" }, "Add IRK");
+    // Progress bar container — hidden until validation starts
+    const irkProgress = el("div", { style: "display:none;margin-top:6px" });
     const irkMsg = el("div", { style: "font-size:11px;margin-top:6px;min-height:16px" });
+    // Override row — shown when validation finds no match
+    const irkOverrideRow = el("div", { style: "display:none;margin-top:6px;display:none;align-items:center;gap:8px" });
 
-    addBtn.addEventListener("click", async () => {
-      const irk = irkInp.value.trim();
-      const name = nameInp.value.trim();
-      if (!irk) { irkMsg.textContent = "Please paste an IRK"; irkMsg.style.color = "#f87171"; return; }
-      addBtn.disabled = true;
-      addBtn.textContent = "Adding...";
-      irkMsg.textContent = "";
+    // Helper: commit the IRK to HA (shared by both validated and override paths)
+    const _commitIrk = async (irk, name) => {
       try {
         const res = await ctx.actions.wsCall("padspan_ha/private_ble_add_irk", { irk, name: name || "PadSpan Device" });
         if (res.duplicate) {
@@ -835,19 +834,155 @@ function _settingsPresence(ctx, el){
           irkInp.value = "";
           nameInp.value = "";
         }
-        // Refresh IRK status table inline (don't re-render entire view)
         await _refreshIrkStatus();
       } catch(e) {
         irkMsg.style.color = "#f87171";
         irkMsg.textContent = e.message || "Failed to add IRK";
       }
-      addBtn.disabled = false;
-      addBtn.textContent = "Add IRK";
+    };
+
+    // ── Validation-then-add flow ──
+    // Polls irk_validate every 5s for up to 30s, looking for a live RPA match.
+    // If matched: auto-saves. If not: shows warning + "Save Anyway" override.
+    let _validationAborted = false;
+
+    addBtn.addEventListener("click", async () => {
+      const irk = irkInp.value.trim();
+      const name = nameInp.value.trim();
+      if (!irk) { irkMsg.textContent = "Please paste an IRK"; irkMsg.style.color = "#f87171"; return; }
+
+      // Reset UI state
+      addBtn.disabled = true;
+      addBtn.textContent = "Validating...";
+      irkMsg.textContent = "";
+      irkOverrideRow.style.display = "none";
+      _validationAborted = false;
+
+      // Build progress bar
+      const VALIDATE_DURATION_S = 30;
+      const POLL_INTERVAL_S = 5;
+      irkProgress.style.display = "block";
+      irkProgress.innerHTML = "";
+      const progressLabel = el("div", { style: "font-size:11px;color:#94a3b8;margin-bottom:3px" }, "Scanning for device...");
+      const barOuter = el("div", { style: "height:6px;border-radius:3px;background:#1a2a1a;overflow:hidden;position:relative" });
+      const barInner = el("div", { style: "height:100%;width:0%;background:#52b788;border-radius:3px;transition:width 0.4s ease" });
+      barOuter.appendChild(barInner);
+      irkProgress.appendChild(progressLabel);
+      irkProgress.appendChild(barOuter);
+
+      // Cancel button inside progress area
+      const cancelBtn = el("button", { class: "btn inline", style: "font-size:10px;margin-top:4px;padding:2px 10px;color:#f87171;border-color:#7f1d1d" }, "Cancel");
+      cancelBtn.addEventListener("click", () => { _validationAborted = true; });
+      irkProgress.appendChild(cancelBtn);
+
+      // Poll loop: try irk_validate every POLL_INTERVAL_S up to VALIDATE_DURATION_S
+      let matched = false;
+      let lastResult = null;
+      const rounds = Math.ceil(VALIDATE_DURATION_S / POLL_INTERVAL_S);
+      for (let i = 0; i < rounds; i++) {
+        if (_validationAborted) break;
+        const elapsed = i * POLL_INTERVAL_S;
+        const pct = Math.min(100, Math.round((elapsed / VALIDATE_DURATION_S) * 100));
+        barInner.style.width = pct + "%";
+        progressLabel.textContent = `Scanning for device... ${elapsed}s / ${VALIDATE_DURATION_S}s`;
+
+        try {
+          lastResult = await ctx.actions.wsCall("padspan_ha/irk_validate", { irk_hex: irk });
+          if (lastResult && lastResult.matched_count > 0) {
+            matched = true;
+            break;
+          }
+        } catch(e) {
+          // Parse error — key is malformed
+          irkMsg.style.color = "#f87171";
+          irkMsg.textContent = e.message || "Invalid IRK format";
+          irkProgress.style.display = "none";
+          addBtn.disabled = false;
+          addBtn.textContent = "Add IRK";
+          return;
+        }
+
+        // Wait before next poll (unless it's the last round)
+        if (i < rounds - 1 && !_validationAborted) {
+          await new Promise(r => setTimeout(r, POLL_INTERVAL_S * 1000));
+        }
+      }
+
+      // Fill bar to 100%
+      barInner.style.width = "100%";
+
+      if (_validationAborted) {
+        // User cancelled
+        irkProgress.style.display = "none";
+        irkMsg.style.color = "#94a3b8";
+        irkMsg.textContent = "Validation cancelled.";
+        addBtn.disabled = false;
+        addBtn.textContent = "Add IRK";
+        return;
+      }
+
+      irkProgress.style.display = "none";
+
+      if (matched) {
+        // Key verified — save immediately
+        const n = lastResult.matched_count;
+        progressLabel.textContent = "";
+        irkMsg.style.color = "#52b788";
+        irkMsg.textContent = `Verified — matched ${n} rotating address${n !== 1 ? "es" : ""}. Saving...`;
+        await _commitIrk(irk, name);
+        addBtn.disabled = false;
+        addBtn.textContent = "Add IRK";
+      } else {
+        // No match — warn + offer override
+        const rpas = lastResult ? lastResult.rpa_count : 0;
+        irkMsg.style.color = "#fbbf24";
+        irkMsg.textContent = rpas > 0
+          ? `No match found after ${VALIDATE_DURATION_S}s (${rpas} rotating addresses scanned). The device may be off, out of range, or the key may be incorrect.`
+          : `No rotating addresses detected. Make sure BLE scanners are online and the device is nearby.`;
+
+        // Show override buttons
+        irkOverrideRow.style.display = "flex";
+        irkOverrideRow.innerHTML = "";
+        const saveAnywayBtn = el("button", { class: "btn", style: "font-size:11px;background:#1a0d00;border-color:#d97706;color:#fbbf24" }, "Save Anyway");
+        const retryBtn = el("button", { class: "btn inline", style: "font-size:11px" }, "Retry");
+        const cancelBtn2 = el("button", { class: "btn inline", style: "font-size:11px;color:#94a3b8" }, "Cancel");
+
+        saveAnywayBtn.addEventListener("click", async () => {
+          irkOverrideRow.style.display = "none";
+          addBtn.disabled = true;
+          addBtn.textContent = "Saving...";
+          irkMsg.textContent = "";
+          await _commitIrk(irk, name);
+          addBtn.disabled = false;
+          addBtn.textContent = "Add IRK";
+        });
+        retryBtn.addEventListener("click", () => {
+          irkOverrideRow.style.display = "none";
+          irkMsg.textContent = "";
+          addBtn.disabled = false;
+          addBtn.textContent = "Add IRK";
+          addBtn.click();  // re-trigger validation
+        });
+        cancelBtn2.addEventListener("click", () => {
+          irkOverrideRow.style.display = "none";
+          irkMsg.textContent = "";
+          addBtn.disabled = false;
+          addBtn.textContent = "Add IRK";
+        });
+
+        irkOverrideRow.appendChild(saveAnywayBtn);
+        irkOverrideRow.appendChild(retryBtn);
+        irkOverrideRow.appendChild(cancelBtn2);
+        addBtn.disabled = false;
+        addBtn.textContent = "Add IRK";
+      }
     });
 
     irkCard.appendChild(el("div", { style: rowStyle }, [irkInp]));
     irkCard.appendChild(el("div", { style: rowStyle + ";margin-top:4px" }, [nameInp, addBtn]));
+    irkCard.appendChild(irkProgress);
     irkCard.appendChild(irkMsg);
+    irkCard.appendChild(irkOverrideRow);
 
     // Brief help
     irkCard.appendChild(el("div", { class: "muted", style: "font-size:11px;margin-top:12px;line-height:1.6" },

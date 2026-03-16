@@ -167,6 +167,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_logs_get)
     websocket_api.async_register_command(hass, ws_private_ble_status)
     websocket_api.async_register_command(hass, ws_irk_add)
+    websocket_api.async_register_command(hass, ws_irk_validate)
     websocket_api.async_register_command(hass, ws_irk_remove)
     websocket_api.async_register_command(hass, ws_private_ble_add_irk)
     websocket_api.async_register_command(hass, ws_private_ble_delete_irk)
@@ -5599,6 +5600,58 @@ async def ws_irk_add(hass: HomeAssistant, connection, msg) -> None:
         "irk_hex": irk_clean,
         "canonical_id": f"irk:{irk_clean}",
         "device_count": resolver.device_count if resolver else 0,
+    })
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/irk_validate",
+        vol.Required("irk_hex"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_irk_validate(hass: HomeAssistant, connection, msg) -> None:
+    """Test an IRK against all currently-visible BLE RPAs.
+
+    Returns the number of matched addresses so the UI can confirm the key is
+    valid before saving.  Does NOT persist anything — purely a read-only check.
+    """
+    from .private_ble_resolver import _parse_irk, _address_matches_irk, _is_rpa  # noqa: PLC0415
+
+    irk_raw = str(msg["irk_hex"]).strip()
+    irk_bytes = _parse_irk(irk_raw)
+    if not irk_bytes:
+        connection.send_error(msg["id"], "invalid", "Could not parse IRK. Enter 32 hex chars or base64.")
+        return
+
+    # Gather all RPAs from the live BLE advertisement cache
+    try:
+        ble_live = get_bluetooth_live(hass)
+        snap = ble_live.get_snapshot(max_ads=5000, max_age_s=3600)
+        rpas: set[str] = set()
+        for ad in (snap.get("advertisements") or []):
+            addr = (ad.get("address") or "").upper()
+            if addr and _is_rpa(addr):
+                rpas.add(addr)
+    except Exception as err:
+        _LOGGER.warning("irk_validate: BLE snapshot error: %s", err)
+        rpas = set()
+
+    # Test the IRK against every RPA
+    matched: list[str] = []
+    for addr in rpas:
+        try:
+            if _address_matches_irk(addr, irk_bytes):
+                matched.append(addr)
+        except Exception:
+            pass
+
+    connection.send_result(msg["id"], {
+        "valid": len(matched) > 0,
+        "matched_count": len(matched),
+        "matched_addresses": matched[:10],  # cap for payload size
+        "rpa_count": len(rpas),
+        "irk_hex": irk_bytes.hex(),
     })
 
 
