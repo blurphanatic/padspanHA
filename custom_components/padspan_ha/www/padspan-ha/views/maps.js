@@ -3694,8 +3694,14 @@ function _stack(ctx, maps, helpBtn){
           const rDy       = _sane(Math.round(result.y_offset * 10000) / 10000, 0, -10, 10);
           const resPct    = _sane(Math.round((result.residual || 0) * 1000) / 10, 0, 0, 999);
 
+          console.log("[PtAlign] AR(H/W)=" + arHW.toFixed(4) + " refImage=" + _refIW + "x" + _refIH);
           console.log("[PtAlign] Result: dx=" + rDx + " dy=" + rDy + " scale=" + rScale +
             " rot=" + rRotation + " stretch=" + rStretch + " residual=" + resPct + "%");
+          for (let _d = 0; _d < Math.min(refPts.length, tgtPts.length); _d++) {
+            console.log("[PtAlign] Pair " + (_d+1) + ": ref=(" +
+              refPts[_d].x.toFixed(4) + "," + refPts[_d].y.toFixed(4) + ") tgt=(" +
+              tgtPts[_d].x.toFixed(4) + "," + tgtPts[_d].y.toFixed(4) + ")");
+          }
 
           // Compute per-point residuals using the CSS transform model.
           // CSS rotate() works in pixel space, so rotation mixes x and y
@@ -3714,7 +3720,11 @@ function _stack(ctx, maps, helpBtn){
             const dx2 = predX - refPts[i].x;
             const dy2 = predY - refPts[i].y;
             const dist = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-            perPoint.push({ idx: i + 1, dist, pct: Math.round(dist * 1000) / 10 });
+            perPoint.push({ idx: i + 1, dist, pct: Math.round(dist * 1000) / 10,
+              predX, predY, refX: refPts[i].x, refY: refPts[i].y });
+            console.log("[PtAlign] Pt " + (i+1) + ": CSS→(" +
+              predX.toFixed(4) + "," + predY.toFixed(4) + ") ref=(" +
+              refPts[i].x.toFixed(4) + "," + refPts[i].y.toFixed(4) + ") err=" + dist.toFixed(4));
           }
 
           // ── Show preview instead of immediately applying ──
@@ -3970,6 +3980,30 @@ function _stack(ctx, maps, helpBtn){
       tgtLabel.style.cssText = "position:absolute;top:4px;right:6px;font-size:10px;color:#f59e0b;font-weight:700;z-index:3;background:#071008aa;padding:1px 6px;border-radius:3px";
       tgtLabel.textContent = "Tgt: " + (tgtMap.name || tgtMap.id);
       previewStage.appendChild(tgtLabel);
+
+      // Diagnostic markers: green = ref points, yellow = CSS-predicted target positions
+      // If these overlap, the solver is correct. If not, there's a transform error.
+      const markerLayer = document.createElement("div");
+      markerLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5";
+      for (const pp of (perPoint || [])) {
+        // Reference point (green circle)
+        const refDot = document.createElement("div");
+        refDot.style.cssText = "position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid #52b788;" +
+          "background:#52b78844;transform:translate(-50%,-50%);font-size:8px;color:#52b788;text-align:center;line-height:10px;" +
+          "left:" + (pp.refX * 100) + "%;top:" + (pp.refY * 100) + "%";
+        refDot.textContent = String(pp.idx);
+        refDot.title = "Ref " + pp.idx + " (" + pp.refX.toFixed(3) + "," + pp.refY.toFixed(3) + ")";
+        markerLayer.appendChild(refDot);
+        // Predicted position (yellow X)
+        const predDot = document.createElement("div");
+        predDot.style.cssText = "position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid #f59e0b;" +
+          "background:#f59e0b44;transform:translate(-50%,-50%);font-size:8px;color:#f59e0b;text-align:center;line-height:10px;" +
+          "left:" + (pp.predX * 100) + "%;top:" + (pp.predY * 100) + "%";
+        predDot.textContent = String(pp.idx);
+        predDot.title = "CSS pred " + pp.idx + " (" + pp.predX.toFixed(3) + "," + pp.predY.toFixed(3) + ")";
+        markerLayer.appendChild(predDot);
+      }
+      previewStage.appendChild(markerLayer);
 
       previewPanel.appendChild(previewStage);
 
