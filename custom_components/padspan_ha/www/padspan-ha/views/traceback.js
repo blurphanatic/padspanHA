@@ -111,6 +111,11 @@ export function render(ctx) {
   if (!ctx.state._traceback.mode) ctx.state._traceback.mode = "playback";
   const tb = ctx.state._traceback;
 
+  // ── Clear stale timer from previous render ──────────────────────────
+  // If we're re-rendering while a timer is running, kill it so it doesn't
+  // write to detached DOM nodes.  We'll restart below if tb.playing is true.
+  if (tb._animTimer) { clearInterval(tb._animTimer); tb._animTimer = null; }
+
   function _fmtTime(ts) {
     if (!ts) return "--";
     return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -261,12 +266,10 @@ export function render(ctx) {
     if (tb.frames.length && frameIdx >= 0 && frameIdx < tb.frames.length) {
       const frame = tb.frames[frameIdx];
       const _scannerSrcSet = new Set(((ctx.state.live?.snapshot?.ble?.radios) || []).map(r => String(r.source || "").toUpperCase()).filter(Boolean));
-      // Also match scanner names (source key might not match traceback object key)
       for (const r of ((ctx.state.live?.snapshot?.ble?.radios) || [])) {
         if (r.name) _scannerSrcSet.add(String(r.name).toUpperCase());
       }
       // Build set of objects that never change rooms (static — useless in movement playback).
-      // Only compute once and cache on tb.
       if (!tb._staticKeys) {
         const _roomByKey = {};
         for (const f of tb.frames) {
@@ -284,9 +287,7 @@ export function render(ctx) {
       const objs = (frame.o || []).filter(o => {
         const ku = String(o.k || "").toUpperCase();
         if (_scannerSrcSet.has(ku)) return false;
-        // Keep the specifically filtered object even if static
         if (tb.filterKey && o.k === tb.filterKey) return true;
-        // Hide objects that never move throughout the entire playback
         if (tb._staticKeys.has(o.k)) return false;
         return true;
       });
@@ -294,58 +295,115 @@ export function render(ctx) {
       const TB_COLORS = ["#fbbf24", "#60a5fa", "#f87171", "#34d399", "#c4b5fd", "#fb923c", "#5eead4", "#f472b6", "#a3e635", "#818cf8"];
       const _colorMap = {};
       let _ci = 0;
-      for (const o of objs) {
-        if (!_colorMap[o.k]) { _colorMap[o.k] = TB_COLORS[_ci % TB_COLORS.length]; _ci++; }
-      }
-
-      // Trail from prev frames
-      const trailLen = Math.min(8, frameIdx);
-      for (let ti = Math.max(0, frameIdx - trailLen); ti < frameIdx; ti++) {
-        const trailFrame = tb.frames[ti];
-        const fade = 0.08 + 0.12 * ((ti - (frameIdx - trailLen)) / trailLen);
-        for (const to of (trailFrame.o || [])) {
-          if (_scannerSrcSet.has(String(to.k || "").toUpperCase())) continue;
-          if (tb._staticKeys && tb._staticKeys.has(to.k) && to.k !== tb.filterKey) continue;
-          if (!to.r || !roomIsoPos[to.r]) continue;
-          const tpos = roomIsoPos[to.r];
-          const col = _colorMap[to.k] || "#fbbf24";
-          s += `<circle cx="${Math.round(tpos[0])}" cy="${Math.round(tpos[1])}" r="3" fill="${col}" opacity="${fade.toFixed(2)}"/>`;
+      // Assign colors to ALL objects across all frames so colors are stable
+      for (const f of tb.frames) {
+        for (const o of (f.o || [])) {
+          if (!_colorMap[o.k]) { _colorMap[o.k] = TB_COLORS[_ci % TB_COLORS.length]; _ci++; }
         }
       }
 
-      // Current frame objects
+      // ── Trail: connected lines + fading dots showing recent path ──
+      const trailLen = Math.min(12, frameIdx);
+      const trailStart = Math.max(0, frameIdx - trailLen);
+      // Build per-object trail paths: { key: [ {x,y,room,ti} ... ] }
+      const _trails = {};
+      for (let ti = trailStart; ti <= frameIdx; ti++) {
+        const tf = tb.frames[ti];
+        for (const to of (tf.o || [])) {
+          if (_scannerSrcSet.has(String(to.k || "").toUpperCase())) continue;
+          if (tb._staticKeys && tb._staticKeys.has(to.k) && to.k !== tb.filterKey) continue;
+          if (!to.r || !roomIsoPos[to.r]) continue;
+          if (!_trails[to.k]) _trails[to.k] = [];
+          const pos = roomIsoPos[to.r];
+          _trails[to.k].push({ x: pos[0], y: pos[1], room: to.r, ti });
+        }
+      }
+      // Draw trail lines and dots
+      for (const [key, trail] of Object.entries(_trails)) {
+        const col = _colorMap[key] || "#fbbf24";
+        if (trail.length >= 2) {
+          // Draw line segments between room changes
+          for (let j = 1; j < trail.length; j++) {
+            if (trail[j].room !== trail[j - 1].room) {
+              const fade = 0.15 + 0.35 * ((trail[j].ti - trailStart) / Math.max(1, trailLen));
+              s += `<line x1="${Math.round(trail[j - 1].x)}" y1="${Math.round(trail[j - 1].y)}" x2="${Math.round(trail[j].x)}" y2="${Math.round(trail[j].y)}" stroke="${col}" stroke-width="2.5" stroke-dasharray="6,4" opacity="${fade.toFixed(2)}"/>`;
+              // Arrow head at destination
+              const dx = trail[j].x - trail[j - 1].x, dy = trail[j].y - trail[j - 1].y;
+              const len = Math.sqrt(dx * dx + dy * dy);
+              if (len > 10) {
+                const ux = dx / len, uy = dy / len;
+                const ax = trail[j].x - ux * 8, ay = trail[j].y - uy * 8;
+                s += `<polygon points="${Math.round(trail[j].x)},${Math.round(trail[j].y)} ${Math.round(ax - uy * 5)},${Math.round(ay + ux * 5)} ${Math.round(ax + uy * 5)},${Math.round(ay - ux * 5)}" fill="${col}" opacity="${fade.toFixed(2)}"/>`;
+              }
+            }
+          }
+        }
+        // Trail dots (not for current frame — that gets the big marker)
+        for (let j = 0; j < trail.length - 1; j++) {
+          const fade = 0.12 + 0.25 * ((trail[j].ti - trailStart) / Math.max(1, trailLen));
+          s += `<circle cx="${Math.round(trail[j].x)}" cy="${Math.round(trail[j].y)}" r="5" fill="${col}" opacity="${fade.toFixed(2)}" stroke="#071008" stroke-width="0.8"/>`;
+        }
+      }
+
+      // ── Current frame objects: BIG prominent markers ──
       for (const o of objs) {
         if (!o.r || !roomIsoPos[o.r]) continue;
         const pos = roomIsoPos[o.r];
         const idx = (_roomCount[o.r] || 0);
         _roomCount[o.r] = idx + 1;
-        const angle = idx * 2.4;
-        const radius = 6 + idx * 5;
-        const offX = Math.cos(angle) * Math.min(radius, 35);
-        const offY = Math.sin(angle) * Math.min(radius, 22);
+        const angle = idx * 2.0;
+        const radius = 8 + idx * 8;
+        const offX = Math.cos(angle) * Math.min(radius, 45);
+        const offY = Math.sin(angle) * Math.min(radius, 30);
         const px = Math.round(pos[0] + offX);
         const py = Math.round(pos[1] + offY);
         const col = _colorMap[o.k] || "#fbbf24";
-        const lbl = (o.n || o.k || "?").substring(0, 12);
+        const lbl = (o.n || o.k || "?").substring(0, 16);
         const tip = `${lbl} | Room: ${o.r}${o.rssi ? " | RSSI: " + o.rssi + " dBm" : ""}`;
 
-        s += `<g data-tip="${_esc(tip)}">`;
-        s += `<circle cx="${px}" cy="${py}" r="16" fill="${col}" opacity="0.1"/>`;
-        s += `<circle cx="${px}" cy="${py}" r="9" fill="${col}" stroke="#071008" stroke-width="1.5" opacity="0.95"/>`;
-        s += `<circle cx="${px}" cy="${py}" r="3" fill="#071008" opacity="0.6"/>`;
-        const lblW = Math.min(lbl.length * 6 + 8, 90);
-        s += `<rect x="${px - lblW / 2}" y="${py - 24}" width="${lblW}" height="13" rx="3" fill="#071008" opacity="0.8"/>`;
-        s += `<text x="${px}" y="${py - 14}" text-anchor="middle" fill="${col}" font-size="9" font-weight="700">${_esc(lbl)}</text>`;
-        s += `</g>`;
+        // Outer glow ring (pulsing)
+        s += `<circle cx="${px}" cy="${py}" r="26" fill="none" stroke="${col}" stroke-width="2" opacity="0.35">`;
+        s += `<animate attributeName="r" values="22;28;22" dur="1.8s" repeatCount="indefinite"/>`;
+        s += `<animate attributeName="opacity" values="0.35;0.15;0.35" dur="1.8s" repeatCount="indefinite"/>`;
+        s += `</circle>`;
+        // Solid glow halo
+        s += `<circle cx="${px}" cy="${py}" r="20" fill="${col}" opacity="0.12"/>`;
+        // Main marker — big solid circle
+        s += `<circle cx="${px}" cy="${py}" r="14" fill="${col}" stroke="#071008" stroke-width="2" opacity="0.95"/>`;
+        // Inner dot
+        s += `<circle cx="${px}" cy="${py}" r="4" fill="#071008" opacity="0.7"/>`;
+        // Label background — bigger, more readable
+        const lblW = Math.min(lbl.length * 7 + 14, 130);
+        s += `<rect x="${px - lblW / 2}" y="${py - 34}" width="${lblW}" height="18" rx="4" fill="#071008" stroke="${col}" stroke-width="1" opacity="0.9"/>`;
+        s += `<text x="${px}" y="${py - 21}" text-anchor="middle" fill="${col}" font-size="12" font-weight="700">${_esc(lbl)}</text>`;
+        // Room label below
+        const roomLbl = o.r.substring(0, 18);
+        const roomW = Math.min(roomLbl.length * 6 + 10, 120);
+        s += `<rect x="${px - roomW / 2}" y="${py + 16}" width="${roomW}" height="14" rx="3" fill="#071008" opacity="0.75"/>`;
+        s += `<text x="${px}" y="${py + 27}" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="500">${_esc(roomLbl)}</text>`;
       }
     }
 
-    // Timestamp overlay
+    // ── Timestamp + progress bar overlay ──
     if (tb.frames.length && frameIdx >= 0 && frameIdx < tb.frames.length) {
       const ts = tb.frames[frameIdx].ts;
       const timeStr = _fmtDate(ts);
-      s += `<rect x="${W - 200}" y="${viewY + 4}" width="196" height="22" rx="4" fill="#071008" opacity="0.85"/>`;
-      s += `<text x="${W - 102}" y="${viewY + 19}" text-anchor="middle" fill="#fbbf24" font-size="13" font-weight="700">${_esc(timeStr)}</text>`;
+      // Large time badge top-right
+      s += `<rect x="${W - 230}" y="${viewY + 4}" width="226" height="28" rx="6" fill="#071008" stroke="#fbbf24" stroke-width="1" opacity="0.9"/>`;
+      s += `<text x="${W - 117}" y="${viewY + 23}" text-anchor="middle" fill="#fbbf24" font-size="16" font-weight="700" font-family="monospace">${_esc(timeStr)}</text>`;
+      // Frame counter top-left
+      const frameTxt = `${frameIdx + 1} / ${tb.frames.length}`;
+      s += `<rect x="4" y="${viewY + 4}" width="100" height="22" rx="4" fill="#071008" opacity="0.8"/>`;
+      s += `<text x="54" y="${viewY + 19}" text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="600" font-family="monospace">${frameTxt}</text>`;
+      // Progress bar at bottom of map area
+      const barY = BASE_H - 6;
+      const barW = W - 20;
+      const progress = tb.frames.length > 1 ? frameIdx / (tb.frames.length - 1) : 0;
+      s += `<rect x="10" y="${barY}" width="${barW}" height="4" rx="2" fill="#1b3526" opacity="0.8"/>`;
+      s += `<rect x="10" y="${barY}" width="${Math.round(barW * progress)}" height="4" rx="2" fill="#fbbf24" opacity="0.9"/>`;
+      // Playhead indicator
+      const phX = 10 + Math.round(barW * progress);
+      s += `<circle cx="${phX}" cy="${barY + 2}" r="6" fill="#fbbf24" stroke="#071008" stroke-width="1.5"/>`;
     }
 
     // Legend — compact single row (matches overview)
@@ -594,7 +652,10 @@ export function render(ctx) {
 
   // ── Playback helpers ───────────────────────────────────────────────────
   function _renderFrame() {
-    if (!tb.frames.length) return;
+    if (!tb.frames.length) {
+      mapDiv.innerHTML = `<div style="text-align:center;padding:40px;color:#64748b;font-size:14px">No traceback frames loaded. Select a time range and press Play.</div>`;
+      return;
+    }
     mapDiv.innerHTML = _buildTracebackSVG(tb.frameIdx);
   }
 
@@ -1360,10 +1421,19 @@ export function render(ctx) {
   tb.active = true;
 
   // Auto-load data on tab open
+  const _wasPlaying = tb.playing;
   if (tb.mode === "playback") {
     _loadTracebackData().then(() => {
       _buildControls();
       _renderFrame();
+      // Restart playback if it was interrupted by a re-render
+      if (_wasPlaying && tb.frames.length) {
+        _startPlayback();
+        _buildControls();
+      }
+    }).catch(err => {
+      console.error("Traceback load failed:", err);
+      mapDiv.innerHTML = `<div style="text-align:center;padding:40px;color:#f87171;font-size:14px">Failed to load traceback data: ${String(err).substring(0, 100)}</div>`;
     });
   } else {
     _runDiscoverySearch();
