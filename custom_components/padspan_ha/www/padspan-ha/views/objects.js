@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+/**
+ * Objects view — lists all tracked BLE objects/tags.
+ * Basic mode: card-based layout grouped by room.
+ * Advanced mode: searchable/filterable table with sort, inline tagging, and detail expand.
+ * Data source: snapshot tags + roomTagMap; live index built per-render for friendly names.
+ */
+
 export function renderTags(ctx, tagsList) {
   const { el } = ctx.helpers;
   const { mode, tagFilter } = ctx.state;

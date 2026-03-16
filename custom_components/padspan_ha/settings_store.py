@@ -5,9 +5,15 @@
 from __future__ import annotations
 
 """
-REPO LOGIC NOTES
+PadSpan HA — Settings Store
+=============================
+Persistent UI settings — toggling sample/live mode, tuning BLE parameters
+(ref power, path-loss exponent, Kalman Q/R, room sigma), controlling which
+entity types are published, and storing per-scanner RSSI offsets.
 
-Persistent UI settings store for sample/live toggle and active map selection.
+All settings live in a single flat dict persisted to
+``.storage/padspan_ha.settings``.  Unknown keys from future versions are
+preserved on load (merged onto DEFAULT_SETTINGS).
 """
 
 
@@ -90,6 +96,11 @@ class SettingsStore:
         self.data = dict(DEFAULT_SETTINGS)
 
     async def async_load(self) -> dict[str, Any]:
+        """Load and merge persisted settings onto defaults.
+
+        Merging ensures new keys added in future versions get their defaults
+        while preserving the user's existing overrides.
+        """
         loaded = await self.store.async_load()
         if isinstance(loaded, dict):
             self.data = {**DEFAULT_SETTINGS, **loaded}

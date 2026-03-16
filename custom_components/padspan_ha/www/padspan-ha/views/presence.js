@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+/**
+ * Presence view — lookup tool for object-to-room presence.
+ * Enter an object/tag ID to see which rooms it appears in, using the
+ * roomTagMap inverse index. Useful for debugging room assignment and
+ * verifying that objects are detected where expected.
+ */
+
 export function render(ctx){
   const { el, radioShortId } = ctx.helpers;
   const _sid = (source) => radioShortId ? radioShortId(source || "") : "";

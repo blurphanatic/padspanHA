@@ -2,14 +2,38 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
-/*
-REPO LOGIC NOTES
 
-Maps view: upload/resize/convert to PNG client-side, then send base64 PNG to backend store.
-Receivers are stored as normalized coordinates.
-Editor provides pan/zoom and marker add/drag/delete.
-*/
+// ── Maps View ────────────────────────────────────────────────────────────────
+//
+// This file implements the Maps view — the spatial foundation of PadSpan.
+// Users upload floor plan images, place BLE scanner markers, draw room
+// boundaries, align multiple floors into a unified 3D stack, and export
+// the result.
+//
+// TABS:
+//   Library   — browse uploaded maps, set/change master, delete with migration
+//   Upload    — client-side image resize → PNG, crop tool, send base64 to backend
+//   Edit      — place receivers (BLE scanners) + draw room boundary polygons
+//   3D Stack  — floor assignment table, alignment overlay editor (drag/scale/
+//               rotate), Point Align solver, tie-in system, 3D isometric preview
+//   Lights    — hex-grid light control overlay on floor plans
+//   Export    — download PNG/SVG/JSON backups, 3D building render
+//   Help      — how-it-works reference
+//
+// KEY DESIGN DECISIONS:
+//   • All coordinates are normalized 0–1 so they survive image resizing.
+//   • The "master" map is the fixed alignment anchor — all other maps are
+//     positioned relative to it via translate + rotate + scale transforms.
+//   • Tie-ins are stored alignment snapshots that act as constraints; the
+//     conflict resolver averages or warns when new alignment diverges.
+//   • Point Align uses a 6-DOF affine least-squares solver to compute
+//     transform from matched point pairs (see _solvePtAlign).
+//   • _ptAlign.active gates the 5s poll re-render to prevent the side-by-side
+//     panels from being destroyed mid-interaction.
 
+// ── Main Render Entry Point ──────────────────────────────────────────────────
+// Dispatches to the active tab. Called every 5s by the poll cycle and on
+// user-initiated state changes.
 export function render(ctx){
   const { el, esc, pill, helpBtn } = ctx.helpers;
   const isBasic = ctx.state.complexity === "basic";
@@ -69,6 +93,7 @@ export function render(ctx){
   return root;
 }
 
+// ── Tab Button Helper ─────────────────────────────────────────────────────────
 function _tabBtn(id,label,active,setTab){
   const b = document.createElement("button");
   b.className = "tab" + (active===id ? " active" : "");
@@ -77,9 +102,12 @@ function _tabBtn(id,label,active,setTab){
   return b;
 }
 
+// Sentinel floor_id for outdoor/exterior maps — treated specially in the
+// 3D stack (fitted inside the indoor bounding box rather than its own slab).
 const OUTSIDE_FLOOR_ID = "__outside__";
 function _isOutsideMap(m) { return (m.floor_id || "") === OUTSIDE_FLOOR_ID; }
 
+// Resolve a floor_id to a human-readable name from the HA floor registry.
 function _floorName(ctx, floor_id){
   const floors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
   const id = String(floor_id || "").trim();
@@ -89,6 +117,11 @@ function _floorName(ctx, floor_id){
   return f ? (f.name || f.id) : id;
 }
 
+// ── Library Tab ──────────────────────────────────────────────────────────────
+// Lists all uploaded maps with thumbnails, master badges, and action buttons.
+// Masters sort to the top. Each row shows receiver count, dimensions, floor,
+// and whether a coverage gap was detected. Includes the undo-migration banner
+// and the Change Master wizard launcher.
 function _library(ctx, maps, activeId, helpBtn, isBasic){
   const { el } = ctx.helpers;
   helpBtn = helpBtn || (()=>null);
@@ -271,6 +304,12 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
   return wrap;
 }
 
+// ── Delete Map Modal ─────────────────────────────────────────────────────────
+// When a map has data (receivers, beacons, room outlines), offers the option
+// to migrate that data to another same-floor map before deleting. Migration
+// transforms coordinates from source → world → target coordinate space using
+// each map's stack transform, and optionally extends the target canvas if
+// migrated items would fall outside [0,1].
 function _deleteMapModal(ctx, srcMap, allMaps){
   const { el } = ctx.helpers;
 
@@ -385,9 +424,12 @@ function _deleteMapModal(ctx, srcMap, allMaps){
     }
 
     // Check if any migrated coords would fall outside [0,1] on target
-    // Simple JS mapPt/inverse to estimate — mirrors backend transform
+    // Transform source map coords → world coords → target map coords to check
+    // if migrated items would fall outside the target's [0,1] canvas.
+    // This mirrors the backend's coordinate transform pipeline.
     const srcStk = srcMap.stack || {};
     const tgtStk = tgt.stack || {};
+    // Map-local (0–1) → world (shared coordinate space via stack transform)
     const _mapToWorld = (px, py, stk) => {
       const sc = stk.scale||1, sx = stk.scale_x_adj||1, ar = stk.ref_ar||1;
       const ox = stk.x_offset||0, oy = stk.y_offset||0;
@@ -395,6 +437,7 @@ function _deleteMapModal(ctx, srcMap, allMaps){
       const dx=(px-0.5)*sc*sx, dy=(py-0.5)*sc*ar;
       return [(0.5+ox)+dx*Math.cos(r)-dy*Math.sin(r), ar*(0.5+oy)+dx*Math.sin(r)+dy*Math.cos(r)];
     };
+    // World → map-local (inverse of _mapToWorld)
     const _worldToMap = (wx, wy, stk) => {
       const sc = stk.scale||1, sx = stk.scale_x_adj||1, ar = stk.ref_ar||1;
       const ox = stk.x_offset||0, oy = stk.y_offset||0;
@@ -535,6 +578,12 @@ function _deleteMapModal(ctx, srcMap, allMaps){
   ctx.actions.openModal(`Delete "${srcMap.name||srcMap.id}"?`, body, "This map has data — migrate it to another map first?");
 }
 
+// ── Upload Tab ───────────────────────────────────────────────────────────────
+// Accepts any image type (PNG/JPG/WebP/GIF/SVG), resizes client-side to a max
+// dimension, converts to PNG via canvas, and sends base64 to the backend.
+// Includes a drag-to-crop tool and floor selector (from HA Area Registry).
+// The selected file is stored on ctx.state so it survives poll-triggered
+// DOM rebuilds (the file input element gets destroyed on re-render).
 function _upload(ctx, helpBtn, isBasic){
   helpBtn = helpBtn || (()=>null);
   const { el } = ctx.helpers;
@@ -742,6 +791,11 @@ function _upload(ctx, helpBtn, isBasic){
 }
 
 
+// ── Image Processing Helpers ─────────────────────────────────────────────────
+
+// Reads a File object, optionally crops it, constrains to maxDim, and returns
+// {width, height, pngBase64}. All image processing happens client-side via
+// an offscreen <canvas> — no server round-trip for resize/convert.
 async function _preparePng(file, maxDim, crop=null){
   const buf = await file.arrayBuffer();
   const blob = new Blob([buf], {type: file.type || "image/*"});
@@ -780,6 +834,8 @@ async function _preparePng(file, maxDim, crop=null){
   }
 }
 
+// Convert ArrayBuffer to base64 string. Processes in 32KB chunks to avoid
+// exceeding the max argument count for String.fromCharCode.apply().
 function _arrayBufferToBase64(buffer){
   let binary = "";
   const bytes = new Uint8Array(buffer);
@@ -801,7 +857,8 @@ function _loadImage(url){
   });
 }
 
-// Like _preparePng but reads from a URL (for already-uploaded map images).
+// Like _preparePng but loads from a URL (for trim/bake operations on
+// already-uploaded map images that are served by HA at /local/...).
 async function _preparePngFromUrl(imgUrl, maxDim, crop=null){
   const img = await _loadImage(imgUrl);
   let w = img.naturalWidth || img.width;
@@ -831,6 +888,17 @@ async function _preparePngFromUrl(imgUrl, maxDim, crop=null){
   return {width:tw, height:th, pngBase64:b64};
 }
 
+// ── Edit Tab ─────────────────────────────────────────────────────────────────
+// Full map editor with two modes:
+//   Receivers mode — double-click to place BLE scanner markers, drag to
+//                    reposition, assign room from HA Area Registry, auto-detect
+//                    live BLE radios for one-click placement.
+//   Rooms mode    — click to draw polygon room boundaries, auto-circle fallback
+//                    for rooms with assigned receivers but no polygon yet.
+//
+// Draft state is kept on ctx.state.maps._draft* so edits survive tab switches
+// within the same session. Changes are only persisted on explicit "Save Layout".
+// Also includes Trim Image and Rotate Image sub-panels.
 function _edit(ctx, map){
   const { el, roomColor } = ctx.helpers;
   const card = el("div",{class:"card"});
@@ -844,6 +912,8 @@ function _edit(ctx, map){
   const floorById = (id)=>floors.find(f=>f.id===id) || null;
 
   // --- Draft state (per-map) ---
+  // Reset drafts when switching to a different map. Drafts are mutable copies
+  // of the map's saved data; the original is untouched until "Save Layout".
   if(!ctx.state.maps._draftReceivers || ctx.state.maps._draftMapId !== map.id){
     ctx.state.maps._draftReceivers = (map.receivers||[]).map(r=>({
       id: r.id||"",
@@ -853,7 +923,9 @@ function _edit(ctx, map){
       room: r.room || "",
       source: r.source || ""
     }));
-    // Backfill source on old receivers that lack it
+    // Backfill: older receivers may lack a `source` field (MAC address).
+    // Match by label against live BLE radios and persist the backfill so
+    // future stale-receiver checks can work reliably.
     const _snap = (ctx.state.live && ctx.state.live.snapshot) || null;
     const _radios = (_snap && _snap.ble && Array.isArray(_snap.ble.radios)) ? _snap.ble.radios : [];
     if(_radios.length){
@@ -1421,8 +1493,11 @@ function _edit(ctx, map){
   refreshList();
   renderTools();
 
-  // ── Trim Image panel ────────────────────────────────────────────────────
-  // Shown/hidden by the "Trim" button in the title row.
+  // ── Trim Image Panel ────────────────────────────────────────────────────
+  // Lets user crop the uploaded image in-place. Drag on the preview to select
+  // a region; Apply Trim re-renders the cropped area as a new PNG and replaces
+  // the map image on the backend. Receiver/room coordinates are remapped by
+  // the backend's crop transform to stay aligned with the trimmed image.
   const trimPanel = el("div",{style:"display:none;margin-top:10px"});
   const trimStatus = el("div",{class:"mono",style:"font-size:12px;margin-top:6px"}, "\u2014");
 
@@ -1530,12 +1605,14 @@ function _edit(ctx, map){
   // Insert Trim button into the existing title row buttons (direct reference — no fragile querySelector)
   titleBtns.insertBefore(trimToggleBtn, titleBtns.firstChild);
 
-  // ── Rotate Image panel ─────────────────────────────────────────────────
-  // Only available before the map is connected to the 3D stack fabric.
-  // Bakes rotation into the actual image so downstream code stays simple.
-  // Rotation is available unless the map has been positioned in the 3D stack
-  // (has tie-ins or is the master map). Fresh maps get default stack values
-  // (x_offset=0, scale=1) which don't count as "connected".
+  // ── Rotate Image Panel ─────────────────────────────────────────────────
+  // Bakes rotation directly into the image file (not a CSS transform) so all
+  // downstream code sees a pre-rotated image. Disabled once the map has
+  // tie-ins or is the master — rotating a connected map would invalidate all
+  // alignment relationships. Fresh maps (x_offset=0, scale=1, no tie-ins)
+  // don't count as "connected" and can still be rotated.
+  // Receiver and room-boundary coordinates are remapped through the same
+  // rotation matrix so they stay aligned with the rotated image.
   const _stk = map.stack || {};
   const _hasStackTieIns = Array.isArray(_stk.tie_ins) && _stk.tie_ins.length > 0;
   const _isMaster = !!_stk.is_master;
@@ -1683,7 +1760,7 @@ function _edit(ctx, map){
   return card;
 }
 
-// ----- helpers for maps -----
+// ── Edit Tab Helpers ─────────────────────────────────────────────────────────
 
 function _slug(s){
   return String(s||"").trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"") || "floor";
@@ -1706,6 +1783,8 @@ function _floorSelect(floors, value, onChange){
   return sel;
 }
 
+// Group receivers by their assigned room name → {room: [receivers]}.
+// Used to generate auto-circle fallbacks for rooms without drawn polygons.
 function _roomToReceivers(receivers){
   const out = {};
   for(const r of (receivers||[])){
@@ -1717,6 +1796,8 @@ function _roomToReceivers(receivers){
   return out;
 }
 
+// Auto-circle fallback: if a room has assigned receivers but no drawn polygon,
+// show a dashed circle centered on the average receiver position.
 function _autoRoomCircle(rxs){
   if(!rxs || !rxs.length) return null;
   let cx=0, cy=0;
@@ -1733,8 +1814,9 @@ function _centroid(points){
   return [clamp01(x/points.length), clamp01(y/points.length)];
 }
 
+// Library thumbnail: composites the map image + room bounds SVG + optional
+// coverage-gap recommendation polygon into a fixed-width preview.
 function _libraryThumb(m, ctx, reco){
-  // Fixed-width thumbnail showing the map image + room bounds SVG + optional recommendation polygon.
   const iw = m.image?.width  || 800;
   const ih = m.image?.height || 600;
   const ar = ih / iw;
@@ -1806,6 +1888,9 @@ function _layoutText(receivers, roomBounds){
 }
 
 
+// Makes a receiver marker node draggable within its container. Updates the
+// receiver's (x,y) coordinates in normalized 0–1 space as the user drags.
+// onDragState callback sets ctx.state.maps._editDragging to suppress re-renders.
 function _makeDraggable(node, receiver, container, onMoved=null, isEnabled=null, onDragState=null){
   let dragging = false;
   let rect = null;
@@ -1857,9 +1942,13 @@ function clamp01(x){
 }
 
 // ─── Scanner Placement Recommender ───────────────────────────────────────────
+// Analyses coverage gaps by scoring each room based on: distance from nearest
+// receiver (primary driver), live traffic volume, and signal strength. Rooms
+// scoring above a threshold are merged into a convex-hull "recommended zone"
+// polygon, which is displayed as a yellow overlay on the map.
 
+// Andrew's monotone chain convex hull — O(n log n).
 function _convexHull(pts){
-  // Andrew's monotone chain — O(n log n)
   if(pts.length < 3) return pts.slice();
   const s = pts.slice().sort((a,b)=> a[0]!==b[0] ? a[0]-b[0] : a[1]-b[1]);
   const cross = (O,A,B)=>(A[0]-O[0])*(B[1]-O[1])-(A[1]-O[1])*(B[0]-O[0]);
@@ -1877,8 +1966,9 @@ function _convexHull(pts){
   return lo.concat(hi);
 }
 
+// Inflate a convex hull outward from its centroid by `dist` (in 0–1 space).
+// Gives the recommendation zone some padding for placement flexibility.
 function _inflatePolygon(pts, dist){
-  // Push each hull vertex outward from centroid by dist (in 0-1 space).
   if(!pts.length) return pts;
   const cx = pts.reduce((s,p)=>s+p[0],0)/pts.length;
   const cy = pts.reduce((s,p)=>s+p[1],0)/pts.length;
@@ -1945,7 +2035,16 @@ function _recommendPlacement(receivers, roomBounds, snap){
   return { polygon, rooms: candidates.map(c=>c.room), topScore: maxScore };
 }
 
-// ── Alignment conflict helpers ────────────────────────────────────────────────
+// ── Alignment Conflict & Tie-in Helpers ──────────────────────────────────────
+// Tie-ins are stored alignment snapshots (x_offset, y_offset, scale, rotation)
+// referencing a specific map. When the user drags a target map to a new
+// position, these helpers detect whether the new position conflicts with
+// previously recorded tie-in constraints.
+//
+// Conflict severity is computed as a weighted metric:
+//   55% offset distance + 30% scale difference + 15% rotation difference.
+// <5% → auto-average silently; 5–25% → offer Average & Save; >25% → warn.
+
 // Returns array of conflict objects for any tie-ins that differ from the new position.
 function _checkAlignConflicts(newX, newY, newScale, newRot, tgtMap, allMaps) {
   const tieIns = (tgtMap?.stack?.tie_ins) || [];
@@ -1970,7 +2069,8 @@ function _checkAlignConflicts(newX, newY, newScale, newRot, tgtMap, allMaps) {
   return conflicts;
 }
 
-// Average the new alignment position with all tie-in constraints equally.
+// Average the new alignment with all existing tie-in constraints equally.
+// Used for auto-reconciliation when conflicts are minor (<5% variance).
 function _averageAlignWithTieIns(newX, newY, newScale, newRot, tieIns) {
   const xs = [newX], ys = [newY], ss = [newScale], rs = [newRot||0];
   for(const ti of tieIns){
@@ -1981,7 +2081,9 @@ function _averageAlignWithTieIns(newX, newY, newScale, newRot, tieIns) {
   return { x_offset: avg(xs), y_offset: avg(ys), scale: avg(ss), rotation: avg(rs) };
 }
 
-// Returns true if a map qualifies for master designation (pristine, unmodified).
+// Returns true if a map qualifies for master designation. A map is eligible
+// if it hasn't been moved/scaled/rotated from its default position — i.e.,
+// it's still "pristine" and would make a natural alignment anchor.
 function _isMasterEligible(m) {
   if(_isOutsideMap(m)) return false;  // Outside maps cannot be masters
   const s = m.stack || {};
@@ -1993,8 +2095,14 @@ function _isMasterEligible(m) {
       && !s.ref_map_id;
 }
 
-// ── Change Master — transform helpers + wizard ───────────────────────────────
+// ── Change Master — Transform Helpers + Wizard ───────────────────────────────
+// Changing the master is a destructive operation: the old master gets the
+// inverse of the new master's transform, and all maps that referenced the old
+// master are relinked via composed transforms. Floating-point rounding means
+// the result may not match the original layout perfectly.
 
+// Compute the inverse of a 2D similarity transform (translate + rotate + scale).
+// If B maps master → new_master, then B⁻¹ maps new_master → master.
 function _invertTransform(bx, by, bs, br_deg) {
   const br = (br_deg || 0) * Math.PI / 180;
   const invS = 1.0 / (bs || 1.0);
@@ -2006,6 +2114,8 @@ function _invertTransform(bx, by, bs, br_deg) {
   };
 }
 
+// Compose two 2D similarity transforms: result = outer ∘ inner.
+// Used to relink maps that referenced the old master through the new master.
 function _composeTransforms(outer, inner) {
   const or_rad = (outer.rotation || 0) * Math.PI / 180;
   const cos_r = Math.cos(or_rad);
@@ -2019,6 +2129,9 @@ function _composeTransforms(outer, inner) {
   };
 }
 
+// Execute the master swap: (1) new master → pristine origin, (2) old master →
+// inverse transform referenced to new master, (3) relink all other maps that
+// directly referenced old master via composed transforms.
 async function _executeChangeMaster(ctx, oldMaster, newMaster, allMaps) {
   const ns = newMaster.stack || {};
   const bx = ns.x_offset || 0, by = ns.y_offset || 0;
@@ -2075,6 +2188,10 @@ async function _executeChangeMaster(ctx, oldMaster, newMaster, allMaps) {
   return relinked;
 }
 
+// Multi-step wizard for changing the master map. Step 1: risk warning.
+// Step 2: select new master + verify its alignment to the current master.
+// Step 3: execute swap and show result. The wizard enforces that the new
+// master must be aligned to the current master before the swap proceeds.
 function _changeMasterWizard(ctx, allMaps, currentMaster) {
   const { el } = ctx.helpers;
   const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -2197,9 +2314,11 @@ function _changeMasterWizard(ctx, allMaps, currentMaster) {
   return container;
 }
 
-// ── Emergency tie-in recovery ─────────────────────────────────────────────────
-// Scans all maps and returns a recovery plan: for each map, which tie-ins to keep
-// vs remove based on consensus cluster detection.
+// ── Emergency Tie-in Recovery ─────────────────────────────────────────────────
+// Scans all maps for inconsistent tie-ins and produces a recovery plan.
+// Uses consensus clustering: each tie-in "votes" for a position, and outliers
+// (those that agree with fewer than half the max-agreement cluster) are removed.
+// The saved primary alignment is treated as an implicit vote.
 // Returns array of { map, keptTieIns, removedTieIns, reason }.
 function _emergencyRecoverTieIns(allMaps) {
   const OFF_T   = 0.20;   // normalized offset distance threshold
@@ -2271,6 +2390,13 @@ function _emergencyRecoverTieIns(allMaps) {
   return plans;
 }
 
+// ── Export Tab ───────────────────────────────────────────────────────────────
+// Five export sections:
+//   1. Floor Plan Image — raw PNG download
+//   2. Room Drawing SVG — scalable room boundaries + receiver dots
+//   3. Combined PNG — floor plan + room overlay composited via canvas
+//   4. Full 3D Building — isometric SVG/PNG of all floors
+//   5. Map Data Backup — full JSON backup/restore including base64 images
 function _export(ctx, active, maps_list){
   const { el } = ctx.helpers;
 
@@ -2674,6 +2800,24 @@ function _buildDemoSVG(fp){
 }
 
 // ─── 3D Stack Tab ─────────────────────────────────────────────────────────────
+// The spatial backbone of PadSpan's multi-floor system. Three main sections:
+//
+// 1. FLOOR ASSIGNMENT TABLE — assign each map to an HA floor, set z_level
+//    (stacking order), ceiling height, and visibility toggle.
+//
+// 2. ALIGNMENT OVERLAY EDITOR — two layers stacked: the reference map (fixed)
+//    and the target map (semi-transparent, draggable). User drags/scales/rotates
+//    the target to align structural features. CSS transform with
+//    transform-origin:50% 50% means translate moves the centre point, then
+//    rotate+scale happen around that translated centre. View Zoom scales the
+//    entire stage (not the maps) so both maps fit on screen.
+//
+// 3. 3D ISOMETRIC PREVIEW — SVG render of all floors stacked in isometric
+//    perspective. Floor spacing, L/R offset, and focus floor are adjustable
+//    via sliders. Outside maps are fitted inside the indoor bounding box.
+//
+// Also includes: Point Align (side-by-side affine solver), tie-in system,
+// dual-master conflict resolution, and emergency tie-in recovery.
 
 const _LEVEL_NAMES = ["Basement", "Ground", "Level 1", "Level 2", "Level 3"];
 
@@ -2681,7 +2825,8 @@ function _stack(ctx, maps, helpBtn){
   const { el, esc } = ctx.helpers;
   helpBtn = helpBtn || (()=>null);
 
-  // Init alignment state (exclude outside maps from alignment candidates)
+  // Init alignment state — outside maps are excluded from alignment because
+  // they use a different coordinate model (fitted to indoor bounding box).
   const _alignableMaps = maps.filter(m => !_isOutsideMap(m));
   if(!ctx.state.maps._stackAlign){
     const firstTgt = _alignableMaps[1] || _alignableMaps[0] || null;
@@ -2720,7 +2865,9 @@ function _stack(ctx, maps, helpBtn){
         .map((f, i) => ({ value: f.level ?? i, label: f.name || f.id }))
     : _LEVEL_NAMES.map((name, i) => ({ value: i, label: name }));
 
-  // View zoom (scales the stage down so both maps fit on screen) and target opacity
+  // View zoom scales the entire overlay stage (not individual maps) so both
+  // reference and target are visible even when the target is offset far off.
+  // Target opacity controls how transparent the draggable overlay is.
   if(ctx.state.maps._stackViewScale  === undefined) ctx.state.maps._stackViewScale  = 1.0;
   if(ctx.state.maps._stackTgtOpacity === undefined) ctx.state.maps._stackTgtOpacity = 0.55;
   if(ctx.state.maps._stackOutsideMode === undefined) ctx.state.maps._stackOutsideMode = false;
@@ -2953,7 +3100,10 @@ function _stack(ctx, maps, helpBtn){
   updateReadout();
   card.appendChild(readoutDiv);
 
-  // stageOuter: scrollable canvas with 60px buffer so dragged target remains visible near edges
+  // stageOuter: scrollable canvas with 60px padding so the dragged target
+  // remains visible when it overflows the reference map's bounding box.
+  // stageWrap: the actual sized container. Its CSS transform:scale() is the
+  // "View Zoom" — scaling the whole stage, not individual map layers.
   const stageOuter = el("div",{style:"margin-top:10px;overflow:auto;max-width:100%;border-radius:8px;background:#071008;padding:60px"});
   const stageWrap = el("div",{style:`position:relative;overflow:visible;border-radius:6px;background:#071008;width:100%;min-width:220px;transform:scale(${ctx.state.maps._stackViewScale||1.0});transform-origin:50% 50%`});
   stageOuter.appendChild(stageWrap);
@@ -3049,8 +3199,11 @@ function _stack(ctx, maps, helpBtn){
       tgtLayerRef = tgtLayer;
 
       applyCurrentTransform = ()=>{
-        // transform-origin:50% 50% means rotate/scale happen around element center.
-        // translate moves the center to (x_offset+0.5, y_offset+0.5) of stage; rotate/scale around that point.
+        // CSS transform chain: translate → rotate → scale.
+        // With transform-origin:50% 50%, rotate and scale happen around the
+        // element's centre. translate() shifts that centre point by
+        // (x_offset, y_offset) as a percentage of the stage dimensions.
+        // scaleX_adj allows non-uniform stretch (X differs from Y).
         const sx = (alignState.scale || 1.0) * (alignState.scaleX_adj || 1.0);
         const sy = alignState.scale || 1.0;
         tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) rotate(${alignState.rotation||0}deg) scale(${sx},${sy})`;
@@ -3239,43 +3392,73 @@ function _stack(ctx, maps, helpBtn){
   ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; alignState.rotation=0; alignState.scaleX_adj=1.0; applyCurrentTransform(); }},"Reset"));
 
   // ── Point Align ────────────────────────────────────────────────────────────
-  // Shows ref & tgt maps SIDE BY SIDE (not overlaid). User clicks matching
-  // points on each, then computes a similarity transform.
+  // An alternative to manual drag-align: shows ref & tgt maps SIDE BY SIDE
+  // (not overlaid). User clicks matching real-world locations on each map,
+  // alternating between ref and tgt. After 3+ matched pairs, a least-squares
+  // affine transform is computed to determine the optimal alignment.
+  //
+  // When _ptAlign.active is true, the overlay stage and normal controls are
+  // hidden and replaced with the side-by-side panels. This flag also acts as
+  // a re-render guard — the 5s poll cycle skips _renderCurrentView() when
+  // active to prevent destroying the point-picking UI mid-interaction.
   if(!ctx.state.maps._ptAlign) ctx.state.maps._ptAlign = { active: false, refPts: [], tgtPts: [], phase: "ref" };
   const _pta = ctx.state.maps._ptAlign;
 
-  // Solve affine transform from point pairs (translate + rotate + scale + stretch).
+  // ── Affine Transform Solver (_solvePtAlign) ───────────────────────────────
+  //
+  // Given N >= 3 matched point pairs (ref[i], tgt[i]), solves for the 6-DOF
+  // affine transform that best maps target coordinates to reference coordinates.
+  //
+  // MODEL (centred at 0.5, 0.5):
+  //   ref_x - 0.5 = a*(tgt_x - 0.5) + b*(tgt_y - 0.5) + dx
+  //   ref_y - 0.5 = c*(tgt_x - 0.5) + d*(tgt_y - 0.5) + dy
+  //
+  // This gives 2N equations in 6 unknowns [a, b, c, d, dx, dy].
+  //
+  // SOLUTION: Assemble the normal equations AᵀA·x = Aᵀb (6×6 system), then
+  // solve via Gaussian elimination with partial pivoting. This is the standard
+  // least-squares approach — efficient and numerically stable for small N.
+  //
+  // DECOMPOSITION: The 2×2 matrix [[a,b],[c,d]] is decomposed into:
+  //   sx = √(a² + c²)  — X-axis scale (includes stretch)
+  //   sy = √(b² + d²)  — Y-axis scale (the "uniform" scale)
+  //   θ  = atan2(c, a)  — rotation angle
+  //   scale     = sy
+  //   scaleX_adj = sx / sy  — non-uniform X stretch relative to Y
+  //
+  // RESIDUAL: RMS distance between predicted and actual reference points.
+  // Low residual (<1%) means the maps align well; high residual suggests
+  // mismatched points or non-affine distortion (e.g., lens warp).
+  //
   // Returns {x_offset, y_offset, scale, rotation, scaleX_adj, residual}
-  // Model: ref = Affine(tgt centered at 0.5, 0.5) + translate
-  //   ref_x - 0.5 = a*u + b*v + dx    where u = tgt_x - 0.5, v = tgt_y - 0.5
-  //   ref_y - 0.5 = c*u + d*v + dy
-  // 6 unknowns: a, b, c, d, dx, dy → least-squares via 6×6 normal equations
-  // Decompose: sx = sqrt(a²+c²), sy = sqrt(b²+d²), θ = atan2(c,a)
-  //            scale = sy, scaleX_adj = sx/sy, rotation = θ
   const _solvePtAlign = (refPts, tgtPts, ar) => {
     const n = Math.min(refPts.length, tgtPts.length);
-    if(n < 3) return null;
-    // Work in aspect-ratio-corrected space for Y
+    if(n < 3) return null;  // Need at least 3 pairs for a unique 6-DOF solution
+    // Scale Y by aspect ratio so distances are isotropic (pixels, not fractions).
+    // Without this, a 16:9 map would weight X-distance more than Y-distance.
     const rp = refPts.slice(0,n).map(p=>({x:p.x, y:p.y*ar}));
     const tp = tgtPts.slice(0,n).map(p=>({x:p.x, y:p.y*ar}));
     const cx = 0.5, cy = 0.5*ar;
-    // Build 6×6 normal equations: ATA * [a,b,c,d,dx,dy]^T = ATb
+    // Build normal equations AᵀA · params = Aᵀb (6×6 symmetric positive-definite)
     const K = 6;
     const ATA = Array.from({length:K},()=>Array(K).fill(0));
     const ATb = Array(K).fill(0);
     for(let i=0;i<n;i++){
       const u = tp[i].x - cx, v = tp[i].y - cy;
       const bx = rp[i].x - cx, by = rp[i].y - cy;
-      // Row for x-equation: [u, v, 0, 0, 1, 0] · params = bx
+      // Each point pair contributes two rows to the design matrix A:
+      //   x-equation: [u, v, 0, 0, 1, 0] · [a,b,c,d,dx,dy]ᵀ = bx
+      //   y-equation: [0, 0, u, v, 0, 1] · [a,b,c,d,dx,dy]ᵀ = by
       const r1 = [u, v, 0, 0, 1, 0];
-      // Row for y-equation: [0, 0, u, v, 0, 1] · params = by
       const r2 = [0, 0, u, v, 0, 1];
       for(let j=0;j<K;j++){
         for(let k=0;k<K;k++) ATA[j][k] += r1[j]*r1[k] + r2[j]*r2[k];
         ATb[j] += r1[j]*bx + r2[j]*by;
       }
     }
-    // Gaussian elimination with partial pivoting
+    // Gaussian elimination with partial pivoting on the augmented matrix [AᵀA | Aᵀb].
+    // Partial pivoting (swapping rows to put the largest absolute value on the
+    // diagonal) prevents division by near-zero and improves numerical stability.
     const M = ATA.map((r,i)=>[...r, ATb[i]]);
     for(let col=0;col<K;col++){
       let maxR=col;
@@ -3287,20 +3470,24 @@ function _stack(ctx, maps, helpBtn){
         for(let c2=col;c2<=K;c2++) M[r][c2]-=f*M[col][c2];
       }
     }
+    // Back-substitution: solve the upper-triangular system from bottom to top
     const x=Array(K).fill(0);
     for(let r=K-1;r>=0;r--){
       x[r]=M[r][K];
       for(let c2=r+1;c2<K;c2++) x[r]-=M[r][c2]*x[c2];
       x[r]/=M[r][r];
     }
+    // Extract the 6 parameters; dy is de-corrected for the AR scaling
     const a=x[0], b=x[1], c=x[2], d=x[3], dx=x[4], dy=x[5]/ar;
-    // Decompose affine [[a,b],[c,d]] into rotation + non-uniform scale
-    const sx = Math.sqrt(a*a + c*c);  // X scale
-    const sy = Math.sqrt(b*b + d*d);  // Y scale
-    const rotation = Math.atan2(c, a) * 180 / Math.PI;
-    const scale = sy;                 // uniform scale = Y scale
-    const scaleX_adj = sx > 0 && sy > 0 ? sx / sy : 1.0;  // X stretch relative to uniform
-    // Compute residual using full affine
+    // Decompose the 2×2 affine matrix [[a,b],[c,d]] via polar decomposition:
+    //   Column 1 (a,c) represents how the X-axis is transformed
+    //   Column 2 (b,d) represents how the Y-axis is transformed
+    const sx = Math.sqrt(a*a + c*c);  // X-axis scale magnitude
+    const sy = Math.sqrt(b*b + d*d);  // Y-axis scale magnitude
+    const rotation = Math.atan2(c, a) * 180 / Math.PI;  // rotation from X-axis column
+    const scale = sy;                 // uniform scale = Y scale (convention)
+    const scaleX_adj = sx > 0 && sy > 0 ? sx / sy : 1.0;  // non-uniform X stretch
+    // Compute RMS residual: how well the affine model fits the point pairs
     let res = 0;
     for(let i=0;i<n;i++){
       const u = tp[i].x - cx, v = tp[i].y - cy;
@@ -3316,7 +3503,8 @@ function _stack(ctx, maps, helpBtn){
   const _ptAlignContainer = el("div",{style:"display:none;margin-top:10px"});
   const _ptAlignToolbar = el("div",{style:"display:none;margin-top:8px;padding:10px 12px;border-radius:8px;background:#0a1a2a;border:1px solid #1e4976"});
 
-  // Build SVG markers for one map panel
+  // Build numbered circle markers for the Point Align side-by-side panels.
+  // Each point gets a numbered label so the user can verify correspondence.
   const _ptAlignMarkerSVG = (pts, color, ar2) => {
     let svg = "";
     for(let i=0;i<pts.length;i++){
@@ -3480,7 +3668,12 @@ function _stack(ctx, maps, helpBtn){
       const rDx       = Math.round(result.x_offset * 10000) / 10000;
       const rDy       = Math.round(result.y_offset * 10000) / 10000;
 
-      // Bake: render transformed image onto canvas, upload as new file
+      // ── Bake into image ──
+      // When "Bake" is checked, rotation/scale/stretch are rendered onto a new
+      // canvas image and uploaded to replace the target map's file. The stored
+      // transform is then reset to translation-only (rotation=0, scale=1,
+      // scaleX_adj=1). This "burns in" the geometric correction so future
+      // alignment only needs a simple translate, making the stack more robust.
       if(_pta.bake && tgtMap && tgtMap.image?.filename){
         computeBtn.disabled = true; computeBtn.textContent = "Baking…";
         try {
@@ -4555,16 +4748,21 @@ async function _drawSvgOnCanvas(g, svgStr, w, h, alpha=1.0){
   }
 }
 
-// ── LIGHTS TAB ───────────────────────────────────────────────────────────────
+// ── Lights Tab ───────────────────────────────────────────────────────────────
+// Shows a hex-grid light control overlay on the floor plan image. Each light
+// entity gets a hexagonal button positioned at its room's centroid. Tapping
+// toggles on/off. Yellow = on, grey = off. Lights are discovered from HA's
+// entity registry and grouped by area_name.
 
-// Deterministic 3-char code: 1 letter + 2-digit number  (A01 … Z99)
+// Deterministic 3-char code for each light: A01–A99, B01–B99, etc.
 function _lightCode(idx) {
   const letter = String.fromCharCode(65 + Math.floor(idx / 99));
   const num    = String((idx % 99) + 1).padStart(2, "0");
   return letter + num;
 }
 
-// SVG points string for a pointy-top regular hexagon (top vertex pointing up)
+// SVG points string for a pointy-top regular hexagon. Each vertex is at
+// 60° intervals starting from 90° (top vertex).
 function _hexPts(cx, cy, r) {
   const pts = [];
   for (let k = 0; k < 6; k++) {
@@ -4574,9 +4772,10 @@ function _hexPts(cx, cy, r) {
   return pts.join(" ");
 }
 
-// Cluster offsets for N hexes around a room centre (tight, touching formation)
+// Compute hex offsets for N lights clustered around a room centre.
+// Uses a honeycomb ring layout: 1 centre + up to 6 surrounding hexes.
+// Overflow beyond 7 falls back to a 3-wide grid.
 function _hexCluster(n, r) {
-  // Pointy-top touching distance between centres = r * √3; add 2 px gap
   const d = r * Math.sqrt(3) + 2;
   const ring = Array.from({length: 6}, (_, i) => {
     const a = (30 + i * 60) * Math.PI / 180;

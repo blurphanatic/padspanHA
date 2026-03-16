@@ -137,12 +137,20 @@ _KNN_LIVE_THRESHOLD: float = 0.15
 
 
 def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
-    """Point-in-polygon / point-in-circle test against room_bounds. Returns room name or ''."""
+    """Determine which room a map-space (x, y) coordinate falls inside.
+
+    Used by k-NN positioning and pinned-beacon room resolution to convert
+    fractional map coordinates into a named room.  Supports two boundary
+    types defined in the map editor: circles and polygons.
+
+    Returns the room name, or '' if the point is outside all defined rooms.
+    """
     for room_name, b in room_bounds.items():
         if not isinstance(b, dict):
             continue
         btype = b.get("type", "poly")
         if btype == "circle":
+            # Simple Euclidean distance check against the circle's radius
             cx = float(b.get("cx", 0.5))
             cy = float(b.get("cy", 0.5))
             r = float(b.get("r", 0.12))
@@ -152,6 +160,8 @@ def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
             pts = b.get("points") or []
             if len(pts) < 3:
                 continue
+            # Ray-casting algorithm: cast a horizontal ray from (x, y) to
+            # the right and count edge crossings.  Odd count = inside.
             inside = False
             n = len(pts)
             j = n - 1
@@ -167,7 +177,19 @@ def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
 
 
 class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Periodically fetches the live BLE snapshot and exposes smoothed room data."""
+    """Central BLE room-presence engine for PadSpan HA.
+
+    Polls the live BLE snapshot every 10 seconds and runs each advertisement
+    through a multi-stage pipeline:
+        1. Kalman filter (per-scanner RSSI smoothing)
+        2. Gaussian room scoring (distance-weighted room assignment)
+        3. Majority-vote window (temporal stabilization)
+
+    The result dict maps object keys to enriched dicts containing the
+    confirmed room, confidence scores, and optional k-NN sub-room position.
+    Sensor and device_tracker entities consume this via HA's coordinator
+    pattern (async_config_entry_first_refresh / async_add_listener).
+    """
 
     def __init__(self, hass: HomeAssistant) -> None:
         super().__init__(
@@ -220,6 +242,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ── main update ──────────────────────────────────────────────────────────
 
     async def _async_update_data(self) -> dict[str, Any]:
+        """Main poll loop — called every _SCAN_INTERVAL (10s) by HA's coordinator.
+
+        High-level flow:
+          1. Fetch the live BLE snapshot (advertisements + radios + objects)
+          2. Resolve rotating private addresses (RPA) to canonical IDs
+          3. Build per-device, per-scanner RSSI maps and source-to-area lookups
+          4. For each BLE/iBeacon object, run the smoothing pipeline (_smooth_room)
+          5. Apply pinned-beacon overrides for beacons with known map positions
+          6. Carry forward stale objects for home/away persistence
+          7. Fire follow-alerts and record movement history for room changes
+
+        Returns {object_key: enriched_obj_dict} consumed by HA entities.
+        """
         from .websocket import _live_snapshot  # noqa: PLC0415  (circular-import guard)
         from .private_ble_resolver import get_resolver  # noqa: PLC0415
 
@@ -229,7 +264,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"PadSpan snapshot error: {err}") from err
 
         now = time.monotonic()
-        self._pending_room_changes: list[tuple[str, str | None, str]] = []  # (key, old_room, new_room)
+        # Accumulates (key, old_room, new_room) tuples during this poll cycle;
+        # processed at the end for alerts, movement history, and HA tag events.
+        self._pending_room_changes: list[tuple[str, str | None, str]] = []
 
         # ── Resolve rotating MACs to canonical IDs ────────────────────────────
         # Build a mapping {raw_addr_upper → canonical_key} so that all rotating
@@ -244,9 +281,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if res:
                         _rpa_map[raw] = str(res["canonical_id"]).upper()
 
-        # Build {key: {source: rssi}} and {key: tx_power} from advertisements.
-        # For resolved RPAs, use the canonical_id as key so all rotations share
-        # one Kalman state.
+        # ── Build per-device RSSI maps from raw advertisements ────────────
+        # addr_src_rssi: {canonical_addr: {scanner_source: best_rssi}}
+        # addr_tx_power: {canonical_addr: tx_power_level}
+        # For resolved RPAs, the canonical_id is the key so all rotating MACs
+        # from the same physical phone share one Kalman filter state.
         addr_src_rssi: dict[str, dict[str, float]] = {}
         addr_tx_power: dict[str, int] = {}
         for ad in (snap.get("ble") or {}).get("advertisements") or []:
@@ -264,10 +303,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if addr and tx_pwr is not None and addr not in addr_tx_power:
                 addr_tx_power[addr] = int(tx_pwr)
 
-        # Build {source: area} and {source: floor} from BLE radios
+        # ── Build source-to-area and source-to-floor lookups ──────────────
+        # These maps connect each ESPHome scanner (by source name) to its
+        # HA area and floor.  This is the bridge between "scanner X heard
+        # device Y at -65 dBm" and "device Y is in the Kitchen".
         source_to_area: dict[str, str] = {}
         source_to_floor: dict[str, str] = {}
-        # Pre-build area→floor lookup from HA registries (for adaptive floor detection)
+        # Pre-build area→floor from HA registries so we can derive scanner floors
         _area_to_floor: dict[str, str] = {}
         try:
             from homeassistant.helpers import area_registry as _ar_reg  # noqa: PLC0415
@@ -286,7 +328,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if fl:
                     source_to_floor[str(src)] = fl
 
-        # Apply per-scanner RSSI offsets to the raw addr_src_rssi dict
+        # ── Apply per-scanner RSSI calibration offsets ────────────────────
+        # Users can set per-scanner dBm offsets in Settings → Presence to
+        # compensate for hardware differences between ESPHome boards.
         try:
             _st = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
             _scanner_offsets: dict[str, float] = ((_st.data if _st else {}).get("scanner_offsets") or {})
@@ -299,7 +343,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception:
             pass
 
-        # Read configurable room-change delay from settings
+        # ── Dynamic vote-window sizing from room_change_delay_s setting ───
+        # The user sets a desired delay in seconds; we convert that to a
+        # vote window size and simple-majority threshold.  E.g. 20s at 10s
+        # poll → window=2, threshold=2 (must win 2 of last 2 polls).
         try:
             _st2 = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
             _delay_s = float(((_st2.data if _st2 else {}).get("room_change_delay_s") or 20.0))
@@ -314,10 +361,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result: dict[str, Any] = {}
 
         # ── Load pinned beacon positions + master map room bounds ────────────
+        # Pinned beacons have known (x, y) positions on a map, so their room
+        # is determined geometrically rather than by RSSI scoring.
+        # The master map's room_bounds take precedence for k-NN boundary checks.
         _pinned: dict[str, dict[str, Any]] = {}  # key → {map_id, x, y, room, floor_id}
-        _master_bounds: dict[str, Any] = {}  # room_bounds from the master map (precedence)
-        _master_map_id: str = ""              # master map ID (for k-NN coordinate space check)
-        _master_rooms: set[str] = set()       # rooms defined on the master map
+        _master_bounds: dict[str, Any] = {}  # room_bounds from the master map
+        _master_map_id: str = ""              # master map ID (k-NN coordinate space)
+        _master_rooms: set[str] = set()       # rooms with boundaries on the master map
         _maps_store = None
         try:
             _maps_store = self.hass.data.get(DOMAIN, {}).get(DATA_MAPS)
@@ -373,8 +423,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             self._known_objs[key] = dict(obj)
 
-            # Apply smoothing only to BLE objects (entity-based ones are already
-            # smoothed by their source integration, e.g. Bermuda).
+            # ── Per-object smoothing pipeline ──────────────────────────────
+            # Only BLE and iBeacon objects go through our Kalman + Gaussian +
+            # vote pipeline.  Entity-based trackers (e.g. Bermuda) arrive
+            # pre-smoothed from their own integration.
             if obj.get("kind") in ("ble", "private_ble"):
                 obj = dict(obj)  # copy — don't mutate the snapshot list in place
                 raw_addr = str(obj.get("address") or "").upper()
@@ -408,7 +460,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._known_objs[key] = dict(obj)  # refresh with smoothed data
             elif obj.get("kind") == "ibeacon":
                 obj = dict(obj)
-                # Merge per-source RSSI across all rotating MACs for this iBeacon
+                # iBeacons may advertise from multiple MAC addresses (rotation).
+                # Merge RSSI across all known addresses, keeping the strongest
+                # per scanner, then feed the merged dict into _smooth_room under
+                # the UUID-based key (not a MAC address).
                 merged_src: dict[str, float] = {}
                 for a in (obj.get("all_addresses") or []):
                     for src, rssi in addr_src_rssi.get(str(a).upper(), {}).items():
@@ -524,7 +579,15 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ── MQTT publishing (experimental) ───────────────────────────────────────
 
     async def _async_mqtt_publish(self, result: dict[str, Any]) -> None:
-        """Publish device state to MQTT if enabled. Errors never break the pipeline."""
+        """Publish device state to MQTT topics if enabled in settings.
+
+        Publishes to padspan/devices/{slug}/state (JSON), /area, and /distance
+        with retain=True so MQTT consumers get the last known state on connect.
+        Only devices with a user_label are published (unlabeled devices are
+        typically not interesting for external automation).
+        Errors are silently logged — MQTT is optional and must never break the
+        presence pipeline.
+        """
         try:
             st = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
             if not st or not (st.data or {}).get("mqtt_publish_enabled", False):
@@ -571,11 +634,32 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         master_bounds: dict | None = None,
         maps_store: Any | None = None,
     ) -> str | None:
-        """
-        Run one poll of the two-stage smoothing pipeline for a BLE device.
+        """Run one poll cycle of the full smoothing pipeline for a single BLE device.
+
+        Pipeline stages executed in order:
+          1. Kalman filter — smooth raw RSSI per (device, scanner) pair
+          2. Gaussian room scoring — convert smoothed RSSI to distance-weighted
+             room scores, with hysteresis to prevent boundary flickering
+          3. Floor stickiness — require extra margin for cross-floor transitions
+          4. Adaptive blend — mix in learned fingerprint similarity (if enabled)
+          5. k-NN override — use calibration fingerprints when confident enough
+          6. Majority vote — temporal window for final room confirmation
+
+        Args:
+            key: Object key (used for vote state and confidence tracking)
+            addr: Kalman state key (canonical address or UUID for iBeacons)
+            addr_src_rssi: Full {addr: {source: rssi}} map for this poll cycle
+            source_to_area: {scanner_source: HA_area_name}
+            vote_window / vote_threshold: Dynamic sizing from room_change_delay_s
+            source_to_floor: {scanner_source: floor_id} for cross-floor logic
+            master_rooms: Room names defined on the master map (tie-breaking)
+            master_map_id: ID of master map (for k-NN coordinate validation)
+            master_bounds: Room boundary polygons from the master map
+            maps_store: Maps store reference (for non-master map boundary lookup)
+
         Returns the confirmed (stable) room name, or None if not yet established.
-        vote_window / vote_threshold come from the per-poll configurable delay setting.
-        Stores room confidence in self._room_confidence[key].
+        Side-effects: updates self._room_confidence, _rssi_margin_confidence,
+        _knn_position, _confirmed_room, and _room_votes for this key.
         """
         live_srcs = addr_src_rssi.get(addr, {})
 
@@ -597,16 +681,18 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _Q = _KALMAN_Q
             _R = _KALMAN_R
 
-        # Update sources that reported this poll
+        # Kalman update for sources that reported this poll.
+        # K (Kalman gain) adapts automatically: high P (uncertainty) → K≈1
+        # (trust new measurement); low P → K≈0 (trust existing estimate).
         for src, rssi in live_srcs.items():
             if src in ema:
                 p = kp.get(src, _R)
-                K = p / (p + _R)
-                ema[src] = ema[src] + K * (rssi - ema[src])
-                kp[src] = (1.0 - K) * p + _Q
+                K = p / (p + _R)                        # Kalman gain
+                ema[src] = ema[src] + K * (rssi - ema[src])  # state update
+                kp[src] = (1.0 - K) * p + _Q            # covariance update
             else:
-                ema[src] = rssi   # first observation — seed without smoothing
-                kp[src] = _R      # start with maximum uncertainty
+                ema[src] = rssi   # first observation — seed directly
+                kp[src] = _R      # initialize at max uncertainty
 
         # Decay sources that did NOT report (drifts toward silence target and pruned).
         # Total silence (no scanners reporting) uses a gentler -95 dBm phantom so
@@ -625,7 +711,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     del ema[src]
                     kp.pop(src, None)
 
-        # Read path-loss params and room sigma from settings
+        # ── Stage 1.5 prep: read path-loss model parameters ────────────────
+        # ref_power: RSSI at 1 meter (typically -59 to -65 dBm)
+        # path_loss_exp: environment factor (2.0 = free space, 3-4 = indoors)
+        # room_sigma_m: Gaussian width — controls how quickly score drops with distance
         try:
             _st_pl = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
             _d_pl  = (_st_pl.data if _st_pl else {}) or {}
@@ -637,16 +726,24 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _n_exp = DEFAULT_PATH_LOSS_EXP
             _sigma = DEFAULT_ROOM_SIGMA_M
 
-        # ── Change A: Gaussian room scoring ──────────────────────────────────
-        # Convert each scanner's Kalman-filtered RSSI → estimated distance →
-        # Gaussian weight exp(−(d/σ)²).  Score each room as the max weight of
-        # its assigned scanners.  Compared to winner-takes-all (max RSSI), this
-        # penalises scanners on the far side of a wall more proportionally,
-        # softening boundary flickering without requiring geometry data.
+        # ── Stage 1.5: Gaussian room scoring ─────────────────────────────
+        # Why Gaussian instead of raw "max RSSI wins"?
+        #   Raw RSSI comparison treats -60 and -70 as a 10-unit gap, but the
+        #   actual distance difference is nonlinear (path-loss is logarithmic).
+        #   Converting RSSI → distance → Gaussian weight exp(-(d/sigma)^2)
+        #   makes scoring proportional to physical proximity.  A scanner
+        #   behind a wall (-75 dBm ~ 8m) scores near zero, while two
+        #   scanners at -60 and -63 dBm both score high — reducing flicker.
+        #
+        # Each room's score = max Gaussian weight across its scanners.
+        # Using max (not sum) prevents rooms with more scanners from winning
+        # purely due to having more hardware.
         candidate: str | None = None
         rssi_margin_confidence: float = 0.0
         if ema:
-            # Raw RSSI gap: keep backwards-compatible rssi_margin_confidence metric
+            # RSSI margin confidence: how far ahead the strongest scanner is.
+            # Normalized to [0, 1] where 15 dBm gap = 1.0 (very decisive).
+            # Surfaced in entity attributes for automation conditions.
             sorted_vals = sorted(ema.values(), reverse=True)
             if len(sorted_vals) >= 2:
                 rssi_margin_confidence = round(
@@ -655,23 +752,27 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 rssi_margin_confidence = 1.0
 
-            # Gaussian room scoring with hysteresis
+            # Score each room by its best scanner's Gaussian weight
             room_scores: dict[str, float] = {}
             for _src, _rssi in ema.items():
                 _room = source_to_area.get(_src)
                 if not _room:
                     continue
+                # Path-loss model: RSSI → estimated distance in meters
+                # d = 10 ^ ((ref_power - rssi) / (10 * n))
                 _dist  = max(0.1, 10.0 ** ((_ref - _rssi) / (10.0 * _n_exp)))
+                # Gaussian weight: close scanners score ~1.0, far ones → 0
                 _score = math.exp(-(_dist / _sigma) ** 2)
                 if _room not in room_scores or _score > room_scores[_room]:
                     room_scores[_room] = _score
             if room_scores:
                 _best_room = max(room_scores, key=lambda r: room_scores[r])
                 _cur_room = self._confirmed_room.get(key)
-                # Hysteresis: stick with current room unless new room's score
-                # exceeds current room's score by a margin.  Prevents flipping
-                # when two scanners are nearly equal (boundary device).
-                # Read configurable hysteresis margin from settings (default 0.06)
+                # ── Hysteresis: prevent boundary flicker ──────────────────
+                # When a device sits between two rooms, their scores oscillate
+                # within a small band.  Requiring the new room to exceed the
+                # current room by a margin (default 6%) prevents rapid flipping.
+                # Configurable in Settings → Presence → Hysteresis margin.
                 try:
                     _st_hyst = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
                     _HYSTERESIS_MARGIN = float(((_st_hyst.data if _st_hyst else {}).get("hysteresis_margin") or 0.06))
@@ -680,26 +781,29 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _HYSTERESIS_MARGIN = 0.06
                 if _cur_room and _cur_room in room_scores and _best_room != _cur_room:
                     if room_scores[_best_room] - room_scores[_cur_room] < _HYSTERESIS_MARGIN:
-                        # Within hysteresis — prefer master map rooms as tie-breaker
+                        # Score gap too small to be decisive.  Tie-breaker:
+                        # if the best room is on the master map but current
+                        # isn't, prefer master (more authoritative boundaries).
                         if master_rooms and _cur_room not in master_rooms and _best_room in master_rooms:
-                            candidate = _best_room  # master map room wins the tie
+                            candidate = _best_room
                         else:
-                            candidate = _cur_room  # stay — margin too small
+                            candidate = _cur_room  # stay put — not enough evidence
                     else:
-                        candidate = _best_room
+                        candidate = _best_room  # clear winner — switch rooms
                 else:
                     candidate = _best_room
 
-        # ── Floor stickiness ─────────────────────────────────────────────────
-        # Cross-floor transitions should be much harder than same-floor ones.
-        # If the candidate room is on a different floor than the confirmed room,
-        # require 2× the hysteresis margin.  This prevents sudden floor jumps
-        # from noise when a device is near scanners that serve different floors.
+        # ── Floor stickiness (cross-floor hysteresis) ────────────────────────
+        # BLE signals leak between floors (stairwells, thin ceilings), so a
+        # device on floor 1 may occasionally score highest on a floor 2
+        # scanner.  To prevent phantom floor jumps, require DOUBLE the normal
+        # hysteresis margin for cross-floor transitions.  The device must be
+        # decisively closer to the new floor's scanners before switching.
         _floor_hyst = locals().get("_HYSTERESIS_MARGIN", 0.06)
         if candidate and room_scores and source_to_floor:
             _cur_room_fs = self._confirmed_room.get(key)
             if _cur_room_fs and _cur_room_fs != candidate and _cur_room_fs in room_scores:
-                # Build room→floor from source_to_area + source_to_floor
+                # Derive room→floor by looking up which floor each scanner's area is on
                 _room_to_fl: dict[str, str] = {}
                 for _src2, _area2 in source_to_area.items():
                     _fl2 = source_to_floor.get(_src2)
@@ -713,10 +817,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if room_scores.get(candidate, 0) - room_scores.get(_cur_room_fs, 0) < _floor_margin:
                         candidate = _cur_room_fs  # stay on current floor
 
-        # ── Change A2: Adaptive learning blend ──────────────────────────────
-        # When adaptive learning is enabled and has accumulated data, blend
-        # fingerprint-similarity scores into the Gaussian room scores.  Also
-        # apply transition priors and cross-floor penalty.
+        # ── Adaptive learning blend ───────────────────────────────────────────
+        # When adaptive learning is enabled and has accumulated enough data
+        # (maturity > 5%), blend its fingerprint-similarity scores into the
+        # Gaussian room scores.  This lets the system learn from confirmed
+        # room assignments over time without manual calibration.
+        #
+        # Three adaptive adjustments (all capped to prevent the learned
+        # model from dominating the physics-based Gaussian):
+        #   1. Fingerprint blend (max 25%) — similarity to past observations
+        #   2. Transition prior (max 8%) — favor commonly observed transitions
+        #   3. Floor penalty (50% score cut) — discourage low-confidence floor jumps
         try:
             _st_ad = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
             _d_ad = (_st_ad.data if _st_ad else {}) or {}
@@ -731,14 +842,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _ad_store = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
                 if _ad_store and _ad_store.maturity() > 0.05:
                     _ad_scores = _ad_store.score_rooms(dict(ema), source_to_area)
-                    # Cap blend at 25% (was 40%) — adaptive should assist, not dominate
+                    # Blend weight scales with maturity (0→25%) so early data
+                    # has minimal impact.  Capped at 25% to keep Gaussian dominant.
                     _blend = min(0.25, _ad_store.maturity() * 0.3)
                     for _ar in room_scores:
                         if _ar in _ad_scores:
                             room_scores[_ar] = (1.0 - _blend) * room_scores[_ar] + _blend * _ad_scores[_ar]
 
-                    # Transition prior — reduced from 15% to 8% max to prevent
-                    # positive feedback loops that trap devices in rooms
+                    # Transition prior: boost rooms that are common destinations
+                    # from the current room.  Capped at 8% to avoid positive
+                    # feedback loops (device gets stuck because being in a room
+                    # reinforces staying in that room).
                     _cur = self._confirmed_room.get(key)
                     if _cur:
                         _priors = _ad_store.transition_prior(_cur, room_scores.keys())
@@ -747,7 +861,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             for _ar in room_scores:
                                 room_scores[_ar] *= (1.0 + _prior_blend * _priors.get(_ar, 0.0))
 
-                    # Floor penalty for cross-floor candidates
+                    # Adaptive floor penalty: if the adaptive model has low
+                    # confidence that the device is actually on the candidate's
+                    # floor, halve that room's score to discourage the transition.
                     if _floor_on and source_to_floor and candidate:
                         _cand_floor = None
                         _cur_floor = None
@@ -774,13 +890,20 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except Exception:
                 pass  # adaptive scoring is best-effort
 
-        # ── Change B: fingerprint positioning (k-NN or Random Forest) ─────────
-        # When calibration data exists and the fingerprint match is confident
-        # enough, use the result as the candidate instead of the Gaussian
-        # winner.  Also captures sub-room (x_frac, y_frac) for map display.
-        # Master map precedence: if the result gives a position (x_frac, y_frac),
-        # test it against the master map's room_bounds.  If the position falls
-        # inside a room on the master map, that room overrides nearest_room.
+        # ── Fingerprint positioning (k-NN or Random Forest) ─────────────────
+        # When the user has collected calibration data (>= _KNN_MIN_POINTS),
+        # the system can use fingerprint matching instead of (or on top of)
+        # the Gaussian model.  k-NN compares the current RSSI vector against
+        # calibration points and returns the nearest match with a confidence
+        # score.  If confidence >= _KNN_LIVE_THRESHOLD (15%), the fingerprint
+        # result overrides the Gaussian candidate.
+        #
+        # This also provides sub-room positioning (x_frac, y_frac) for the
+        # map dot display.  The position is EMA-smoothed to prevent jumping.
+        #
+        # Room boundary check: the k-NN (x, y) is tested against the correct
+        # map's room_bounds (not necessarily the master) since coordinates are
+        # in the calibration map's coordinate space.
         try:
             _calib = self.hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
             if _calib and len(_calib.data.get("points", [])) >= _KNN_MIN_POINTS:
@@ -868,18 +991,23 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._knn_position.pop(key, None)
             self._smooth_xy.pop(key, None)
 
-        # ── Stage 2: majority-vote window (size adjusts to room_change_delay_s) ──
+        # ── Stage 2: majority-vote temporal stabilization ──────────────────
+        # The candidate from stages 1-1.5 can still flip between polls due to
+        # RF noise.  The vote window adds temporal inertia: a room must win a
+        # majority of the last N polls before it becomes the confirmed room.
+        # Window size adapts to the user's room_change_delay_s setting.
         existing = self._room_votes.get(key)
         if existing is None or existing.maxlen != vote_window:
-            # Resize the deque when the setting changes; preserve existing votes
+            # Resize the deque when the setting changes mid-run; keep recent votes
             prev = list(existing) if existing else []
             self._room_votes[key] = deque(prev[-vote_window:], maxlen=vote_window)
         votes = self._room_votes[key]
-        # Don't pollute the vote window with None when no data is available
-        # (preserves last known room during total signal dropout)
+        # Skip None candidates (total signal dropout) — preserves the last
+        # known room instead of diluting the window with empty votes.
         if candidate is not None:
             votes.append(candidate)
 
+        # Count votes per room and check if any room meets the threshold
         counts: dict[str, int] = {}
         for v in votes:
             if v:
@@ -890,6 +1018,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if counts:
             top_room = max(counts, key=lambda r: counts[r])
             top_count = counts[top_room]
+            # Confidence = fraction of window agreeing on the top room (0.0–1.0)
             confidence = round(top_count / len(votes), 2)
             if top_count >= vote_threshold:
                 if top_room != confirmed:
@@ -906,8 +1035,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._rssi_margin_confidence[key] = rssi_margin_confidence
 
         # ── Adaptive learning: record observation ────────────────────────────
-        # Only learn from high-confidence, stable assignments.  Rate-limited to
-        # one observation per device per 300 s to keep data compact.
+        # Feed confirmed room assignments back into the adaptive store so it
+        # can improve over time.  Only record when confidence >= 0.7 (stable)
+        # and rate-limited to 1 per device per 5 min to keep data compact.
         if _adaptive_on and confirmed and confidence >= 0.7 and ema:
             try:
                 _now_mono = time.monotonic()
@@ -941,7 +1071,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ── Object state cleanup ─────────────────────────────────────────────
 
     def _evict_object(self, key: str) -> None:
-        """Remove all cached state for a single object key (internal)."""
+        """Remove all cached state for a single object key.
+
+        Called when an object has been stale longer than _STALE_EVICT_S, or
+        explicitly via clear_object_state().  Cleans up Kalman, vote, k-NN,
+        confidence, and alert state to prevent unbounded memory growth.
+        """
         self._known_objs.pop(key, None)
         self._last_seen.pop(key, None)
         self._away_miss.pop(key, None)
@@ -973,7 +1108,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _inject_beacon_calibration(
         self, now: float, pinned: dict[str, dict], result: dict[str, Any]
     ) -> None:
-        """Auto-inject calibration points from pinned beacons with RSSI data."""
+        """Auto-inject calibration points from pinned beacons that have live RSSI.
+
+        Beacons with known map positions act as continuous calibration sources:
+        since we know exactly where they are, their RSSI readings become new
+        fingerprint data points.  Rate-limited to one injection per beacon per
+        10 minutes to avoid flooding the calibration store.
+        """
         try:
             _st = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
             if _st:
@@ -1026,12 +1167,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def inject_immediate_calibration(
         self, beacons: list[dict], map_id: str, floor_id: str, room_bounds: dict
     ) -> int:
-        """Immediately inject calibration points for beacons that have live RSSI.
+        """Inject calibration points immediately for beacons with live RSSI.
 
-        Called when beacon tune saves positions — bypasses the 10-minute rate limit
-        and uses the presence coordinator's cached EMA RSSI.
+        Called by the Beacon Tune save handler when the user confirms beacon
+        positions on the map.  Bypasses the normal 10-minute rate limit because
+        this is an explicit user action — the positions are fresh and intentional.
+        Uses the coordinator's Kalman-smoothed RSSI (not raw) for better quality.
 
-        Returns number of calibration points injected.
+        Returns the number of calibration points successfully injected.
         """
         cal_store = self.hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
         if not cal_store:
@@ -1086,7 +1229,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _process_room_alerts(
         self, now: float, result: dict[str, Any]
     ) -> None:
-        """Send email alerts for room changes based on saved alert configs."""
+        """Send notifications for room changes based on Follow tab alert configs.
+
+        Supports both legacy HA notify services (notify.{name}) and the newer
+        entity-based notify (notify.send_message with entity_id).  Falls back
+        to auto-detecting an available service, preferring email/SMTP ones.
+        Rate-limited to one alert per device per 60 seconds.
+        """
         from .const import DOMAIN, DATA_ALERTS
 
         alert_store = self.hass.data.get(DOMAIN, {}).get(DATA_ALERTS)
@@ -1199,10 +1348,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.warning("Follow alert failed for %s: %s", key, err)
 
     def clear_scanner(self, source: str) -> int:
-        """Clear all in-memory smoothing state for a scanner.
+        """Remove a scanner from all devices' Kalman filter state.
 
-        Removes source from _ema_rssi and _kalman_p for all device addresses.
-        Returns the number of device entries cleaned.
+        Called when a scanner is removed or reset.  Without this, stale RSSI
+        entries for the removed scanner would decay slowly via the silence
+        mechanism, potentially biasing room scores during that window.
+        Returns the number of device entries that were cleaned.
         """
         cleared = 0
         for addr in list(self._ema_rssi):
@@ -1216,7 +1367,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return cleared
 
     async def _record_movement(self, result: dict[str, Any]) -> None:
-        """Record room transitions to persistent movement history."""
+        """Persist room transitions to the movement history store.
+
+        Movement history powers the Follow tab's movement log and the
+        Manage → History view.  Each transition is recorded with a timestamp,
+        the object's display label, and the old/new room names.
+        """
         from .const import DOMAIN, DATA_MOVEMENT, DATA_OBJECTS
         try:
             mv_store = self.hass.data.get(DOMAIN, {}).get(DATA_MOVEMENT)

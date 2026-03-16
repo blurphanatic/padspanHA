@@ -5,17 +5,23 @@
 from __future__ import annotations
 
 """
-REPO LOGIC NOTES
+PadSpan HA — Model Store
+==========================
+Global spatial model: floors and per-room metadata (floor assignment + color).
 
-Global "model" store:
-- floors (aka map owners)
-- per-room metadata (floor assignment + color)
+Deliberately separate from MapsStore because:
+- Floors and room_meta are shared across ALL maps (a room exists independently
+  of which map it appears on).
+- Maps are per-image resources with their own metadata.
 
-This is intentionally separate from MapsStore:
-- floors + room_meta are shared across ALL maps
-- maps are per-image resources
+Data layout in .storage/padspan_ha.model:
+  {
+    "floors": [{"id": "main", "name": "Main Floor"}, ...],
+    "room_meta": {"Kitchen": {"floor_id": "main", "color": "#7a9b5c"}, ...}
+  }
 
-We keep defaults simple and safe. The UI can later expand this schema without breaking.
+Room colours are deterministically generated from the room name (SHA-256 hash →
+pastel RGB) so they're stable across sessions without needing explicit assignment.
 """
 
 import asyncio

@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+/**
+ * Debug view — raw panel state inspector.
+ * Serializes the entire ctx.state object to formatted JSON, including Sets.
+ * Useful for diagnosing UI-side issues like dead buttons or missing views
+ * without needing browser dev tools.
+ */
+
 export function render(ctx){
   const { el } = ctx.helpers;
   const root = el("section",{id:"debug"});

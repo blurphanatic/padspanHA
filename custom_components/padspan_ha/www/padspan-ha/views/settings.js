@@ -2,13 +2,27 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+/**
+ * Settings — user-configurable preferences
+ *
+ * Tabs (advanced mode):
+ *   Appearance   — room colors, floor names, dark theme options
+ *   Scanner Map  — assign scanners to rooms, per-map calibration clear
+ *   Presence     — BLE tuning (ref power, path-loss, Kalman, sigma),
+ *                  adaptive learning toggle, positioning algorithm
+ *   Manage       — entity types toggle, MQTT, IRK devices
+ *
+ * Basic mode shows only the Appearance tab (no tabs UI).
+ *
+ * Uses a "draft" copy of the model so edits don't take effect until Save.
+ */
 export function render(ctx){
   const { el, esc, roomColor, helpBtn } = ctx.helpers;
   const isBasic = ctx.state.complexity === "basic";
   const root = el("section",{id:"settings"});
   root.className = ctx.state.view==="settings" ? "" : "hidden";
 
-  // Draft model (so users can edit and hit Save)
+  // Draft model — local copy so edits don't affect live state until Save
   if(!ctx.state._settingsDraft || ctx.state._settingsDraftBuild !== ctx.state.buildId){
     ctx.state._settingsDraft = JSON.parse(JSON.stringify(ctx.state.model || {floors:[], room_meta:{}}));
     if(!ctx.state._settingsDraft.floors || !ctx.state._settingsDraft.floors.length) ctx.state._settingsDraft.floors = [{id:"main", name:"Main"}];

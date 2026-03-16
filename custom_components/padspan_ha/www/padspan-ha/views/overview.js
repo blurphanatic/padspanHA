@@ -3,16 +3,21 @@
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 /**
- * Overview page (PadSpan)
+ * Overview — "control tower" dashboard
  *
- * REPO LOGIC NOTES
- * - This is intentionally a "control tower" page: small metrics + buttons that open lists.
- * - The user explicitly asked that **every metric in Overview links to a list** (modal).
- * - For BLE, the live snapshot provides:
- *     snapshot.ble.radios            -> HA scanners/proxies
- *     snapshot.ble.advertisements    -> ad monitor stream
- *     snapshot.objects.list          -> derived union list (entities + BLE addresses)
- *     snapshot.objects.summary       -> counts + common OUIs (>=3)
+ * Basic mode:  summary bar (rooms, objects, radios) + 3D iso map with room/beacon dots.
+ * Advanced mode:  KPI cards + renderRoomGrid() SVG with heatmap + beacon pins.
+ *
+ * Data flow:
+ *   snapshot.ble.radios            → scanner count & list
+ *   snapshot.ble.advertisements    → ad monitor stream
+ *   snapshot.objects.list          → all tracked objects (entities + BLE)
+ *   snapshot.objects.summary       → counts, OUI breakdown
+ *
+ * Design rules:
+ *   - Every KPI metric is clickable → opens a detail modal with the full list.
+ *   - Uses `liveSnap` (not `snap`) — differs from other views. See memory note.
+ *   - 3D iso map re-uses the maps list + stack transforms from the Maps tab.
  */
 
 export function render(ctx){

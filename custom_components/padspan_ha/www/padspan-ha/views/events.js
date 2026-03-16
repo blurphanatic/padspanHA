@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+/**
+ * Events view — session event log filtered to actionable types.
+ * Displays tag, view_change, and snapshot events from _sessionEvents with
+ * color-coded type badges and a summary count bar. Events are shown in
+ * reverse chronological order (newest first).
+ */
+
 export function render(ctx){
   const { el, helpBtn } = ctx.helpers;
   const root = el("section",{id:"events"});

@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+/**
+ * Monitor view — system health and diagnostics dashboard.
+ * Sub-tabs: Diagnostics | Zones | Insights | Health | Diag Export | Debug.
+ * Acts as a container that renders the active sub-tab; each sub-tab focuses
+ * on a different aspect of system state (BLE coverage, zone config, performance).
+ */
+
 export function render(ctx){
   const { el, helpBtn, radioShortId } = ctx.helpers;
   const _sid = (source) => radioShortId ? radioShortId(source || "") : "";

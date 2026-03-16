@@ -2,14 +2,33 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
-// PadSpan HA – Manage view
-// Standalone sidebar tab: Data management + History + Events + HA Entities
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Manage View — Administration, data cleanup, entity management, and diagnostics
+//
+// Sub-tabs:
+//   Data             — Danger-zone data management: orphan cleanup, label removal,
+//                      entity/area deletion, map deletion, backup & restore,
+//                      integration controls (reload, color reset)
+//   HA Entities      — Entity reference docs, publishing toggles, live audit,
+//                      automation YAML library, MQTT config
+//   Beacon Chars     — Per-beacon signal profiles from calibration, model grouping
+//   History          — Persisted room-transition log (backend movement_history store)
+//   Events           — Session event log (in-memory), email alert configuration
+//   Logs             — Live integration log viewer with level filtering
+//   Factory Reset    — Nuclear option: wipes all PadSpan stores + browser caches
+//
+// The Data tab is gated by a `disabled` flag: destructive actions require
+// Live mode. In Sample mode the buttons render but are disabled, and a
+// warning banner tells the user to switch.
+// ══════════════════════════════════════════════════════════════════════════════
 
 export function render(ctx){
   const { el } = ctx.helpers;
   const root = el("section",{id:"manage"});
   root.className = ctx.state.view==="manage" ? "" : "hidden";
 
+  // Default to the Data sub-tab on first visit
   if(!ctx.state.manageTab) ctx.state.manageTab = "data";
   const mTab = ctx.state.manageTab;
   const setTab = (t) => { ctx.state.manageTab = t; ctx.actions.renderRooms(); };
@@ -30,19 +49,24 @@ export function render(ctx){
   }
   root.appendChild(tabBar);
 
+  // Non-data tabs are rendered by dedicated helper functions and returned early
   if(mTab === "ha_entities")   { root.appendChild(_haEntities(ctx, el));    return root; }
   if(mTab === "beacon_chars")  { root.appendChild(_beaconChars(ctx, el));  return root; }
   if(mTab === "history")       { root.appendChild(_history(ctx, el));      return root; }
   if(mTab === "events")        { root.appendChild(_events(ctx, el));       return root; }
   if(mTab === "logs")          { root.appendChild(_logs(ctx, el));         return root; }
   if(mTab === "factory_reset") { root.appendChild(_factoryReset(ctx, el)); return root; }
-  // ── Data tab ─────────────────────────────────────────────────────────────────
+
+  // ── Data Tab (default) ──────────────────────────────────────────────────────
+  // Everything below builds the Data tab: orphan cleanup, labels, entities,
+  // areas, maps, backup/restore, and integration controls.
   const snap     = (ctx.state.live && ctx.state.live.snapshot) || null;
   const haAreas  = (ctx.state.model && Array.isArray(ctx.state.model.areas))  ? ctx.state.model.areas  : [];
   const haFloors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
   const dataMode = ctx.state.dataMode || "sample";
 
-  // Danger banner
+  // Danger zone banner — prominent red warning at top of the Data tab.
+  // In sample mode, an extra line tells the user to switch to Live.
   root.appendChild(el("div",{style:"background:#3d0c0c;border:2px solid #dc2626;border-radius:12px;padding:16px"},[
     el("div",{style:"font-weight:800;font-size:15px;color:#fca5a5;margin-bottom:6px"},"⚠  Danger Zone — Read before proceeding"),
     el("div",{style:"font-size:13px;color:#fcd5d5;line-height:1.6"},
@@ -53,16 +77,25 @@ export function render(ctx){
       : null,
   ].filter(Boolean)));
 
+  // Master gate: all destructive buttons check this flag.
+  // In sample mode, buttons render with "disabled" class + .disabled = true.
   const disabled = dataMode !== "live";
 
   // ── Orphan Room Polygons ──────────────────────────────────────────────────────
+  // Orphans are room polygons stored in map.room_bounds whose room name no
+  // longer exists in the HA area registry or roomTagMap. They typically come
+  // from sample-mode demos that wrote polygons for rooms like "Kitchen" when
+  // the real HA install has no such area. We detect them here and let the user
+  // delete them individually or in bulk.
   {
     const allMaps = ctx.state.maps?.list || [];
+    // Build a set of all room names the system currently recognises
     const validRooms = new Set([
       ...(ctx.state.model?.areas || []).map(a => a.name),
       ...Object.keys(ctx.state.roomTagMap || {}),
     ]);
 
+    // Scan every map's room_bounds for polygon entries referencing unknown rooms
     const orphans = []; // {map, room, b}
     for(const m of allMaps){
       for(const [room, b] of Object.entries(m.room_bounds || {})){
@@ -85,7 +118,11 @@ export function render(ctx){
       const tbody = el("tbody");
       for(const {map, room, b} of orphans){
         const bw = el("div",{style:"display:flex;gap:4px"});
-        const makeBtn = ()=>{
+        // Each orphan row gets a Delete button that swaps to a Yes/No confirm
+      // pattern (inline confirmation — no modal). On confirm, we rebuild the
+      // map's room_bounds without the orphan key and push the whole map back
+      // via mapsUpdate (the API expects the full room_bounds dict).
+      const makeBtn = ()=>{
           const btn = el("button",{class:"btn tiny"+(disabled?" disabled":"")},"Delete");
           if(disabled) btn.disabled = true;
           btn.addEventListener("click", ()=>{
@@ -96,6 +133,7 @@ export function render(ctx){
               bw.innerHTML = "";
               bw.appendChild(el("span",{class:"muted",style:"font-size:11px"},"Deleting…"));
               try {
+                // Strip the orphan room from the bounds and re-save the entire map
                 const newBounds = Object.fromEntries(
                   Object.entries(map.room_bounds || {}).filter(([r]) => r !== room)
                 );
@@ -131,7 +169,9 @@ export function render(ctx){
         tbody,
       ]));
 
-      if(orphans.length > 1){
+      // Bulk delete: only shown when >1 orphan. Groups orphans by map to
+    // minimise API calls — one mapsUpdate per affected map.
+    if(orphans.length > 1){
         const delAllWrap = el("div",{style:"margin-top:10px;display:flex;gap:8px;align-items:center"});
         const makeDelAll = ()=>{
           const b = el("button",{class:"btn"+(disabled?" disabled":"")},"Delete ALL orphans");
@@ -184,6 +224,9 @@ export function render(ctx){
   }
 
   // ── BLE Device Labels ────────────────────────────────────────────────────────
+  // Shows tagged BLE devices and lets the user remove ("untag") friendly names.
+  // Removing a label does NOT delete the device from the snapshot — it just
+  // reverts to showing the raw MAC address.
   const allObjs   = snap?.objects?.list || [];
   const taggedObjs = allObjs.filter(o => o.kind === "ble" && o.user_label);
   const tagsCard  = el("div",{class:"card"});
@@ -261,13 +304,15 @@ export function render(ctx){
   }
   root.appendChild(tagsCard);
 
-  // ── HA Entities ──────────────────────────────────────────────────────────────
+  // ── HA Entities (Data tab section) ──────────────────────────────────────────
+  // Two categories:
+  //   Phantom — entity IDs in PadSpan's room_tag_map that no longer exist in HA
+  //             (leftover sample data or stale installs). Safe to purge.
+  //   Real    — actual HA entities. Deleting them removes from the HA registry.
   const entityObjs = allObjs.filter(o => o.kind === "entity" && o.entity_id);
-  // Split into phantom (missing from HA state) vs real HA entities
   const phantomObjs = entityObjs.filter(o => o.missing === true);
   const realObjs    = entityObjs.filter(o => !o.missing);
-
-  // Phantom entities card — these come from coord.room_tag_map with no HA state
+  // Phantom entities card — purges stale room_tag_map entries via WS call
   if(phantomObjs.length){
     const phantomCard = el("div",{class:"card",style:"border-color:#f59e0b"});
     phantomCard.appendChild(el("div",{class:"row",style:"margin-bottom:6px"},[
@@ -321,7 +366,9 @@ export function render(ctx){
     root.appendChild(phantomCard);
   }
 
-  // Real HA entities card
+  // Real HA entities card — per-entity delete from the HA entity registry.
+  // Entities from active integrations (e.g. Bermuda) will be recreated
+  // on the next poll, so the user is warned about that.
   const entCard = el("div",{class:"card"});
   entCard.appendChild(el("div",{class:"row",style:"margin-bottom:8px"},[
     el("div",{style:"font-weight:700;font-size:14px"},"HA Entities"),
@@ -406,6 +453,9 @@ export function render(ctx){
   root.appendChild(entCard);
 
   // ── HA Areas (Rooms) ─────────────────────────────────────────────────────────
+  // Deletes areas from HA's Area Registry. Devices assigned to a deleted area
+  // become unassigned. Any PadSpan room_meta (custom colors) for that area is
+  // also lost. HA is the source of truth for areas — PadSpan just reads them.
   const areasCard = el("div",{class:"card"});
   areasCard.appendChild(el("div",{class:"row",style:"margin-bottom:8px"},[
     el("div",{style:"font-weight:700;font-size:14px"},"HA Areas (Rooms)"),
@@ -461,6 +511,8 @@ export function render(ctx){
   root.appendChild(areasCard);
 
   // ── Uploaded Maps ────────────────────────────────────────────────────────────
+  // Permanently deletes floor plan images. Calibration data and room polygons
+  // referencing the map will become orphaned (see Orphan Polygons above).
   const maps = ctx.state.maps?.list || [];
   if(maps.length){
     const mapsCard = el("div",{class:"card"});
@@ -505,6 +557,19 @@ export function render(ctx){
   }
 
   // ── Backup & Restore ────────────────────────────────────────────────────────
+  // Flow: Create → List → Restore (selective) → Delete
+  //
+  // Create:  Calls store_backup_create, which snapshots all PadSpan .storage
+  //          JSON files + map image binaries into a timestamped backup.
+  // List:    store_backup_list returns metadata (store_keys, map_image_count).
+  //          Displayed newest-first.
+  // Restore: Opens an inline checkbox dialog letting the user pick which
+  //          stores and/or map images to restore. Uses store_backup_restore
+  //          with a store_keys whitelist + optional restore_map_images flag.
+  // Delete:  store_backup_delete removes a single backup from disk.
+  //
+  // The checkbox dialog avoids the all-or-nothing problem: users can restore
+  // just calibration data without overwriting their settings, for example.
   {
     const bkCard = el("div",{class:"card"});
     bkCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;margin-bottom:4px"},"Backup & Restore"));
@@ -515,7 +580,8 @@ export function render(ctx){
     const bkListWrap = el("div",{style:"margin-bottom:12px"});
     bkCard.appendChild(bkListWrap);
 
-    // Friendly names for store keys
+    // Friendly display names for internal store key strings.
+    // These appear as checkbox labels in the selective-restore dialog.
     const _storeLabel = (k) => {
       const map = {
         "padspan_ha.settings": "Settings",
@@ -532,7 +598,8 @@ export function render(ctx){
       return map[k] || k.replace("padspan_ha.", "");
     };
 
-    // Render backup list
+    // Async-render the backup list into bkListWrap. Called on initial render
+    // and after create/delete to refresh the displayed list.
     const _renderBkList = async () => {
       bkListWrap.innerHTML = "";
       try {
@@ -556,14 +623,16 @@ export function render(ctx){
           // Action buttons row
           const actRow = el("div",{style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap"});
 
-          // Restore button — shows checkbox dialog
+          // Restore button — opens an inline selective-restore dialog.
+          // Each store key from the backup gets a checkbox (pre-checked).
+          // Map images get a separate checkbox if the backup includes any.
+          // "Select all / none" convenience buttons are provided.
           const restoreWrap = el("div",{style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap"});
           const makeRestoreBtn = () => {
             const btn = el("button",{class:"btn tiny"+(disabled?" disabled":"")}, "Restore…");
             if(disabled) btn.disabled = true;
             btn.addEventListener("click", () => {
               restoreWrap.innerHTML = "";
-              // Build checkbox UI
               const dialog = el("div",{style:"padding:10px 12px;border:1px solid #1e4976;border-radius:8px;background:#0a1a2a;margin-top:6px"});
               dialog.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin-bottom:8px;color:#7dd3fc"},"Choose items to restore:"));
               const checkboxes = [];
@@ -598,6 +667,7 @@ export function render(ctx){
               const btnRow = el("div",{style:"display:flex;gap:8px;margin-top:10px"});
               const confirmBtn = el("button",{class:"btn",style:"background:#1b4a2e;border-color:#52b788;font-size:12px"},"Restore selected");
               confirmBtn.addEventListener("click", async()=>{
+                // Split selections: real store keys vs the synthetic __map_images__ key
                 const selected = checkboxes.filter(c=>c.checked).map(c=>c.value);
                 const storeKeysToRestore = selected.filter(s=>s!=="__map_images__");
                 const restoreImages = selected.includes("__map_images__");
@@ -664,7 +734,7 @@ export function render(ctx){
       }
     };
 
-    // Create backup button
+    // Create backup button — snapshots all stores + map images in one call
     const createWrap = el("div",{style:"display:flex;gap:8px;align-items:center"});
     const makeCreateBtn = () => {
       const btn = el("button",{class:"btn"+(disabled?" disabled":"")}, "Create Backup");
@@ -689,6 +759,9 @@ export function render(ctx){
   }
 
   // ── Integration Controls ─────────────────────────────────────────────────────
+  // Reload: forces HA to call async_setup_entry again without a full HA restart.
+  // Reset colors: wipes room_meta (custom room color picks) so colors regenerate
+  //               from the hash-based room name algorithm.
   const ctrlCard = el("div",{class:"card"});
   ctrlCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;margin-bottom:8px"},"Integration Controls"));
   ctrlCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:14px"},"Low-level control over the PadSpan™ HA integration."));
@@ -748,7 +821,15 @@ export function render(ctx){
   return root;
 }
 
-// ── HA Entities sub-tab ───────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// HA Entities sub-tab
+// Composed of five sections stacked vertically:
+//   1. Intro          — what PadSpan entities are and why they matter
+//   2. Controls       — per-entity-type publishing toggles (tracker, area, etc.)
+//   3. Audit          — live inventory fetched via WS, health pills, insights
+//   4. Library        — reference cards for each entity type with YAML examples
+//   5. MQTT           — experimental MQTT publishing toggle + topic docs
+// ══════════════════════════════════════════════════════════════════════════════
 function _haEntities(ctx, el){
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
   const settings = ctx.state.settings || {};
@@ -760,6 +841,7 @@ function _haEntities(ctx, el){
   return wrap;
 }
 
+/** Static intro card explaining the four entity types PadSpan creates. */
 function _haEntitiesIntro(el){
   return el("div",{class:"card",style:"border-color:#1b4a2e"},[
     el("div",{style:"font-weight:800;font-size:15px;color:#5eead4;margin-bottom:6px"},"PadSpan HA — Entity Reference"),
@@ -772,6 +854,11 @@ function _haEntitiesIntro(el){
   ]);
 }
 
+/**
+ * Entity publishing toggles — checkboxes to enable/disable each entity type.
+ * Persisted to settings via settingsSet. Disabling a type marks existing
+ * entities as disabled in the HA registry; new devices skip creating them.
+ */
 function _haEntityControls(ctx, el, settings){
   const card = el("div",{class:"card"});
   card.appendChild(el("div",{style:"font-weight:700;font-size:14px;margin-bottom:4px"},"Entity Publishing Controls"));
@@ -806,6 +893,13 @@ function _haEntityControls(ctx, el, settings){
   return card;
 }
 
+/**
+ * Live entity inventory — fetches all PadSpan entities from HA via
+ * ha_entities_audit WS call. Renders a summary bar (health pills, type
+ * counts), a scrollable table (health dot, entity ID, type badge, state,
+ * last changed, automation usage, suggestion hints), and insight cards
+ * that surface actionable advice (unused entities, stale sensors, etc.).
+ */
 function _haEntityAudit(ctx, el){
   const card = el("div",{class:"card"});
   const header = el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"});
@@ -832,7 +926,7 @@ function _haEntityAudit(ctx, el){
     }
     const entities = res.entities;
 
-    // ── Summary bar ──────────────────────────────────────────────────────
+    // ── Summary bar — coloured pills showing entity health breakdown ────
     const summary = el("div",{style:"display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"});
     const _pill = (label, count, color) => el("div",{style:`display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;border:1px solid ${color};font-size:11px`},[
       el("span",{style:`color:${color};font-weight:700`},String(count)),
@@ -963,7 +1057,7 @@ function _haEntityAudit(ctx, el){
     tableWrap.appendChild(table);
     body.appendChild(tableWrap);
 
-    // ── Health insights ──────────────────────────────────────────────────
+    // ── Health insights — contextual advice based on the audit data ─────
     const insights = [];
     const unusedCount = entities.filter(e => e.used_count === 0 && e.health !== "disabled").length;
     const staleCount = bh.stale || 0;
@@ -1008,11 +1102,17 @@ function _haEntityAudit(ctx, el){
   return card;
 }
 
+/**
+ * Entity Type Library — static reference cards for each of the four entity
+ * types PadSpan creates. Each card shows the entity ID pattern, state
+ * description, attribute table, and collapsible YAML automation examples
+ * with a copy-to-clipboard button.
+ */
 function _haEntityLibrary(ctx, el){
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
   wrap.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#94a3b8;margin-bottom:2px"},"Entity Type Library"));
 
-  // ── 1. device_tracker ───────────────────────────────────────────────────
+  // ── 1. device_tracker — person-linkable room tracker ────────────────────
   wrap.appendChild(_entityCard(el, {
     id: "device_tracker.padspan_{label}",
     badge: "Person-linkable",
@@ -1040,7 +1140,7 @@ function _haEntityLibrary(ctx, el){
     ],
   }));
 
-  // ── 2. sensor._area ─────────────────────────────────────────────────────
+  // ── 2. sensor._area — primary room sensor with confidence attributes ───
   wrap.appendChild(_entityCard(el, {
     id: "sensor.padspan_{label}_area",
     badge: "Primary room sensor",
@@ -1166,7 +1266,7 @@ content: >-
     ],
   }));
 
-  // ── 3. sensor._distance ─────────────────────────────────────────────────
+  // ── 3. sensor._distance — nearest-scanner proximity in metres ───────────
   wrap.appendChild(_entityCard(el, {
     id: "sensor.padspan_{label}_distance",
     badge: "Proximity metre",
@@ -1216,7 +1316,7 @@ content: >-
     ],
   }));
 
-  // ── 4. sensor._distance_{scanner} ──────────────────────────────────────
+  // ── 4. sensor._distance_{scanner} — per-scanner micro-zone distance ────
   wrap.appendChild(_entityCard(el, {
     id: "sensor.padspan_{label}_distance_{scanner}",
     badge: "Per-scanner hyper-local",
@@ -1283,6 +1383,7 @@ content: >-
   return wrap;
 }
 
+/** Renders a single entity type reference card (header, state, attributes table, examples). */
 function _entityCard(el, cfg){
   const card = el("div",{class:"card"});
 
@@ -1322,6 +1423,11 @@ function _entityCard(el, cfg){
   return card;
 }
 
+/**
+ * Collapsible YAML example block with copy-to-clipboard.
+ * Used in the Entity Library cards and MQTT section.
+ * Starts collapsed (arrow ▶); click toggles the code panel.
+ */
 function _exampleBlock(el, ex){
   const wrap = el("div",{style:"margin-bottom:8px;border:1px solid #1b3526;border-radius:8px;overflow:hidden"});
 
@@ -1373,6 +1479,11 @@ function _exampleBlock(el, ex){
   return wrap;
 }
 
+/**
+ * MQTT Publishing section — experimental feature that publishes device
+ * presence data to MQTT topics alongside HA entities. Useful for bridging
+ * to Node-RED or non-HA systems. Toggle persisted to settings store.
+ */
 function _haMqttSection(ctx, el, settings){
   const card = el("div",{class:"card",style:"border-color:#f59e0b"});
 
@@ -1426,12 +1537,24 @@ function _haMqttSection(ctx, el, settings){
   return card;
 }
 
-// ── History sub-tab ───────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// History sub-tab — persisted room-transition timeline
+//
+// Fetches the backend movement_history store (up to 500 entries) and renders
+// them newest-first in a scrollable timeline. Each entry shows timestamp,
+// device label, from-room, and to-room with a colour-coded left border.
+//
+// Friendly names are resolved from three sources (in priority order):
+//   1. Live snapshot objects (BLE devices)
+//   2. Snapshot tags (entity trackers)
+//   3. Stored object labels (padspan_ha.objects store)
+// ══════════════════════════════════════════════════════════════════════════════
 function _history(ctx, el){
   const { roomColor } = ctx.helpers;
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
 
-  // Ensure object labels are loaded for friendly names
+  // Lazy-load object labels from the backend (once per session).
+  // Triggers a re-render when labels arrive so device names appear.
   if(!ctx.state._objectLabelsLoaded){
     ctx.state._objectLabelsLoaded = true;
     ctx.actions.objectLabelList().then(r => {
@@ -1442,7 +1565,8 @@ function _history(ctx, el){
     }).catch(()=>{});
   }
 
-  // Load persisted movement history from backend
+  // Fetch persisted movement history from backend (once per session).
+  // The _manageMovementLoaded flag prevents re-fetching on every render.
   if(!ctx.state._manageMovementLoaded){
     ctx.state._manageMovementLoaded = true;
     ctx.state._manageMovementEntries = [];
@@ -1533,12 +1657,24 @@ function _history(ctx, el){
   return wrap;
 }
 
-// ── Events sub-tab ────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// Events sub-tab — session event log + email alert configuration
+//
+// Two main sections:
+//   1. Email Notifications — saved alerts summary table + per-device editor
+//      with email, service selection, room filter checkboxes, test button
+//   2. Session event log — in-memory followHistory, newest first, clears on
+//      page reload (unlike the History tab which reads persisted data)
+//
+// Also shows system diagnostics JSON if ctx.state.diag is populated.
+// ══════════════════════════════════════════════════════════════════════════════
 function _events(ctx, el){
   const { roomColor } = ctx.helpers;
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
 
   // ── Email Notifications card ──────────────────────────────────────────────
+  // Wrapped in try/catch because this section is complex and a crash here
+  // should not prevent the rest of the Events tab from rendering.
   try {
     wrap.appendChild(_buildNotifications(ctx, el));
   } catch(e) {
@@ -1553,6 +1689,9 @@ function _events(ctx, el){
     "Session event log — room transitions for all tracked tags, newest first. Clears on page reload."
   ));
 
+  // Build a flat, time-sorted event list from per-device followHistory arrays.
+  // Each device's history is an array of {ts, room} entries; we merge them all
+  // and tag the last entry per device as "isCurrent" for a "now" badge.
   const followHistory = ctx.state.followHistory || {};
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const allObjects = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
@@ -1610,15 +1749,27 @@ function _events(ctx, el){
   return wrap;
 }
 
-// ── Email Notification Configuration ──────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// Email Notification Configuration
+//
+// Renders two cards:
+//   1. Saved Alerts — summary table of all persisted alert configs with
+//      device name, email, service, watched rooms, active status, delete btn.
+//   2. Configure Alerts — per-device editor with email input, HA notify
+//      service dropdown, on-room-change toggle, room filter checkboxes,
+//      save + test buttons. Also handles notify service discovery and shows
+//      setup instructions when no services are found.
+//
+// The device list is assembled from five sources to ensure completeness:
+//   1. Snapshot tags (entity trackers)
+//   2. Snapshot objects (BLE devices)
+//   3. Saved alert configs (devices that had alerts previously)
+//   4. Followed addresses
+//   5. Stored object labels
+// ══════════════════════════════════════════════════════════════════════════════
 function _buildNotifications(ctx, el){
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const snapObjects = (snap && snap.objects && Array.isArray(snap.objects.list)) ? snap.objects.list : [];
-
-  // Merge all sources of tagged devices so list is complete:
-  // 1. Live snapshot objects
-  // 2. Saved alert configs (devices that had alerts configured previously)
-  // 3. Followed addresses
   const configs = ctx.state.followAlertConfig || {};
   const seen = new Set();
   const allObjects = [];
@@ -1672,7 +1823,7 @@ function _buildNotifications(ctx, el){
 
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
 
-  // ── Saved Alerts summary table ──────────────────────────────────────────────
+  // ── Saved Alerts summary table — read-only view of all persisted configs ──
   const savedEntries = Object.entries(configs).filter(([,c]) => c && c.email);
   const savedCard = el("div",{class:"card"});
   const activeCount = savedEntries.filter(([,c]) => c.on_room_change).length;
@@ -1740,12 +1891,15 @@ function _buildNotifications(ctx, el){
   wrap.appendChild(savedCard);
 
   // ── Per-device alert editor ─────────────────────────────────────────────────
-  // Any device with a label/name can receive alerts: tagged BLE, entities, followed
+  // Any device with a label/name can receive alerts: tagged BLE, entities, followed.
+  // Each device row has: email input, notify service dropdown, on-room-change
+  // toggle, room filter checkboxes, save button, and test-notification button.
   const trackable = allObjects.filter(o =>
     o.user_label || o.name || o.kind === "entity" || o._fromConfig || o._fromFollowed || o._fromStore
   );
 
-  // Always refresh notify services (user may add SMTP mid-session)
+  // Always refresh notify services on render (user may add SMTP mid-session).
+  // If the service list changes, we re-render to update all dropdowns.
   const _prevServices = JSON.stringify(ctx.state._notifyServices || []);
   if(!ctx.state._notifyServices) ctx.state._notifyServices = [];
   ctx.actions.wsCall("padspan_ha/notify_services_list", {}).then(r => {
@@ -1950,7 +2104,14 @@ function _buildNotifications(ctx, el){
   return wrap;
 }
 
-// ── Logs tab ──────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// Logs sub-tab — live integration log viewer
+//
+// Fetches up to 300 log entries from the backend's in-memory ring buffer
+// (which holds 500 entries since last HA restart). Level filter dropdown
+// controls minimum severity. Colour-coded rows: green=INFO, amber=WARNING,
+// red=ERROR/CRITICAL, grey=DEBUG. Auto-fetches on first visit.
+// ══════════════════════════════════════════════════════════════════════════════
 function _logs(ctx, el) {
   const wrap = el("div", {});
   if (!ctx.state._logsLevel) ctx.state._logsLevel = "DEBUG";
@@ -2050,7 +2211,21 @@ function _logs(ctx, el) {
 }
 
 
-// ── Beacon Characteristics tab ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// Beacon Characteristics sub-tab — signal profiles computed from calibration
+//
+// Shows per-beacon and per-model signal statistics: average RSSI, variance,
+// scanner reach, multi-radio percentage, grid cells hit. Beacons are
+// auto-grouped by model (iBeacon UUID prefix, manufacturer, BLE name).
+//
+// Features:
+//   - Master toggle to enable/disable beacon profiling
+//   - Per-beacon "Tune" toggle: exclude specific beacons from adaptive tuning
+//   - Group/Ungroup: override auto-grouping for individual beacons
+//   - Collapsible per-scanner breakdown table (mean RSSI, std, point count)
+//   - All overrides persisted to settings via beacon_tune_disabled and
+//     beacon_group_overrides keys
+// ══════════════════════════════════════════════════════════════════════════════
 function _beaconChars(ctx, el){
   const wrap = el("div",{style:"max-width:900px"});
   const settings = ctx.state.settings || {};
@@ -2095,6 +2270,8 @@ function _beaconChars(ctx, el){
   }
 
   // ── State (hydrate from settings on first load) ──
+  // _bcTuneDisabled: Set of device_ids excluded from adaptive tuning
+  // _bcGroupOverrides: {device_id: model_key} overrides for auto-grouping
   if (!ctx.state._bcProfiles) ctx.state._bcProfiles = null;
   if (!ctx.state._bcLoading)  ctx.state._bcLoading = false;
   if (!ctx.state._bcStateHydrated) {
@@ -2152,14 +2329,14 @@ function _beaconChars(ctx, el){
 
   const { beacons, models, scanner_names } = profiles;
 
-  // ── Apply group overrides ──
+  // ── Apply group overrides to compute effective model keys ──
   const overrides = ctx.state._bcGroupOverrides || {};
   const effective = beacons.map(b => ({
     ...b,
     effective_model: overrides[b.device_id] || b.model_key,
   }));
 
-  // ── Group by effective model ──
+  // ── Group by effective model, sorted by total calibration points (most data first) ──
   const grouped = {};
   for (const b of effective) {
     const mk = b.effective_model;
@@ -2314,7 +2491,25 @@ function _beaconChars(ctx, el){
 }
 
 
-// ── Factory Reset tab ─────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// Factory Reset sub-tab — complete data wipe with multi-step progress
+//
+// Guarded by three safety layers:
+//   1. Requires Live mode (disabled flag)
+//   2. User must type "FACTORY RESET" in a text input
+//   3. Browser confirm() dialog as final gate
+//
+// Reset sequence (shown as a progress bar):
+//   Step 1: Backend store_factory_reset — clears all 11 .storage JSON files
+//   Step 2: Restore data_mode to "live" (factory reset defaults to "sample")
+//   Step 3: Clear browser localStorage keys (followed list, hidden maps, etc.)
+//   Step 4: Reset in-memory frontend state (filters, selections)
+//   Step 5: Verify server settings are clean
+//   Step 6: Fetch fresh snapshot (objects will be empty)
+//
+// Sets _factoryResetInProgress on state to prevent the 5s poll from
+// re-rendering the page and destroying the progress DOM mid-reset.
+// ══════════════════════════════════════════════════════════════════════════════
 function _factoryReset(ctx, el){
   const wrap = el("div",{class:"card",style:"max-width:640px"});
 
@@ -2355,7 +2550,7 @@ function _factoryReset(ctx, el){
     return wrap;
   }
 
-  // Confirmation input — user must type FACTORY RESET
+  // Confirmation input — user must type "FACTORY RESET" exactly to unlock the button
   const confirmWrap = el("div",{style:"margin-bottom:16px"});
   confirmWrap.appendChild(el("div",{style:"font-size:13px;color:#94a3b8;margin-bottom:6px"},
     'To confirm, type FACTORY RESET in the box below:'
@@ -2391,6 +2586,7 @@ function _factoryReset(ctx, el){
   });
 
   // ── Progress UI (hidden until reset starts) ──
+  // Shows a green progress bar, step label, and scrollable log of completed steps.
   const progressWrap = el("div",{style:"display:none;margin-top:16px"});
   const progressBar = el("div",{style:"width:100%;height:8px;background:#1e293b;border-radius:4px;overflow:hidden;margin-bottom:10px"});
   const progressFill = el("div",{style:"width:0%;height:100%;background:#52b788;border-radius:4px;transition:width 0.3s ease"});
@@ -2431,7 +2627,9 @@ function _factoryReset(ctx, el){
     progressWrap.style.display = "block";
     stepLog.innerHTML = "";
 
-    // Block poll-triggered re-renders from destroying our progress DOM
+    // Block the 5s poll from calling renderRooms() while reset is in progress.
+    // Without this flag, the poll would re-render the Manage tab and destroy
+    // our progress bar DOM mid-operation.
     ctx.state._factoryResetInProgress = true;
 
     // ── Step 1: Send factory reset to backend (clears all 11 stores) ──

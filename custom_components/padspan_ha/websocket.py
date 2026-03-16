@@ -5,9 +5,32 @@
 from __future__ import annotations
 
 """
-REPO LOGIC NOTES
+WebSocket API surface for the PadSpan HA frontend panel.
 
-Defines the websocket surface consumed by the panel. This is the preferred integration point because hass.callWS is stable across HA releases.
+Every UI action (settings changes, map edits, calibration, object labelling,
+backup/restore, etc.) flows through handlers registered here.  We use the
+HA websocket_api rather than REST because hass.callWS is stable across HA
+releases and gives us push-capable connections for free.
+
+The file is organised into logical sections:
+  - Status / diagnostics / version
+  - Model (floors, areas, room metadata)
+  - Settings (read / write)
+  - Live snapshot (the main data pipeline: BLE → objects → rooms)
+  - Maps CRUD
+  - Object labelling & history
+  - Radio management (area assignment, lost/disabled, full reset)
+  - Follow / alert configuration
+  - Calibration (points, model computation, health check)
+  - Movement history & traceback playback
+  - Notifications
+  - Adaptive learning
+  - Propagation health analysis
+  - Backup / restore
+  - Private BLE / IRK management
+  - Companion App discovery & auto-follow
+  - HA Tags integration
+  - Factory reset
 """
 
 
@@ -76,8 +99,15 @@ def _ensure_log_handler() -> _RingLogHandler:
     return _log_handler
 
 
+# ── WebSocket Command Registration ─────────────────────────────────────────────
+
 @callback
 def async_register_websockets(hass: HomeAssistant) -> None:
+    """Register every PadSpan WS command with Home Assistant.
+
+    Called once during integration setup.  Also attaches the in-memory log
+    handler so the UI Debug tab can display WARNING+ log entries.
+    """
     websocket_api.async_register_command(hass, ws_status)
     websocket_api.async_register_command(hass, ws_room_tags)
     websocket_api.async_register_command(hass, ws_auto_diagnostics)
@@ -149,9 +179,12 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
+# ── Status / Diagnostics / Version ─────────────────────────────────────────────
+
 @websocket_api.websocket_command({"type": "padspan_ha/status"})
 @websocket_api.async_response
 async def ws_status(hass: HomeAssistant, connection, msg) -> None:
+    """Return the coordinator's current state dict for the Manage → Health tab."""
     coord = hass.data.get(DOMAIN, {}).get("coordinator")
     entries = []
     if coord:
@@ -198,6 +231,11 @@ async def ws_room_tags(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/auto_diagnostics"})
 @websocket_api.async_response
 async def ws_auto_diagnostics(hass: HomeAssistant, connection, msg) -> None:
+    """Run quick health checks and return pass/fail with recommendations.
+
+    Checks: coordinator presence, room_tag_map population, last_error state.
+    Used by the Manage → Diagnostics panel to show at-a-glance system health.
+    """
     coord = hass.data.get(DOMAIN, {}).get("coordinator")
     checks = []
     recs = []
@@ -239,6 +277,7 @@ async def ws_auto_diagnostics(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/version"})
 @websocket_api.async_response
 async def ws_version(hass: HomeAssistant, connection, msg) -> None:
+    """Return version info.  BUILD_ID is a YYYYMMDDTHHMMSSZ cache-buster for JS imports."""
     connection.send_result(msg["id"], {"version": VERSION, "build_version": BUILD_VERSION, "build_id": BUILD_ID})
 
 
@@ -297,8 +336,11 @@ async def ws_model_update(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], updated)
 
 
+# ── Settings Helpers ───────────────────────────────────────────────────────────
+
 @callback
 def _get_settings(hass: HomeAssistant) -> dict:
+    """Read current settings, defaulting to sample mode if store isn't loaded."""
     st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
     if st:
         return dict(st.data)
@@ -313,16 +355,25 @@ def _is_rpa_addr(address: str) -> bool:
         return False
 
 
+# ── Live Snapshot ──────────────────────────────────────────────────────────────
+# This is the MAIN data pipeline: assembles everything the UI needs from HA state,
+# BLE advertisements, device/entity registries, calibration, and object history.
+# Called every 5s by the panel's poll loop and on demand by other handlers.
+
 async def _live_snapshot(hass: HomeAssistant) -> dict:
-    """Best-effort read of REAL data from Home Assistant.
+    """Build a comprehensive snapshot of all PadSpan-relevant HA data.
 
-    What we try to discover:
-      - receivers/radios (typically Bermuda gateways / BLE receivers)
-      - rooms (from Areas + entity registry area assignments)
-      - tags (device_tracker/sensor/binary_sensor entities tied to Bermuda or bluetooth-ish)
+    Discovers:
+      - BLE scanners (radios) and advertisements from bluetooth_live
+      - Rooms from the HA Area Registry
+      - Tag/entity candidates (Bermuda, device_tracker, sensor)
+      - BLE objects grouped by identity (MAC, iBeacon, private_ble/IRK)
+      - Room assignments via RSSI-to-scanner-area mapping
+      - Object history cache (7-day rolling, disk-backed)
+      - Traceback position recording for playback
 
-    We stay defensive and never raise — the panel must keep rendering even if we can't
-    find any live data.
+    IMPORTANT: This function must never raise.  If any subsection fails, it
+    logs and continues so the UI always gets a renderable (possibly sparse) result.
     """
     snapshot: dict[str, Any] = {
         "source": "live",
@@ -338,10 +389,11 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     }
 
     # --- Bluetooth (scanners + advertisements) ---
+    # Fetched FIRST because downstream sections (objects, room assignment) depend on it.
     try:
         bl = get_bluetooth_live(hass)
         if bl is not None:
-            # Read configurable BLE advertisement timeout from settings (default 3600s / 1 hour)
+            # Max age is user-configurable (Settings → Presence).  Clamped to [60s, 4h].
             _ble_age = 14400
             try:
                 _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
@@ -367,6 +419,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         pass
 
     # --- Find Bermuda config entries (if installed) ---
+    # Bermuda is a popular BLE presence integration.  We auto-detect its entities
+    # as "tag candidates" unless the user has set bermuda_ignore=true.
     bermuda_entry_ids: set[str] = set()
     _bermuda_ignore = False
     try:
@@ -405,15 +459,19 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception:
         snapshot["receivers"] = []
 
-    # --- Tag candidates + mapping ---
+    # --- Tag candidates + room mapping ---
+    # Walk every HA entity and heuristically determine which ones represent
+    # BLE trackable objects and which room they're currently in.
     er = entity_registry.async_get(hass)
 
     def _norm(s: str) -> str:
+        """Case-fold + strip for fuzzy room name matching."""
         return (s or "").strip().casefold()
 
     known_rooms = {_norm(r): r for r in snapshot.get("rooms_discovered", [])}
 
     def _room_from_state(entity_id: str, st: State) -> str | None:
+        """Determine which room an entity is in, trying 4 strategies in priority order."""
         # 1) state string equals a room name
         room = known_rooms.get(_norm(st.state))
         if room:
@@ -440,6 +498,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         return None
 
     def _is_candidate(entity_id: str, st: State) -> bool:
+        """Return True if the entity looks like a BLE presence-tracking entity.
+
+        Accepts: Bermuda config_entry entities, entities with *_area_last_seen
+        naming patterns, entities with receiver/rssi/distance attributes, and
+        entities with bluetooth-ish keywords in their entity_id or name.
+        """
         ent = er.async_get(entity_id)
         # When bermuda_ignore is on, reject any entity from a Bermuda config entry
         if _bermuda_ignore and ent and ent.config_entry_id in _all_bermuda_entry_ids:
@@ -497,7 +561,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception:
         saved_room_tag_map = {}
     def _resolve_saved_entity_id(tag_id: str) -> str:
-        """If coordinator uses tag.* placeholders, try to find a real HA entity."""
+        """Resolve a saved tag ID (which may be a tag.* placeholder) to a real HA entity.
+
+        The coordinator's room_tag_map may contain tag.* entries from sample mode
+        or user configuration.  We try common Bermuda/BLE naming patterns and
+        finally do a fuzzy search across all HA states.
+        """
         if hass.states.get(tag_id):
             return tag_id
         if "." not in tag_id:
@@ -788,7 +857,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         snapshot["bermuda_devices"] = snapshot.get("receivers") or []
 
     # --- Derived "objects" list (entities + BLE addresses) ---
-    # This is what drives the Overview → Objects / Unidentified modals.
+    # This is the core data structure the UI consumes.  It merges three sources:
+    #   (A) Entity-based objects (Bermuda device_trackers, sensors with area states)
+    #   (B) Raw BLE advertisement objects (deduplicated by MAC address)
+    #   (B2) Private BLE objects (rotating-MAC phones merged by IRK canonical_id)
+    #   (C) iBeacon objects (merged by UUID:major:minor across rotating MACs)
+    # After building, we run aggressive deduplication (D1-D7) to collapse duplicates
+    # from MAC rotation, multi-protocol broadcasts, and Apple continuity noise.
     try:
         dr2 = device_registry.async_get(hass)
         er2 = entity_registry.async_get(hass)
@@ -920,9 +995,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 prefix_counts[pfx] = prefix_counts.get(pfx, 0) + 1
 
         # --- Private BLE Device / IRK resolution ---
-        # Resolve Resolvable Private Addresses (RPAs) from modern phones to canonical
-        # identities registered in HA's built-in 'private_ble_device' component.
-        # Also parse Apple iBeacon UUIDs from manufacturer data for HA Companion App.
+        # Modern phones (iOS 8+, Android 8+) rotate their BLE MAC every ~15 minutes.
+        # The only way to identify them stably is via an IRK (Identity Resolving Key)
+        # registered in HA's private_ble_device integration or in PadSpan settings.
+        # We also parse Apple iBeacon UUIDs from manufacturer_data for Companion App phones.
         canonical_by_addr: dict[str, dict[str, Any]] = {}   # addr → {canonical_id, name, kind}
         ibeacon_groups: dict[str, dict[str, Any]] = {}       # "ibeacon:uuid:major:minor" → merged group
         ibeacon_addrs: set[str] = set()                      # MAC addresses absorbed into an iBeacon group
@@ -1478,11 +1554,18 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         except Exception as _merge_err:
             _LOGGER.debug("Object merge error: %s", _merge_err)
 
-        # ── Aggressive beacon deduplication ──────────────────────────────────
-        # Reduces ~700 beacons down by merging devices that are clearly the
-        # same physical device broadcasting under different MACs or protocols.
-        # Runs twice: once on current-cycle objects (to purge ghosts from cache),
-        # and again after cache reintroduction (to dedup cached objects too).
+        # ── Aggressive beacon deduplication (D1–D7) ─────────────────────────
+        # A typical home sees 200-700+ BLE addresses, many of which are the same
+        # physical device broadcasting under different MACs or protocols.
+        # Strategies (in order):
+        #   D1: Entity absorbs its raw BLE counterpart (same MAC)
+        #   D2: Eddystone-UID namespace grouping (same namespace+instance)
+        #   D3: Same BLE broadcast name on random MACs
+        #   D4: Identical manufacturer_data fingerprint (excl. Apple continuity)
+        #   D5: Apple continuity subtype + same scanner set
+        #   D6: Identical service_uuids + same scanner set
+        #   D7: Bare random MACs with zero distinguishing data → collapse by scanner set
+        # Runs twice: once on current objects, again after cache reintroduction.
         _dedup_absorbed: set[str] = set()
 
         # Helper: merge obj_src into obj_dst (like the iBeacon merge above)
@@ -1989,9 +2072,11 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     pass
 
         # ── Persistent object history (7-day rolling, disk-backed) ─────────
-        # Every object we see is recorded here with all metadata.  Tagged/
-        # identified objects never expire; unidentified expire after 7 days.
-        # The cache is loaded from disk on first access and saved every 60 s.
+        # WHY: Objects disappear from BLE when out of range or MAC rotates.
+        # Without history, they'd vanish from the UI.  This cache preserves
+        # every object with all metadata so they reappear with correct labels.
+        # Tagged/identified objects never expire; unidentified expire after 7 days.
+        # The cache is loaded from disk on first access and saved every 15s.
         import time as _time
         _HISTORY_TTL = 604800       # 7 days for unidentified objects
         _SAVE_INTERVAL = 15         # save to disk at most every 15 s
@@ -2487,6 +2572,12 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
 )
 @websocket_api.async_response
 async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
+    """Persist one or more settings changes.
+
+    Each field is individually validated and clamped to safe ranges before
+    being written to the SettingsStore.  After saving, entity toggles in the
+    HA registry are updated to reflect enabled/disabled preferences.
+    """
     mode = (msg.get("data_mode") or "sample").strip().lower()
     if mode not in ("sample", "live"):
         mode = "sample"
@@ -2622,7 +2713,15 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/calibration_health_check"})
 @websocket_api.async_response
 async def ws_calibration_health_check(hass: HomeAssistant, connection, msg) -> None:
-    """Analyse calibration data quality. Returns scanner anomalies and recommended re-scan spots."""
+    """Analyse calibration data quality for the Health Reminder notification.
+
+    Checks:
+      - Staleness: how many days since the last calibration capture
+      - Scanner anomalies: scanners whose mean RSSI deviates >12 dBm from fleet avg
+      - Sparse coverage: grid cells below 0.8 coverage score per map (top 3 worst)
+
+    Returns has_issues=True if any check fails, enabling the UI health badge.
+    """
     from datetime import datetime, timezone as _tz  # noqa: PLC0415
 
     st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
@@ -2729,11 +2828,19 @@ async def ws_calibration_health_check(hass: HomeAssistant, connection, msg) -> N
 @websocket_api.websocket_command({"type": "padspan_ha/live_snapshot"})
 @websocket_api.async_response
 async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
+    """Return the full live snapshot to the panel, enriched with presence + calibration data.
+
+    This is called every 5s by the panel's poll loop.  It:
+      1. Builds the raw snapshot via _live_snapshot()
+      2. Overlays smoothed k-NN positions from the presence coordinator
+      3. Injects stale followed objects that are missing from BLE
+      4. Attaches calibration status metadata for the Setup tab
+    """
     snap = await _live_snapshot(hass)
 
     # Overlay presence-coordinator smoothed data (x_frac, y_frac,
-    # knn_confidence, room, room_confidence) onto snapshot objects so the
-    # UI has access to calibration-derived positions and stable rooms.
+    # knn_confidence, room, room_confidence) so the UI can show
+    # calibration-derived positions and stable room assignments.
     try:
         pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
         if pc and pc.data:
@@ -2936,21 +3043,20 @@ async def ws_vendor_lookup(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], res)
 
 
+# ── Maps CRUD ──────────────────────────────────────────────────────────────────
+
 import time as _time
-# Delay first prune until 10 minutes after module load (HA boot). This gives
-# ESPHome scanners time to reconnect — without this grace period, the prune
-# runs before all radios have reported in and deletes legitimate receivers.
-_last_receiver_prune: float = _time.monotonic() + 900  # first prune eligible after boot + 15 min
+# Delay first prune until 15 min after module load (HA boot).  ESPHome scanners
+# need time to reconnect after a reboot; premature pruning caused receivers
+# to silently disappear (fixed v0.6.72).
+_last_receiver_prune: float = _time.monotonic() + 900
 
 @websocket_api.websocket_command({"type": "padspan_ha/maps_list"})
 @websocket_api.async_response
 async def ws_maps_list(hass: HomeAssistant, connection, msg) -> None:
+    """Return all maps.  Auto-prune is deliberately disabled (see v0.6.72 fix)."""
     global _last_receiver_prune
     ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
-
-    # Auto-prune disabled — receivers are only removed via explicit user action
-    # (Delete button or Remove-from-map in the Tune tab).  The previous auto-prune
-    # caused receivers to silently disappear after reboots or scanner reconnects.
 
     maps = ms.list_maps() if ms else []
     connection.send_result(msg["id"], {"maps": maps})
@@ -2970,6 +3076,11 @@ async def ws_maps_list(hass: HomeAssistant, connection, msg) -> None:
 )
 @websocket_api.async_response
 async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
+    """Upload a new floor plan image and create a map entry.
+
+    The PNG is sent as base64 in the WS message.  Only one Outside map is
+    allowed (the Outside floor has special handling in the 3D stack view).
+    """
     ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
     if not ms:
         connection.send_error(msg["id"], "no_maps_store", "Maps store not initialized")
@@ -3013,6 +3124,13 @@ async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
 )
 @websocket_api.async_response
 async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
+    """Update map metadata: receivers, beacons, room_bounds, calibration, stack, notes.
+
+    When beacons are saved, also triggers immediate calibration injection so
+    the k-NN model incorporates them without waiting for the next walk-around.
+    When beacons are removed, clears stale coordinator state to prevent
+    ghost objects from lingering on the overview 3D map.
+    """
     ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
     if not ms:
         connection.send_error(msg["id"], "no_maps_store", "Maps store not initialized")
@@ -3190,7 +3308,12 @@ async def ws_maps_delete_migrate(hass: HomeAssistant, connection, msg) -> None:
     tgt_stk = tgt_map.get("stack") or {}
 
     def _xform(px: float, py: float) -> tuple[float, float]:
-        """Source map 0-1 → target map 0-1 via world coords."""
+        """Source map 0-1 → target map 0-1 via world coords.
+
+        Maps use fractional coordinates [0,1].  The stack alignment gives each
+        map a world-space position/scale.  We go source→world→target to
+        preserve spatial accuracy when merging maps at different zoom levels.
+        """
         wx, wy = ms.map_to_world(px, py, src_stk)
         return ms.world_to_map(wx, wy, tgt_stk)
 
@@ -3420,6 +3543,8 @@ async def ws_maps_revert_extend(hass: HomeAssistant, connection, msg) -> None:
         connection.send_result(msg["id"], {"ok": False, "reason": "no_extend_snapshot"})
 
 
+# ── Object Labelling ───────────────────────────────────────────────────────────
+
 @websocket_api.websocket_command(
     {
         "type": "padspan_ha/object_label_set",
@@ -3429,7 +3554,20 @@ async def ws_maps_revert_extend(hass: HomeAssistant, connection, msg) -> None:
 )
 @websocket_api.async_response
 async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
-    """Assign a user label to a BLE MAC address (or canonical_id / ibeacon key)."""
+    """Assign a user label to a BLE object (MAC, ibeacon key, or canonical_id).
+
+    Labels are the primary way users "identify" BLE objects.  A labelled object
+    gets "identified: true", which keeps it in history forever and surfaces it
+    prominently in the UI.
+
+    Key behavior:
+      - Rotating MACs (RPAs) are resolved to a stable canonical_id via IRK so
+        the label survives address rotation.
+      - The label is cross-stored under ALL stable identity keys for the same
+        physical device (canonical_id, iBeacon key, static MAC).  This prevents
+        the device from splitting into labelled + unlabelled halves when one
+        identity is seen in a snapshot but not another.
+    """
     obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
     if not obj_store:
         connection.send_error(msg["id"], "no_object_store", "Object store not initialized")
@@ -3659,10 +3797,12 @@ async def ws_object_label_list(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/objects_clear_history"})
 @websocket_api.async_response
 async def ws_objects_clear_history(hass: HomeAssistant, connection, msg) -> None:
-    """Clear untagged/unfollowed objects from the history cache.
+    """Purge untagged/unfollowed objects from the 7-day history cache.
 
-    Preserves objects that have a user_label (tagged) or are identified.
-    This lets the user start fresh without losing their labelled devices.
+    WHY: Over time the cache accumulates hundreds of transient neighbour
+    devices.  This lets the user declutter without losing their labelled
+    or followed devices.  Tagged and followed objects are always preserved.
+    Forces an immediate disk save so the purge survives restarts.
     """
     _dom = hass.data.get(DOMAIN, {})
     _cache: dict | None = _dom.get(DATA_OBJECT_HISTORY)
@@ -3721,6 +3861,8 @@ async def ws_objects_clear_history(hass: HomeAssistant, connection, msg) -> None
     connection.send_result(msg["id"], {"ok": True, "removed": removed, "kept": kept})
 
 
+# ── Radio / Scanner Management ─────────────────────────────────────────────────
+
 @websocket_api.websocket_command(
     {
         "type": "padspan_ha/radio_area_set",
@@ -3731,7 +3873,10 @@ async def ws_objects_clear_history(hass: HomeAssistant, connection, msg) -> None
 )
 @websocket_api.async_response
 async def ws_radio_area_set(hass: HomeAssistant, connection, msg) -> None:
-    """Assign a BLE radio/scanner to an HA area (updates HA device registry). area_name='' to clear."""
+    """Assign a BLE scanner to an HA area.  This is how PadSpan knows which
+    room a scanner is in — the scanner's area becomes the "room" for objects
+    it hears the loudest.  Pass area_name='' to clear the assignment.
+    """
     dev_id = (msg.get("device_id") or "").strip()
     source = (msg.get("source") or "").strip()
     area_name = (msg.get("area_name") or "").strip()
@@ -4073,9 +4218,17 @@ async def ws_integration_reload(hass: HomeAssistant, connection, msg) -> None:
 
 
 # ── Calibration WebSocket Handlers ────────────────────────────────────────────
+# Calibration data is SACRED (see feedback_calibration_data.md).  Beacon captures
+# are cumulative — old positions must never be deleted, only new ones added.
+# The CalibrationStore holds per-position RSSI fingerprints that power the k-NN
+# and Random Forest positioning algorithms.
 
 async def _get_cal_store(hass: HomeAssistant) -> CalibrationStore:
-    """Lazily initialize and return the CalibrationStore."""
+    """Lazily initialize and return the CalibrationStore.
+
+    Creates and loads the store on first access.  Subsequent calls return
+    the cached instance from hass.data.
+    """
     domain_data = hass.data.setdefault(DOMAIN, {})
     if DATA_CALIBRATION not in domain_data:
         store = CalibrationStore(hass)
@@ -4182,10 +4335,11 @@ async def ws_calibration_clear_map(hass: HomeAssistant, connection, msg) -> None
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_object_evict(hass: HomeAssistant, connection, msg) -> None:
-    """Clear coordinator cached state for a single object key.
+    """Evict a single object from the coordinator's smoothed state cache.
 
-    Used after hard relocation to force immediate k-NN recalculation
-    instead of waiting for the next poll cycle.
+    WHY: After physically moving a beacon, the Kalman filter / EMA smoother
+    still remembers the old position.  Evicting forces immediate k-NN
+    recalculation on the next poll instead of slowly drifting to the new spot.
     """
     key = str(msg.get("key") or "").strip()
     if not key:
@@ -4200,9 +4354,11 @@ async def ws_object_evict(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/calibration_compute_model"})
 @websocket_api.async_response
 async def ws_calibration_compute_model(hass: HomeAssistant, connection, msg) -> None:
-    """
-    Trigger full model computation: coverage grids, path-loss fits (if scanner
-    positions available from MapsStore), and LOO cross-validation accuracy.
+    """Trigger full calibration model recomputation.
+
+    Computes: coverage grids (heatmaps), per-scanner path-loss regression
+    fits (if scanner positions are placed on maps), and Leave-One-Out (LOO)
+    cross-validation accuracy.  Results are persisted and returned to the UI.
     """
     cal = await _get_cal_store(hass)
     maps_store = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
@@ -4607,7 +4763,16 @@ async def ws_adaptive_reset(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/propagation_health"})
 @websocket_api.async_response
 async def ws_propagation_health(hass: HomeAssistant, connection, msg) -> None:
-    """Compute comprehensive propagation model health analysis."""
+    """Compute comprehensive propagation model health analysis.
+
+    Combines data from three sources:
+      - Adaptive store: room fingerprint stability, observation counts
+      - Calibration store: path-loss fits (R-squared), LOO accuracy
+      - Floor pairs: cross-floor RSSI delta (sufficient separation for floor detection)
+
+    Returns an overall letter grade (A-F), per-room status, per-scanner
+    path-loss quality, and prioritised recommendations.
+    """
     import math as _math
 
     domain = hass.data.get(DOMAIN, {})
@@ -4773,8 +4938,21 @@ async def ws_propagation_health(hass: HomeAssistant, connection, msg) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Store backup / restore
+# Store Backup / Restore
 # ═══════════════════════════════════════════════════════════════════════════════
+#
+# Backs up ALL PadSpan persistent stores + map image files into a single JSON
+# blob stored via HA's built-in Storage helper.  Up to 3 backups are retained.
+#
+# Key design decisions:
+#   - Map images are base64-encoded and included in the backup so restoring on
+#     a new HA instance doesn't lose floor plan images.
+#   - Restore supports selective store_keys filtering — the user can restore
+#     only calibration data without overwriting their settings.
+#   - In-memory store objects are hot-patched after restore so no restart is
+#     needed (though HA restart is recommended for full consistency).
+#   - Each store class uses different attribute names (.data, ._data, .entries,
+#     .frames) so both backup and restore probe for the correct attribute.
 
 _ALL_STORE_KEYS = [
     SETTINGS_STORE_KEY,
@@ -4789,6 +4967,8 @@ _ALL_STORE_KEYS = [
     OBJECT_HISTORY_STORE_KEY,
 ]
 
+# Maps HA Storage file keys → in-memory hass.data[DOMAIN] keys.
+# Used by both backup (read live data) and restore (hot-patch in-memory stores).
 _DATA_KEY_MAP = {
     SETTINGS_STORE_KEY: DATA_SETTINGS,
     CALIBRATION_STORE_KEY: DATA_CALIBRATION,
@@ -4802,10 +4982,11 @@ _DATA_KEY_MAP = {
     OBJECT_HISTORY_STORE_KEY: DATA_OBJECT_HISTORY,
 }
 
-_MAX_BACKUPS = 3
+_MAX_BACKUPS = 3  # Oldest backup is dropped when a new one exceeds this limit
 
 
 async def _load_backups(hass: HomeAssistant) -> dict[str, Any]:
+    """Load the backup index from HA persistent storage."""
     from homeassistant.helpers.storage import Store as _St
     st = _St(hass, 1, BACKUPS_STORE_KEY)
     loaded = await st.async_load()
@@ -4813,6 +4994,7 @@ async def _load_backups(hass: HomeAssistant) -> dict[str, Any]:
 
 
 async def _save_backups(hass: HomeAssistant, data: dict[str, Any]) -> None:
+    """Write the backup index (including all snapshot data) to disk."""
     from homeassistant.helpers.storage import Store as _St
     st = _St(hass, 1, BACKUPS_STORE_KEY)
     await st.async_save(data)
@@ -4824,17 +5006,26 @@ async def _save_backups(hass: HomeAssistant, data: dict[str, Any]) -> None:
 })
 @websocket_api.async_response
 async def ws_store_backup_create(hass: HomeAssistant, connection, msg) -> None:
-    """Create a backup snapshot of all persistent stores."""
+    """Create a full backup snapshot of all PadSpan persistent stores + map images.
+
+    Each store is read from the in-memory object first (for consistency with
+    current session state).  If the in-memory object isn't available (e.g. store
+    not yet loaded), falls back to reading directly from HA's on-disk storage.
+
+    Map images (PNG/JPG/WEBP) are base64-encoded and included so the backup is
+    fully self-contained — restoring on a fresh HA instance recovers everything.
+    """
     import os
     from datetime import datetime, timezone as _tz
 
     domain = hass.data.get(DOMAIN, {})
     stores_data: dict[str, Any] = {}
 
+    # Snapshot each store, probing for the correct data attribute
     for store_key, data_key in _DATA_KEY_MAP.items():
         store_obj = domain.get(data_key)
         if not store_obj:
-            # Fall back to reading directly from HA storage
+            # Store not loaded in memory — read from HA's JSON storage files
             try:
                 from homeassistant.helpers.storage import Store as _St
                 _st = _St(hass, 1, store_key)
@@ -4863,8 +5054,10 @@ async def ws_store_backup_create(hass: HomeAssistant, connection, msg) -> None:
                 stores_data[store_key] = {}
 
     # ── Collect map image files ──────────────────────────────────────────────
+    # WHY: Maps metadata (receiver positions, room bounds) is useless without
+    # the underlying floor plan image.  Including images makes backups portable.
     import base64 as _b64
-    map_images: dict[str, str] = {}  # filename -> base64
+    map_images: dict[str, str] = {}  # filename -> base64-encoded image data
     try:
         from .const import MAPS_DIR
         maps_dir = Path(hass.config.path("www")) / MAPS_DIR
@@ -4932,8 +5125,15 @@ async def ws_store_backup_list(hass: HomeAssistant, connection, msg) -> None:
 async def ws_store_backup_restore(hass: HomeAssistant, connection, msg) -> None:
     """Restore selected stores from a backup snapshot.
 
-    If store_keys is provided, only those stores are restored.
-    If restore_map_images is true, map image files are restored to disk.
+    Selective restore: if store_keys is provided, ONLY those stores are written
+    back — e.g. the user can restore just calibration without touching settings.
+    If store_keys is None/omitted, all stores in the backup are restored.
+
+    For each restored store:
+      1. Write to HA's on-disk JSON storage (survives restarts)
+      2. Hot-patch the in-memory store object so the UI reflects changes immediately
+
+    Map images are restored to www/padspan_ha/maps/ with path traversal protection.
     """
     from homeassistant.helpers.storage import Store as _St
 
@@ -5030,7 +5230,11 @@ async def ws_store_backup_delete(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/beacon_positions_get"})
 @websocket_api.async_response
 async def ws_beacon_positions_get(hass: HomeAssistant, connection, msg) -> None:
-    """Return all pinned beacon positions across all maps with computed room."""
+    """Return all pinned beacon positions across all maps with their computed room.
+
+    Used by the Beacon Tune tab to show where beacons are placed.  Room is
+    determined by point-in-polygon/circle test against the map's room_bounds.
+    """
     ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
     if not ms:
         connection.send_result(msg["id"], {"positions": []})
@@ -5578,15 +5782,24 @@ async def ws_private_ble_delete_irk(hass: HomeAssistant, connection, msg) -> Non
 
 
 # ── Auto-discover Companion App phones via BLE Transmitter ───────────────────
+# The Companion App (Android + iOS) can broadcast as an iBeacon via its
+# BLE Transmitter sensor.  This section discovers phones using 5 strategies:
+#   1. Entity registry: sensor.*_ble_transmitter from mobile_app platform
+#   2. Device registry: mobile_app devices without BLE transmitter entities
+#   3. Notify services: notify.mobile_app_* always exists when app is registered
+#   4. Device tracker: device_tracker.* from mobile_app (always present)
+#   5. Webhook registrations: hass.data["mobile_app"] (lowest level, always exists)
+# Each strategy catches progressively less-configured phones so the UI can
+# guide the user through enabling BLE Transmitter step by step.
 
 @websocket_api.websocket_command({"type": "padspan_ha/companion_discover"})
 @websocket_api.async_response
 async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
     """Discover HA Companion App phones that have BLE Transmitter enabled.
 
-    Scans for sensor.*_ble_transmitter entities, reads their transmitting UUID,
-    and matches against detected iBeacon objects in the current snapshot.
-    Returns a list of phones that can be auto-followed.
+    Returns a list of phones with their iBeacon UUID, visibility status,
+    IRK availability, and whether they're already followed.  Disabled
+    sensors are included so the UI can prompt the user to enable them.
     """
     try:
         from homeassistant.helpers import entity_registry as er
@@ -6169,11 +6382,15 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
 })
 @websocket_api.async_response
 async def ws_companion_follow(hass: HomeAssistant, connection, msg) -> None:
-    """Auto-label and auto-follow a Companion App phone by its iBeacon key.
+    """One-click "Follow This Phone" action for Companion App phones.
 
-    This is the one-click action: labels the iBeacon object with the phone name,
-    adds it to the followed list, and enables the BLE Transmitter sensor so the
-    Companion App starts broadcasting.  Returns verification of what was done.
+    Performs four steps atomically:
+      1. Labels the iBeacon object in ObjectStore (+ cross-stores under canonical_id)
+      2. Adds the uppercase iBeacon key to followed_addrs in settings
+      3. Enables the BLE Transmitter sensor in the entity registry (un-disables)
+      4. Sends a command_ble_transmitter turn_on notification to the phone app
+
+    Returns verification flags so the UI can confirm each step succeeded.
     """
     try:
         ibeacon_key = str(msg["ibeacon_key"])
@@ -6442,12 +6659,25 @@ async def ws_tags_status(hass: HomeAssistant, connection, msg) -> None:
 async def ws_factory_reset(hass: HomeAssistant, connection, msg) -> None:
     """Erase every PadSpan HA persistent store and reset to factory defaults.
 
-    Requires confirm="FACTORY RESET" to execute.  Admin-only.
-    Clears: settings, calibration, adaptive, objects, maps, model,
-    alerts, movement, traceback, object_history, and backups.
+    Requires confirm="FACTORY RESET" as a safety latch.  Admin-only.
 
-    Each store type is reset to its correct default state — not blindly to {}.
-    bluetooth_live is intentionally left intact so BLE radios keep working.
+    Resets 11 stores, each to its correct empty/default state:
+      - SettingsStore → DEFAULT_SETTINGS (not {}, which would break the UI)
+      - MapsStore → {"maps": []} + deletes uploaded image files from disk
+      - CalibrationStore → {"points": [], "model": {}}
+      - AdaptiveStore → empty room fingerprints / stats
+      - ModelStore → DEFAULT_DATA
+      - ObjectStore, AlertStore → {}
+      - MovementStore → []
+      - TracebackStore → {"frames": []}
+      - ObjectHistory → {} (in-memory dict, re-initialized on next snapshot)
+      - BackupsStore → {}
+
+    Also clears in-memory caches: presence coordinator, main coordinator,
+    object history dict, and bluetooth_live advertisement cache.
+
+    bluetooth_live subscription is intentionally left intact — BLE radios
+    keep working and will repopulate naturally.
     """
     if msg["confirm"] != "FACTORY RESET":
         connection.send_error(

@@ -2,9 +2,12 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
-// PadSpan HA – Devices view
-// Shows ALL tracked devices: HA entity trackers + BLE objects (tagged & unidentified).
-// Each row is clickable for details and has a delete/untag action.
+/**
+ * Devices view — unified list of ALL tracked devices.
+ * Merges HA entity trackers, tagged BLE objects, and unidentified BLE advertisements
+ * into a single sortable table. Each row is clickable for details and supports
+ * delete/untag actions. Gathers data from snap.tags, snap.objects, and snap.ble.
+ */
 
 export function render(ctx) {
   const { el, esc, radioShortId } = ctx.helpers;

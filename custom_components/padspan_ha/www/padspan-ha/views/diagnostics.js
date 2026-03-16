@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+/**
+ * Diagnostics view — full JSON dump of UI and backend state.
+ * Serializes version info, timing, WS counts, live snapshot, maps, room-tag map,
+ * and auto-diagnostics into a copyable JSON block. Intended for pasting into
+ * support conversations or AI-assisted debugging.
+ */
+
 export function render(ctx){
   const { el } = ctx.helpers;
   const root = el("section",{id:"diagnostics"});

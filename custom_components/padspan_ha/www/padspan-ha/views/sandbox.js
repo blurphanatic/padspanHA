@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+/**
+ * Sandbox view — experimental data playground.
+ * Read-only exploration of live snapshot data, experimental feature toggles,
+ * and internal state. Nothing here changes config or persisted data.
+ * Marked with a PLAYGROUND badge to set expectations.
+ */
+
 export function render(ctx){
   const { el, helpBtn, radioShortId } = ctx.helpers;
   const _sid = (source) => radioShortId ? radioShortId(source || "") : "";

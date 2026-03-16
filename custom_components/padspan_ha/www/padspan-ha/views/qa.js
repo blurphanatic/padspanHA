@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+/**
+ * QA view — automated config health checks and validation.
+ * Runs pass/warn/fail checks against live snapshot data: BLE scanners present,
+ * rooms discovered, maps uploaded, objects tracked, calibration state, etc.
+ * Provides a quick at-a-glance summary of system readiness.
+ */
+
 export function render(ctx){
   const { el, esc, helpBtn, radioShortId } = ctx.helpers;
   const _sid = (source) => radioShortId ? radioShortId(source || "") : "";

@@ -5,13 +5,19 @@
 from __future__ import annotations
 
 """
-REPO LOGIC NOTES
+PadSpan HA — Integration Entry Point
+======================================
+Initialises persistent stores, registers the websocket API, and registers a
+single HA sidebar panel (internal view navigation happens inside the panel JS).
 
-Entry point. Initializes coordinator + persistent stores, registers websocket API, and
-registers a SINGLE HA panel (internal navigation happens inside the panel).
-
-Key rule: NEVER "revert" features by accident. Treat the repo as additive — only remove
-features when the user explicitly requests it.
+Startup order:
+  1. ``async_setup`` — called once per HA boot (before any config entry).
+     Creates stores, registers WS commands, registers the sidebar panel,
+     and starts the Bluetooth live feed.
+  2. ``async_setup_entry`` — called per config entry (one per install).
+     Creates the PadSpanCoordinator, starts PresenceCoordinator (BLE polling),
+     and forwards sensor/binary_sensor/device_tracker platforms.
+  3. ``async_unload_entry`` — teardown: stops coordinator, flushes stores.
 """
 
 import logging
@@ -64,7 +70,11 @@ SERVICE_SCHEMA = vol.Schema({vol.Required("room_tag_map"): dict})
 
 
 async def _ensure_stores(hass: HomeAssistant) -> None:
-    """Create/load persistent stores exactly once per HA runtime."""
+    """Create/load every persistent store exactly once per HA runtime.
+
+    Each store is guarded by a DATA_* key in hass.data[DOMAIN] so reload
+    cycles don't double-init.  Order doesn't matter — stores are independent.
+    """
     hass.data.setdefault(DOMAIN, {})
 
     if DATA_SETTINGS not in hass.data[DOMAIN]:
@@ -136,6 +146,7 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """One-time HA boot setup: stores → websockets → panel → BLE feed → services."""
     hass.data.setdefault(DOMAIN, {})
 
     _LOGGER.info("PadSpan HA starting v%s (build %s)", BUILD_VERSION, BUILD_ID)
@@ -232,6 +243,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Per-config-entry setup: coordinator → presence polling → entity platforms."""
     hass.data.setdefault(DOMAIN, {})
 
     # Re-register panels with the current BUILD_ID so HACS reloads (without full
@@ -291,6 +303,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Tear down: unload platforms, stop BLE, flush stores to disk."""
     unload_ok = True
     try:
         unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

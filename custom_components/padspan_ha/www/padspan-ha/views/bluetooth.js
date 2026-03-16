@@ -2,12 +2,21 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
-// PadSpan HA – Bluetooth view
-// A pragmatic clone of HA's Bluetooth page: scanners/adapters + advertisement monitor + simple visualization.
+// ── Bluetooth View ──────────────────────────────────────────────────────────
+// Main Bluetooth diagnostics page with four sub-tabs:
+//   - Visualization: SVG scanner→device graph showing which scanners hear which devices
+//   - Monitor: Scrollable advertisement list with detail panel, enrichment badges, tagging
+//   - Scanners: Left/right split — scanner list + per-scanner device table
+//   - ESPHome Configs: Static YAML config library for setting up ESP32 BLE scanners
+//
+// Data flow: snapshot.ble provides radios[] (scanners) and advertisements[] (recent BLE ads).
+// Each advertisement carries _xref (cross-reference to tracked objects) from the backend.
+// The view also pulls snapshot.objects for richer display names and identification status.
 
 export function render(ctx) {
   const { el, esc } = ctx.helpers;
 
+  // ── Extract BLE data from the live snapshot ───────────────────────────────
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const isLive = ctx.state.dataMode === "live";
   const ble = snap && snap.ble ? snap.ble : { radios: [], advertisements: [], diag: { ok: true, errors: [] } };
@@ -22,17 +31,20 @@ export function render(ctx) {
     }
   }
 
-  // View state (stored on ctx.state so it survives re-renders)
-  if (!ctx.state.btTab) ctx.state.btTab = "visualization"; // visualization | monitor | scanners
+  // ── Persistent view state ─────────────────────────────────────────────────
+  // Stored on ctx.state so values survive the 5-second poll re-render cycle.
+  if (!ctx.state.btTab) ctx.state.btTab = "visualization";
   if (ctx.state.btFilter == null) ctx.state.btFilter = "";
-  if (!ctx.state.btSource) ctx.state.btSource = "all"; // all | <scanner source>
+  if (!ctx.state.btSource) ctx.state.btSource = "all";
   if (!ctx.state.btMax) ctx.state.btMax = 200;
 
   const radios = Array.isArray(ble.radios) ? ble.radios : [];
   const adsAll = Array.isArray(ble.advertisements) ? ble.advertisements : [];
   const diag = ble.diag || { ok: true, errors: [] };
 
-  // Derived
+  // ── Filter + paginate advertisements ──────────────────────────────────────
+  // Apply source selector and free-text search across all relevant fields
+  // (name, address, source, company, services, cross-ref label/room/kind).
   const filter = String(ctx.state.btFilter || "").trim().toLowerCase();
   const sourceSel = ctx.state.btSource || "all";
   const maxItems = Math.max(10, Math.min(1000, Number(ctx.state.btMax || 200)));
@@ -42,14 +54,17 @@ export function render(ctx) {
       if (!a) return false;
       if (sourceSel !== "all" && String(a.source || "") !== sourceSel) return false;
       if (!filter) return true;
+      // Concatenate all searchable fields into one haystack string for substring match
       const xr = a._xref || {};
       const hay = `${a.name || ""} ${a.address || ""} ${a.source || ""} ${a.company_name || ""} ${a.device_type || ""} ${(a.service_names||[]).join(" ")} ${xr.label || ""} ${xr.kind || ""} ${xr.room || ""} ${xr.canonical_id || ""} ${xr.ibeacon_uuid || ""}`.toLowerCase();
       return hay.includes(filter);
     })
     .slice(0, maxItems);
 
+  // Deduplicated scanner source names for the source dropdown filter
   const sources = ["all", ...Array.from(new Set(radios.map(r => String(r.source || "")).filter(Boolean))).sort()];
 
+  // ── Sub-tab switcher ──────────────────────────────────────────────────────
   const tabButton = (id, label) =>
     el(
       "button",
@@ -63,6 +78,7 @@ export function render(ctx) {
       label
     );
 
+  // ── Page header with KPI summary badges ────────────────────────────────────
   const header = el("div", { class: "row" }, [
     el("div", { class: "grow" }, [
       el("div", { class: "h1" }, "Bluetooth"),
@@ -82,6 +98,9 @@ export function render(ctx) {
     ]),
   ]);
 
+  // ── BLE health diagnostics ─────────────────────────────────────────────────
+  // callback_active: whether bluetooth.async_register_callback() succeeded in HA.
+  // resolver: private BLE (IRK) resolution status from the objects model.
   const _resolverDiag = (snap?.objects?.summary?.resolver) || {};
   const _resolverErrors = _resolverDiag.errors || [];
   const _callbackOk = diag.callback_active !== false;
@@ -93,6 +112,10 @@ export function render(ctx) {
   const _privateBleCount = (snap?.objects?.summary?.private_ble) || 0;
 
   // ── Private BLE clickable card ──────────────────────────────────────────────
+  // Expandable card showing IRK device status. Color-coded:
+  //   green  = IRKs loaded and resolving RPAs
+  //   amber  = RPAs detected but no IRKs configured (unresolvable)
+  //   slate  = no rotating-MAC devices detected yet
   if (!ctx.state._pbleExpanded) ctx.state._pbleExpanded = false;
   if (!ctx.state._pbleStatus)   ctx.state._pbleStatus = null;
 
@@ -127,6 +150,7 @@ export function render(ctx) {
   ]);
   privateBleCard.appendChild(_pbleHdr);
 
+  // Toggle expand/collapse; lazy-fetch private BLE status on first expand
   _pbleHdr.addEventListener("click", () => {
     ctx.state._pbleExpanded = !ctx.state._pbleExpanded;
     if (ctx.state._pbleExpanded && !ctx.state._pbleStatus) {
@@ -206,6 +230,7 @@ export function render(ctx) {
       }, "Add");
       const irkMsg = el("div", { style: "font-size:11px;margin-top:4px;min-height:16px;width:100%" });
 
+      // Submit IRK to backend — accepts hex (32 chars), base64, or colon-separated
       irkAddBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         const name = irkNameInput.value.trim();
@@ -217,7 +242,7 @@ export function render(ctx) {
           irkMsg.style.color = "#4ade80";
           irkMsg.textContent = "\u2713 IRK saved for " + name + " \u2014 resolving will start within 60 seconds";
           irkNameInput.value = ""; irkValueInput.value = "";
-          // Refresh status
+          // Refresh status after a short delay to let the backend register the new IRK
           ctx.state._pbleStatus = null;
           setTimeout(() => {
             ctx.actions.wsCommand("padspan_ha/private_ble_status").then(res => {
@@ -297,6 +322,8 @@ export function render(ctx) {
     privateBleCard.appendChild(detail);
   }
 
+  // ── BLE health warning cards ────────────────────────────────────────────────
+  // diagCard: shown when ble.diag.ok is false (e.g. HA Bluetooth integration missing)
   const diagCard =
     diag && (diag.ok === false || (diag.errors && diag.errors.length))
       ? el("div", { class: "card warn" }, [
@@ -310,7 +337,7 @@ export function render(ctx) {
         ])
       : null;
 
-  // Warn if BLE callback isn't active or resolver has errors
+  // bleDiagCard: shown when the BLE callback failed or private BLE resolver has errors
   const bleDiagCard = (!_callbackOk || _resolverErrors.length)
     ? el("div", { class: "card warn" }, [
         !_callbackOk ? el("div", { style: "margin-bottom:6px" }, [
@@ -326,6 +353,8 @@ export function render(ctx) {
 
   const tabs = el("div", { class: "tabs" }, [tabButton("visualization", "Visualization"), tabButton("monitor", "Advertisement monitor"), tabButton("scanners", "Scanners"), tabButton("esphome_configs", "ESPHome Configs")]);
 
+  // ── Search / source / max-rows controls ────────────────────────────────────
+  // Shared filter bar used by all sub-tabs except ESPHome Configs.
   const controls = el("div", { class: "bt-controls", style: "display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px" }, [
     el("div", { class: "field", style: "flex:2;min-width:160px" }, [
       el("div", { class: "label" }, "Search"),
@@ -369,7 +398,9 @@ export function render(ctx) {
     ]),
   ]);
 
-  // ESPHome Configs tab is 100% static — skip full DOM rebuild on 5s poll
+  // ── Tab routing ────────────────────────────────────────────────────────────
+  // ESPHome Configs tab is 100% static — cache the DOM to avoid flickering
+  // expanded YAML blocks during the 5-second poll re-render cycle.
   if (ctx.state.btTab === "esphome_configs") {
     if (ctx.state._esphomeFullDom) return ctx.state._esphomeFullDom;
     const body = renderEsphomeConfigs(ctx);
@@ -394,6 +425,11 @@ export function render(ctx) {
   return out;
 }
 
+// ── Scanners Sub-Tab ────────────────────────────────────────────────────────
+// Two-column layout: left panel lists all BLE scanners (ESPHome proxies,
+// HA Bluetooth adapters), right panel shows devices heard by the selected scanner.
+// Each scanner row includes: short ID pill, name, room, metadata, RSSI offset
+// control, and a two-step "Reset radio" button (to prevent accidental data loss).
 function renderScanners(ctx, radios, sources, adsAll) {
   const { el, radioShortId } = ctx.helpers;
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
@@ -422,7 +458,9 @@ function renderScanners(ctx, radios, sources, adsAll) {
       r.disabled ? el("span", { class: "badge warn", style: "font-size:10px;background:rgba(148,100,220,.18);color:#c084fc" }, "⊘ Disabled") : null,
     ].filter(Boolean));
 
-    // Per-scanner RSSI offset control
+      // Per-scanner RSSI offset control — compensates for hardware differences.
+    // Positive offset = scanner reads weaker than reality; negative = reads stronger.
+    // Persisted via padspan_ha/scanner_offset_set WS call, applied during model inference.
     const currentOffset = Number(scannerOffsets[src] || 0);
     const offsetInput = el("input", {
       type: "number", min: "-30", max: "30", step: "1",
@@ -447,7 +485,9 @@ function renderScanners(ctx, radios, sources, adsAll) {
       currentOffset !== 0 ? el("span", { class: "badge", style: "font-size:10px;background:#1a3a2a;color:#52b788" }, `${currentOffset > 0 ? "+" : ""}${currentOffset} dBm active`) : null,
     ].filter(Boolean));
 
-    // Reset radio button — two-step confirmation
+    // Reset radio button — two-step confirmation to prevent accidental data loss.
+    // First click shows "Erase all data? [Yes, reset] [No]"; second click executes.
+    // Clears calibration readings, map placements, fingerprints, and offsets for this radio.
     const resetWrap = document.createElement("div");
     resetWrap.style.cssText = "display:flex;align-items:center;gap:4px;margin-top:3px";
     const makeResetBtn = () => {
@@ -526,11 +566,14 @@ function renderScanners(ctx, radios, sources, adsAll) {
     return div;
   };
 
-  // ── Right panel: objects heard by selected scanner ──
+  // ── Right panel: objects heard by selected scanner ──────────────────────────
+  // Default to first scanner; selection persists across re-renders via ctx.state.
   if (!ctx.state._scannerSel && radios.length) ctx.state._scannerSel = radios[0].source || "";
   const selSrc = ctx.state._scannerSel || "";
 
-  // Highlight selected scanner in the left list
+  // Build the left-side scanner list with click-to-select behavior.
+  // Selected scanner gets a green left border highlight.
+  // Clicks on buttons/inputs (offset, reset) are excluded from selection.
   const scannerListEl = el("div", { class: "bt-list" });
   for (const r of radios) {
     const rowEl = row(r);
@@ -556,9 +599,9 @@ function renderScanners(ctx, radios, sources, adsAll) {
     for (const a of (o.all_addresses || [])) { if (a) objByAddr.set(String(a).toUpperCase(), o); }
   }
 
-  // Find all ads from this scanner
+  // Find all ads from the selected scanner, then dedup by address keeping the
+  // strongest RSSI. This gives a "what can this scanner see right now?" view.
   const scannerAds = adsAll.filter(a => String(a.source || "") === selSrc);
-  // Dedup by address, keep best RSSI
   const addrMap = new Map();
   for (const a of scannerAds) {
     const addr = (a.address || "").toUpperCase();
@@ -568,6 +611,7 @@ function renderScanners(ctx, radios, sources, adsAll) {
   }
   const uniqueAds = [...addrMap.values()].sort((a, b) => (b.rssi || -200) - (a.rssi || -200));
 
+  // Format seconds-ago into human-readable relative time (e.g. "3m 12s", "2h 5m")
   const fmtAgo = (s) => {
     const v = Number(s); if (!isFinite(v)) return "—";
     if (v < 1) return "<1s"; if (v < 60) return `${Math.round(v)}s`;
@@ -576,7 +620,8 @@ function renderScanners(ctx, radios, sources, adsAll) {
     const d = Math.floor(h/24); return `${d}d ${h%24}h`;
   };
 
-  // Quiet mode: filter per-scanner device list
+  // Quiet mode: only show devices the user has labeled, identified, or is following.
+  // Hides the flood of unknown BLE advertisements for a cleaner view.
   const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   const _filteredAds = _quietMode
     ? uniqueAds.filter(a => {
@@ -608,6 +653,7 @@ function renderScanners(ctx, radios, sources, adsAll) {
       const obj = objByAddr.get(addr);
       const displayName = obj ? (obj.user_label || obj.name || addr) : (a.name && a.name !== addr ? a.name : addr);
       const kindLabel = obj ? (obj.kind === "private_ble" ? "Private BLE" : obj.kind === "ibeacon" ? "iBeacon" : obj.identified ? "BLE" : "BLE?") : "";
+      // RSSI bar: maps -100 dBm → 0% and -40 dBm → 100% (60 dBm range)
       const pct = Math.max(0, Math.min(100, ((a.rssi || -100) + 100) / 60 * 100));
       const bar = el("div", { style: `width:${pct.toFixed(0)}%;height:5px;background:#52b788;border-radius:3px;min-width:2px` });
 
@@ -640,6 +686,13 @@ function renderScanners(ctx, radios, sources, adsAll) {
   ]);
 }
 
+// ── Advertisement Monitor Sub-Tab ────────────────────────────────────────────
+// Two-column layout: left panel is a scrollable list of recently seen BLE
+// advertisements with enrichment badges (kind, company, services, connectable).
+// Right panel shows full detail for the selected advertisement including
+// identity, signal info, manufacturer data, service UUIDs, iBeacon fields,
+// and a raw JSON toggle. Clicking a row selects it; clicking the Tag button
+// opens the label prompt for object tracking.
 function renderMonitor(ctx, ads, radios, objIndex) {
   const { el, esc } = ctx.helpers;
   const _rsid = ctx.helpers.radioShortId || (() => "");
@@ -653,8 +706,9 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     ]);
   }
 
-  // ── helpers ──
+  // ── Display helpers ────────────────────────────────────────────────────────
 
+  // RSSI pill with color-coded severity: good (>= -60), ok (>= -80), bad (< -80)
   const rssiPill = rssi => {
     const v = Number(rssi);
     if (!isFinite(v)) return el("span", { class: "pill" }, "RSSI ?");
@@ -665,6 +719,7 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     return el("span", { class: cls }, `${v} dBm`);
   };
 
+  // Human-readable relative time from seconds (same logic as fmtAgo in Scanners)
   const ageText = age_s => {
     const s = Number(age_s);
     if (!isFinite(s)) return "\u2014";
@@ -678,8 +733,10 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     return `${d}d ${h % 24}h`;
   };
 
+  // Tiny colored badge factory — used for kind, company, services, etc.
   const badge = (text, bg, fg, border) => el("span", { style: `display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:${bg};color:${fg};border:1px solid ${border||bg};white-space:nowrap` }, text);
 
+  // Object kind badge with distinct colors per type for quick visual scanning
   const kindBadge = kind => {
     if (kind === "entity")      return badge("entity",      "#0a2a1a", "#86efac", "#2d6a4f");
     if (kind === "private_ble") return badge("private BLE",  "#0a1a3a", "#93c5fd", "#1e4976");
@@ -688,16 +745,19 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     return null;
   };
 
-  // ── row renderer ──
+  // ── Advertisement row renderer ──────────────────────────────────────────────
+  // Each row shows: display name, sub-line (address, scanner short ID, room),
+  // enrichment badges (kind, company, device type, connectable, services),
+  // RSSI pill, age, and a Tag/Relabel button.
 
   const row = a => {
     const addr = a.address || "";
     const src = a.source || "";
-    const xr = a._xref || {};
+    const xr = a._xref || {};  // Backend cross-reference: label, kind, room, canonical_id, etc.
     const obj = addr ? objIndex.get(String(addr).toUpperCase()) : null;
     const userLabel = xr.label || (obj && obj.user_label) || "";
     const displayName = userLabel || a.name || addr || "Unknown";
-    const sid = _rsid(src);
+    const sid = _rsid(src);  // Short scanner ID (e.g. "S1") for compact display
 
     // Enrichment badges (inline, compact)
     const badges = [];
@@ -721,7 +781,8 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     if (xr.canonical_id) subParts.push("IRK-resolved");
     if (xr.ibeacon_uuid) subParts.push("iBeacon");
 
-    // Use stable identifier for private_ble/ibeacon (same logic as objects.js)
+    // Use stable identifier for tagging — private BLE uses canonical_id (IRK-derived),
+    // iBeacon uses the UUID/major/minor key, because MAC addresses rotate for these types.
     const tagAddr = xr.kind === "private_ble" ? (xr.canonical_id || addr)
                   : xr.kind === "ibeacon"     ? (xr.key || addr)
                   : addr;
@@ -750,8 +811,9 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     ]);
   };
 
-  // ── detail panel ──
-
+  // ── Detail panel (right column) ────────────────────────────────────────────
+  // Shows full inspection of the selected advertisement: identity, signal,
+  // manufacturer data, service UUIDs/data, iBeacon fields, and raw JSON toggle.
   const details = (() => {
     if (!selected) return null;
     const a = ads.find(x => x && String(x.address || "") === selected) || null;
@@ -765,7 +827,7 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     card.appendChild(el("div", { style: "font-weight:700;font-size:15px;margin-bottom:4px" }, hdrName));
     if (xr.kind) card.appendChild(el("div", { style: "margin-bottom:8px" }, [kindBadge(xr.kind)]));
 
-    // Section helper
+    // Section helper — renders a titled group of key/value rows, skipping empty values
     const section = (title, rows) => {
       const s = el("div", { style: "margin-bottom:10px" });
       s.appendChild(el("div", { style: "font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;margin-bottom:4px" }, title));
@@ -854,7 +916,7 @@ function renderMonitor(ctx, ads, radios, objIndex) {
     card.appendChild(rawToggle);
     card.appendChild(rawPre);
 
-    // Object detail button
+    // Link to full object detail modal if this address is in the tracked objects list
     const snap = ctx.state.live?.snapshot;
     const matchedObj = (snap?.objects?.list||[]).find(o =>
       o.address && o.address.toUpperCase() === selected.toUpperCase()
@@ -893,6 +955,21 @@ function renderMonitor(ctx, ads, radios, objIndex) {
   ]);
 }
 
+// ── Visualization Sub-Tab ────────────────────────────────────────────────────
+// Renders an SVG bipartite graph: scanners on the left, devices on the right,
+// with lines connecting each device to the scanner that reported it.
+//
+// Layout (left to right):
+//   [Scanner labels]  (circle)────line────(circle)  [Device labels]
+//
+// Lines are color-coded by RSSI strength (good/ok/bad). Labels are rendered
+// as clickable blue text with underlines — clicking a scanner opens the scanner
+// detail modal, clicking a device opens the object detail modal.
+//
+// SVG is built as an innerHTML string (not createElement) because
+// document.createElement in HTML namespace produces invisible SVG elements
+// in HA WebViews. Event delegation on the wrapper div handles clicks by
+// walking up from the click target to find the nearest <g data-type="...">.
 function renderVisualization(ctx, radios, ads, objIndex) {
   const { el } = ctx.helpers;
 
@@ -903,8 +980,10 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     ]);
   }
 
-  // Layout: labels on the outer edges, nodes in the middle, lines between nodes.
-  //   [Scanner labels →]  (o)----line----(o)  [← Device labels]
+  // ── SVG coordinate system ─────────────────────────────────────────────────
+  // Fixed width, dynamic height based on device count.
+  // Scanner labels left-aligned at scannerLabelX, scanner circles at scannerNodeX.
+  // Device circles at deviceNodeX, device labels right-aligned at deviceLabelX.
   const w = 920;
   const pad = 24;
   const scannerLabelX = pad + 10;          // labels start here (left-aligned)
@@ -912,10 +991,12 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const deviceNodeX = w - pad - 300;       // device circles — more room for labels
   const deviceLabelX = w - pad - 10;       // device labels end here
 
+  // Deduplicated sorted scanner source IDs, with index for positional lookups
   const srcs = Array.from(new Set(radios.map(r => String(r.source || "")).filter(Boolean))).sort();
   const srcIndex = new Map(srcs.map((s, i) => [s, i]));
 
-  // Filter out scanner-to-scanner detections (scanners are infrastructure, not devices)
+  // Exclude scanner-to-scanner detections — scanners advertising to each other
+  // would create noise in the device column without adding useful information.
   const _isScanner = ctx.helpers.isScanner || (() => false);
   const filteredAds = ads.filter(a => {
     const addr = String(a.address || "").toUpperCase();
@@ -930,13 +1011,16 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     bySrc[src].push(a);
   }
 
-  // Dynamic height: 16px per device row, minimum 460, plus room for titles
+  // ── Dynamic SVG height calculation ─────────────────────────────────────────
+  // 16px per device row, minimum 460px, must also fit all scanners at 20px apart.
   const DEV_ROW_H = 16;
   const totalDevCount = Object.values(bySrc).reduce((sum, arr) => sum + Math.min(arr.length, 24), 0);
   const scannerMinH = srcs.length * 20 + pad * 2 + 40;
   let h = Math.max(460, totalDevCount * DEV_ROW_H + pad * 3 + 30, scannerMinH);
 
-  // Place scanners evenly along the left (initial pass, repositioned after devices)
+  // ── Scanner node placement (left column) ───────────────────────────────────
+  // Initial pass: evenly spaced. After devices are placed, scanners are
+  // repositioned to the vertical center of their device cluster for visual clarity.
   const _vizSid = ctx.helpers.radioShortId || (() => "");
   const scannerNodes = srcs.map((src, i) => {
     const y = pad + 20 + (i + 1) * ((h - pad * 2 - 20) / (srcs.length + 1));
@@ -945,7 +1029,10 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     return { id: src, label: (sid ? "[" + sid + "] " : "") + name, x: scannerNodeX, y };
   });
 
-  // Place devices near their source scanner, then resolve overlaps
+  // ── Device node placement (right column) ───────────────────────────────────
+  // Devices are placed vertically near their reporting scanner (centered on
+  // the scanner's Y position), capped at 24 per scanner to prevent overflow.
+  // Rich labels include: user label or name, room, and RSSI in parentheses.
   const deviceNodes = [];
   for (const src of Object.keys(bySrc)) {
     const sIdx = srcIndex.has(src) ? srcIndex.get(src) : -1;
@@ -982,7 +1069,10 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     }
   }
 
-  // Resolve vertical overlaps: sort by Y, push apart if too close
+  // ── Overlap resolution ─────────────────────────────────────────────────────
+  // Sort devices by Y, then push overlapping nodes apart to ensure minimum gap.
+  // If the column overflows the bottom, shift the entire block up; if the top
+  // overflows after shifting, clamp and accept that we need more height.
   deviceNodes.sort((a, b) => a.y - b.y);
   const MIN_GAP = DEV_ROW_H;
   for (let i = 1; i < deviceNodes.length; i++) {
@@ -1005,7 +1095,8 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     }
   }
 
-  // Reposition each scanner to the vertical center of its device cluster
+  // Reposition each scanner to the vertical center of its device cluster —
+  // this makes the connecting lines fan out symmetrically from the scanner node.
   for (const sn of scannerNodes) {
     const myDevs = deviceNodes.filter(d => d.src === sn.id);
     if (myDevs.length) {
@@ -1045,6 +1136,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     if (neededH > h) h = neededH;
   }
 
+  // RSSI CSS class for line color: good (green), ok (amber), bad (red)
   const rssiClass = rssi => {
     const v = Number(rssi);
     if (!isFinite(v)) return "rssi-unk";
@@ -1053,12 +1145,14 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     return "rssi-bad";
   };
 
-  // Build SVG as an HTML string — avoids the HTML-namespace issue that makes
-  // document.createElement("circle") / ("line") render as invisible elements.
+  // ── SVG rendering (innerHTML string approach) ─────────────────────────────
+  // Must use innerHTML, not document.createElement, because SVG elements
+  // created in the HTML namespace are invisible in HA's WebView.
+  // Embedded <style> provides hover effects: labels turn teal, circles glow.
   let s = `<svg class="bt-viz" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
   s += `<style>.bt-viz-click{cursor:pointer;pointer-events:all}.bt-viz-click text.bt-viz-label{fill:#7dd3fc}.bt-viz-click:hover text.bt-viz-label{fill:#5eead4}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}.bt-viz-uline{stroke:#7dd3fc;stroke-width:0.5;opacity:0.7}.bt-viz-click:hover .bt-viz-uline{stroke:#5eead4}</style>`;
 
-  // Lines first (back layer) — connect between the node circles only
+  // Lines first (back layer) — RSSI-colored connections between scanner and device circles
   for (const d of deviceNodes) {
     const sn = scannerNodes.find(n => n.id === d.src);
     if (!sn) continue;
@@ -1070,8 +1164,10 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const MAX_LABEL = 38;
   const trunc = (s) => s.length > MAX_LABEL ? s.slice(0, MAX_LABEL - 1) + "…" : s;
 
-  // Scanner nodes + labels (left-aligned, growing rightward toward node) — clickable
-  // Invisible hit-area rect behind each row so clicks land reliably on the <g>
+  // ── Scanner nodes + labels (left column) ───────────────────────────────────
+  // Each scanner is a <g> with data-type="scanner" for event delegation.
+  // Blue text label with subtle underline, circle node, and an invisible rect
+  // hit-area so clicks land reliably even between the label and circle.
   for (const sn of scannerNodes) {
     const _lblLen = Math.min(trunc(sn.label).length * 7.2, sn.x - scannerLabelX - 10);
     s += `<g class="bt-viz-click" data-type="scanner" data-id="${_escSvg(sn.id)}" style="cursor:pointer" pointer-events="all">`;
@@ -1082,7 +1178,8 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     s += `</g>`;
   }
 
-  // Device nodes + labels (left-aligned, growing rightward from node) — clickable
+  // ── Device nodes + labels (right column) ───────────────────────────────────
+  // Same pattern as scanners: <g data-type="device">, blue label, underline, circle.
   for (const d of deviceNodes) {
     const rc = rssiClass(d.rssi);
     const _dLblLen = Math.min(trunc(d.label).length * 6.6, deviceLabelX - d.x - 18);
@@ -1094,7 +1191,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     s += `</g>`;
   }
 
-  // Titles on top
+  // Column titles at the top of the SVG
   s += `<text x="${scannerLabelX}" y="${pad}" class="bt-viz-title" text-anchor="start" dominant-baseline="middle">Scanners</text>`;
   s += `<text x="${deviceNodeX + 10}" y="${pad}" class="bt-viz-title" text-anchor="start" dominant-baseline="middle">Devices</text>`;
 
@@ -1103,10 +1200,11 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const svgWrap = document.createElement("div");
   svgWrap.innerHTML = s;
 
-  // Click handler — event delegation on the wrapper div.  Walk up from the
-  // click target to find the nearest <g> with data-type.  This is more reliable
-  // than querySelectorAll(".class") on SVG elements created via innerHTML,
-  // which can miss elements due to HTML/SVG namespace mismatches in WebViews.
+  // ── Click handler (event delegation) ──────────────────────────────────────
+  // Walk up from the click target to find the nearest <g data-type="...">.
+  // Event delegation is used instead of per-element listeners because
+  // querySelectorAll on SVG elements created via innerHTML is unreliable
+  // in HA's WebView due to HTML/SVG namespace mismatches.
   svgWrap.addEventListener("click", (e) => {
     let node = e.target;
     // Walk up from click target to find the <g> with data-type
@@ -1119,9 +1217,11 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     const id = node.getAttribute("data-id");
     if (!id) return;
     if (type === "scanner") {
+      // Open scanner detail modal
       const radio = radios.find(r => String(r.source || "") === id);
       if (radio) ctx.actions.showScannerDetail(radio);
     } else if (type === "device") {
+      // Open object detail modal — prefer tracked object, fall back to ad-based stub
       const obj = objIndex.get(id.toUpperCase());
       if (obj) {
         ctx.actions.showObjectDetail(obj);
@@ -1150,6 +1250,10 @@ function renderVisualization(ctx, radios, ads, objIndex) {
 }
 
 // ── ESPHome Config Library ─────────────────────────────────────────────────────
+// Static array of optimized ESPHome YAML configurations for each ESP32 variant.
+// Each entry has: full standalone YAML, a "minimal" snippet for adding to existing
+// configs, chip/connection metadata, and human-readable notes.
+// Ordered by recommendation: S3 Ethernet (best) → C6 WiFi → S3 WiFi → Minimal → C3 (worst).
 
 const ESPHOME_CONFIGS = [
   {
@@ -1667,6 +1771,11 @@ text_sensor:
   },
 ];
 
+// ── ESPHome Configs Sub-Tab ──────────────────────────────────────────────────
+// Renders the full ESPHome config library: intro card, hardware recommendations
+// (with auto-expiry dates), chip comparison table, per-config cards with
+// expandable YAML (full and minimal variants), and a tips card.
+// The entire DOM is cached because this tab has no dynamic data.
 function renderEsphomeConfigs(ctx) {
   // Cache the entire config library DOM — it's 100% static content.
   // Without this, the 5s poll cycle rebuilds the DOM and flickers expanded YAML.
@@ -1674,7 +1783,8 @@ function renderEsphomeConfigs(ctx) {
 
   const { el } = ctx.helpers;
 
-  // Floating copy-to-clipboard icon for code blocks (industry-standard top-right placement)
+  // Floating copy-to-clipboard icon for code blocks.
+  // Placed top-right of the code container. Shows a checkmark for 1.5s after successful copy.
   function _makeCodeCopyIcon(text) {
     const btn = document.createElement("button");
     btn.title = "Copy to clipboard";
@@ -1728,7 +1838,8 @@ function renderEsphomeConfigs(ctx) {
     ]),
   ]);
 
-  // External antenna recommendation — auto-expires September 10, 2026
+  // ── External antenna recommendation card ───────────────────────────────────
+  // Auto-expires September 10, 2026 — hardware recommendations go stale.
   const _antExpiry = new Date("2026-09-10T00:00:00Z").getTime();
   const antennaCard = Date.now() < _antExpiry ? el("div", { class: "card", style: "border:1px solid #f59e0b55;background:#1a1500" }, [
     el("div", { style: "display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap" }, [
@@ -1775,7 +1886,8 @@ function renderEsphomeConfigs(ctx) {
     ]),
   ]) : null;
 
-  // Hardware recommendation — auto-expires July 10, 2026
+  // ── Recommended hardware card (ESP32-S3 Ethernet) ──────────────────────────
+  // Auto-expires July 10, 2026. Includes a tested YAML config with show/copy buttons.
   const _recExpiry = new Date("2026-07-10T00:00:00Z").getTime();
   const recCard = Date.now() < _recExpiry ? (() => {
     const _recYaml = `esphome:
@@ -1941,7 +2053,8 @@ button:
     ]);
   })() : null;
 
-  // Chip comparison table — auto-expires March 10, 2028 (hardware recs go stale)
+  // ── Chip comparison table ──────────────────────────────────────────────────
+  // Auto-expires March 10, 2028 (hardware recs go stale).
   const _chipExpiry = new Date("2028-03-10T00:00:00Z").getTime();
   const chipTable = Date.now() < _chipExpiry ? el("div", { class: "card" }, [
     el("div", { style: "font-weight:700;margin-bottom:8px" }, "Chip Comparison"),
@@ -1968,7 +2081,9 @@ button:
     })(),
   ]) : null;
 
-  // Config cards
+  // ── Per-config expandable cards ─────────────────────────────────────────────
+  // Each card has two YAML variants (full + minimal "add to existing"), only one
+  // visible at a time. Copy button copies whichever is currently expanded.
   const configCards = ESPHOME_CONFIGS.map(cfg => {
     const expandedFull = ctx.state[`_cfgExpand_${cfg.id}`] || false;
     const expandedMin  = ctx.state[`_cfgMinimal_${cfg.id}`] || false;
@@ -2022,7 +2137,7 @@ button:
       minWrap.appendChild(_makeCodeCopyIcon(cfg.minimal));
     }
 
-    // Only one can be open at a time
+    // Mutual exclusion: only one YAML panel (full or minimal) can be open at a time
     toggleBtn.addEventListener("click", () => {
       const show = !ctx.state[`_cfgExpand_${cfg.id}`];
       ctx.state[`_cfgExpand_${cfg.id}`] = show;
@@ -2045,7 +2160,8 @@ button:
       });
     }
 
-    // Copy whichever is currently visible
+    // Copy whichever YAML variant is currently visible; falls back to selecting text
+    // in the pre element if clipboard API is unavailable (e.g. insecure context).
     copyBtn.addEventListener("click", () => {
       const text = ctx.state[`_cfgMinimal_${cfg.id}`] ? cfg.minimal : cfg.yaml;
       navigator.clipboard.writeText(text).then(() => {
@@ -2086,6 +2202,9 @@ button:
   return result;
 }
 
+// ── SVG text escaping ───────────────────────────────────────────────────────
+// Escape HTML entities for safe inclusion in SVG innerHTML strings.
+// Required because labels may contain user-supplied text (device names, etc.).
 function _escSvg(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

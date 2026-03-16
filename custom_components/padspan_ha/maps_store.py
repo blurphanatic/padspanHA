@@ -4,6 +4,30 @@
 # See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 from __future__ import annotations
 
+"""
+PadSpan HA — Maps Store
+========================
+Persists floor-plan map metadata (name, floor, room bounds, receivers, beacons,
+alignment stack) and the associated PNG image files on disk.
+
+Data layout:
+  - Metadata: .storage/padspan_ha.maps  →  {"maps": [MapDict, ...]}
+  - Images:   www/padspan_ha/maps/{map_id}.png
+
+Each map dict holds:
+  - id, name, created, updated
+  - image: {filename, width, height, sha256, ...}
+  - receivers: [{id, label, x, y, room, source}, ...]    (scanner pin positions)
+  - beacons:   [{id, label, key, x, y, kind}, ...]       (beacon pin positions)
+  - room_bounds: {roomName: {type:"poly", points:[[x,y],...]} | {type:"circle",...}}
+  - calibration: {mode, px_per_meter, reference_points}
+  - stack: {z_level, x_offset, y_offset, scale, rotation, ...}  (alignment transform)
+  - floor_id, notes
+
+Coordinate convention: all positions are normalised 0-1 fractions of the image
+dimensions (x = left-to-right, y = top-to-bottom).
+"""
+
 import asyncio
 import base64
 import hashlib
@@ -21,7 +45,7 @@ from homeassistant.helpers.storage import Store
 
 from .const import MAPS_STORE_KEY, MAPS_DIR, DEFAULT_FLOOR_ID
 
-MAX_MAP_BYTES = 20 * 1024 * 1024  # 20 MB decoded limit
+MAX_MAP_BYTES = 20 * 1024 * 1024  # 20 MB decoded limit — prevents OOM on large uploads
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -33,6 +57,13 @@ def _sha256(data: bytes) -> str:
 
 @dataclass
 class MapsStore:
+    """Manages floor-plan map metadata and image files.
+
+    Images live on disk at www/padspan_ha/maps/{map_id}.png so HA's
+    built-in static file server exposes them at /local/padspan_ha/maps/.
+    Metadata lives in HA Storage (.storage/padspan_ha.maps).
+    """
+
     hass: HomeAssistant
     store: Store
     maps_dir: Path
@@ -45,6 +76,12 @@ class MapsStore:
         self.data = {"maps": []}
 
     async def async_setup(self) -> None:
+        """Load stored map data and ensure the image directory exists.
+
+        Also normalises legacy map dicts to include all expected fields
+        (receivers, beacons, calibration, room_bounds, stack, etc.) so
+        downstream code never needs defensive .get() chains.
+        """
         await asyncio.to_thread(self.maps_dir.mkdir, parents=True, exist_ok=True)
         loaded = await self.store.async_load()
         if isinstance(loaded, dict) and "maps" in loaded:
@@ -52,7 +89,7 @@ class MapsStore:
         else:
             self.data = {"maps": []}
 
-        # Normalize existing
+        # Normalise existing maps — fill in fields added in later versions
         for m in self.data.get("maps", []):
             m.setdefault("receivers", [])
             m.setdefault("beacons", [])
@@ -83,7 +120,12 @@ class MapsStore:
         return None
 
     async def async_add_map(self, name: str, filename: str, mime: str, width: int, height: int, png_base64: str, floor_id: str | None = None) -> dict[str, Any]:
-        # Reject oversized uploads before decoding
+        """Create a new map from an uploaded PNG image.
+
+        Writes the image file to disk, creates the metadata dict with default
+        stack/calibration/bounds, and persists to storage.
+        """
+        # Reject oversized uploads before decoding (avoid OOM)
         max_b64_len = (MAX_MAP_BYTES * 4) // 3 + 4
         if len(png_base64) > max_b64_len:
             raise ValueError(f"Map image exceeds {MAX_MAP_BYTES // (1024*1024)} MB limit")
@@ -125,6 +167,13 @@ class MapsStore:
         return info
 
     async def async_update_map(self, map_id: str, *, receivers: list[dict[str, Any]] | None = None, beacons: list[dict[str, Any]] | None = None, calibration: dict[str, Any] | None = None, notes: str | None = None, floor_id: str | None = None, room_bounds: dict[str, Any] | None = None, stack: dict | None = None) -> dict[str, Any]:
+        """Update map metadata — only fields that are not None are changed.
+
+        Each field is validated and sanitised (coords clamped 0-1, strings
+        truncated, etc.) before being stored.  The stack dict preserves
+        alignment fields (is_master, ref_map_id, ref_ar, scale_x_adj, tie_ins)
+        across partial updates so alignment state is never accidentally lost.
+        """
         m = self.get_map(map_id)
         if not m:
             raise KeyError("not_found")
@@ -217,6 +266,7 @@ class MapsStore:
             m["room_bounds"] = clean_rb
 
         if isinstance(stack, dict):
+            # Clamp numeric values to sane ranges to prevent broken rendering
             z = max(0, min(20, int(stack.get("z_level", 0))))
             sc = max(0.1, min(10.0, float(stack.get("scale", 1.0))))
             ceil_h = max(1.5, min(20.0, float(stack.get("ceiling_height_m", 2.4))))
@@ -229,7 +279,10 @@ class MapsStore:
                 "ceiling_height_m": ceil_h,
                 "rotation": rot,
             }
-            # Preserve alignment fields
+            # Preserve alignment fields that may not be in the incoming payload
+            # (e.g. when only z_level or ceiling_height is being updated from
+            # the 3D Stack table — the caller shouldn't need to re-send the
+            # full alignment state every time)
             if "is_master" in stack:
                 new_stack["is_master"] = bool(stack["is_master"])
             elif m.get("stack", {}).get("is_master"):
@@ -393,11 +446,15 @@ class MapsStore:
         await self.store.async_save(self.data)
 
     # ── Coordinate transforms for cross-map migration ──────────────────────
+    # These convert between a map's local (0-1) space and a shared "world"
+    # coordinate system.  Used when migrating receivers/bounds from a
+    # deleted map onto a surviving one (maps_delete_migrate).
 
     @staticmethod
     def map_to_world(px: float, py: float, stk: dict) -> tuple[float, float]:
         """Map-local normalised (0-1) → world coords.
 
+        Applies: scale × scale_x_adj → rotate → translate.
         Mirrors the JS ``mapPt`` function in overview.js / calibration.js.
         """
         sc = float(stk.get("scale", 1.0))
@@ -604,12 +661,17 @@ class MapsStore:
         return m
 
 
+# ── Pure-Python PNG manipulation ──────────────────────────────────────────────
+# We can't use Pillow (not in HA's dependency tree).  Instead we do minimal
+# PNG chunk parsing, zlib inflate/deflate, and manual scanline filter reversal.
+# These functions support the canvas-extend and crop-revert features.
+
 def _extend_png(old_png: bytes, old_w: int, old_h: int,
                 new_w: int, new_h: int,
                 offset_x: int, offset_y: int) -> bytes:
     """Create a new PNG with the original image placed at (offset_x, offset_y)
     on a larger dark canvas.  Uses raw RGBA scanline construction + zlib.
-    Falls back to returning a 1x1 dark PNG on error.
+    Falls back to returning the original PNG on error.
     """
     try:
         # Decode original PNG to raw RGBA pixels

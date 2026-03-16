@@ -17,9 +17,13 @@ If UI changes don't show:
   - Confirm build stamp in Diagnostics page
 */
 
-const APP_VERSION = "0.13.9";
-// Build stamp used for cache-busting and Diagnostics.
-const BUILD_ID = "20260316T173305Z";
+// ── Version & Build Constants ────────────────────────────────────────────────
+// APP_VERSION is the semver shown in the sidebar and Diagnostics.
+// BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
+// so browsers always load the latest code after a release.
+// CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
+const APP_VERSION = "0.14.0";
+const BUILD_ID = "20260316T174252Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -60,6 +64,10 @@ const _viewsPromise = Promise.allSettled([
   });
 });
 
+// ── Sidebar Menu Definition ──────────────────────────────────────────────────
+// Each entry: [route_id, display_label, mdi_icon].
+// Order here determines sidebar rendering order. Visibility is filtered
+// at render time based on the current complexity mode (Basic/Advanced/Dev).
 const MENU = [
   ["overview","Overview","mdi:view-dashboard-outline"],
   ["follow","Follow","mdi:crosshairs-gps"],
@@ -78,13 +86,16 @@ const MENU = [
   ["sandbox","Sandbox","mdi:flask-outline"],
 ];
 
-// Tabs shown in Basic (simplified) mode
+// ── Complexity Mode Tab Sets ─────────────────────────────────────────────────
+// Three complexity tiers control which sidebar tabs are visible:
+//   Basic     — simplified for non-technical users (follow + overview + essentials)
+//   Advanced  — default set plus user-chosen extras from Settings -> UI Structure
+//   Dev       — everything visible (includes QA, Sandbox, raw Debug, etc.)
 const BASIC_TABS = new Set(["follow", "overview", "maps", "settings", "training"]);
-// Tabs shown in Advanced mode by default (user can add more via Settings → UI Structure)
 const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration","traceback"]);
-// Tabs that only appear in Development mode unless opted into Advanced
 const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox"];
 
+// Accent color per tab — used for the sidebar dot, mobile nav, and active highlights
 const MENU_COLORS = {
   follow: "#5eead4",
   overview: "#52b788",
@@ -111,9 +122,15 @@ const MENU_COLORS = {
 };
 
 
+// ── DOM Utility Functions ────────────────────────────────────────────────────
+// Shared helpers used by panel.js and all view modules (passed via ctx.helpers).
+
+/** HTML-escape a string to prevent XSS when inserting into innerHTML. */
 function esc(s){
   return String(s ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
 }
+
+/** Convenience DOM builder: el("div", {class:"foo", onclick:fn}, ["text", childNode]) */
 function el(tag, attrs={}, children=[]){
   const n=document.createElement(tag);
   for(const [k,v] of Object.entries(attrs||{})) {
@@ -132,8 +149,11 @@ function el(tag, attrs={}, children=[]){
   return n;
 }
 
-// Deterministic short ID for a BLE radio: letter-number-letter (e.g. "A3B")
-// Stable across sessions — derived solely from the source string.
+/**
+ * Deterministic short ID for a BLE radio: letter-number-letter (e.g. "A3B").
+ * Derived from a djb2 hash of the source string so it's stable across sessions
+ * and compact enough to display as a visual badge in scanner lists.
+ */
 function radioShortId(source){
   let h = 5381;
   const s = String(source || "");
@@ -166,6 +186,7 @@ function scannerStatus(radio, ads){
   return { label:"idle", cls:"badge warn", title:"No recent BLE data — may be offline, rebooting, or in a quiet area" };
 }
 
+/** FNV-1a 32-bit hash — used by roomColor for deterministic hue selection. */
 function _hash32(str){
   let h = 2166136261;
   for(let i=0;i<str.length;i++){
@@ -174,7 +195,12 @@ function _hash32(str){
   }
   return h >>> 0;
 }
-// Deterministic room color (stable across sessions)
+
+/**
+ * Deterministic room color — stable across sessions.
+ * If the user set an explicit color in room_meta, use that.
+ * Otherwise derive a hue from the room name hash for consistent coloring.
+ */
 function roomColor(roomName, model){
   const meta = model && model.room_meta ? model.room_meta[String(roomName ?? "")] : null;
   if(meta && meta.color) return String(meta.color);
@@ -186,11 +212,29 @@ function roomColor(roomName, model){
 
 function pill(text){ return el("span",{class:"pill"}, text); }
 
+// ── Main Application Element ─────────────────────────────────────────────────
+// PadSpanHaApp is registered as a custom element ("padspan-ha-app") and mounted
+// by Home Assistant as a panel. HA drives the lifecycle:
+//   1. constructor()        — initializes state (no DOM yet)
+//   2. connectedCallback()  — builds shadow DOM, starts polling & keep-alive
+//   3. set hass(hass)       — called by HA on every state change (very frequent);
+//                             used for first boot, WS reconnect detection, and
+//                             sidebar re-entry recovery
+//   4. disconnectedCallback() — tears down timers & listeners when HA detaches
+//
+// State management: all UI state lives in this.state (a plain object).
+// Views receive a "ctx" object (_ctx()) with state, helpers, and actions.
+// Views are pure render functions: ctx => HTMLElement. They never mutate state
+// directly — all mutations go through ctx.actions which call back into this class.
 class PadSpanHaApp extends HTMLElement {
   constructor(){
     super();
     this._hass = null;
 
+    // ── Centralized application state ──────────────────────────────────────
+    // All UI state is kept here so views can read it through ctx.state.
+    // Mutations happen through actions (ctx.actions) which update state
+    // and trigger re-renders via _renderCurrentView().
     this.state = {
       version: APP_VERSION,
       buildId: BUILD_ID,
@@ -222,27 +266,39 @@ class PadSpanHaApp extends HTMLElement {
       followAddr: localStorage.getItem("padspan_followAddr") || "",
     };
 
-    this.$ = null;
-    this.$nav = null;
-    this.$content = null;
+    // ── Shadow DOM references (set in connectedCallback) ─────────────────
+    this.$ = null;          // querySelector shorthand for shadow DOM
+    this.$nav = null;       // sidebar nav container
+    this.$content = null;   // main content area where views render
 
-    // Live polling (keeps 'Live' mode actually live)
+    // ── Polling & Keep-Alive Timers ────────────────────────────────────────
+    // _pollTimer: 5s interval that fetches live_snapshot + status (data freshness)
+    // _pollInFlight: prevents overlapping WS calls if previous poll is still running
     this._pollTimer = null;
     this._pollInFlight = false;
-    // Anti-blank: activity simulation + watchdog (independent of polling)
+    // _activityTimer: 25s synthetic pointer events to prevent HA idle overlay
+    // _watchdogTimer: 5s DOM integrity checks to recover from blank screens
     this._activityTimer = null;
     this._watchdogTimer = null;
-    // Render health tracking — used by watchdog to detect persistent blank screens
+    // Render health tracking — watchdog uses these to detect persistent blank screens
+    // and escalate from soft re-render to full connectedCallback rebuild
     this._lastGoodRender = performance.now();
     this._renderFailCount = 0;
     // Track last user interaction to suppress poll re-renders during active use
+    // (prevents form inputs from being destroyed while the user is typing)
     this._lastUserInteraction = 0;
   }
 
+  // ── HA Property Setter ──────────────────────────────────────────────────────
+  // HA calls `set hass()` on EVERY state change (entity updates, etc.) — potentially
+  // dozens of times per second. We must NOT do expensive work on every call.
+  // Three cases are handled:
+  //   1. First boot (_booted === false): wait for view modules, then full refresh
+  //   2. WS reconnect (connection object changed): re-bootstrap everything
+  //   3. Sidebar re-entry: restart timers/listeners if they were cleared by disconnect
   set hass(hass){
     const prevHass = this._hass;
     this._hass = hass;
-    // Avoid spamming refresh on every hass set (HA calls it often)
     if(!this._booted){
       this._booted = true;
       // Wait for all view modules to be ready before the first full refresh
@@ -251,8 +307,8 @@ class PadSpanHaApp extends HTMLElement {
         if(this.state.dataMode === "live") this._startPolling();
       });
     } else if(hass && prevHass && hass !== prevHass && hass.connection !== prevHass.connection){
-      // HA reconnected with a new WS connection — re-bootstrap
-      this._pollInFlight = false; // clear any stuck poll
+      // HA reconnected with a new WS connection (e.g. after network blip) — re-bootstrap
+      this._pollInFlight = false;
       _viewsPromise.then(() => {
         this._ensureShadowDom();
         this._refreshAll(false);
@@ -279,6 +335,11 @@ class PadSpanHaApp extends HTMLElement {
     }
   }
 
+  // ── connectedCallback ───────────────────────────────────────────────────────
+  // Called when HA inserts the element into the DOM. Builds the entire shadow DOM
+  // (sidebar, topbar, content area, modal/toast containers), wires up event
+  // listeners, and kicks off the initial data load. Also called as a "nuclear
+  // recovery" path by the watchdog when the DOM is irrecoverably corrupted.
   connectedCallback(){
     if(!this.shadowRoot) this.attachShadow({mode:"open"});
     this.shadowRoot.innerHTML = `
@@ -397,7 +458,11 @@ class PadSpanHaApp extends HTMLElement {
       this.$("#complexityToggle").click();
     });
 
-    // Track user interaction to suppress poll re-renders during active use
+    // ── User interaction tracking ──────────────────────────────────────────
+    // Records the timestamp of the last user interaction on the content area.
+    // _renderCurrentView(fromPoll=true) checks this and skips re-renders within
+    // 3 seconds of interaction, preventing form inputs / scroll positions from
+    // being destroyed while the user is actively working.
     const _markInteraction = () => { this._lastUserInteraction = performance.now(); };
     this.$content.addEventListener("input", _markInteraction, true);
     this.$content.addEventListener("change", _markInteraction, true);
@@ -410,7 +475,7 @@ class PadSpanHaApp extends HTMLElement {
       await this._setDataMode(next);
     });
 
-    // Restore persisted complexity preference
+    // Restore persisted complexity preference (Basic/Advanced/Dev survives page reloads)
     try {
       const saved = localStorage.getItem("padspan_complexity");
       if (saved === "basic" || saved === "advanced" || saved === "development") this.state.complexity = saved;
@@ -465,9 +530,11 @@ class PadSpanHaApp extends HTMLElement {
   }
 
 
+  // ── disconnectedCallback ────────────────────────────────────────────────────
+  // Called when HA removes the element from the DOM (e.g. user navigates away).
+  // Full cleanup: clear ALL timers and event listeners to prevent zombie timers
+  // if HA creates a new element instance. connectedCallback will recreate them.
   disconnectedCallback(){
-    // Full cleanup: clear ALL timers to prevent zombie timers if HA creates a
-    // new element instance. connectedCallback will recreate them fresh.
     this._stopDataPoll();
     this._pollInFlight = false;
     if(this._activityTimer){ clearInterval(this._activityTimer); this._activityTimer = null; }
@@ -682,6 +749,13 @@ class PadSpanHaApp extends HTMLElement {
     if(this.state.dataMode === "live" && !this._pollTimer) this._startDataPoll();
   }
 
+  // ── Data Polling ────────────────────────────────────────────────────────────
+  // The 5-second poll loop keeps "Live" mode actually live by periodically
+  // fetching fresh snapshot + status data from the backend via WebSocket.
+  // Polling is ONLY active in live mode — sample mode uses static demo data.
+  // The poll loop is separate from the keep-alive system (activity ping + watchdog)
+  // which runs regardless of data mode to prevent blank screens.
+
   _startDataPoll(){
     if(this._pollTimer) return;
     this._pollTimer = setInterval(()=>this._pollTick(), 5000);
@@ -701,15 +775,21 @@ class PadSpanHaApp extends HTMLElement {
 
   _stopPolling(){
     this._stopDataPoll();
-    // Keep-alive timers + event handlers are NOT stopped here.
-    // They protect against blank screens regardless of data mode.
+    // Keep-alive timers + event handlers are NOT stopped here —
+    // they protect against blank screens regardless of data mode.
   }
 
+  /**
+   * Single poll iteration — called every 5s by _pollTimer.
+   * Guards prevent overlapping calls, polling in sample mode, and interrupting
+   * the maps view (where drawing/dragging would break on DOM rebuild).
+   * After fetching data, triggers a "from poll" re-render which respects
+   * interaction guards (_dragging, _confirming, focused inputs, recent clicks).
+   */
   async _pollTick(){
     if(!this._hass) return;
     if(this.state.dataMode !== "live") return;
     if(this._pollInFlight) return;
-    // Avoid interrupting map drawing
     if(this.state.view === "maps") return;
 
     this._pollInFlight = true;
@@ -746,7 +826,12 @@ class PadSpanHaApp extends HTMLElement {
     }
   }
 
-  // ---------- WS helpers ----------
+  // ── WebSocket Helpers ───────────────────────────────────────────────────────
+  // All backend communication goes through hass.callWS (HA's WS API).
+  // _callWS wraps it with call counting (for Diagnostics) and event logging
+  // (for the session Events tab). Views never call hass.callWS directly —
+  // they use ctx.actions.callWS or the typed action methods.
+
   _wsCount(type){
     this.state.wsCounts[type] = (this.state.wsCounts[type]||0)+1;
   }
@@ -787,7 +872,11 @@ class PadSpanHaApp extends HTMLElement {
     }catch(e){}
   }
 
-  // ---------- Data loading ----------
+  // ── Data Loading ────────────────────────────────────────────────────────────
+  // These methods fetch data from the backend and update this.state.
+  // They are called from _refreshAll (full bootstrap) and individually
+  // from specific actions (e.g. after tagging an object, after map upload).
+
   async _loadSettings(){
     try {
       if(!this._hass) return;
@@ -804,6 +893,14 @@ class PadSpanHaApp extends HTMLElement {
     }
   }
 
+  /**
+   * Switch between "sample" and "live" data modes.
+   * Sample mode: assigns SAMPLE_SNAPSHOT (static demo data) so all views work
+   *   without real BLE hardware — useful for demos and development.
+   * Live mode: clears the sample snapshot and starts polling the backend for
+   *   real BLE data every 5 seconds.
+   * The choice is persisted server-side via settings_set.
+   */
   async _setDataMode(mode){
     try {
       const res = await this._callWS({ type: "padspan_ha/settings_set", data_mode: mode });
@@ -843,8 +940,14 @@ class PadSpanHaApp extends HTMLElement {
     this.state.status = entry;
   }
 
+  /**
+   * Recompute derived state from the latest snapshot.
+   * The room-tag map has three layers: saved (persisted), live (from snapshot),
+   * and missing (tags referencing rooms that no longer exist in HA).
+   * This separation lets the UI show live positions while preserving the
+   * saved map for settings/configuration views.
+   */
   _recomputeDerived(){
-    // Keep the saved map separate from the effective map the UI should use.
     const saved = this.state.savedRoomTagMap || {};
     const snap = this.state.live?.snapshot;
     if(snap && snap.room_tag_map){
@@ -866,9 +969,14 @@ class PadSpanHaApp extends HTMLElement {
     if(res?.sources) this.state.live.sources = res.sources;
   }
 
+  /**
+   * Fetch the live BLE snapshot from the backend, or use SAMPLE_SNAPSHOT in sample mode.
+   * Sample mode uses a static demo snapshot (from sample_data.js) so every view
+   * renders with realistic data even without any BLE hardware connected.
+   * In live mode, we keep the last good snapshot on failure to prevent UI flickering.
+   */
   async _getLiveSnapshot(){
     if(this.state.dataMode !== "live") {
-      // Sample mode: use the built-in demo snapshot so all views render fully.
       // But only assign if we don't already have a live snapshot cached
       // (prevents race conditions during _refreshAll where settings haven't loaded yet).
       if(!this.state.live.snapshot || this.state.live.snapshot === SAMPLE_SNAPSHOT){
@@ -934,13 +1042,19 @@ class PadSpanHaApp extends HTMLElement {
     }
   }
 
+  /**
+   * Full data refresh — fetches ALL backend state in parallel.
+   * Called on boot, reconnect, wake-up, and user "Refresh" button.
+   *
+   * IMPORTANT ordering: settings are fetched FIRST (awaited) so that dataMode
+   * is correct before _getLiveSnapshot runs. Without this, a race condition
+   * causes _getLiveSnapshot to see "sample" mode and assign SAMPLE_SNAPSHOT
+   * even when the user is in live mode.
+   */
   async _refreshAll(userAction=false){
     if(!this._hass) return;
     const t0 = performance.now();
     if(userAction) this._toast("Refreshing…");
-    // IMPORTANT: Fetch settings FIRST so dataMode is correct before _getLiveSnapshot runs.
-    // This prevents the race condition where _getLiveSnapshot sees "sample" mode
-    // because settings haven't loaded yet, and incorrectly assigns SAMPLE_SNAPSHOT.
     await Promise.allSettled([this._fetchSettings()]);
     // Now run remaining fetches in parallel (dataMode is now correct)
     const results = await Promise.allSettled([
@@ -962,8 +1076,8 @@ class PadSpanHaApp extends HTMLElement {
     this._renderCurrentView();
   }
 
+  /** Update the desktop topbar status pills and mobile topbar pills to reflect current state. */
   _updateBadges(){
-    // Top badges
     const scan = this.state.status?.scan_interval ?? "—";
     const st = this.state.status?.status ?? "—";
     this.$("#scanBadge").textContent = `Scan: ${scan}s`;
@@ -981,7 +1095,13 @@ class PadSpanHaApp extends HTMLElement {
     }
   }
 
-  // ---------- Nav + rendering ----------
+  // ── Navigation & View Routing ───────────────────────────────────────────────
+  // The sidebar (desktop) and bottom nav (mobile) are built from the MENU array,
+  // filtered by the current complexity mode. Clicking a nav item sets state.view
+  // and calls _renderCurrentView(), which looks up the module in the VIEWS map
+  // and calls its render(ctx) function.
+
+  /** Return the Set of tab IDs visible in the current complexity mode. */
   _getVisibleTabs(){
     const mode = this.state.complexity;
     if (mode === "development") return new Set(MENU.map(x => x[0]));
@@ -993,6 +1113,7 @@ class PadSpanHaApp extends HTMLElement {
     return s;
   }
 
+  /** Rebuild the sidebar nav, mobile bottom nav, and mobile topbar to match current state. */
   _renderNav(){
     const isBasic = this.state.complexity === "basic";
     const visible = this._getVisibleTabs();
@@ -1089,6 +1210,7 @@ class PadSpanHaApp extends HTMLElement {
     }
   }
 
+  /** Open a help modal for the given key (content loaded from help_content.js). */
   _showHelp(key){
     const h = HELP[key];
     if(!h){ this._toast("No help entry for: " + key, false); return; }
@@ -1104,6 +1226,16 @@ class PadSpanHaApp extends HTMLElement {
     this._openModal(h.title, body, "");
   }
 
+  // ── Context Object (ctx) ────────────────────────────────────────────────────
+  // Every view's render(ctx) receives this object. It provides:
+  //   ctx.hass     — the HA hass object (for callWS, states, etc.)
+  //   ctx.state    — the full application state (read-only by convention)
+  //   ctx.helpers  — pure utility functions (el, esc, roomColor, etc.)
+  //   ctx.actions  — mutation methods that update state + trigger re-renders
+  //   ctx.toast    — show a temporary notification message
+  //
+  // This pattern keeps views as pure render functions with no direct access
+  // to the PadSpanHaApp instance, making them easier to test and reason about.
   _ctx(){
     const self = this;
     return {
@@ -1160,11 +1292,16 @@ class PadSpanHaApp extends HTMLElement {
           return false;
         },
       },
+      // ── Actions ──────────────────────────────────────────────────────────
+      // All state mutations flow through these action methods.
+      // Views call ctx.actions.xyz() which updates state, makes WS calls,
+      // and triggers re-renders as needed. Grouped by domain below.
       actions: {
-        // Simple actions used by views
+        // Re-render triggers (views call these after local UI changes)
         renderRooms: ()=>this._renderCurrentView(),
         renderNav: ()=>this._renderNav(),
-        // Objects view updates its tag list in-place to avoid full re-render loops.
+        // Targeted tag-list re-render — avoids a full view rebuild which would
+        // cause infinite loops in the Objects view's search/filter interaction
         renderTags: (target=null)=>{
           const node = target || this.shadowRoot?.querySelector("#content #tags");
           if(!node) return;
@@ -1195,7 +1332,10 @@ class PadSpanHaApp extends HTMLElement {
         radioAreaSet: async (payload)=>await this._callWS({ type:"padspan_ha/radio_area_set", ...payload }),
         radioLostSet: async (source, lost)=>await this._callWS({ type:"padspan_ha/radio_lost_set", source, lost }),
         radioDisabledSet: async (source, disabled)=>await this._callWS({ type:"padspan_ha/radio_disabled_set", source, disabled }),
+        // radioReset: full reset + re-fetch + re-render (use for user-initiated resets)
         radioReset: async (source)=>{ const r = await this._callWS({ type:"padspan_ha/radio_reset", source }); await this._getLiveSnapshot(); await this._loadSettings(); this._renderCurrentView(); return r; },
+        // radioResetQuiet: WS-only reset with no re-render — use in async UI flows
+        // (e.g. calibration) where the caller manages rendering separately
         radioResetQuiet: async (source)=>{ return await this._callWS({ type:"padspan_ha/radio_reset", source }); },
         refreshSnapshot: async ()=>{ await this._getLiveSnapshot(); this._renderCurrentView(); },
         refreshSnapshotQuiet: async ()=>{ await this._getLiveSnapshot(); },
@@ -1282,7 +1422,9 @@ class PadSpanHaApp extends HTMLElement {
         calibrationSwapRadio: async (old_source, new_source) => await this._callWS({ type: "padspan_ha/calibration_swap_radio", old_source, new_source }),
         calibrationHealthCheck: async () => await this._callWS({ type: "padspan_ha/calibration_health_check" }),
         wsCall: async (type, data={}) => await this._callWS({ type, ...data }),
-        // Followed beacons — multi-device follow; persisted to server via settings
+        // ── Followed Beacons ──────────────────────────────────────────────
+        // Multi-device follow set — persisted both to server (via settings_set)
+        // and to localStorage as a fallback. Addresses are stored uppercase.
         followedHas: (addr) => !!addr && this.state.followedAddrs.has(String(addr).toUpperCase()),
         followedToggle: (addr) => {
           if(!addr) return;
@@ -1307,9 +1449,10 @@ class PadSpanHaApp extends HTMLElement {
     };
   }
 
-  // ----------------------------
-  // Modal helper (Overview lists)
-  // ----------------------------
+  // ── Modal System ────────────────────────────────────────────────────────────
+  // Overlay modal used by detail views (object detail, room detail, scanner detail)
+  // and by the tag/rename prompt. Built with raw DOM — no framework dependency.
+  // ESC key and clicking the overlay backdrop both close the modal.
   _openModal(title, bodyNode, subtitle=""){
     if(!this.$modal) return;
     this.$modal.classList.remove("hidden");
@@ -1355,6 +1498,10 @@ class PadSpanHaApp extends HTMLElement {
   }
 
 
+  // ── Tag/Rename Prompt ───────────────────────────────────────────────────────
+  // Opens a modal with an input field to assign or update a human-readable label
+  // on a BLE device. Labels are stored server-side via object_label_set and
+  // appear throughout the UI wherever the device's address would normally show.
   _tagObjectPrompt(addr, currentLabel){
     const input = el("input",{type:"text", placeholder:"Enter a label…", maxLength:48});
     input.value = currentLabel || "";
@@ -1410,8 +1557,12 @@ class PadSpanHaApp extends HTMLElement {
     requestAnimationFrame(()=>{ try{ input.focus(); }catch(e){} });
   }
 
-  // ----------- Detail modals -----------
+  // ── Detail Modals ───────────────────────────────────────────────────────────
+  // Rich detail views for objects, rooms, and scanners. These are opened from
+  // Overview cards, Follow view, and anywhere a "Details" button appears.
+  // Each builds a DOM tree with identity info, status, location, and actions.
 
+  /** Look up floor name from floor_id using the model's floor list. */
   _floorName(floor_id){
     if(!floor_id) return "—";
     const floors = this.state.model?.floors || [];
@@ -1419,6 +1570,14 @@ class PadSpanHaApp extends HTMLElement {
     return f ? f.name : "—";
   }
 
+  /**
+   * Show a rich detail modal for a BLE object.
+   * Sections: identity (name, kind, addresses), status (RSSI, age, calibration),
+   * location (room, floor, nearest receiver), detection sources table,
+   * raw BLE data (manufacturer data, service UUIDs), rename form, and
+   * action buttons (follow, delete, close).
+   * Handles all BLE kinds: ble, private_ble, ibeacon, and HA entities.
+   */
   _showObjectDetail(obj){
     const addr = obj.address || "";
     const userLabel = obj.user_label || "";
@@ -1793,6 +1952,7 @@ class PadSpanHaApp extends HTMLElement {
     this._openModal(name, body, kind==="ble" ? `BLE object · ${identified?"identified":"unidentified"}` : "HA entity");
   }
 
+  /** Show a detail modal for a room: objects currently in it, assigned scanners, HA entities. */
   _showRoomDetail(roomName){
     const snap = this.state.live?.snapshot;
     const objects = (snap?.objects?.list||[]).filter(o => o.room === roomName);
@@ -1875,6 +2035,7 @@ class PadSpanHaApp extends HTMLElement {
     this._openModal(roomName, body, `Room · ${floorName}`);
   }
 
+  /** Show a detail modal for a BLE scanner: status, network info, area, visible devices. */
   _showScannerDetail(scanner){
     const snap = this.state.live?.snapshot;
     const devices = (snap?.objects?.list||[]).filter(
@@ -2007,25 +2168,32 @@ class PadSpanHaApp extends HTMLElement {
     this._openModal(name, body, `Bluetooth scanner · ${scanner.area_name || "unassigned"}`);
   }
 
+  // ── View Rendering & Re-render Guards ────────────────────────────────────────
+  // This is the single render entry point. Every view change, poll update, and
+  // recovery path calls this method. The fromPoll flag indicates whether the
+  // render was triggered by the 5s poll loop (true) or by a user action (false).
+  //
+  // RE-RENDER GUARDS: Multiple flags prevent the poll from destroying interactive
+  // UI state. These are critical — removing any guard causes real bugs:
+  //   _dragging / _confirming  — calibration pin placement (Tune / Beacon Tune)
+  //   _stackDragging / _editDragging — map alignment drag operations
+  //   _ptAlign.active          — Point Align mode (side-by-side maps)
+  //   _traceback.active        — traceback animation playback
+  //   _factoryResetInProgress  — factory reset progress UI
+  //   focused input/select     — user typing in a form field
+  //   _lastUserInteraction     — any click/scroll within last 3 seconds
+  //
+  // The general strategy: poll renders are "nice to have" (data freshness),
+  // but user interactions are sacred (never destroy mid-action).
   _renderCurrentView(fromPoll){
-    // Block ALL re-renders during factory reset — the progress UI must survive
     if(this.state._factoryResetInProgress) return;
-    // Skip re-render during active drag to prevent DOM destruction mid-interaction
     if(this.state._calibTune?._dragging || this.state._calibBeacon?._dragging || this.state._calibTune?._confirming || this.state._calibBeacon?._confirming) return;
-    // Skip re-render during active drag on 3D Stack alignment, Edit tab, or Trim tool
     if(this.state.maps?._stackDragging || this.state.maps?._editDragging) return;
-    // Skip ALL re-renders while Point Align mode is active (side-by-side maps)
     if(this.state.maps?._ptAlign?.active) return;
-    // Skip ALL re-renders while traceback tab is active (prevents flicker/DOM destruction)
     if(this.state._traceback?.active && this.state.view === "traceback") return;
-    // Skip poll-triggered re-renders while on the maps upload/stack/edit tabs.
-    // Upload: file input gets destroyed, loses selected file + kills file-picker dialog.
-    // Stack: 3D alignment overlay has drag state that breaks on DOM rebuild.
-    // Edit: receiver dragging and trim crop tool break on DOM rebuild.
+    // Maps upload/stack/edit tabs have fragile state (file inputs, drag handles)
     if(fromPoll && this.state.view === "maps" && (this.state.mapsTab === "upload" || this.state.mapsTab === "stack" || this.state.mapsTab === "edit")) return;
-    // Skip poll-triggered re-renders when the user is actively interacting.
-    // Checks: (1) a form element has focus, or (2) user interacted within the last 3s.
-    // User-initiated renders (tab clicks, saves, etc.) always proceed.
+    // Skip poll re-renders when the user is actively interacting
     if(fromPoll){
       try {
         const active = (this.shadowRoot || this).querySelector(":focus");
@@ -2055,8 +2223,10 @@ class PadSpanHaApp extends HTMLElement {
       }
     } catch(e) { /* ignore */ }
 
-    // ── Build new content into a fragment BEFORE clearing ──────────────────
-    // This prevents blank-screen: if render throws, old content stays visible.
+    // ── Fragment-first rendering ──────────────────────────────────────────
+    // Build new content into a DocumentFragment BEFORE clearing $content.
+    // If the view's render() throws, old content stays visible (no blank screen).
+    // Only after successful render do we swap: clear old, append new.
     const frag = document.createDocumentFragment();
 
     // BLE health banner — show once per session when Bluetooth feed is unhealthy
@@ -2185,6 +2355,10 @@ class PadSpanHaApp extends HTMLElement {
   }
 
 
+  // ── Toast Notifications ─────────────────────────────────────────────────────
+  // Temporary message bar at the top of the content area. Auto-hides after 4.5s.
+  // Used for confirmations ("Tagged: Kitchen Beacon"), errors ("WS call failed"),
+  // and progress ("Refreshing..."). Only one toast visible at a time.
   _toast(msg, isErr=false){
     const t = this.$("#toast");
     if(!t) return;
@@ -2196,4 +2370,7 @@ class PadSpanHaApp extends HTMLElement {
   }
 }
 
+// ── Register Custom Element ──────────────────────────────────────────────────
+// HA discovers this via the panel config in __init__.py. Once defined,
+// HA creates an instance and drives it through connectedCallback + set hass().
 customElements.define("padspan-ha-app", PadSpanHaApp);

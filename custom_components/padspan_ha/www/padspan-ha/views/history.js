@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+/**
+ * History view — temporal record of session activity and object movement.
+ * Sub-tabs: Session Events | Movement.
+ * Session Events shows the filtered event log (delegates to events-style rendering).
+ * Movement shows per-object room transition history from the live snapshot.
+ */
+
 export function render(ctx){
   const { el, helpBtn } = ctx.helpers;
   const root = el("section",{id:"history"});

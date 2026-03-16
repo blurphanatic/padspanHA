@@ -5,9 +5,17 @@
 from __future__ import annotations
 
 """
-REPO LOGIC NOTES
+PadSpan HA — Panel Registration
+=================================
+Registers exactly ONE HA sidebar panel (``padspan-ha``).  Internal navigation
+between views (Overview, Follow, Maps, etc.) happens inside the panel's JS —
+we do NOT register separate panels per view.
 
-Registers exactly one HA panel. The panel does internal nav; do not register per-view panels.
+The panel's ``module_url`` includes ``BUILD_ID`` as a cache-buster so that
+HACS reloads (without full HA restart) always serve the latest JS module.
+
+Optionally registers a second "Lights" panel when ``lights_panel_enabled``
+is set in settings.
 """
 
 

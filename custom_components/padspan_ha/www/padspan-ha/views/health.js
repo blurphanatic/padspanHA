@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Garry Broeckling
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+/**
+ * Health view — quick system status summary.
+ * Shows UI version/build, data mode, last refresh timing, and best-effort
+ * live discovery counts (rooms, radios, tags). Lightweight counterpart
+ * to the full Diagnostics JSON dump.
+ */
+
 export function render(ctx){
   const { el } = ctx.helpers;
   const root = el("section",{id:"health"});
