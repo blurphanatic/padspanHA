@@ -1164,31 +1164,56 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const MAX_LABEL = 38;
   const trunc = (s) => s.length > MAX_LABEL ? s.slice(0, MAX_LABEL - 1) + "…" : s;
 
-  // Build lookup maps so click handlers can find data by index (avoids
-  // reliance on getAttribute which can fail in some HA WebView contexts).
-  const _scannerById = new Map(scannerNodes.map(sn => [sn.id, sn]));
-  const _deviceById = new Map(deviceNodes.map(d => [d.id, d]));
+  // ── Click data map ──────────────────────────────────────────────────────────
+  // Each clickable <g> gets a unique id (_vs0, _vd0, etc.). A JS Map stores
+  // the click callback keyed by that id. Event delegation on the wrapper div
+  // walks up from the click target using node.id (a basic DOM property that
+  // works in all contexts, unlike getAttribute on SVG in shadow DOM).
+  const _clickMap = new Map();
 
   // ── Scanner nodes + labels (left column) ───────────────────────────────────
-  // Each scanner is wrapped in a <g> with a unique ID for post-render listener binding.
   for (let si = 0; si < scannerNodes.length; si++) {
     const sn = scannerNodes[si];
-    s += `<g id="_vs${si}" class="bt-viz-click" style="cursor:pointer">`;
+    const gid = "_vs" + si;
+    s += `<g id="${gid}" class="bt-viz-click" style="cursor:pointer">`;
     s += `<rect x="${scannerLabelX - 4}" y="${sn.y - 10}" width="${sn.x - scannerLabelX + 18}" height="20" fill="rgba(0,0,0,0)" pointer-events="all"/>`;
-    s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner"/>`;
-    s += `<text x="${scannerLabelX}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(sn.label))}</text>`;
+    s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner" pointer-events="all"/>`;
+    s += `<text x="${scannerLabelX}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle" pointer-events="all">${_escSvg(trunc(sn.label))}</text>`;
     s += `</g>`;
+    _clickMap.set(gid, () => {
+      const radio = radios.find(r => String(r.source || "") === sn.id);
+      if (radio) ctx.actions.showScannerDetail(radio);
+    });
   }
 
   // ── Device nodes + labels (right column) ───────────────────────────────────
   for (let di = 0; di < deviceNodes.length; di++) {
     const d = deviceNodes[di];
     const rc = rssiClass(d.rssi);
-    s += `<g id="_vd${di}" class="bt-viz-click" style="cursor:pointer">`;
+    const gid = "_vd" + di;
+    s += `<g id="${gid}" class="bt-viz-click" style="cursor:pointer">`;
     s += `<rect x="${d.x - 8}" y="${d.y - 9}" width="${deviceLabelX - d.x + 18}" height="18" fill="rgba(0,0,0,0)" pointer-events="all"/>`;
-    s += `<circle cx="${d.x}" cy="${d.y}" r="5" class="bt-viz-node device ${rc}"/>`;
-    s += `<text x="${d.x + 10}" y="${d.y}" class="bt-viz-label" font-size="11" text-anchor="start" dominant-baseline="middle">${_escSvg(trunc(d.label))}</text>`;
+    s += `<circle cx="${d.x}" cy="${d.y}" r="5" class="bt-viz-node device ${rc}" pointer-events="all"/>`;
+    s += `<text x="${d.x + 10}" y="${d.y}" class="bt-viz-label" font-size="11" text-anchor="start" dominant-baseline="middle" pointer-events="all">${_escSvg(trunc(d.label))}</text>`;
     s += `</g>`;
+    _clickMap.set(gid, () => {
+      const obj = objIndex.get(d.id.toUpperCase());
+      if (obj) {
+        ctx.actions.showObjectDetail(obj);
+      } else {
+        const ad = ads.find(a => String(a.address || "") === d.id || String(a.name || "") === d.id);
+        if (ad) {
+          ctx.actions.showObjectDetail({
+            address: ad.address || d.id,
+            name: ad.name || ad.address || d.id,
+            kind: "ble",
+            room: ad.area_name || "",
+            rssi: ad.rssi,
+            source: ad.source || "",
+          });
+        }
+      }
+    });
   }
 
   // Column titles at the top of the SVG
@@ -1199,45 +1224,21 @@ function renderVisualization(ctx, radios, ads, objIndex) {
 
   const svgWrap = document.createElement("div");
   svgWrap.innerHTML = s;
-  const svgEl = svgWrap.querySelector("svg");
 
-  // ── Bind click handlers directly to each <g> by ID ────────────────────────
-  // Using per-element listeners (not event delegation) avoids getAttribute
-  // issues with SVG namespace in HA's WebView shadow DOM.
-  if (svgEl) {
-    for (let si = 0; si < scannerNodes.length; si++) {
-      const gEl = svgEl.getElementById("_vs" + si);
-      if (!gEl) continue;
-      const sn = scannerNodes[si];
-      gEl.addEventListener("click", () => {
-        const radio = radios.find(r => String(r.source || "") === sn.id);
-        if (radio) ctx.actions.showScannerDetail(radio);
-      });
+  // ── Click handler (event delegation via node.id) ──────────────────────────
+  // Walks up from the click target checking node.id against the _clickMap.
+  // node.id is a basic DOM property that works on both HTML and SVG elements
+  // in all browsers, unlike getAttribute which can fail on SVG in shadow DOM.
+  svgWrap.addEventListener("click", (e) => {
+    let node = e.target;
+    while (node && node !== svgWrap) {
+      if (node.id && _clickMap.has(node.id)) {
+        _clickMap.get(node.id)();
+        return;
+      }
+      node = node.parentNode;
     }
-    for (let di = 0; di < deviceNodes.length; di++) {
-      const gEl = svgEl.getElementById("_vd" + di);
-      if (!gEl) continue;
-      const d = deviceNodes[di];
-      gEl.addEventListener("click", () => {
-        const obj = objIndex.get(d.id.toUpperCase());
-        if (obj) {
-          ctx.actions.showObjectDetail(obj);
-        } else {
-          const ad = ads.find(a => String(a.address || "") === d.id || String(a.name || "") === d.id);
-          if (ad) {
-            ctx.actions.showObjectDetail({
-              address: ad.address || d.id,
-              name: ad.name || ad.address || d.id,
-              kind: "ble",
-              room: ad.area_name || "",
-              rssi: ad.rssi,
-              source: ad.source || "",
-            });
-          }
-        }
-      });
-    }
-  }
+  });
 
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),
