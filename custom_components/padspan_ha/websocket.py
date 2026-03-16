@@ -11,7 +11,9 @@ Defines the websocket surface consumed by the panel. This is the preferred integ
 """
 
 
+import asyncio
 import logging
+from pathlib import Path
 
 import voluptuous as vol
 from typing import Any
@@ -4860,6 +4862,23 @@ async def ws_store_backup_create(hass: HomeAssistant, connection, msg) -> None:
             except Exception:
                 stores_data[store_key] = {}
 
+    # ── Collect map image files ──────────────────────────────────────────────
+    import base64 as _b64
+    map_images: dict[str, str] = {}  # filename -> base64
+    try:
+        from .const import MAPS_DIR
+        maps_dir = Path(hass.config.path("www")) / MAPS_DIR
+        if maps_dir.is_dir():
+            for fp in maps_dir.iterdir():
+                if fp.is_file() and fp.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                    try:
+                        raw = await asyncio.get_event_loop().run_in_executor(None, fp.read_bytes)
+                        map_images[fp.name] = _b64.b64encode(raw).decode("ascii")
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
     backup_id = f"bk_{os.urandom(6).hex()}"
     backup = {
         "id": backup_id,
@@ -4867,6 +4886,7 @@ async def ws_store_backup_create(hass: HomeAssistant, connection, msg) -> None:
         "version": BUILD_VERSION,
         "note": str(msg.get("note") or "")[:200],
         "stores": stores_data,
+        "map_images": map_images,
     }
 
     bk_data = await _load_backups(hass)
@@ -4896,6 +4916,8 @@ async def ws_store_backup_list(hass: HomeAssistant, connection, msg) -> None:
             "version": bk.get("version", ""),
             "note": bk.get("note", ""),
             "store_count": len(bk.get("stores", {})),
+            "store_keys": list(bk.get("stores", {}).keys()),
+            "map_image_count": len(bk.get("map_images", {})),
         })
     connection.send_result(msg["id"], {"backups": items})
 
@@ -4903,10 +4925,16 @@ async def ws_store_backup_list(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({
     "type": "padspan_ha/store_backup_restore",
     vol.Required("backup_id"): str,
+    vol.Optional("store_keys"): [str],
+    vol.Optional("restore_map_images"): bool,
 })
 @websocket_api.async_response
 async def ws_store_backup_restore(hass: HomeAssistant, connection, msg) -> None:
-    """Restore all stores from a backup snapshot."""
+    """Restore selected stores from a backup snapshot.
+
+    If store_keys is provided, only those stores are restored.
+    If restore_map_images is true, map image files are restored to disk.
+    """
     from homeassistant.helpers.storage import Store as _St
 
     backup_id = msg["backup_id"]
@@ -4921,9 +4949,12 @@ async def ws_store_backup_restore(hass: HomeAssistant, connection, msg) -> None:
         return
 
     stores_data = backup.get("stores", {})
+    selected_keys = msg.get("store_keys")  # None = restore all
     restored = 0
     for store_key, data in stores_data.items():
         if data is None:
+            continue
+        if selected_keys is not None and store_key not in selected_keys:
             continue
         try:
             st = _St(hass, 1, store_key)
@@ -4945,7 +4976,38 @@ async def ws_store_backup_restore(hass: HomeAssistant, connection, msg) -> None:
         except Exception as e:
             _LOGGER.warning("Failed to restore %s: %s", store_key, e)
 
-    connection.send_result(msg["id"], {"restored": restored, "total": len(stores_data)})
+    # ── Restore map images to disk ────────────────────────────────────────────
+    images_restored = 0
+    if msg.get("restore_map_images") and backup.get("map_images"):
+        import base64 as _b64
+        try:
+            from .const import MAPS_DIR
+            maps_dir = Path(hass.config.path("www")) / MAPS_DIR
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: maps_dir.mkdir(parents=True, exist_ok=True)
+            )
+            for fname, b64data in backup["map_images"].items():
+                # Sanitize filename
+                safe = Path(fname).name
+                if not safe or "/" in safe or "\\" in safe:
+                    continue
+                fp = (maps_dir / safe).resolve()
+                if not str(fp).startswith(str(maps_dir.resolve())):
+                    continue
+                try:
+                    raw = _b64.b64decode(b64data)
+                    await asyncio.get_event_loop().run_in_executor(None, fp.write_bytes, raw)
+                    images_restored += 1
+                except Exception:
+                    pass
+        except Exception as e:
+            _LOGGER.warning("Failed to restore map images: %s", e)
+
+    connection.send_result(msg["id"], {
+        "restored": restored,
+        "total": len(stores_data),
+        "images_restored": images_restored,
+    })
 
 
 @websocket_api.websocket_command({

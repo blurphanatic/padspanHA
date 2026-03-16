@@ -504,6 +504,190 @@ export function render(ctx){
     root.appendChild(mapsCard);
   }
 
+  // ── Backup & Restore ────────────────────────────────────────────────────────
+  {
+    const bkCard = el("div",{class:"card"});
+    bkCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;margin-bottom:4px"},"Backup & Restore"));
+    bkCard.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-bottom:14px"},
+      "Create snapshots of all PadSpan™ data stores and map images. Restore selectively."
+    ));
+
+    const bkListWrap = el("div",{style:"margin-bottom:12px"});
+    bkCard.appendChild(bkListWrap);
+
+    // Friendly names for store keys
+    const _storeLabel = (k) => {
+      const map = {
+        "padspan_ha.settings": "Settings",
+        "padspan_ha.calibration": "Calibration",
+        "padspan_ha.adaptive": "Adaptive Model",
+        "padspan_ha.objects": "Objects",
+        "padspan_ha.maps": "Maps Config",
+        "padspan_ha.model": "Model",
+        "padspan_ha.follow_alerts": "Alerts",
+        "padspan_ha.movement_history": "Movement",
+        "padspan_ha.traceback": "Traceback",
+        "padspan_ha.object_history": "Object History",
+      };
+      return map[k] || k.replace("padspan_ha.", "");
+    };
+
+    // Render backup list
+    const _renderBkList = async () => {
+      bkListWrap.innerHTML = "";
+      try {
+        const res = await ctx.actions.wsCall("padspan_ha/store_backup_list");
+        const backups = res?.backups || [];
+        if(!backups.length){
+          bkListWrap.appendChild(el("div",{class:"muted",style:"font-size:12px"},"No backups yet."));
+          return;
+        }
+        for(const bk of backups.reverse()){
+          const bkRow = el("div",{style:"padding:10px 12px;border:1px solid #333;border-radius:8px;margin-bottom:8px;background:#0d1117"});
+          const hdr = el("div",{style:"display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"});
+          hdr.appendChild(el("div",{style:"font-weight:600;font-size:13px"},
+            (bk.note || "Backup") + (bk.version ? ` — v${bk.version}` : "")));
+          hdr.appendChild(el("div",{class:"muted",style:"font-size:11px"},
+            new Date(bk.created_at).toLocaleString()));
+          bkRow.appendChild(hdr);
+          bkRow.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:8px"},
+            `${bk.store_count} stores` + (bk.map_image_count ? `, ${bk.map_image_count} map images` : "")));
+
+          // Action buttons row
+          const actRow = el("div",{style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap"});
+
+          // Restore button — shows checkbox dialog
+          const restoreWrap = el("div",{style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap"});
+          const makeRestoreBtn = () => {
+            const btn = el("button",{class:"btn tiny"+(disabled?" disabled":"")}, "Restore…");
+            if(disabled) btn.disabled = true;
+            btn.addEventListener("click", () => {
+              restoreWrap.innerHTML = "";
+              // Build checkbox UI
+              const dialog = el("div",{style:"padding:10px 12px;border:1px solid #1e4976;border-radius:8px;background:#0a1a2a;margin-top:6px"});
+              dialog.appendChild(el("div",{style:"font-weight:600;font-size:12px;margin-bottom:8px;color:#7dd3fc"},"Choose items to restore:"));
+              const checkboxes = [];
+              const storeKeys = bk.store_keys || [];
+              for(const sk of storeKeys){
+                const lbl = el("label",{style:"display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px;cursor:pointer"});
+                const cb = document.createElement("input");
+                cb.type = "checkbox"; cb.checked = true; cb.value = sk;
+                cb.style.cssText = "width:14px;height:14px;accent-color:#52b788;cursor:pointer";
+                lbl.appendChild(cb);
+                lbl.appendChild(document.createTextNode(_storeLabel(sk)));
+                dialog.appendChild(lbl);
+                checkboxes.push(cb);
+              }
+              // Map images checkbox
+              if(bk.map_image_count > 0){
+                const lbl = el("label",{style:"display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px;cursor:pointer"});
+                const cb = document.createElement("input");
+                cb.type = "checkbox"; cb.checked = true; cb.value = "__map_images__";
+                cb.style.cssText = "width:14px;height:14px;accent-color:#52b788;cursor:pointer";
+                lbl.appendChild(cb);
+                lbl.appendChild(document.createTextNode(`Map Images (${bk.map_image_count} files)`));
+                dialog.appendChild(lbl);
+                checkboxes.push(cb);
+              }
+              // Select all / none
+              const selRow = el("div",{style:"display:flex;gap:8px;margin:8px 0 4px"});
+              selRow.appendChild(el("button",{class:"btn tiny",style:"font-size:10px", onclick:()=>{ checkboxes.forEach(c=>c.checked=true); }},"Select all"));
+              selRow.appendChild(el("button",{class:"btn tiny",style:"font-size:10px", onclick:()=>{ checkboxes.forEach(c=>c.checked=false); }},"Select none"));
+              dialog.appendChild(selRow);
+              // Confirm / cancel
+              const btnRow = el("div",{style:"display:flex;gap:8px;margin-top:10px"});
+              const confirmBtn = el("button",{class:"btn",style:"background:#1b4a2e;border-color:#52b788;font-size:12px"},"Restore selected");
+              confirmBtn.addEventListener("click", async()=>{
+                const selected = checkboxes.filter(c=>c.checked).map(c=>c.value);
+                const storeKeysToRestore = selected.filter(s=>s!=="__map_images__");
+                const restoreImages = selected.includes("__map_images__");
+                if(!storeKeysToRestore.length && !restoreImages){
+                  ctx.toast("Nothing selected to restore.", true);
+                  return;
+                }
+                confirmBtn.disabled = true; confirmBtn.textContent = "Restoring…";
+                try {
+                  const payload = { backup_id: bk.id };
+                  if(storeKeysToRestore.length) payload.store_keys = storeKeysToRestore;
+                  else payload.store_keys = [];
+                  if(restoreImages) payload.restore_map_images = true;
+                  const r = await ctx.actions.wsCall("padspan_ha/store_backup_restore", payload);
+                  ctx.toast(`Restored ${r.restored} store(s)` + (r.images_restored ? ` + ${r.images_restored} map image(s)` : "") + ". Reload integration for full effect.");
+                  restoreWrap.innerHTML = ""; restoreWrap.appendChild(makeRestoreBtn());
+                } catch(e){
+                  ctx.toast("Restore failed: "+String(e), true);
+                  restoreWrap.innerHTML = ""; restoreWrap.appendChild(makeRestoreBtn());
+                }
+              });
+              btnRow.appendChild(confirmBtn);
+              btnRow.appendChild(el("button",{class:"btn inline",style:"font-size:12px", onclick:()=>{
+                restoreWrap.innerHTML = ""; restoreWrap.appendChild(makeRestoreBtn());
+              }},"Cancel"));
+              dialog.appendChild(btnRow);
+              restoreWrap.appendChild(dialog);
+            });
+            return btn;
+          };
+          restoreWrap.appendChild(makeRestoreBtn());
+          actRow.appendChild(restoreWrap);
+
+          // Delete button
+          const delWrap = el("div",{style:"display:flex;gap:8px;align-items:center"});
+          const makeDelBtn = () => {
+            const btn = el("button",{class:"btn tiny",style:"color:#f87171;border-color:#7f1d1d"+(disabled?" ;opacity:0.4":"")}, "Delete");
+            if(disabled) btn.disabled = true;
+            btn.addEventListener("click", () => {
+              delWrap.innerHTML = "";
+              const yes = el("button",{class:"btn tiny",style:"background:#7f1d1d;border-color:#dc2626"},"Yes, delete");
+              const no = el("button",{class:"btn tiny"},"No");
+              yes.addEventListener("click", async()=>{
+                delWrap.innerHTML = "";
+                try {
+                  await ctx.actions.wsCall("padspan_ha/store_backup_delete", {backup_id: bk.id});
+                  ctx.toast("Backup deleted.");
+                  _renderBkList();
+                } catch(e){ ctx.toast("Delete failed: "+String(e), true); delWrap.innerHTML=""; delWrap.appendChild(makeDelBtn()); }
+              });
+              no.addEventListener("click", ()=>{ delWrap.innerHTML=""; delWrap.appendChild(makeDelBtn()); });
+              delWrap.appendChild(yes); delWrap.appendChild(no);
+            });
+            return btn;
+          };
+          delWrap.appendChild(makeDelBtn());
+          actRow.appendChild(delWrap);
+
+          bkRow.appendChild(actRow);
+          bkListWrap.appendChild(bkRow);
+        }
+      } catch(e){
+        bkListWrap.appendChild(el("div",{style:"color:#f87171;font-size:12px"},"Failed to load backups: "+String(e)));
+      }
+    };
+
+    // Create backup button
+    const createWrap = el("div",{style:"display:flex;gap:8px;align-items:center"});
+    const makeCreateBtn = () => {
+      const btn = el("button",{class:"btn"+(disabled?" disabled":"")}, "Create Backup");
+      if(disabled) btn.disabled = true;
+      btn.addEventListener("click", async () => {
+        btn.disabled = true; btn.textContent = "Creating…";
+        try {
+          const r = await ctx.actions.wsCall("padspan_ha/store_backup_create", {note: "Manual backup"});
+          ctx.toast(`Backup created (${r.store_count} stores).`);
+          _renderBkList();
+        } catch(e){ ctx.toast("Backup failed: "+String(e), true); }
+        createWrap.innerHTML = ""; createWrap.appendChild(makeCreateBtn());
+      });
+      return btn;
+    };
+    createWrap.appendChild(makeCreateBtn());
+    bkCard.appendChild(createWrap);
+
+    root.appendChild(bkCard);
+    // Load backup list on render
+    _renderBkList();
+  }
+
   // ── Integration Controls ─────────────────────────────────────────────────────
   const ctrlCard = el("div",{class:"card"});
   ctrlCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;margin-bottom:8px"},"Integration Controls"));

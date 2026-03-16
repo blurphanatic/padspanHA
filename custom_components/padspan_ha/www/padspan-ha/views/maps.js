@@ -2869,7 +2869,9 @@ function _stack(ctx, maps, helpBtn){
   card.appendChild(tableWrap);
 
   // ── Section 2: Alignment Overlay Editor ──────────────────────────────────
-  card.appendChild(el("div",{class:"muted",style:"margin-top:24px;font-size:13px;font-weight:600"},"Alignment Overlay"));
+  const alignHdrRow = el("div",{style:"margin-top:24px;display:flex;align-items:center;justify-content:space-between"});
+  alignHdrRow.appendChild(el("div",{class:"muted",style:"font-size:13px;font-weight:600"},"Alignment Overlay"));
+  card.appendChild(alignHdrRow);
   card.appendChild(el("div",{class:"muted",style:"font-size:12px;margin-top:4px"},"Drag the target floor plan (semi-transparent) over the reference to align them spatially. Use Scale +/− to resize."));
 
   const selRow = el("div",{style:"display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-top:10px"});
@@ -3555,8 +3557,8 @@ function _stack(ctx, maps, helpBtn){
       "Click the same real-world location on both maps. Point 1 on Reference = Point 1 on Target. Auto-alternates between maps. After 3+ pairs, click Compute."));
   };
 
-  // Point Align button
-  const ptAlignBtn = el("button",{class:"btn inline",style:"margin-left:8px;background:#0a1a2a;border-color:#1e4976;color:#7dd3fc", onclick:()=>{
+  // Point Align button — placed in the Alignment Overlay header row
+  const ptAlignBtn = el("button",{class:"btn inline",style:"background:#0a1a2a;border-color:#1e4976;color:#7dd3fc;font-size:11px;padding:3px 12px", onclick:()=>{
     _pta.active = true; _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref";
     // Hide the overlay stage and normal controls, show side-by-side panels
     stageOuter.style.display = "none";
@@ -3566,7 +3568,7 @@ function _stack(ctx, maps, helpBtn){
     _renderPtAlignToolbar();
     _rebuildPtAlignPanels();
   }}, "Point Align");
-  ctrlRow.appendChild(ptAlignBtn);
+  alignHdrRow.appendChild(ptAlignBtn);
 
   // Conflict warning div (created early so save/tie-in closures can reference it)
   const warnDiv = el("div",{style:"display:none;margin-top:12px;padding:12px;border-radius:8px;background:#1a0d00;border:1px solid #d97706;font-size:12px"});
