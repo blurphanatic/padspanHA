@@ -1164,39 +1164,38 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const MAX_LABEL = 38;
   const trunc = (s) => s.length > MAX_LABEL ? s.slice(0, MAX_LABEL - 1) + "…" : s;
 
-  // ── Click data map ──────────────────────────────────────────────────────────
-  // Each clickable <g> gets a unique id (_vs0, _vd0, etc.). A JS Map stores
-  // the click callback keyed by that id. Event delegation on the wrapper div
-  // walks up from the click target using node.id (a basic DOM property that
-  // works in all contexts, unlike getAttribute on SVG in shadow DOM).
-  const _clickMap = new Map();
+  // ── Click handlers ──────────────────────────────────────────────────────────
+  // Store callbacks keyed by index. After innerHTML parse, we attach click
+  // listeners directly to each <g> via querySelectorAll — no event delegation
+  // or node.id lookup needed. This avoids SVGAnimatedString issues in WebViews
+  // where node.id on SVG elements may return an object instead of a string.
+  const _scannerClicks = [];  // index → callback
+  const _deviceClicks = [];   // index → callback
 
   // ── Scanner nodes + labels (left column) ───────────────────────────────────
   for (let si = 0; si < scannerNodes.length; si++) {
     const sn = scannerNodes[si];
-    const gid = "_vs" + si;
-    s += `<g id="${gid}" class="bt-viz-click" style="cursor:pointer">`;
+    s += `<g data-vs="${si}" class="bt-viz-click" style="cursor:pointer">`;
     s += `<rect x="${scannerLabelX - 4}" y="${sn.y - 10}" width="${sn.x - scannerLabelX + 18}" height="20" fill="rgba(0,0,0,0)" pointer-events="all"/>`;
     s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner" pointer-events="all"/>`;
     s += `<text x="${scannerLabelX}" y="${sn.y}" class="bt-viz-label" text-anchor="start" dominant-baseline="middle" pointer-events="all">${_escSvg(trunc(sn.label))}</text>`;
     s += `</g>`;
-    _clickMap.set(gid, () => {
+    _scannerClicks[si] = () => {
       const radio = radios.find(r => String(r.source || "") === sn.id);
       if (radio) ctx.actions.showScannerDetail(radio);
-    });
+    };
   }
 
   // ── Device nodes + labels (right column) ───────────────────────────────────
   for (let di = 0; di < deviceNodes.length; di++) {
     const d = deviceNodes[di];
     const rc = rssiClass(d.rssi);
-    const gid = "_vd" + di;
-    s += `<g id="${gid}" class="bt-viz-click" style="cursor:pointer">`;
+    s += `<g data-vd="${di}" class="bt-viz-click" style="cursor:pointer">`;
     s += `<rect x="${d.x - 8}" y="${d.y - 9}" width="${deviceLabelX - d.x + 18}" height="18" fill="rgba(0,0,0,0)" pointer-events="all"/>`;
     s += `<circle cx="${d.x}" cy="${d.y}" r="5" class="bt-viz-node device ${rc}" pointer-events="all"/>`;
     s += `<text x="${d.x + 10}" y="${d.y}" class="bt-viz-label" font-size="11" text-anchor="start" dominant-baseline="middle" pointer-events="all">${_escSvg(trunc(d.label))}</text>`;
     s += `</g>`;
-    _clickMap.set(gid, () => {
+    _deviceClicks[di] = () => {
       const obj = objIndex.get(d.id.toUpperCase());
       if (obj) {
         ctx.actions.showObjectDetail(obj);
@@ -1213,7 +1212,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
           });
         }
       }
-    });
+    };
   }
 
   // Column titles at the top of the SVG
@@ -1225,19 +1224,16 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const svgWrap = document.createElement("div");
   svgWrap.innerHTML = s;
 
-  // ── Click handler (event delegation via node.id) ──────────────────────────
-  // Walks up from the click target checking node.id against the _clickMap.
-  // node.id is a basic DOM property that works on both HTML and SVG elements
-  // in all browsers, unlike getAttribute which can fail on SVG in shadow DOM.
-  svgWrap.addEventListener("click", (e) => {
-    let node = e.target;
-    while (node && node !== svgWrap) {
-      if (node.id && _clickMap.has(node.id)) {
-        _clickMap.get(node.id)();
-        return;
-      }
-      node = node.parentNode;
-    }
+  // ── Attach click handlers directly to each <g> ─────────────────────────────
+  // querySelectorAll on the wrapper div finds SVG elements reliably.
+  // Using data attributes (data-vs, data-vd) avoids SVG id/namespace issues.
+  svgWrap.querySelectorAll("[data-vs]").forEach(g => {
+    const idx = parseInt(g.getAttribute("data-vs"), 10);
+    if (_scannerClicks[idx]) g.addEventListener("click", _scannerClicks[idx]);
+  });
+  svgWrap.querySelectorAll("[data-vd]").forEach(g => {
+    const idx = parseInt(g.getAttribute("data-vd"), 10);
+    if (_deviceClicks[idx]) g.addEventListener("click", _deviceClicks[idx]);
   });
 
   return el("div", { class: "card" }, [
