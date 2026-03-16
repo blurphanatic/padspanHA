@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.14.15";
-const BUILD_ID = "20260316T200953Z";
+const APP_VERSION = "0.14.16";
+const BUILD_ID = "20260316T201922Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1766,7 +1766,7 @@ class PadSpanHaApp extends HTMLElement {
           tbody.appendChild(makeSourceRow(srcName, rssi, age_s));
         }
       } else {
-        tbody.appendChild(makeSourceRow("primary", obj.rssi, obj.age_s));
+        tbody.appendChild(makeSourceRow(obj.source || "unknown", obj.rssi, obj.age_s));
       }
       const srcSection = el("div", {}, [
         el("div", {style:"font-weight:600;margin-bottom:6px"}, "Detection sources"),

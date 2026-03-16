@@ -1232,16 +1232,29 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const svgWrap = document.createElement("div");
   svgWrap.innerHTML = s;
 
-  // ── Attach click handlers directly to each <g> ─────────────────────────────
-  // querySelectorAll on the wrapper div finds SVG elements reliably.
-  // Using data attributes (data-vs, data-vd) avoids SVG id/namespace issues.
-  svgWrap.querySelectorAll("[data-vs]").forEach(g => {
-    const idx = parseInt(g.getAttribute("data-vs"), 10);
-    if (_scannerClicks[idx]) g.addEventListener("click", _scannerClicks[idx]);
-  });
-  svgWrap.querySelectorAll("[data-vd]").forEach(g => {
-    const idx = parseInt(g.getAttribute("data-vd"), 10);
-    if (_deviceClicks[idx]) g.addEventListener("click", _deviceClicks[idx]);
+  // ── Attach click handlers via event delegation ──────────────────────────────
+  // Single listener on the wrapper; walk up from click target to find the
+  // nearest <g> with data-vs or data-vd. This avoids querySelectorAll with
+  // attribute selectors which can fail on SVG namespace elements in WebViews.
+  svgWrap.addEventListener("click", (e) => {
+    let node = e.target;
+    while (node && node !== svgWrap) {
+      if (node.tagName === "g" || node.tagName === "G") {
+        const vs = node.getAttribute("data-vs");
+        if (vs !== null) {
+          const idx = parseInt(vs, 10);
+          if (_scannerClicks[idx]) _scannerClicks[idx]();
+          return;
+        }
+        const vd = node.getAttribute("data-vd");
+        if (vd !== null) {
+          const idx = parseInt(vd, 10);
+          if (_deviceClicks[idx]) _deviceClicks[idx]();
+          return;
+        }
+      }
+      node = node.parentNode;
+    }
   });
 
   return el("div", { class: "card" }, [
