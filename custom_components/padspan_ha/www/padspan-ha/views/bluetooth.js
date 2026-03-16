@@ -1056,7 +1056,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // Build SVG as an HTML string — avoids the HTML-namespace issue that makes
   // document.createElement("circle") / ("line") render as invisible elements.
   let s = `<svg class="bt-viz" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
-  s += `<style>.bt-viz-click:hover text{fill:#5eead4!important}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}</style>`;
+  s += `<style>.bt-viz-click text{fill:#7dd3fc;text-decoration:underline}.bt-viz-click:hover text{fill:#5eead4!important}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}</style>`;
 
   // Lines first (back layer) — connect between the node circles only
   for (const d of deviceNodes) {

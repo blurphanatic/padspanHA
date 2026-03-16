@@ -70,6 +70,7 @@ class PrivateBLEResolver:
         # {address_upper: (canonical_id | None, expiry_ts)}
         self._cache: dict[str, tuple[str | None, float]] = {}
         self._loaded_at: float = 0.0
+        self._unresolved_log_count: int = 0
 
     # ── public interface ──────────────────────────────────────────────────────
 
@@ -200,6 +201,16 @@ class PrivateBLEResolver:
                     return {"canonical_id": dev["canonical_id"], "name": dev["name"], "kind": "private_ble"}
             except Exception as err:
                 _LOGGER.warning("IRK match error for %s: %s", addr_upper, err)
+
+        # Log first few unresolved RPAs for debugging (helps diagnose IRK byte-order issues)
+        _unresolved = getattr(self, "_unresolved_log_count", 0)
+        if _unresolved < 5:
+            self._unresolved_log_count = _unresolved + 1
+            _LOGGER.info(
+                "Unresolved RPA %s (checked %d IRK(s)). If your phone is nearby, "
+                "the IRK byte order may be wrong or the IRK value is incorrect.",
+                addr_upper, len(self._devices),
+            )
 
         self._cache[addr_upper] = (None, now + _CACHE_TTL_S)
         return None
@@ -340,7 +351,8 @@ def _address_matches_irk(address: str, irk: bytes) -> bool:
         ct         = AES-128-ECB(irk, plaintext)
         match      = (ct[13:16] == hash_value)  — least-significant 24 bits of ct
 
-    Matches the reference implementation in ``bluetooth-data-tools`` (used by HA).
+    Tries BOTH the given byte order and the reversed byte order to handle
+    LE/BE ambiguity — iOS/Android provide LE IRKs, but storage format varies.
     """
     try:
         import binascii  # noqa: PLC0415
@@ -352,13 +364,25 @@ def _address_matches_irk(address: str, irk: bytes) -> bool:
         rpa = binascii.unhexlify(address.replace(":", "").replace("-", ""))
         prand = rpa[:3]
         hash_value = rpa[3:]
-
         plaintext = b"\x00" * 13 + prand
+
+        # Try IRK as-is first
         cipher = Cipher(algorithms.AES(irk), modes.ECB(), backend=default_backend())
         enc = cipher.encryptor()
         ct = enc.update(plaintext) + enc.finalize()
+        if ct[13:] == hash_value:
+            return True
 
-        return ct[13:] == hash_value
+        # Try reversed byte order (handles LE vs BE ambiguity)
+        irk_rev = bytes(reversed(irk))
+        if irk_rev != irk:
+            cipher2 = Cipher(algorithms.AES(irk_rev), modes.ECB(), backend=default_backend())
+            enc2 = cipher2.encryptor()
+            ct2 = enc2.update(plaintext) + enc2.finalize()
+            if ct2[13:] == hash_value:
+                return True
+
+        return False
     except Exception:
         return False
 

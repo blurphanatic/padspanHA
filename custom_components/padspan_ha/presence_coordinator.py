@@ -690,6 +690,29 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else:
                     candidate = _best_room
 
+        # ── Floor stickiness ─────────────────────────────────────────────────
+        # Cross-floor transitions should be much harder than same-floor ones.
+        # If the candidate room is on a different floor than the confirmed room,
+        # require 2× the hysteresis margin.  This prevents sudden floor jumps
+        # from noise when a device is near scanners that serve different floors.
+        _floor_hyst = locals().get("_HYSTERESIS_MARGIN", 0.06)
+        if candidate and room_scores and source_to_floor:
+            _cur_room_fs = self._confirmed_room.get(key)
+            if _cur_room_fs and _cur_room_fs != candidate and _cur_room_fs in room_scores:
+                # Build room→floor from source_to_area + source_to_floor
+                _room_to_fl: dict[str, str] = {}
+                for _src2, _area2 in source_to_area.items():
+                    _fl2 = source_to_floor.get(_src2)
+                    if _fl2 and _area2 not in _room_to_fl:
+                        _room_to_fl[_area2] = _fl2
+                _cand_fl = _room_to_fl.get(candidate)
+                _cur_fl = _room_to_fl.get(_cur_room_fs)
+                if _cand_fl and _cur_fl and _cand_fl != _cur_fl:
+                    # Cross-floor: require double hysteresis margin
+                    _floor_margin = _floor_hyst * 2.0
+                    if room_scores.get(candidate, 0) - room_scores.get(_cur_room_fs, 0) < _floor_margin:
+                        candidate = _cur_room_fs  # stay on current floor
+
         # ── Change A2: Adaptive learning blend ──────────────────────────────
         # When adaptive learning is enabled and has accumulated data, blend
         # fingerprint-similarity scores into the Gaussian room scores.  Also
