@@ -3501,7 +3501,75 @@ function _stack(ctx, maps, helpBtn){
     return { x_offset: dx, y_offset: dy, scale, rotation, scaleX_adj, residual: res };
   };
 
-  // Container for the side-by-side point-picking UI (hidden until activated)
+  // ── Similarity Transform Solver (_solvePtAlignRigid) ──────────────────────
+  //
+  // Restricted version of _solvePtAlign: only translation + rotation + uniform
+  // scale (4-DOF). No skew or non-uniform stretch — output is always a "rigid"
+  // rectangle, never a leaning parallelogram.
+  //
+  // MODEL (centred at 0.5, 0.5):
+  //   ref_x - cx = a*(tgt_x - cx) - b*(tgt_y - cy) + dx
+  //   ref_y - cy = b*(tgt_x - cx) + a*(tgt_y - cy) + dy
+  //
+  // where a = s*cos(θ), b = s*sin(θ). Only 4 unknowns [a, b, dx, dy].
+  // Needs >= 2 pairs (but we keep the 3-pair minimum for consistency).
+  //
+  // Returns same shape as _solvePtAlign with scaleX_adj = 1.0.
+  const _solvePtAlignRigid = (refPts, tgtPts, ar) => {
+    const n = Math.min(refPts.length, tgtPts.length);
+    if (n < 2) return null;
+    const rp = refPts.slice(0, n).map(p => ({ x: p.x, y: p.y * ar }));
+    const tp = tgtPts.slice(0, n).map(p => ({ x: p.x, y: p.y * ar }));
+    const cx = 0.5, cy = 0.5 * ar;
+    // Build normal equations for 4 unknowns [a, b, dx, dy]
+    const K = 4;
+    const ATA = Array.from({ length: K }, () => Array(K).fill(0));
+    const ATb = Array(K).fill(0);
+    for (let i = 0; i < n; i++) {
+      const u = tp[i].x - cx, v = tp[i].y - cy;
+      const bx = rp[i].x - cx, by = rp[i].y - cy;
+      // x-equation: a*u - b*v + dx = bx  →  row [u, -v, 1, 0]
+      // y-equation: b*u + a*v + dy = by  →  row [v,  u, 0, 1]
+      const r1 = [u, -v, 1, 0];
+      const r2 = [v,  u, 0, 1];
+      for (let j = 0; j < K; j++) {
+        for (let k = 0; k < K; k++) ATA[j][k] += r1[j] * r1[k] + r2[j] * r2[k];
+        ATb[j] += r1[j] * bx + r2[j] * by;
+      }
+    }
+    // Gaussian elimination with partial pivoting
+    const M = ATA.map((r, i) => [...r, ATb[i]]);
+    for (let col = 0; col < K; col++) {
+      let maxR = col;
+      for (let r = col + 1; r < K; r++) if (Math.abs(M[r][col]) > Math.abs(M[maxR][col])) maxR = r;
+      [M[col], M[maxR]] = [M[maxR], M[col]];
+      if (Math.abs(M[col][col]) < 1e-12) return null;
+      for (let r = col + 1; r < K; r++) {
+        const f = M[r][col] / M[col][col];
+        for (let c2 = col; c2 <= K; c2++) M[r][c2] -= f * M[col][c2];
+      }
+    }
+    const x = Array(K).fill(0);
+    for (let r = K - 1; r >= 0; r--) {
+      x[r] = M[r][K];
+      for (let c2 = r + 1; c2 < K; c2++) x[r] -= M[r][c2] * x[c2];
+      x[r] /= M[r][r];
+    }
+    const a = x[0], b = x[1], dx = x[2], dy = x[3] / ar;
+    const scale = Math.sqrt(a * a + b * b);
+    const rotation = Math.atan2(b, a) * 180 / Math.PI;
+    // Residual
+    let res = 0;
+    for (let i = 0; i < n; i++) {
+      const u = tp[i].x - cx, v = tp[i].y - cy;
+      const predX = a * u - b * v + cx + dx;
+      const predY = (b * u + a * v + cy) / ar + dy;
+      res += (predX - refPts[i].x) ** 2 + (predY - refPts[i].y) ** 2;
+    }
+    res = Math.sqrt(res / n);
+    return { x_offset: dx, y_offset: dy, scale, rotation, scaleX_adj: 1.0, residual: res };
+  };
+
   // ── Point Align Modal ─────────────────────────────────────────────────────
   // Opens a full-screen fixed overlay for side-by-side point matching.
   // Completely self-contained — owns its own DOM, state, and lifecycle.
@@ -3518,6 +3586,7 @@ function _stack(ctx, maps, helpBtn){
     const tgtPts = [];
     let phase = "ref";
     let bake = false;
+    let fullTransform = false; // OFF = rigid (no skew); ON = full affine (can lean)
 
     // ── Modal root (position:fixed covers the viewport) ──
     const overlay = document.createElement("div");
@@ -3612,6 +3681,19 @@ function _stack(ctx, maps, helpBtn){
       bakeLabel.appendChild(document.createTextNode("Bake"));
       toolbar.appendChild(bakeLabel);
 
+      // Full transform checkbox — OFF (default) = rigid (translate + rotate + scale only),
+      // ON = full 6-DOF affine (allows non-uniform stretch / skew / "leaning" output)
+      const ftLabel = document.createElement("label");
+      ftLabel.style.cssText = "display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8;cursor:pointer;user-select:none";
+      const ftCb = document.createElement("input");
+      ftCb.type = "checkbox";
+      ftCb.checked = fullTransform;
+      ftCb.style.cssText = "width:14px;height:14px;accent-color:#f59e0b;cursor:pointer";
+      ftCb.onchange = () => { fullTransform = ftCb.checked; };
+      ftLabel.appendChild(ftCb);
+      ftLabel.appendChild(document.createTextNode("Full transform"));
+      toolbar.appendChild(ftLabel);
+
       // Compute button
       const canCompute = pairs >= 3;
       const computeBtn = document.createElement("button");
@@ -3624,7 +3706,9 @@ function _stack(ctx, maps, helpBtn){
           computeBtn.disabled = true;
           computeBtn.textContent = "Computing...";
           const solveAr = _refIH / _refIW;  // height/width ratio for the solver
-          const result = _solvePtAlign(refPts, tgtPts, solveAr);
+          const result = fullTransform
+            ? _solvePtAlign(refPts, tgtPts, solveAr)       // 6-DOF affine (allows skew)
+            : _solvePtAlignRigid(refPts, tgtPts, solveAr); // 4-DOF rigid (no skew)
           if (!result) {
             ctx.toast("Could not compute — points may be collinear", true);
             _close();
