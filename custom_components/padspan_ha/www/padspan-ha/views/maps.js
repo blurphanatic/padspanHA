@@ -3452,21 +3452,92 @@ function _stack(ctx, maps, helpBtn){
       _rebuildPtAlignPanels(); _renderPtAlignToolbar();
     }}, "Clear All"));
 
+    // Bake toggle — when ON, Compute writes a new image file with rotation/scale/stretch
+    // burned in, so future alignment starts clean (only translation remains).
+    if(_pta.bake === undefined) _pta.bake = false;
+    const bakeLabel = el("label",{style:"display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8;cursor:pointer;user-select:none"});
+    const bakeCb = document.createElement("input");
+    bakeCb.type = "checkbox"; bakeCb.checked = _pta.bake;
+    bakeCb.style.cssText = "width:14px;height:14px;accent-color:#52b788;cursor:pointer";
+    bakeCb.addEventListener("change", ()=>{ _pta.bake = bakeCb.checked; });
+    bakeLabel.appendChild(bakeCb);
+    bakeLabel.appendChild(document.createTextNode("Bake into image"));
+    row2.appendChild(bakeLabel);
+
     // Compute
     const canCompute = pairs >= 3;
-    const computeBtn = el("button",{class:"btn",style:`font-size:11px;padding:3px 12px;${canCompute?"background:#1b4a2e;border-color:#52b788":"opacity:0.4"}`, disabled:!canCompute, onclick:()=>{
+    const computeBtn = el("button",{class:"btn",style:`font-size:11px;padding:3px 12px;${canCompute?"background:#1b4a2e;border-color:#52b788":"opacity:0.4"}`, disabled:!canCompute, onclick: async ()=>{
       const refMap = maps.find(m=>m.id===refSel.value);
+      const tgtMap = maps.find(m=>m.id===tgtSel.value);
       const solveAr = refMap ? (refMap.image?.height||600)/(refMap.image?.width||800) : stageAr;
       const result = _solvePtAlign(_pta.refPts, _pta.tgtPts, solveAr);
       if(!result){ ctx.toast("Could not compute alignment — points may be collinear",true); return; }
-      alignState.x_offset   = Math.round(result.x_offset * 10000) / 10000;
-      alignState.y_offset   = Math.round(result.y_offset * 10000) / 10000;
-      alignState.scale      = Math.round(result.scale * 10000) / 10000;
-      alignState.rotation   = Math.round(result.rotation * 100) / 100;
-      alignState.scaleX_adj = Math.round((result.scaleX_adj || 1.0) * 10000) / 10000;
+      const rScale    = Math.round(result.scale * 10000) / 10000;
+      const rRotation = Math.round(result.rotation * 100) / 100;
+      const rStretch  = Math.round((result.scaleX_adj || 1.0) * 10000) / 10000;
+      const rDx       = Math.round(result.x_offset * 10000) / 10000;
+      const rDy       = Math.round(result.y_offset * 10000) / 10000;
+
+      // Bake: render transformed image onto canvas, upload as new file
+      if(_pta.bake && tgtMap && tgtMap.image?.filename){
+        computeBtn.disabled = true; computeBtn.textContent = "Baking…";
+        try {
+          const _tv = (tgtMap.updated||tgtMap.image?.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
+          const imgUrl = `/local/padspan_ha/maps/${tgtMap.image.filename}${_tv ? '?v='+_tv : ''}`;
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          await new Promise((resolve, reject) => {
+            img.onload = resolve; img.onerror = reject; img.src = imgUrl;
+          });
+          const ow = img.naturalWidth, oh = img.naturalHeight;
+          // Compute output canvas size to fit the rotated+scaled+stretched image
+          const radians = rRotation * Math.PI / 180;
+          const cosA = Math.abs(Math.cos(radians)), sinA = Math.abs(Math.sin(radians));
+          const sx = rScale * rStretch, sy = rScale;
+          const scaledW = ow * sx, scaledH = oh * sy;
+          const nw = Math.ceil(scaledW * cosA + scaledH * sinA);
+          const nh = Math.ceil(scaledW * sinA + scaledH * cosA);
+          const canvas = document.createElement("canvas");
+          canvas.width = nw; canvas.height = nh;
+          const c = canvas.getContext("2d");
+          c.translate(nw / 2, nh / 2);
+          c.rotate(radians);
+          c.scale(sx, sy);
+          c.drawImage(img, -ow / 2, -oh / 2);
+          // Export as PNG base64
+          const dataUrl = canvas.toDataURL("image/png");
+          const b64 = dataUrl.split(",")[1];
+          await ctx.actions.mapsReplaceImage({ map_id: tgtMap.id, png_base64: b64, width: nw, height: nh });
+          // Reset transform to translation-only (rotation/scale/stretch baked into the image)
+          alignState.x_offset   = rDx;
+          alignState.y_offset   = rDy;
+          alignState.scale      = 1.0;
+          alignState.rotation   = 0;
+          alignState.scaleX_adj = 1.0;
+          applyCurrentTransform();
+          const resPct = Math.round(result.residual * 1000) / 10;
+          ctx.toast(`Baked into image ✔ (${pairs} pairs, residual: ${resPct}%). Rotation/scale/stretch written to file; only translation remains.`);
+        } catch(bakeErr) {
+          ctx.toast("Bake failed: " + String(bakeErr), true);
+          // Fall back to normal transform application
+          alignState.x_offset = rDx; alignState.y_offset = rDy;
+          alignState.scale = rScale; alignState.rotation = rRotation;
+          alignState.scaleX_adj = rStretch;
+          applyCurrentTransform();
+        }
+        _exitPtAlign();
+        return;
+      }
+
+      // Normal mode — apply transform parameters
+      alignState.x_offset   = rDx;
+      alignState.y_offset   = rDy;
+      alignState.scale      = rScale;
+      alignState.rotation   = rRotation;
+      alignState.scaleX_adj = rStretch;
       applyCurrentTransform();
       const resPct = Math.round(result.residual * 1000) / 10;
-      const stretchPct = Math.round((result.scaleX_adj || 1.0) * 100);
+      const stretchPct = Math.round(rStretch * 100);
       ctx.toast(`Point alignment applied (${pairs} pairs, residual: ${resPct}%, stretch: ${stretchPct}%)`);
       _exitPtAlign();
     }}, canCompute ? `Compute (${pairs} pairs)` : "Need 3+ pairs");
