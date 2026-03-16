@@ -3622,7 +3622,9 @@ function _stack(ctx, maps, helpBtn){
   };
 
   const _exitPtAlign = () => {
-    _pta.active = false; _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref"; _pta._ts = 0;
+    // Idempotent — safe to call multiple times (finally blocks, error paths, etc.)
+    _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref"; _pta._ts = 0;
+    _pta.active = false;
     try { _ptAlignToolbar.style.display = "none"; } catch(_e){}
     try { _ptAlignContainer.style.display = "none"; } catch(_e){}
     try { stageOuter.style.display = ""; } catch(_e){}
@@ -3672,92 +3674,102 @@ function _stack(ctx, maps, helpBtn){
     row2.appendChild(bakeLabel);
 
     // Compute — solves the affine transform then exits Point Align.
-    // All work is synchronous except the Bake path (image load + upload).
-    // On success or failure, _exitPtAlign() always runs to release the re-render guard.
+    // IMPORTANT: NOT async — prevents unhandled promise rejections that kill HA panels.
+    // The Bake path uses .then()/.catch() for its async work.
+    // Single outer try/catch/finally ensures _exitPtAlign() ALWAYS runs.
     const canCompute = pairs >= 3;
-    const computeBtn = el("button",{class:"btn",style:`font-size:11px;padding:3px 12px;${canCompute?"background:#1b4a2e;border-color:#52b788":"opacity:0.4"}`, disabled:!canCompute, onclick: async ()=>{
-      computeBtn.disabled = true;
-      computeBtn.textContent = "Computing…";
-
-      // ── Solve ──
-      let result = null;
+    const computeBtn = el("button",{class:"btn",style:`font-size:11px;padding:3px 12px;${canCompute?"background:#1b4a2e;border-color:#52b788":"opacity:0.4"}`, disabled:!canCompute, onclick: ()=>{
+      console.log("[PtAlign] Compute clicked, pairs:", pairs);
       try {
-        const refMap = maps.find(m=>m.id===refSel.value);
-        const solveAr = refMap ? (refMap.image?.height||600)/(refMap.image?.width||800) : stageAr;
-        result = _solvePtAlign(_pta.refPts, _pta.tgtPts, solveAr);
-      } catch(solveErr) {
-        console.error("PtAlign solver error:", solveErr);
-      }
-      if(!result){
-        ctx.toast("Could not compute alignment — points may be collinear", true);
-        _exitPtAlign();
-        return;
-      }
+        computeBtn.disabled = true;
+        computeBtn.textContent = "Computing…";
 
-      // Sanitize outputs — clamp to sane ranges, replace NaN/Infinity with defaults
-      const _sane = (v, def, lo, hi) => { const n = Number(v); return (isFinite(n) && n >= lo && n <= hi) ? n : def; };
-      const rScale    = _sane(Math.round(result.scale * 10000) / 10000, 1.0, 0.01, 100);
-      const rRotation = _sane(Math.round(result.rotation * 100) / 100, 0, -360, 360);
-      const rStretch  = _sane(Math.round((result.scaleX_adj || 1.0) * 10000) / 10000, 1.0, 0.01, 100);
-      const rDx       = _sane(Math.round(result.x_offset * 10000) / 10000, 0, -10, 10);
-      const rDy       = _sane(Math.round(result.y_offset * 10000) / 10000, 0, -10, 10);
-      const resPct    = _sane(Math.round((result.residual||0) * 1000) / 10, 0, 0, 999);
+        // ── Solve ──
+        const refMapS = maps.find(m=>m.id===refSel.value);
+        const solveAr = refMapS ? (refMapS.image?.height||600)/(refMapS.image?.width||800) : stageAr;
+        const result = _solvePtAlign(_pta.refPts, _pta.tgtPts, solveAr);
+        console.log("[PtAlign] Solver result:", result);
 
-      // ── Bake into image ──
-      const tgtMap = maps.find(m=>m.id===tgtSel.value);
-      if(_pta.bake && tgtMap && tgtMap.image?.filename){
-        computeBtn.textContent = "Baking…";
-        try {
-          const _tv = (tgtMap.updated||tgtMap.image?.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
-          const imgUrl = `/local/padspan_ha/maps/${tgtMap.image.filename}${_tv ? '?v='+_tv : ''}`;
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          await new Promise((resolve, reject) => {
-            img.onload = resolve; img.onerror = reject; img.src = imgUrl;
-          });
-          const ow = img.naturalWidth, oh = img.naturalHeight;
-          const radians = rRotation * Math.PI / 180;
-          const cosA = Math.abs(Math.cos(radians)), sinA = Math.abs(Math.sin(radians));
-          const sx = rScale * rStretch, sy = rScale;
-          const scaledW = ow * sx, scaledH = oh * sy;
-          const nw = Math.ceil(scaledW * cosA + scaledH * sinA);
-          const nh = Math.ceil(scaledW * sinA + scaledH * cosA);
-          const canvas = document.createElement("canvas");
-          canvas.width = nw; canvas.height = nh;
-          const c = canvas.getContext("2d");
-          c.translate(nw / 2, nh / 2);
-          c.rotate(radians);
-          c.scale(sx, sy);
-          c.drawImage(img, -ow / 2, -oh / 2);
-          const dataUrl = canvas.toDataURL("image/png");
-          const b64 = dataUrl.split(",")[1];
-          // Write alignment state BEFORE the async call so re-render picks it up
+        if(!result){
+          ctx.toast("Could not compute alignment — points may be collinear", true);
+          return; // finally block handles _exitPtAlign()
+        }
+
+        // Sanitize outputs — clamp to sane ranges, replace NaN/Infinity with defaults
+        const _sane = (v, def, lo, hi) => { const n = Number(v); return (isFinite(n) && n >= lo && n <= hi) ? n : def; };
+        const rScale    = _sane(Math.round(result.scale * 10000) / 10000, 1.0, 0.01, 100);
+        const rRotation = _sane(Math.round(result.rotation * 100) / 100, 0, -360, 360);
+        const rStretch  = _sane(Math.round((result.scaleX_adj || 1.0) * 10000) / 10000, 1.0, 0.01, 100);
+        const rDx       = _sane(Math.round(result.x_offset * 10000) / 10000, 0, -10, 10);
+        const rDy       = _sane(Math.round(result.y_offset * 10000) / 10000, 0, -10, 10);
+        const resPct    = _sane(Math.round((result.residual||0) * 1000) / 10, 0, 0, 999);
+        console.log("[PtAlign] Sanitized: scale="+rScale+" rot="+rRotation+" dx="+rDx+" dy="+rDy);
+
+        // ── Bake into image ──
+        const tgtMap = maps.find(m=>m.id===tgtSel.value);
+        if(_pta.bake && tgtMap && tgtMap.image && tgtMap.image.filename){
+          computeBtn.textContent = "Baking…";
+          // Write alignment state and exit BEFORE async work
           alignState.x_offset = rDx; alignState.y_offset = rDy;
           alignState.scale = 1.0; alignState.rotation = 0; alignState.scaleX_adj = 1.0;
-          // Exit Point Align BEFORE the async upload — releases re-render guard
           _exitPtAlign();
-          await ctx.actions.mapsReplaceImage({ map_id: tgtMap.id, png_base64: b64, width: nw, height: nh });
-          ctx.toast(`Baked into image (${pairs} pairs, residual: ${resPct}%). Only translation remains.`);
-        } catch(bakeErr) {
-          console.error("PtAlign bake error:", bakeErr);
-          alignState.x_offset = rDx; alignState.y_offset = rDy;
-          alignState.scale = rScale; alignState.rotation = rRotation; alignState.scaleX_adj = rStretch;
-          _exitPtAlign();
-          ctx.toast("Bake failed: " + String(bakeErr), true);
+          // Async bake via .then/.catch — NO unhandled rejections
+          const _tv = (tgtMap.updated||tgtMap.image.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
+          const imgUrl = "/local/padspan_ha/maps/" + tgtMap.image.filename + (_tv ? "?v="+_tv : "");
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            try {
+              const ow = img.naturalWidth, oh = img.naturalHeight;
+              const radians = rRotation * Math.PI / 180;
+              const cosA = Math.abs(Math.cos(radians)), sinA = Math.abs(Math.sin(radians));
+              const sx = rScale * rStretch, sy = rScale;
+              const scaledW = ow * sx, scaledH = oh * sy;
+              const nw = Math.ceil(scaledW * cosA + scaledH * sinA);
+              const nh = Math.ceil(scaledW * sinA + scaledH * cosA);
+              const canvas = document.createElement("canvas");
+              canvas.width = nw; canvas.height = nh;
+              const cc = canvas.getContext("2d");
+              cc.translate(nw / 2, nh / 2);
+              cc.rotate(radians);
+              cc.scale(sx, sy);
+              cc.drawImage(img, -ow / 2, -oh / 2);
+              const dataUrl = canvas.toDataURL("image/png");
+              const b64 = dataUrl.split(",")[1];
+              ctx.actions.mapsReplaceImage({ map_id: tgtMap.id, png_base64: b64, width: nw, height: nh })
+                .then(() => ctx.toast("Baked into image ("+pairs+" pairs, residual: "+resPct+"%). Only translation remains."))
+                .catch(e => { console.error("[PtAlign] Bake upload error:", e); ctx.toast("Bake upload failed: "+e, true); });
+            } catch(drawErr) {
+              console.error("[PtAlign] Bake draw error:", drawErr);
+              ctx.toast("Bake draw failed: "+drawErr, true);
+            }
+          };
+          img.onerror = () => {
+            console.error("[PtAlign] Bake image load failed");
+            alignState.scale = rScale; alignState.rotation = rRotation; alignState.scaleX_adj = rStretch;
+            ctx.toast("Bake failed — could not load map image", true);
+          };
+          img.src = imgUrl;
+          return; // _exitPtAlign already called above
         }
-        return;
-      }
 
-      // ── Normal mode — write alignment state and exit ──
-      // Set state FIRST, then exit. The next re-render will pick up
-      // the new values and apply the transform via buildStage().
-      alignState.x_offset   = rDx;
-      alignState.y_offset   = rDy;
-      alignState.scale      = rScale;
-      alignState.rotation   = rRotation;
-      alignState.scaleX_adj = rStretch;
-      _exitPtAlign();
-      ctx.toast(`Point alignment applied (${pairs} pairs, residual: ${resPct}%, stretch: ${Math.round(rStretch * 100)}%)`);
+        // ── Normal mode — write alignment state ──
+        alignState.x_offset   = rDx;
+        alignState.y_offset   = rDy;
+        alignState.scale      = rScale;
+        alignState.rotation   = rRotation;
+        alignState.scaleX_adj = rStretch;
+        console.log("[PtAlign] Normal mode complete, calling _exitPtAlign");
+        _exitPtAlign();
+        ctx.toast("Point alignment applied ("+pairs+" pairs, residual: "+resPct+"%, stretch: "+Math.round(rStretch * 100)+"%)");
+      } catch(err) {
+        console.error("[PtAlign] Compute FATAL:", err);
+        try { ctx.toast("Point Align error: " + String(err), true); } catch(_e2) {}
+      } finally {
+        // Belt-and-suspenders: _exitPtAlign is idempotent, safe to call again
+        try { _exitPtAlign(); } catch(_e3) {}
+        console.log("[PtAlign] Compute handler finished, _pta.active:", _pta.active);
+      }
     }}, canCompute ? `Compute (${pairs} pairs)` : "Need 3+ pairs");
     row2.appendChild(computeBtn);
 
