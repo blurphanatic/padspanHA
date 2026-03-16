@@ -75,8 +75,16 @@ class CalibrationStore:
             self.data = loaded
         else:
             self.data = {"points": [], "model": {}}
-        # Train Random Forest on startup (non-blocking)
+        # Train Random Forest on startup
         await self._async_train_rf()
+
+    async def async_setup_fast(self) -> None:
+        """Load persisted data but skip RF training (deferred to background)."""
+        loaded = await self.store.async_load()
+        if isinstance(loaded, dict) and "points" in loaded:
+            self.data = loaded
+        else:
+            self.data = {"points": [], "model": {}}
 
     def list_points(self) -> list[dict[str, Any]]:
         return list(self.data.get("points", []))

@@ -73,73 +73,106 @@ async def _ensure_stores(hass: HomeAssistant) -> None:
     """Create/load every persistent store exactly once per HA runtime.
 
     Each store is guarded by a DATA_* key in hass.data[DOMAIN] so reload
-    cycles don't double-init.  Order doesn't matter — stores are independent.
+    cycles don't double-init.  Stores are independent so we load them in
+    parallel via asyncio.gather() for faster startup.
     """
+    import asyncio
+
     hass.data.setdefault(DOMAIN, {})
 
-    if DATA_SETTINGS not in hass.data[DOMAIN]:
+    # ── Parallel store init ─────────────────────────────────────────────────
+    # Build a list of (DATA_KEY, factory_coro) pairs for stores not yet loaded.
+    # Each factory returns (DATA_KEY, store_instance, debug_msg).
+
+    async def _init_settings():
         st = SettingsStore(hass)
         await st.async_load()
-        hass.data[DOMAIN][DATA_SETTINGS] = st
-        _LOGGER.debug("SettingsStore ready")
+        return (DATA_SETTINGS, st, "SettingsStore ready")
 
-    if DATA_MAPS not in hass.data[DOMAIN]:
+    async def _init_maps():
         ms = MapsStore(hass)
         await ms.async_setup()
-        hass.data[DOMAIN][DATA_MAPS] = ms
-        _LOGGER.debug("MapsStore ready (%s)", ms.maps_dir)
+        return (DATA_MAPS, ms, f"MapsStore ready ({ms.maps_dir})")
 
-    if DATA_MODEL not in hass.data[DOMAIN]:
+    async def _init_model():
         mdl = ModelStore(hass)
         await mdl.async_setup()
-        hass.data[DOMAIN][DATA_MODEL] = mdl
-        _LOGGER.debug("ModelStore ready (%d floors, %d rooms)", len(mdl.floors()), len(mdl.room_meta()))
+        return (DATA_MODEL, mdl, f"ModelStore ready ({len(mdl.floors())} floors, {len(mdl.room_meta())} rooms)")
 
-    if DATA_OBJECTS not in hass.data[DOMAIN]:
+    async def _init_objects():
         obj_store = ObjectStore(hass)
         await obj_store.async_load()
-        hass.data[DOMAIN][DATA_OBJECTS] = obj_store
-        _LOGGER.debug("ObjectStore ready (%d labels)", len(obj_store.all()))
+        return (DATA_OBJECTS, obj_store, f"ObjectStore ready ({len(obj_store.all())} labels)")
 
-    if DATA_ALERTS not in hass.data[DOMAIN]:
+    async def _init_alerts():
         alert_store = AlertStore(hass)
         await alert_store.async_load()
-        hass.data[DOMAIN][DATA_ALERTS] = alert_store
-        _LOGGER.debug("AlertStore ready (%d configs)", len(alert_store.all()))
+        return (DATA_ALERTS, alert_store, f"AlertStore ready ({len(alert_store.all())} configs)")
 
-    if DATA_MOVEMENT not in hass.data[DOMAIN]:
+    async def _init_movement():
         mv_store = MovementStore(hass)
         await mv_store.async_load()
-        hass.data[DOMAIN][DATA_MOVEMENT] = mv_store
-        _LOGGER.debug("MovementStore ready (%d entries)", len(mv_store.entries))
+        return (DATA_MOVEMENT, mv_store, f"MovementStore ready ({len(mv_store.entries)} entries)")
 
-    if DATA_ADAPTIVE not in hass.data[DOMAIN]:
+    async def _init_adaptive():
         ad_store = AdaptiveStore(hass)
         await ad_store.async_load()
-        hass.data[DOMAIN][DATA_ADAPTIVE] = ad_store
-        _LOGGER.debug("AdaptiveStore ready (%d observations)", ad_store.data.get("stats", {}).get("total_observations", 0))
+        obs = ad_store.data.get("stats", {}).get("total_observations", 0)
+        return (DATA_ADAPTIVE, ad_store, f"AdaptiveStore ready ({obs} observations)")
 
-    if DATA_CALIBRATION not in hass.data[DOMAIN]:
+    async def _init_calibration():
         from .calibration_store import CalibrationStore
         cal_store = CalibrationStore(hass)
-        await cal_store.async_setup()
-        hass.data[DOMAIN][DATA_CALIBRATION] = cal_store
+        # Load data but defer RF training to background
+        await cal_store.async_setup_fast()
         _pt_count = len(cal_store.data.get("points", []))
-        _LOGGER.debug("CalibrationStore ready (%d points)", _pt_count)
+        return (DATA_CALIBRATION, cal_store, f"CalibrationStore ready ({_pt_count} points)")
 
-    if DATA_TRACEBACK not in hass.data[DOMAIN]:
+    async def _init_traceback():
         from .traceback_store import TracebackStore
         tb_store = TracebackStore(hass)
         await tb_store.async_load()
-        hass.data[DOMAIN][DATA_TRACEBACK] = tb_store
-        _LOGGER.debug("TracebackStore ready (%d frames)", len(tb_store.frames))
+        return (DATA_TRACEBACK, tb_store, f"TracebackStore ready ({len(tb_store.frames)} frames)")
 
-    if DATA_TAG_INTEGRATION not in hass.data[DOMAIN]:
+    async def _init_tag():
         from .tag_integration import TagIntegration
         tag_int = TagIntegration(hass)
         await tag_int.async_setup()
-        hass.data[DOMAIN][DATA_TAG_INTEGRATION] = tag_int
-        _LOGGER.debug("TagIntegration ready")
+        return (DATA_TAG_INTEGRATION, tag_int, "TagIntegration ready")
+
+    # Collect only stores that aren't already loaded
+    factories = []
+    if DATA_SETTINGS not in hass.data[DOMAIN]:
+        factories.append(_init_settings())
+    if DATA_MAPS not in hass.data[DOMAIN]:
+        factories.append(_init_maps())
+    if DATA_MODEL not in hass.data[DOMAIN]:
+        factories.append(_init_model())
+    if DATA_OBJECTS not in hass.data[DOMAIN]:
+        factories.append(_init_objects())
+    if DATA_ALERTS not in hass.data[DOMAIN]:
+        factories.append(_init_alerts())
+    if DATA_MOVEMENT not in hass.data[DOMAIN]:
+        factories.append(_init_movement())
+    if DATA_ADAPTIVE not in hass.data[DOMAIN]:
+        factories.append(_init_adaptive())
+    if DATA_CALIBRATION not in hass.data[DOMAIN]:
+        factories.append(_init_calibration())
+    if DATA_TRACEBACK not in hass.data[DOMAIN]:
+        factories.append(_init_traceback())
+    if DATA_TAG_INTEGRATION not in hass.data[DOMAIN]:
+        factories.append(_init_tag())
+
+    if factories:
+        results = await asyncio.gather(*factories)
+        for data_key, store, msg in results:
+            hass.data[DOMAIN][data_key] = store
+            _LOGGER.debug(msg)
+
+    # Kick off deferred RF training in background (non-blocking)
+    cal = hass.data[DOMAIN].get(DATA_CALIBRATION)
+    if cal and not cal.rf_trained and len(cal.data.get("points", [])) >= 4:
+        hass.async_create_task(cal._async_train_rf())
 
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
