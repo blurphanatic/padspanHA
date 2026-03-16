@@ -3236,6 +3236,232 @@ function _stack(ctx, maps, helpBtn){
   // Reset all alignment
   ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; alignState.rotation=0; alignState.scaleX_adj=1.0; applyCurrentTransform(); }},"Reset"));
 
+  // ── Point Align ────────────────────────────────────────────────────────────
+  // Lets user place 3-8 matching points on ref & tgt maps, then computes a
+  // similarity transform (translation + rotation + uniform scale) via least-squares.
+  if(!ctx.state.maps._ptAlign) ctx.state.maps._ptAlign = { active: false, refPts: [], tgtPts: [], phase: "ref" };
+  const _pta = ctx.state.maps._ptAlign;
+
+  // Solve similarity transform from point pairs: returns {x_offset, y_offset, scale, rotation, residual}
+  const _solvePtAlign = (refPts, tgtPts, ar) => {
+    const n = Math.min(refPts.length, tgtPts.length);
+    if(n < 3) return null;
+    // Work in aspect-ratio-corrected coords (multiply y by ar so pixel space is ~square)
+    const rp = refPts.slice(0,n).map(p=>({x:p.x, y:p.y*ar}));
+    const tp = tgtPts.slice(0,n).map(p=>({x:p.x, y:p.y*ar}));
+    // Center target points around (0.5, 0.5*ar)
+    const cx = 0.5, cy = 0.5*ar;
+    // Least squares: for each pair i,
+    //   rx_i = a*(tx_i-cx) - b*(ty_i-cy) + (cx+dx)
+    //   ry_i = b*(tx_i-cx) + a*(ty_i-cy) + (cy+dy)
+    // Variables: a, b, dx, dy  →  4x4 normal equations
+    let ATA = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+    let ATb = [0,0,0,0];
+    for(let i=0;i<n;i++){
+      const u = tp[i].x - cx, v = tp[i].y - cy;
+      // Row for x: [u, -v, 1, 0] * [a,b,dx,dy]^T = rx_i - cx  → ... wait, let me reformulate
+      // rx_i = a*u - b*v + cx + dx  →  a*u - b*v + dx = rx_i - cx
+      // ry_i = b*u + a*v + cy + dy  →  a*v + b*u + dy = ry_i - cy
+      const bx = rp[i].x - cx;
+      const by = rp[i].y - cy;
+      // Row 1: [u, -v, 1, 0]
+      const r1 = [u, -v, 1, 0];
+      // Row 2: [v, u, 0, 1]
+      const r2 = [v, u, 0, 1];
+      for(let j=0;j<4;j++){
+        for(let k=0;k<4;k++){
+          ATA[j][k] += r1[j]*r1[k] + r2[j]*r2[k];
+        }
+        ATb[j] += r1[j]*bx + r2[j]*by;
+      }
+    }
+    // Solve 4x4 via Gaussian elimination
+    const M = ATA.map((r,i)=>[...r, ATb[i]]);
+    for(let col=0;col<4;col++){
+      let maxR=col;
+      for(let r=col+1;r<4;r++) if(Math.abs(M[r][col])>Math.abs(M[maxR][col])) maxR=r;
+      [M[col],M[maxR]]=[M[maxR],M[col]];
+      if(Math.abs(M[col][col])<1e-12) return null; // singular
+      for(let r=col+1;r<4;r++){
+        const f=M[r][col]/M[col][col];
+        for(let c=col;c<=4;c++) M[r][c]-=f*M[col][c];
+      }
+    }
+    const x=[0,0,0,0];
+    for(let r=3;r>=0;r--){
+      x[r]=M[r][4];
+      for(let c=r+1;c<4;c++) x[r]-=M[r][c]*x[c];
+      x[r]/=M[r][r];
+    }
+    const a=x[0], b=x[1], dx=x[2], dy=x[3]/ar; // de-correct dy for aspect ratio
+    const scale = Math.sqrt(a*a+b*b);
+    const rotation = Math.atan2(b,a)*180/Math.PI;
+    // Compute residual
+    let sumSqErr = 0;
+    for(let i=0;i<n;i++){
+      const u = tp[i].x-cx, v=tp[i].y-cy;
+      const px = a*u - b*v + cx + dx*1; // predicted ref x... wait, dx is in the solve already
+      // Actually the solved dx is already x[2], let me recompute predictions properly
+      const predX = a*(tgtPts[i].x-0.5) - b*(tgtPts[i].y*ar - cy) /1 ; // This is getting confused, let me just compute from the output params
+    }
+    // Simpler residual: apply the solved transform to tgt points and compare to ref
+    let res = 0;
+    const cosR = Math.cos(rotation*Math.PI/180), sinR = Math.sin(rotation*Math.PI/180);
+    for(let i=0;i<n;i++){
+      const u = tgtPts[i].x - 0.5, v = tgtPts[i].y - 0.5;
+      const px = scale*(cosR*u - sinR*v) + 0.5 + dx;
+      const py = scale*(sinR*u + cosR*v) + 0.5 + dy;
+      res += (px-refPts[i].x)**2 + (py-refPts[i].y)**2;
+    }
+    res = Math.sqrt(res/n);
+    return { x_offset: dx, y_offset: dy, scale, rotation, residual: res };
+  };
+
+  const _ptAlignOverlayDiv = el("div",{style:"display:none"});
+  const _ptAlignToolbar = el("div",{style:"display:none;margin-top:8px;padding:10px 12px;border-radius:8px;background:#0a1a2a;border:1px solid #1e4976"});
+
+  const _renderPtAlignToolbar = () => {
+    _ptAlignToolbar.innerHTML = "";
+    const pairs = Math.min(_pta.refPts.length, _pta.tgtPts.length);
+    const placing = _pta.phase === "ref" ? "Reference" : "Target";
+    const nextPt = _pta.phase === "ref" ? _pta.refPts.length + 1 : _pta.tgtPts.length + 1;
+    const phaseColor = _pta.phase === "ref" ? "#52b788" : "#f59e0b";
+
+    const row1 = el("div",{style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"});
+    row1.appendChild(el("span",{style:"font-weight:700;font-size:13px;color:#7dd3fc"},"Point Align"));
+    row1.appendChild(el("span",{style:`font-size:12px;font-weight:600;color:${phaseColor}`}, `Placing point ${nextPt} on ${placing} map`));
+    row1.appendChild(el("span",{class:"badge",style:"font-size:10px"}, `${pairs} pair${pairs!==1?"s":""} matched`));
+    _ptAlignToolbar.appendChild(row1);
+
+    const row2 = el("div",{style:"display:flex;align-items:center;gap:6px;flex-wrap:wrap"});
+    // Phase toggle
+    const refBtn = el("button",{class:"btn" + (_pta.phase==="ref" ? "" : " inline"), style:`font-size:11px;padding:3px 10px;${_pta.phase==="ref"?"background:#1b4a2e;border-color:#52b788":""}`, onclick:()=>{ _pta.phase="ref"; _renderPtAlignToolbar(); }}, "Reference");
+    const tgtBtn = el("button",{class:"btn" + (_pta.phase==="tgt" ? "" : " inline"), style:`font-size:11px;padding:3px 10px;${_pta.phase==="tgt"?"background:#4a2e1b;border-color:#f59e0b":""}`, onclick:()=>{ _pta.phase="tgt"; _renderPtAlignToolbar(); }}, "Target");
+    row2.appendChild(refBtn);
+    row2.appendChild(tgtBtn);
+
+    // Undo
+    row2.appendChild(el("button",{class:"btn inline",style:"font-size:11px", onclick:()=>{
+      if(_pta.phase==="ref" && _pta.refPts.length > 0) _pta.refPts.pop();
+      else if(_pta.phase==="tgt" && _pta.tgtPts.length > 0) _pta.tgtPts.pop();
+      else if(_pta.refPts.length >= _pta.tgtPts.length && _pta.refPts.length > 0) _pta.refPts.pop();
+      else if(_pta.tgtPts.length > 0) _pta.tgtPts.pop();
+      _renderPtAlignMarkers(); _renderPtAlignToolbar();
+    }}, "Undo"));
+
+    // Clear
+    row2.appendChild(el("button",{class:"btn inline",style:"font-size:11px", onclick:()=>{
+      _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref";
+      _renderPtAlignMarkers(); _renderPtAlignToolbar();
+    }}, "Clear All"));
+
+    // Compute
+    const canCompute = pairs >= 3;
+    const computeBtn = el("button",{class:"btn",style:`font-size:11px;padding:3px 12px;${canCompute?"background:#1b4a2e;border-color:#52b788":"opacity:0.4"}`, disabled:!canCompute, onclick:()=>{
+      const result = _solvePtAlign(_pta.refPts, _pta.tgtPts, stageAr);
+      if(!result){ ctx.toast("Could not compute alignment — points may be collinear",true); return; }
+      alignState.x_offset = Math.round(result.x_offset * 10000) / 10000;
+      alignState.y_offset = Math.round(result.y_offset * 10000) / 10000;
+      alignState.scale    = Math.round(result.scale * 10000) / 10000;
+      alignState.rotation = Math.round(result.rotation * 100) / 100;
+      applyCurrentTransform();
+      const resPct = Math.round(result.residual * 1000) / 10;
+      ctx.toast(`Point alignment applied (${pairs} pairs, residual: ${resPct}%)`);
+      // Exit point align mode
+      _pta.active = false; _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref";
+      _ptAlignToolbar.style.display = "none";
+      _renderPtAlignMarkers();
+      // Re-enable drag
+      if(tgtLayerRef) tgtLayerRef.style.pointerEvents = "";
+    }}, canCompute ? `Compute (${pairs} pairs)` : "Need 3+ pairs");
+    row2.appendChild(computeBtn);
+
+    // Cancel
+    row2.appendChild(el("button",{class:"btn inline",style:"font-size:11px;color:#f87171;border-color:#7f1d1d", onclick:()=>{
+      _pta.active = false; _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref";
+      _ptAlignToolbar.style.display = "none";
+      _renderPtAlignMarkers();
+      if(tgtLayerRef) tgtLayerRef.style.pointerEvents = "";
+    }}, "Cancel"));
+
+    _ptAlignToolbar.appendChild(row2);
+
+    // Help text
+    _ptAlignToolbar.appendChild(el("div",{class:"muted",style:"font-size:10px;margin-top:6px"},
+      "Click the same real-world location on both maps. Point 1 on Reference = Point 1 on Target. After 3+ pairs, click Compute to align."));
+  };
+
+  // Render point markers as SVG in the pins layer
+  const _renderPtAlignMarkers = () => {
+    if(!pinsLayerRef) return;
+    if(!_pta.active && !_pta.refPts.length && !_pta.tgtPts.length){ return; }
+    // Build SVG overlay
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 ${stageAr}" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none">`;
+    // Ref points (green)
+    for(let i=0;i<_pta.refPts.length;i++){
+      const p = _pta.refPts[i];
+      const r = 0.012;
+      svg += `<circle cx="${p.x}" cy="${p.y*stageAr}" r="${r}" fill="#52b78844" stroke="#52b788" stroke-width="0.003"/>`;
+      svg += `<text x="${p.x}" y="${p.y*stageAr+r*0.35}" text-anchor="middle" font-size="${r*1.4}" fill="#52b788" font-weight="700" font-family="sans-serif">${i+1}</text>`;
+    }
+    // Tgt points (orange)
+    for(let i=0;i<_pta.tgtPts.length;i++){
+      const p = _pta.tgtPts[i];
+      const r = 0.012;
+      svg += `<circle cx="${p.x}" cy="${p.y*stageAr}" r="${r}" fill="#f59e0b44" stroke="#f59e0b" stroke-width="0.003"/>`;
+      svg += `<text x="${p.x}" y="${p.y*stageAr+r*0.35}" text-anchor="middle" font-size="${r*1.4}" fill="#f59e0b" font-weight="700" font-family="sans-serif">${i+1}</text>`;
+    }
+    // Dashed lines connecting matched pairs
+    const pairs = Math.min(_pta.refPts.length, _pta.tgtPts.length);
+    for(let i=0;i<pairs;i++){
+      const rp = _pta.refPts[i], tp = _pta.tgtPts[i];
+      svg += `<line x1="${rp.x}" y1="${rp.y*stageAr}" x2="${tp.x}" y2="${tp.y*stageAr}" stroke="#7dd3fc" stroke-width="0.002" stroke-dasharray="0.008,0.005" opacity="0.6"/>`;
+    }
+    svg += `</svg>`;
+    // Append to pins layer (don't replace pins — add alongside)
+    const existing = pinsLayerRef.querySelector("[data-pt-align]");
+    if(existing) existing.remove();
+    if(_pta.refPts.length || _pta.tgtPts.length){
+      const div = document.createElement("div");
+      div.setAttribute("data-pt-align","1");
+      div.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none";
+      div.innerHTML = svg;
+      pinsLayerRef.appendChild(div);
+    }
+  };
+
+  // Point Align button
+  const ptAlignBtn = el("button",{class:"btn inline",style:"margin-left:8px;background:#0a1a2a;border-color:#1e4976;color:#7dd3fc", onclick:()=>{
+    _pta.active = true; _pta.refPts = []; _pta.tgtPts = []; _pta.phase = "ref";
+    _ptAlignToolbar.style.display = "block";
+    _renderPtAlignToolbar();
+    _renderPtAlignMarkers();
+    // Disable drag on target during point placement
+    if(tgtLayerRef) tgtLayerRef.style.pointerEvents = "none";
+    // Add click handler on stage for point placement
+    const _ptClickHandler = (ev) => {
+      if(!_pta.active) { stageWrap.removeEventListener("click", _ptClickHandler); return; }
+      const rect = stageWrap.getBoundingClientRect();
+      if(!rect.width || !rect.height) return;
+      const x = (ev.clientX - rect.left) / rect.width;
+      const y = (ev.clientY - rect.top) / rect.height;
+      if(x < 0 || x > 1 || y < 0 || y > 1) return;
+      if(_pta.phase === "ref"){
+        if(_pta.refPts.length >= 8) { ctx.toast("Max 8 points"); return; }
+        _pta.refPts.push({x, y});
+        _pta.phase = "tgt"; // auto-switch
+      } else {
+        if(_pta.tgtPts.length >= 8) { ctx.toast("Max 8 points"); return; }
+        _pta.tgtPts.push({x, y});
+        _pta.phase = "ref"; // auto-switch back
+      }
+      _renderPtAlignMarkers();
+      _renderPtAlignToolbar();
+    };
+    stageWrap.addEventListener("click", _ptClickHandler);
+  }}, "Point Align");
+  ctrlRow.appendChild(ptAlignBtn);
+
   // Conflict warning div (created early so save/tie-in closures can reference it)
   const warnDiv = el("div",{style:"display:none;margin-top:12px;padding:12px;border-radius:8px;background:#1a0d00;border:1px solid #d97706;font-size:12px"});
 
@@ -3486,6 +3712,7 @@ function _stack(ctx, maps, helpBtn){
   ctrlRow.appendChild(addTieInBtn);
 
   card.appendChild(ctrlRow);
+  card.appendChild(_ptAlignToolbar);
   card.appendChild(warnDiv);
   card.appendChild(tieInListDiv);
   renderTieIns();
