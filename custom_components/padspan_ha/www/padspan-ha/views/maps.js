@@ -3437,18 +3437,20 @@ function _stack(ctx, maps, helpBtn){
   // Given N >= 3 matched point pairs (ref[i], tgt[i]) in normalised [0,1]²
   // coordinates, solves for the 6-DOF affine that maps target → reference.
   //
-  // IMPORTANT: Works in the SAME normalised coordinate space as CSS transforms
-  // (no aspect-ratio correction). Both panels in the Point Align modal share
-  // the reference map's AR, so click coords are already in a consistent space.
-  // The solver output (dx, dy, scale, rotation, scaleX_adj) maps directly to
-  // CSS translate/rotate/scale without any conversion.
+  // IMPORTANT: CSS rotate() operates in PIXEL space, not normalised space.
+  // On a non-square image, a rotation mixes x-pixels and y-pixels differently
+  // than normalised coordinates would suggest.  We solve in isotropic (pixel-
+  // proportional) space by scaling all y-coords by `ar` (height/width), then
+  // convert dy back after solving.  This makes the decomposed θ/scale/stretch
+  // values directly match CSS translate/rotate/scale behaviour.
   //
-  // MODEL (centred at 0.5, 0.5):
-  //   ref_x - 0.5 = a·(tgt_x - 0.5) + b·(tgt_y - 0.5) + dx
-  //   ref_y - 0.5 = c·(tgt_x - 0.5) + d·(tgt_y - 0.5) + dy
+  // MODEL in isotropic space (centred at origin):
+  //   bx = a·u + b·v + dx       (bx = ref_x − 0.5,  u = tgt_x − 0.5)
+  //   by = c·u + d·v + dy_iso   (by = (ref_y − 0.5)·ar,  v = (tgt_y − 0.5)·ar)
   //
   // Returns {x_offset, y_offset, scale, rotation, scaleX_adj, residual}
-  const _solvePtAlign = (refPts, tgtPts) => {
+  const _solvePtAlign = (refPts, tgtPts, ar) => {
+    ar = ar || 1;
     const n = Math.min(refPts.length, tgtPts.length);
     if (n < 3) return null;
     const cx = 0.5, cy = 0.5;
@@ -3456,8 +3458,8 @@ function _stack(ctx, maps, helpBtn){
     const ATA = Array.from({ length: K }, () => Array(K).fill(0));
     const ATb = Array(K).fill(0);
     for (let i = 0; i < n; i++) {
-      const u = tgtPts[i].x - cx, v = tgtPts[i].y - cy;
-      const bx = refPts[i].x - cx, by = refPts[i].y - cy;
+      const u = tgtPts[i].x - cx, v = (tgtPts[i].y - cy) * ar;
+      const bx = refPts[i].x - cx, by = (refPts[i].y - cy) * ar;
       const r1 = [u, v, 0, 0, 1, 0];
       const r2 = [0, 0, u, v, 0, 1];
       for (let j = 0; j < K; j++) {
@@ -3467,19 +3469,21 @@ function _stack(ctx, maps, helpBtn){
     }
     const x = _gaussSolve(ATA, ATb);
     if (!x) return null;
-    const a = x[0], b = x[1], c = x[2], d = x[3], dx = x[4], dy = x[5];
-    // Decompose [[a,b],[c,d]] → rotation + scale + stretch
+    const a = x[0], b = x[1], c = x[2], d = x[3], dx = x[4], dyIso = x[5];
+    // Decompose [[a,b],[c,d]] in isotropic space → maps directly to CSS
     const sx = Math.sqrt(a * a + c * c);
     const sy = Math.sqrt(b * b + d * d);
     const rotation = Math.atan2(c, a) * 180 / Math.PI;
     const scale = sy;
     const scaleX_adj = sx > 0 && sy > 0 ? sx / sy : 1.0;
-    // RMS residual in normalised coords
+    // Convert dy from isotropic back to normalised y-space
+    const dy = dyIso / ar;
+    // RMS residual in normalised display coordinates
     let res = 0;
     for (let i = 0; i < n; i++) {
-      const u = tgtPts[i].x - cx, v = tgtPts[i].y - cy;
-      const predX = a * u + b * v + cx + dx;
-      const predY = c * u + d * v + cy + dy;
+      const u2 = tgtPts[i].x - cx, v2 = (tgtPts[i].y - cy) * ar;
+      const predX = a * u2 + b * v2 + cx + dx;
+      const predY = (c * u2 + d * v2 + dyIso) / ar + cy;
       res += (predX - refPts[i].x) ** 2 + (predY - refPts[i].y) ** 2;
     }
     return { x_offset: dx, y_offset: dy, scale, rotation, scaleX_adj, residual: Math.sqrt(res / n) };
@@ -3490,16 +3494,18 @@ function _stack(ctx, maps, helpBtn){
   // 4-DOF rigid similarity: translation + rotation + uniform scale only.
   // No skew/stretch — output is always a rectangle, never a parallelogram.
   //
-  // Works in the same normalised [0,1]² space as CSS (no AR correction).
+  // Solves in isotropic (pixel-proportional) space so that rotation and scale
+  // values match CSS pixel-space behaviour on non-square images.
   //
-  // MODEL (centred at 0.5, 0.5):
-  //   ref_x - 0.5 = a·(tgt_x - 0.5) - b·(tgt_y - 0.5) + dx
-  //   ref_y - 0.5 = b·(tgt_x - 0.5) + a·(tgt_y - 0.5) + dy
+  // MODEL in isotropic space:
+  //   bx = a·u − b·v + dx       (u = tgt_x−0.5, v = (tgt_y−0.5)·ar)
+  //   by = b·u + a·v + dy_iso   (bx = ref_x−0.5, by = (ref_y−0.5)·ar)
   //
-  // where a = s·cos(θ), b = s·sin(θ). 4 unknowns [a, b, dx, dy].
+  // where a = s·cos(θ), b = s·sin(θ). 4 unknowns [a, b, dx, dy_iso].
   //
   // Returns same shape as _solvePtAlign with scaleX_adj = 1.0.
-  const _solvePtAlignRigid = (refPts, tgtPts) => {
+  const _solvePtAlignRigid = (refPts, tgtPts, ar) => {
+    ar = ar || 1;
     const n = Math.min(refPts.length, tgtPts.length);
     if (n < 2) return null;
     const cx = 0.5, cy = 0.5;
@@ -3507,8 +3513,8 @@ function _stack(ctx, maps, helpBtn){
     const ATA = Array.from({ length: K }, () => Array(K).fill(0));
     const ATb = Array(K).fill(0);
     for (let i = 0; i < n; i++) {
-      const u = tgtPts[i].x - cx, v = tgtPts[i].y - cy;
-      const bx = refPts[i].x - cx, by = refPts[i].y - cy;
+      const u = tgtPts[i].x - cx, v = (tgtPts[i].y - cy) * ar;
+      const bx = refPts[i].x - cx, by = (refPts[i].y - cy) * ar;
       const r1 = [u, -v, 1, 0];
       const r2 = [v,  u, 0, 1];
       for (let j = 0; j < K; j++) {
@@ -3518,15 +3524,17 @@ function _stack(ctx, maps, helpBtn){
     }
     const x = _gaussSolve(ATA, ATb);
     if (!x) return null;
-    const a = x[0], b = x[1], dx = x[2], dy = x[3];
+    const a = x[0], b = x[1], dx = x[2], dyIso = x[3];
     const scale = Math.sqrt(a * a + b * b);
     const rotation = Math.atan2(b, a) * 180 / Math.PI;
-    // RMS residual
+    // Convert dy from isotropic back to normalised y-space
+    const dy = dyIso / ar;
+    // RMS residual in normalised display coordinates
     let res = 0;
     for (let i = 0; i < n; i++) {
-      const u = tgtPts[i].x - cx, v = tgtPts[i].y - cy;
-      const predX = a * u - b * v + cx + dx;
-      const predY = b * u + a * v + cy + dy;
+      const u2 = tgtPts[i].x - cx, v2 = (tgtPts[i].y - cy) * ar;
+      const predX = a * u2 - b * v2 + cx + dx;
+      const predY = (b * u2 + a * v2 + dyIso) / ar + cy;
       res += (predX - refPts[i].x) ** 2 + (predY - refPts[i].y) ** 2;
     }
     return { x_offset: dx, y_offset: dy, scale, rotation, scaleX_adj: 1.0, residual: Math.sqrt(res / n) };
@@ -3667,9 +3675,10 @@ function _stack(ctx, maps, helpBtn){
         try {
           computeBtn.disabled = true;
           computeBtn.textContent = "Computing...";
+          const arHW = _refIH / _refIW;  // height/width for isotropic space
           const result = fullTransform
-            ? _solvePtAlign(refPts, tgtPts)       // 6-DOF affine (allows skew)
-            : _solvePtAlignRigid(refPts, tgtPts); // 4-DOF rigid (no skew)
+            ? _solvePtAlign(refPts, tgtPts, arHW)       // 6-DOF affine (allows skew)
+            : _solvePtAlignRigid(refPts, tgtPts, arHW); // 4-DOF rigid (no skew)
           if (!result) {
             ctx.toast("Could not compute — points may be collinear", true);
             computeBtn.disabled = false;
@@ -3688,29 +3697,20 @@ function _stack(ctx, maps, helpBtn){
           console.log("[PtAlign] Result: dx=" + rDx + " dy=" + rDy + " scale=" + rScale +
             " rot=" + rRotation + " stretch=" + rStretch + " residual=" + resPct + "%");
 
-          // Compute per-point residuals so the user can see which pairs fit well
+          // Compute per-point residuals using the CSS transform model.
+          // CSS rotate() works in pixel space, so rotation mixes x and y
+          // differently on non-square images.  The correct model is:
+          //   out_x = cos(θ)·sx·(px−0.5) − sin(θ)·sy·ar·(py−0.5) + dx + 0.5
+          //   out_y = sin(θ)·sx/ar·(px−0.5) + cos(θ)·sy·(py−0.5) + dy + 0.5
           const perPoint = [];
           const n = Math.min(refPts.length, tgtPts.length);
+          const cosR = Math.cos(rRotation * Math.PI / 180);
+          const sinR = Math.sin(rRotation * Math.PI / 180);
+          const sxc = rScale * rStretch, syc = rScale;
           for (let i = 0; i < n; i++) {
-            let predX, predY;
-            if (fullTransform) {
-              // 6-DOF: use result matrix directly — recompute a,b,c,d from output
-              // For simplicity, just use the CSS transform model to predict
-              const cosR = Math.cos(rRotation * Math.PI / 180);
-              const sinR = Math.sin(rRotation * Math.PI / 180);
-              const sxf = rScale * rStretch, syf = rScale;
-              const u = tgtPts[i].x - 0.5, v = tgtPts[i].y - 0.5;
-              predX = sxf * (cosR * u - sinR * v) + 0.5 + rDx;
-              predY = syf * (sinR * u + cosR * v) + 0.5 + rDy;
-            } else {
-              // 4-DOF rigid: a = s*cos(θ), b = s*sin(θ)
-              const cosR = Math.cos(rRotation * Math.PI / 180);
-              const sinR = Math.sin(rRotation * Math.PI / 180);
-              const s = rScale;
-              const u = tgtPts[i].x - 0.5, v = tgtPts[i].y - 0.5;
-              predX = s * cosR * u - s * sinR * v + 0.5 + rDx;
-              predY = s * sinR * u + s * cosR * v + 0.5 + rDy;
-            }
+            const u = tgtPts[i].x - 0.5, v = tgtPts[i].y - 0.5;
+            const predX = cosR * sxc * u - sinR * syc * arHW * v + 0.5 + rDx;
+            const predY = sinR * sxc / arHW * u + cosR * syc * v + 0.5 + rDy;
             const dx2 = predX - refPts[i].x;
             const dy2 = predY - refPts[i].y;
             const dist = Math.sqrt(dx2 * dx2 + dy2 * dy2);
