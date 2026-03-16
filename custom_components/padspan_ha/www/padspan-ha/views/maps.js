@@ -3688,8 +3688,37 @@ function _stack(ctx, maps, helpBtn){
           console.log("[PtAlign] Result: dx=" + rDx + " dy=" + rDy + " scale=" + rScale +
             " rot=" + rRotation + " stretch=" + rStretch + " residual=" + resPct + "%");
 
+          // Compute per-point residuals so the user can see which pairs fit well
+          const perPoint = [];
+          const n = Math.min(refPts.length, tgtPts.length);
+          for (let i = 0; i < n; i++) {
+            let predX, predY;
+            if (fullTransform) {
+              // 6-DOF: use result matrix directly — recompute a,b,c,d from output
+              // For simplicity, just use the CSS transform model to predict
+              const cosR = Math.cos(rRotation * Math.PI / 180);
+              const sinR = Math.sin(rRotation * Math.PI / 180);
+              const sxf = rScale * rStretch, syf = rScale;
+              const u = tgtPts[i].x - 0.5, v = tgtPts[i].y - 0.5;
+              predX = sxf * (cosR * u - sinR * v) + 0.5 + rDx;
+              predY = syf * (sinR * u + cosR * v) + 0.5 + rDy;
+            } else {
+              // 4-DOF rigid: a = s*cos(θ), b = s*sin(θ)
+              const cosR = Math.cos(rRotation * Math.PI / 180);
+              const sinR = Math.sin(rRotation * Math.PI / 180);
+              const s = rScale;
+              const u = tgtPts[i].x - 0.5, v = tgtPts[i].y - 0.5;
+              predX = s * cosR * u - s * sinR * v + 0.5 + rDx;
+              predY = s * sinR * u + s * cosR * v + 0.5 + rDy;
+            }
+            const dx2 = predX - refPts[i].x;
+            const dy2 = predY - refPts[i].y;
+            const dist = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+            perPoint.push({ idx: i + 1, dist, pct: Math.round(dist * 1000) / 10 });
+          }
+
           // ── Show preview instead of immediately applying ──
-          _showPreview(rDx, rDy, rScale, rRotation, rStretch, resPct, pairs);
+          _showPreview(rDx, rDy, rScale, rRotation, rStretch, resPct, pairs, perPoint);
         } catch (err) {
           console.error("[PtAlign] Compute error:", err);
           ctx.toast("Compute error: " + String(err), true);
@@ -3736,9 +3765,13 @@ function _stack(ctx, maps, helpBtn){
         // Map stage — BOTH panels use the REFERENCE map's aspect ratio so
         // click coordinates share the same coordinate space for the solver.
         // Images are stretched with object-fit:fill to match.
+        // IMPORTANT: width/height are both auto so aspect-ratio controls sizing
+        // while max-width/max-height constrain without distortion. If we used
+        // width:100% with max-height, the AR would break when max-height clips,
+        // producing wrong click coordinates for edge/corner points.
         const stage = document.createElement("div");
-        stage.style.cssText = "position:relative;width:100%;aspect-ratio:" + _refAR +
-          ";max-height:calc(100vh - 100px);background:#071008";
+        stage.style.cssText = "position:relative;width:auto;height:auto;max-width:100%;" +
+          "max-height:calc(100vh - 120px);aspect-ratio:" + _refAR + ";background:#071008";
 
         // Image — stretched to fill the shared-AR container
         const url = _mapUrl(map);
@@ -3762,9 +3795,16 @@ function _stack(ctx, maps, helpBtn){
         }
 
         // Click catcher — covers the stage exactly
+        // Only accepts clicks when this panel matches the current phase.
+        // Prevents pair mismatch when user accidentally double-clicks one side.
         const catcher = document.createElement("div");
-        catcher.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;z-index:5";
+        catcher.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;z-index:5;" +
+          (phase === which ? "cursor:crosshair" : "cursor:not-allowed;opacity:0.3");
         catcher.addEventListener("click", (ev) => {
+          if (phase !== which) {
+            ctx.toast("Click the " + (phase === "ref" ? "Reference" : "Target") + " map (left = ref, right = target)", true);
+            return;
+          }
           const rect = catcher.getBoundingClientRect();
           if (!rect.width || !rect.height) return;
           const px = (ev.clientX - rect.left) / rect.width;
@@ -3798,7 +3838,7 @@ function _stack(ctx, maps, helpBtn){
     };
 
     // ── Preview screen — shows the computed alignment before applying ──────
-    const _showPreview = (rDx, rDy, rScale, rRotation, rStretch, resPct, pairs) => {
+    const _showPreview = (rDx, rDy, rScale, rRotation, rStretch, resPct, pairs, perPoint) => {
       // Replace the point-picking UI with a preview of the result
       toolbar.innerHTML = "";
       panelsRow.innerHTML = "";
@@ -3940,6 +3980,30 @@ function _stack(ctx, maps, helpBtn){
         "  Scale:" + rScale.toFixed(4) + "  Rot:" + rRotation.toFixed(1) + "\u00b0" +
         (Math.abs(rStretch - 1.0) > 0.005 ? "  Stretch:" + rStretch.toFixed(4) : "");
       previewPanel.appendChild(readout);
+
+      // Per-point residual breakdown — shows how well each pair matched
+      if (perPoint && perPoint.length) {
+        const ppDiv = document.createElement("div");
+        ppDiv.style.cssText = "margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;justify-content:center";
+        for (const pp of perPoint) {
+          const ppColor = pp.pct < 1 ? "#52b788" : pp.pct < 3 ? "#f59e0b" : "#f87171";
+          const chip = document.createElement("span");
+          chip.style.cssText = "font-size:10px;padding:2px 6px;border-radius:3px;font-family:monospace;" +
+            "background:" + ppColor + "18;color:" + ppColor + ";border:1px solid " + ppColor + "44";
+          chip.textContent = "Pt " + pp.idx + ": " + pp.pct.toFixed(1) + "%";
+          chip.title = "Point pair " + pp.idx + " — distance " + pp.dist.toFixed(4) + " (lower = better fit)";
+          ppDiv.appendChild(chip);
+        }
+        previewPanel.appendChild(ppDiv);
+        // Tip about bad points
+        const worstPt = perPoint.reduce((a, b) => b.pct > a.pct ? b : a, perPoint[0]);
+        if (worstPt.pct > 3) {
+          const tip = document.createElement("div");
+          tip.style.cssText = "margin-top:4px;font-size:10px;color:#f59e0b;text-align:center";
+          tip.textContent = "Point " + worstPt.idx + " has high error (" + worstPt.pct.toFixed(1) + "%). Consider going Back and re-placing it.";
+          previewPanel.appendChild(tip);
+        }
+      }
 
       panelsRow.appendChild(previewPanel);
     };
