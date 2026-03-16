@@ -3671,38 +3671,43 @@ function _stack(ctx, maps, helpBtn){
     bakeLabel.appendChild(document.createTextNode("Bake into image"));
     row2.appendChild(bakeLabel);
 
-    // Compute
+    // Compute — solves the affine transform then exits Point Align.
+    // All work is synchronous except the Bake path (image load + upload).
+    // On success or failure, _exitPtAlign() always runs to release the re-render guard.
     const canCompute = pairs >= 3;
     const computeBtn = el("button",{class:"btn",style:`font-size:11px;padding:3px 12px;${canCompute?"background:#1b4a2e;border-color:#52b788":"opacity:0.4"}`, disabled:!canCompute, onclick: async ()=>{
-      // Show immediate progress feedback and disable to prevent double-click
-      const origLabel = computeBtn.textContent;
       computeBtn.disabled = true;
       computeBtn.textContent = "Computing…";
+
+      // ── Solve ──
+      let result = null;
       try {
         const refMap = maps.find(m=>m.id===refSel.value);
-        const tgtMap = maps.find(m=>m.id===tgtSel.value);
         const solveAr = refMap ? (refMap.image?.height||600)/(refMap.image?.width||800) : stageAr;
-        const result = _solvePtAlign(_pta.refPts, _pta.tgtPts, solveAr);
-        if(!result){
-          ctx.toast("Could not compute alignment — points may be collinear", true);
-          // Exit cleanly instead of leaving UI locked
-          _exitPtAlign();
-          return;
-        }
-        const rScale    = Math.round(result.scale * 10000) / 10000;
-        const rRotation = Math.round(result.rotation * 100) / 100;
-        const rStretch  = Math.round((result.scaleX_adj || 1.0) * 10000) / 10000;
-        const rDx       = Math.round(result.x_offset * 10000) / 10000;
-        const rDy       = Math.round(result.y_offset * 10000) / 10000;
+        result = _solvePtAlign(_pta.refPts, _pta.tgtPts, solveAr);
+      } catch(solveErr) {
+        console.error("PtAlign solver error:", solveErr);
+      }
+      if(!result){
+        ctx.toast("Could not compute alignment — points may be collinear", true);
+        _exitPtAlign();
+        return;
+      }
 
-        // ── Bake into image ──
-        // When "Bake" is checked, rotation/scale/stretch are rendered onto a new
-        // canvas image and uploaded to replace the target map's file. The stored
-        // transform is then reset to translation-only (rotation=0, scale=1,
-        // scaleX_adj=1). This "burns in" the geometric correction so future
-        // alignment only needs a simple translate, making the stack more robust.
-        if(_pta.bake && tgtMap && tgtMap.image?.filename){
-          computeBtn.textContent = "Baking…";
+      // Sanitize outputs — clamp to sane ranges, replace NaN/Infinity with defaults
+      const _sane = (v, def, lo, hi) => { const n = Number(v); return (isFinite(n) && n >= lo && n <= hi) ? n : def; };
+      const rScale    = _sane(Math.round(result.scale * 10000) / 10000, 1.0, 0.01, 100);
+      const rRotation = _sane(Math.round(result.rotation * 100) / 100, 0, -360, 360);
+      const rStretch  = _sane(Math.round((result.scaleX_adj || 1.0) * 10000) / 10000, 1.0, 0.01, 100);
+      const rDx       = _sane(Math.round(result.x_offset * 10000) / 10000, 0, -10, 10);
+      const rDy       = _sane(Math.round(result.y_offset * 10000) / 10000, 0, -10, 10);
+      const resPct    = _sane(Math.round((result.residual||0) * 1000) / 10, 0, 0, 999);
+
+      // ── Bake into image ──
+      const tgtMap = maps.find(m=>m.id===tgtSel.value);
+      if(_pta.bake && tgtMap && tgtMap.image?.filename){
+        computeBtn.textContent = "Baking…";
+        try {
           const _tv = (tgtMap.updated||tgtMap.image?.sha256||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,16);
           const imgUrl = `/local/padspan_ha/maps/${tgtMap.image.filename}${_tv ? '?v='+_tv : ''}`;
           const img = new Image();
@@ -3711,7 +3716,6 @@ function _stack(ctx, maps, helpBtn){
             img.onload = resolve; img.onerror = reject; img.src = imgUrl;
           });
           const ow = img.naturalWidth, oh = img.naturalHeight;
-          // Compute output canvas size to fit the rotated+scaled+stretched image
           const radians = rRotation * Math.PI / 180;
           const cosA = Math.abs(Math.cos(radians)), sinA = Math.abs(Math.sin(radians));
           const sx = rScale * rStretch, sy = rScale;
@@ -3725,39 +3729,35 @@ function _stack(ctx, maps, helpBtn){
           c.rotate(radians);
           c.scale(sx, sy);
           c.drawImage(img, -ow / 2, -oh / 2);
-          // Export as PNG base64
           const dataUrl = canvas.toDataURL("image/png");
           const b64 = dataUrl.split(",")[1];
-          await ctx.actions.mapsReplaceImage({ map_id: tgtMap.id, png_base64: b64, width: nw, height: nh });
-          // Reset transform to translation-only (rotation/scale/stretch baked into the image)
-          alignState.x_offset   = rDx;
-          alignState.y_offset   = rDy;
-          alignState.scale      = 1.0;
-          alignState.rotation   = 0;
-          alignState.scaleX_adj = 1.0;
-          try { applyCurrentTransform(); } catch(_e){}
-          const resPct = Math.round(result.residual * 1000) / 10;
-          ctx.toast(`Baked into image (${pairs} pairs, residual: ${resPct}%). Rotation/scale/stretch written to file; only translation remains.`);
+          // Write alignment state BEFORE the async call so re-render picks it up
+          alignState.x_offset = rDx; alignState.y_offset = rDy;
+          alignState.scale = 1.0; alignState.rotation = 0; alignState.scaleX_adj = 1.0;
+          // Exit Point Align BEFORE the async upload — releases re-render guard
           _exitPtAlign();
-          return;
+          await ctx.actions.mapsReplaceImage({ map_id: tgtMap.id, png_base64: b64, width: nw, height: nh });
+          ctx.toast(`Baked into image (${pairs} pairs, residual: ${resPct}%). Only translation remains.`);
+        } catch(bakeErr) {
+          console.error("PtAlign bake error:", bakeErr);
+          alignState.x_offset = rDx; alignState.y_offset = rDy;
+          alignState.scale = rScale; alignState.rotation = rRotation; alignState.scaleX_adj = rStretch;
+          _exitPtAlign();
+          ctx.toast("Bake failed: " + String(bakeErr), true);
         }
-
-        // Normal mode — apply transform parameters directly
-        alignState.x_offset   = rDx;
-        alignState.y_offset   = rDy;
-        alignState.scale      = rScale;
-        alignState.rotation   = rRotation;
-        alignState.scaleX_adj = rStretch;
-        try { applyCurrentTransform(); } catch(_e){}
-        const resPct = Math.round(result.residual * 1000) / 10;
-        const stretchPct = Math.round(rStretch * 100);
-        ctx.toast(`Point alignment applied (${pairs} pairs, residual: ${resPct}%, stretch: ${stretchPct}%)`);
-        _exitPtAlign();
-      } catch(err) {
-        // Catch-all: any unexpected error must not leave the UI locked
-        ctx.toast("Point Align error: " + String(err), true);
-        _exitPtAlign();
+        return;
       }
+
+      // ── Normal mode — write alignment state and exit ──
+      // Set state FIRST, then exit. The next re-render will pick up
+      // the new values and apply the transform via buildStage().
+      alignState.x_offset   = rDx;
+      alignState.y_offset   = rDy;
+      alignState.scale      = rScale;
+      alignState.rotation   = rRotation;
+      alignState.scaleX_adj = rStretch;
+      _exitPtAlign();
+      ctx.toast(`Point alignment applied (${pairs} pairs, residual: ${resPct}%, stretch: ${Math.round(rStretch * 100)}%)`);
     }}, canCompute ? `Compute (${pairs} pairs)` : "Need 3+ pairs");
     row2.appendChild(computeBtn);
 
