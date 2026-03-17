@@ -1835,12 +1835,27 @@ function _settingsPresence(ctx, el){
   const bermudaToggle = el("input",{type:"checkbox",id:"bermudaIgnoreToggle",style:"width:16px;height:16px;accent-color:#52b788;cursor:pointer"});
   bermudaToggle.checked = bermudaIgnore;
 
+  const bermudaStatusEl = el("span",{style:"font-size:11px;color:#94a3b8"});
   bermudaToggle.addEventListener("change", async()=>{
     try {
       await ctx.actions.settingsSet({ bermuda_ignore: bermudaToggle.checked });
       ctx.toast(bermudaToggle.checked ? "Bermuda data will be ignored" : "Bermuda data re-enabled");
+      bermudaStatusEl.textContent = "Saved — refresh snapshot to apply";
+      bermudaStatusEl.style.color = "#fbbf24";
       ctx.actions.renderRooms();
     } catch(e){ ctx.toast("Failed to save setting", true); }
+  });
+
+  const refreshBtn = el("button",{class:"btn inline",style:"font-size:11px;padding:3px 10px"}, "Refresh Snapshot");
+  refreshBtn.addEventListener("click", async()=>{
+    refreshBtn.disabled = true; refreshBtn.textContent = "Refreshing…";
+    try {
+      await ctx.actions.refreshSnapshot();
+      bermudaStatusEl.textContent = "Snapshot refreshed";
+      bermudaStatusEl.style.color = "#52b788";
+      ctx.toast("Snapshot refreshed");
+    } catch(e){ ctx.toast("Refresh failed: "+String(e), true); }
+    finally { refreshBtn.disabled = false; refreshBtn.textContent = "Refresh Snapshot"; }
   });
 
   wrap.appendChild(el("div",{class:"card"},[
@@ -1853,10 +1868,14 @@ function _settingsPresence(ctx, el){
       el("label",{for:"bermudaIgnoreToggle",style:"font-size:13px;color:#e2e8f0;cursor:pointer"},
         "Ignore all Bermuda integration data"),
     ]),
-    el("div",{class:"muted",style:"font-size:12px"},
+    el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
       "When enabled, PadSpan completely ignores all data from the Bermuda integration — no Bermuda devices, " +
       "receivers, or entity candidates will appear in snapshots. Useful for troubleshooting to isolate whether " +
-      "unexpected activity originates from Bermuda. Requires a snapshot refresh to take effect."),
+      "unexpected activity originates from Bermuda."),
+    el("div",{style:"display:flex;align-items:center;gap:10px;flex-wrap:wrap"},[
+      refreshBtn,
+      bermudaStatusEl,
+    ]),
   ]));
 
   return wrap;
