@@ -1490,6 +1490,7 @@ function _settingsPresence(ctx, el){
 
   const reminderResultDiv = el("div",{style:"margin-top:10px"});
 
+  const _sid = ctx.helpers.radioShortId || (()=>"");
   const _renderHealthResults = (r)=>{
     while(reminderResultDiv.firstChild) reminderResultDiv.removeChild(reminderResultDiv.firstChild);
     if(!r){ return; }
@@ -1505,20 +1506,64 @@ function _settingsPresence(ctx, el){
         el("span",{class:"muted"},`${r.point_count} calibration point${r.point_count!==1?"s":""} · newest is ${age} old`),
       ]));
     }
-    for(const a of (r.scanner_anomalies||[])){
-      rows.push(el("div",{style:"font-size:12px;color:#fbbf24;margin-bottom:4px"},`⚠ ${a.message}`));
-    }
-    if((r.recommended_spots||[]).length){
-      rows.push(el("div",{style:"font-size:12px;font-weight:600;color:#e2e8f0;margin:8px 0 4px"},
-        "Suggested walk-around spots — stand for 60 s each with your beacon:"));
-      for(const [i,spot] of (r.recommended_spots||[]).entries()){
-        const pct = x=>Math.round(x*100);
-        const scoreLabel = spot.coverage_score<0.2?"uncovered":spot.coverage_score<0.5?"sparse":"partial";
-        rows.push(el("div",{style:"font-size:12px;color:#94a3b8;margin-bottom:3px"},
-          `${i+1}. Map ${spot.map_id} · position (${pct(spot.x_frac)}%, ${pct(spot.y_frac)}%) · ${scoreLabel}`));
+
+    // Scanner summary table — name, short ID, points, mean RSSI
+    const scanners = r.scanner_summary || [];
+    if(scanners.length){
+      rows.push(el("div",{style:"font-size:11px;font-weight:600;color:#e2e8f0;margin:8px 0 4px"},
+        `Scanners in calibration data (${scanners.length}):`));
+      const tbl = el("div",{style:"display:flex;flex-direction:column;gap:2px;margin-bottom:8px"});
+      for(const sc of scanners){
+        const sid = _sid(sc.source);
+        const name = sc.name || sc.source.slice(-12);
+        const rssiColor = sc.mean_rssi > -65 ? "#52b788" : sc.mean_rssi > -78 ? "#fbbf24" : "#f87171";
+        // Check if this scanner has an anomaly
+        const anomaly = (r.scanner_anomalies||[]).find(a => a.scanner === sc.source);
+        const rowBorder = anomaly ? "border-left:2px solid #fbbf24;" : "border-left:2px solid #1e3a2a;";
+        const row = el("div",{style:`display:grid;grid-template-columns:28px 1fr auto auto;gap:6px;align-items:center;padding:3px 6px;background:#0a150e;border-radius:4px;${rowBorder}`},[
+          el("span",{style:"font-family:monospace;font-size:10px;font-weight:700;color:#52b788;letter-spacing:.04em"}, sid),
+          el("span",{style:"font-size:11px;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, name),
+          el("span",{style:"font-size:10px;color:#94a3b8;white-space:nowrap"}, `${sc.point_count} pt`),
+          el("span",{style:`font-size:10px;color:${rssiColor};font-family:monospace;white-space:nowrap`}, `${sc.mean_rssi} dBm`),
+        ]);
+        if(anomaly){
+          const tipDiv = el("div",{style:"grid-column:1/-1;font-size:10px;color:#fbbf24;padding:2px 0 0 34px"},
+            `⚠ ${Math.abs(anomaly.deviation_db)} dBm ${anomaly.deviation_db > 0 ? "above" : "below"} fleet avg — consider RSSI offset or re-calibration`);
+          row.appendChild(tipDiv);
+        }
+        tbl.appendChild(row);
       }
-      rows.push(el("div",{class:"muted",style:"font-size:11px;margin-top:6px"},
-        "Open Calibration → Pin & Listen, tap these positions on the map, and collect for 60 s each."));
+      rows.push(tbl);
+    }
+
+    if((r.recommended_spots||[]).length){
+      // Group spots by map for cleaner display
+      const spotsByMap = new Map();
+      for(const spot of (r.recommended_spots||[])){
+        const key = spot.map_id;
+        if(!spotsByMap.has(key)) spotsByMap.set(key, { name: spot.map_name || spot.map_id.slice(0,8), spots: [] });
+        spotsByMap.get(key).spots.push(spot);
+      }
+      rows.push(el("div",{style:"font-size:11px;font-weight:600;color:#e2e8f0;margin:8px 0 4px"},
+        `Coverage gaps (${spotsByMap.size} map${spotsByMap.size!==1?"s":""})`));
+      const spotsWrap = el("div",{style:"display:flex;flex-direction:column;gap:6px;margin-bottom:6px"});
+      for(const [, mapGroup] of spotsByMap){
+        const mapDiv = el("div",{style:"background:#0a150e;border-radius:4px;padding:6px 8px;border-left:2px solid #f59e0b"});
+        mapDiv.appendChild(el("div",{style:"font-size:11px;font-weight:600;color:#e2e8f0;margin-bottom:3px"}, mapGroup.name));
+        for(const spot of mapGroup.spots){
+          const pct = x=>Math.round(x*100);
+          const scoreLabel = spot.coverage_score<0.2 ? "uncovered" : spot.coverage_score<0.5 ? "sparse" : "partial";
+          const scoreColor = spot.coverage_score<0.2 ? "#f87171" : spot.coverage_score<0.5 ? "#fbbf24" : "#94a3b8";
+          mapDiv.appendChild(el("div",{style:"font-size:10px;color:#94a3b8;margin-bottom:1px;display:flex;gap:6px"},[
+            el("span",{}, `(${pct(spot.x_frac)}%, ${pct(spot.y_frac)}%)`),
+            el("span",{style:`color:${scoreColor}`}, scoreLabel),
+          ]));
+        }
+        spotsWrap.appendChild(mapDiv);
+      }
+      rows.push(spotsWrap);
+      rows.push(el("div",{class:"muted",style:"font-size:10px"},
+        "Stand at each position with your beacon for 60 s. Open Calibration → Pin & Listen to collect."));
     }
     if(!r.has_issues && r.point_count > 0){
       rows.push(el("div",{style:"font-size:12px;color:#52b788"},"✓ Calibration data looks good — no issues detected."));

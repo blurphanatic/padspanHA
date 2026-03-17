@@ -2785,12 +2785,15 @@ async def ws_calibration_health_check(hass: HomeAssistant, connection, msg) -> N
 
     # ── Sparse coverage spots — top 3 least-covered positions per map ─────────
     maps_store = hass.data.get(DOMAIN, {}).get("maps")
+    all_maps: list[dict[str, Any]] = []
     map_ids: list[str] = []
     if maps_store:
         try:
-            map_ids = [m["id"] for m in (maps_store.data.get("maps") or [])]
+            all_maps = maps_store.data.get("maps") or []
+            map_ids = [m["id"] for m in all_maps]
         except Exception:
             pass
+    map_name_lookup: dict[str, str] = {m["id"]: m.get("name", "") for m in all_maps}
 
     recommended_spots: list[dict[str, Any]] = []
     if cal and map_ids:
@@ -2811,6 +2814,7 @@ async def ws_calibration_health_check(hass: HomeAssistant, connection, msg) -> N
                     break
                 recommended_spots.append({
                     "map_id": mid,
+                    "map_name": map_name_lookup.get(mid, ""),
                     "x_frac": round((cx + 0.5) / n, 3),
                     "y_frac": round((cy + 0.5) / n, 3),
                     "coverage_score": round(score, 3),
@@ -2821,11 +2825,39 @@ async def ws_calibration_health_check(hass: HomeAssistant, connection, msg) -> N
         stale_days is not None and stale_days > 60
     )
 
+    # ── Per-scanner summary for the UI ────────────────────────────────────────
+    # Includes name from live radios, point count, and mean RSSI.
+    coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
+    live_radios: list[dict[str, Any]] = []
+    if coord:
+        try:
+            live_radios = coord.data.get("ble", {}).get("radios", []) if coord.data else []
+        except Exception:
+            pass
+    radio_name_map: dict[str, str] = {}
+    for _r in live_radios:
+        _src = _r.get("source") or ""
+        _nm = _r.get("name") or _r.get("area_name") or _r.get("area") or ""
+        if _src and _nm:
+            radio_name_map[_src] = _nm
+
+    scanner_summary: list[dict[str, Any]] = []
+    for src in sorted(scanner_sum.keys(), key=lambda s: scanner_cnt.get(s, 0), reverse=True):
+        cnt = scanner_cnt[src]
+        mean = round(scanner_sum[src] / cnt, 1) if cnt else 0
+        scanner_summary.append({
+            "source": src,
+            "name": radio_name_map.get(src, ""),
+            "point_count": cnt,
+            "mean_rssi": mean,
+        })
+
     connection.send_result(msg["id"], {
         "enabled": enabled,
         "point_count": len(points),
         "stale_days": stale_days,
         "scanner_anomalies": scanner_anomalies,
+        "scanner_summary": scanner_summary,
         "recommended_spots": recommended_spots,
         "has_issues": has_issues,
     })
