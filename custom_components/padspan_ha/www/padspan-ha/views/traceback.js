@@ -325,6 +325,11 @@ export function render(ctx) {
         }
       }
       const _colorMap = tb._colorMap;
+      // Friendly label helper — strips entity:, ble:, sensor., device_tracker. prefixes
+      const _friendlyLabel = (o) => {
+        const raw = o.n || o.k || "?";
+        return raw.replace(/^entity:/, "").replace(/^ble:/, "").replace(/^sensor\./, "").replace(/^device_tracker\./, "").replace(/_/g, " ").substring(0, 16);
+      };
 
       // ── Trail: connected lines + fading dots showing recent path ──
       const trailLen = Math.min(12, frameIdx);
@@ -382,7 +387,7 @@ export function render(ctx) {
         const px = Math.round(pos[0] + offX);
         const py = Math.round(pos[1] + offY);
         const col = _colorMap[o.k] || "#fbbf24";
-        const lbl = (o.n || o.k || "?").substring(0, 16);
+        const lbl = _friendlyLabel(o);
         const tip = `${lbl} | Room: ${o.r}${o.rssi ? " | RSSI: " + o.rssi + " dBm" : ""}`;
 
         // Outer glow ring (pulsing)
@@ -798,13 +803,14 @@ export function render(ctx) {
       if (!byKind[kind]) byKind[kind] = [];
       byKind[kind].push(obj);
     }
+    const _cleanName = (n) => (n || "").replace(/^entity:/, "").replace(/^ble:/, "").replace(/^sensor\./, "").replace(/^device_tracker\./, "").replace(/_/g, " ");
     for (const [kind, items] of Object.entries(byKind).sort()) {
       const grp = document.createElement("optgroup");
-      grp.label = kind;
+      grp.label = kind === "ble" ? "BLE Devices" : kind === "entity" ? "HA Entities" : kind === "ibeacon" ? "iBeacons" : kind === "private_ble" ? "Private BLE" : kind;
       for (const item of items.sort((a, b) => (a.name || "").localeCompare(b.name || ""))) {
         const opt = document.createElement("option");
         opt.value = item.key;
-        opt.textContent = item.name || item.key;
+        opt.textContent = _cleanName(item.name || item.key);
         if (tb.filterKey === item.key) opt.selected = true;
         grp.appendChild(opt);
       }
