@@ -160,6 +160,31 @@ class PrivateBLEResolver:
                 if irk_bytes:
                     _add_device(irk_bytes, entry.title or entry.entry_id, "mobile_app", entry.entry_id)
 
+            # 3b) BLE Transmitter sensor attributes — companion app exposes IRK
+            #     as a sensor attribute on sensor.*_ble_transmitter entities.
+            try:
+                for state in self._hass.states.async_all("sensor"):
+                    eid = state.entity_id or ""
+                    if "ble_transmitter" not in eid:
+                        continue
+                    attrs = state.attributes or {}
+                    irk_raw = (
+                        attrs.get("IRK")
+                        or attrs.get("irk")
+                        or attrs.get("identity_resolving_key")
+                        or attrs.get("ble_irk")
+                    )
+                    if not irk_raw:
+                        continue
+                    irk_bytes = _parse_irk(str(irk_raw))
+                    if irk_bytes:
+                        # Derive name from entity_id
+                        _name = eid.replace("sensor.", "").replace("_ble_transmitter", "").replace("_", " ").title()
+                        _add_device(irk_bytes, _name, "companion_sensor")
+                        _LOGGER.info("Found IRK from BLE Transmitter sensor: %s", eid)
+            except Exception as _bt_err:
+                _LOGGER.debug("BLE Transmitter sensor IRK scan: %s", _bt_err)
+
             # 4) PadSpan settings — IRKs added directly via PadSpan UI
             try:
                 from .const import DOMAIN

@@ -92,7 +92,14 @@ export function render(ctx) {
       el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(radios.length)), el("div", { class: "kpi-lbl" }, "Scanners")]),
       el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(adsAll.length)), el("div", { class: "kpi-lbl" }, "Recent ads")]),
       el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(diag.unique_cached || 0)), el("div", { class: "kpi-lbl" }, "Unique MACs")]),
-      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(((snap?.objects?.summary?.resolver || {}).irk_devices) || 0)), el("div", { class: "kpi-lbl" }, "Private BLE IRKs")]),
+      (() => {
+        const k = el("div", { class: "kpi", style: "cursor:pointer;border:1px solid transparent;border-radius:6px;padding:4px 8px;transition:border-color .2s" }, [el("div", { class: "kpi-num" }, String(((snap?.objects?.summary?.resolver || {}).irk_devices) || 0)), el("div", { class: "kpi-lbl", style: "text-decoration:underline;text-underline-offset:2px" }, "Private BLE IRKs")]);
+        k.title = "Open IRK Manager";
+        k.addEventListener("mouseenter", ()=>{ k.style.borderColor = "#52b788"; });
+        k.addEventListener("mouseleave", ()=>{ k.style.borderColor = "transparent"; });
+        k.addEventListener("click", ()=>{ ctx.state.btTab = "irk_panel"; ctx.actions.renderRooms(); });
+        return k;
+      })(),
       el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(((snap?.objects?.summary?.resolver || {}).resolved) || 0)), el("div", { class: "kpi-lbl" }, "RPAs resolved")]),
       el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String((snap?.objects?.summary?.ibeacon) || 0)), el("div", { class: "kpi-lbl" }, "iBeacons")]),
     ]),
@@ -351,7 +358,7 @@ export function render(ctx) {
       ].filter(Boolean))
     : null;
 
-  const tabs = el("div", { class: "tabs" }, [tabButton("visualization", "Visualization"), tabButton("monitor", "Advertisement monitor"), tabButton("scanners", "Scanners"), tabButton("esphome_configs", "ESPHome Configs")]);
+  const tabs = el("div", { class: "tabs" }, [tabButton("visualization", "Visualization"), tabButton("monitor", "Advertisement monitor"), tabButton("scanners", "Scanners"), tabButton("irk_panel", "IRK Manager"), tabButton("esphome_configs", "ESPHome Configs")]);
 
   // ── Search / source / max-rows controls ────────────────────────────────────
   // Shared filter bar used by all sub-tabs except ESPHome Configs.
@@ -413,7 +420,11 @@ export function render(ctx) {
   ctx.state._esphomeConfigsDom = null;
 
   let body = null;
-  if (ctx.state.btTab === "scanners") {
+  if (ctx.state.btTab === "irk_panel") {
+    body = renderIrkPanel(ctx);
+    const out = el("div", { id: "bluetooth" }, [header, privateBleCard, diagCard, bleDiagCard, tabs, body]);
+    return out;
+  } else if (ctx.state.btTab === "scanners") {
     body = renderScanners(ctx, radios, sources, adsAll);
   } else if (ctx.state.btTab === "monitor") {
     body = renderMonitor(ctx, ads, radios, objIndex);
@@ -1787,6 +1798,327 @@ text_sensor:
       name: "MAC Address"`,
   },
 ];
+
+// ── IRK Manager Panel ────────────────────────────────────────────────────────
+// Comprehensive control panel for Private BLE (IRK) device management.
+// Provides: device table, add/validate/auto-detect, unresolved RPAs, companion
+// app status, and diagnostics.
+
+function renderIrkPanel(ctx) {
+  const { el, esc } = ctx.helpers;
+  const wrap = el("div", { style: "margin-top:12px" });
+
+  // ── Lazy-load status on first render ──
+  if (!ctx.state._irkPanelStatus) {
+    ctx.state._irkPanelLoading = true;
+    ctx.actions.wsCommand("padspan_ha/private_ble_status").then(res => {
+      ctx.state._irkPanelStatus = res;
+      ctx.state._irkPanelLoading = false;
+      ctx.actions.renderRooms();
+    }).catch(() => { ctx.state._irkPanelLoading = false; });
+  }
+
+  if (ctx.state._irkPanelLoading && !ctx.state._irkPanelStatus) {
+    wrap.appendChild(el("div", { class: "muted", style: "padding:20px" }, "Loading IRK status…"));
+    return wrap;
+  }
+
+  const st = ctx.state._irkPanelStatus || {};
+  const devices = st.devices || [];
+  const rpaCount = st.rpa_count || 0;
+  const totalBle = st.total_ble_addresses || 0;
+  const mobileApps = st.mobile_apps || [];
+  const hasIntegration = st.has_private_ble_integration;
+
+  // ── Dashboard KPIs ──
+  const kpiRow = el("div", { style: "display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px" });
+  const kpi = (num, label, color) => el("div", { style: `background:rgba(0,0,0,.25);border:1px solid ${color || "#1b3526"};border-radius:8px;padding:10px 16px;min-width:90px;text-align:center` }, [
+    el("div", { style: `font-size:22px;font-weight:700;color:${color || "#52b788"}` }, String(num)),
+    el("div", { style: "font-size:11px;color:#94a3b8;margin-top:2px" }, label),
+  ]);
+  kpiRow.appendChild(kpi(devices.length, "IRKs Registered", devices.length > 0 ? "#22c55e" : "#f59e0b"));
+  kpiRow.appendChild(kpi(rpaCount, "Rotating MACs", rpaCount > 0 ? "#60a5fa" : "#334155"));
+  kpiRow.appendChild(kpi(st.irk_count || devices.length, "Resolved", "#22c55e"));
+  kpiRow.appendChild(kpi(Math.max(0, rpaCount - (st.irk_count || devices.length)), "Unresolved RPAs", "#f59e0b"));
+  kpiRow.appendChild(kpi(totalBle, "Total BLE MACs", "#94a3b8"));
+  wrap.appendChild(kpiRow);
+
+  // ── Integration status ──
+  const intCard = el("div", { class: "card", style: `border-color:${hasIntegration ? "#22c55e" : "#f59e0b"};margin-bottom:12px` });
+  intCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;font-size:12px" }, [
+    el("span", { style: `color:${hasIntegration ? "#4ade80" : "#fca5a5"}` }, hasIntegration ? "✓ Private BLE Device integration installed" : "✗ Private BLE Device integration not installed"),
+    mobileApps.length ? el("span", { style: "color:#cbd5e1" }, `• Companion Apps: ${mobileApps.join(", ")}`) : null,
+  ].filter(Boolean)));
+  wrap.appendChild(intCard);
+
+  // ── Registered Devices Table ──
+  const devCard = el("div", { class: "card", style: "margin-bottom:12px" });
+  devCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;margin-bottom:10px;color:#e2e8f0" }, `Registered IRK Devices (${devices.length})`));
+
+  if (devices.length) {
+    const tbl = el("table", { style: "width:100%;border-collapse:collapse;font-size:12px" });
+    const thead = el("tr", { style: "color:#94a3b8;text-align:left;border-bottom:1px solid #334155" });
+    for (const h of ["Name", "Source", "Canonical ID", ""]) {
+      thead.appendChild(el("th", { style: "padding:6px 8px;font-weight:600" }, h));
+    }
+    tbl.appendChild(thead);
+
+    for (const d of devices) {
+      const tr = el("tr", { style: "border-bottom:1px solid #1e293b" });
+      const srcColor = d.source === "padspan" ? "#a78bfa" : d.source === "private_ble_device" ? "#4ade80" : d.source === "mobile_app" ? "#60a5fa" : d.source === "bluetooth_bond" ? "#fbbf24" : "#94a3b8";
+      tr.appendChild(el("td", { style: "padding:6px 8px;color:#e2e8f0;font-weight:600" }, d.name || "Unknown"));
+      tr.appendChild(el("td", { style: "padding:6px 8px" }, el("span", { style: `color:${srcColor};font-size:11px;padding:1px 6px;border:1px solid ${srcColor};border-radius:3px;white-space:nowrap` }, d.source || "unknown")));
+      tr.appendChild(el("td", { style: "padding:6px 8px;color:#64748b;font-family:monospace;font-size:10px;word-break:break-all" }, d.canonical_id || ""));
+
+      // Delete button — different behavior based on source
+      const tdAct = el("td", { style: "padding:6px 8px;white-space:nowrap" });
+      if (d.source === "padspan") {
+        const rmBtn = el("button", { class: "btn tiny", style: "color:#fca5a5;border-color:#7f1d1d;background:#2a0a0a" }, "Remove");
+        rmBtn.addEventListener("click", async () => {
+          if (!confirm(`Remove IRK for "${d.name}"?`)) return;
+          const hex = (d.canonical_id || "").replace("irk:", "");
+          try {
+            await ctx.actions.wsCall("padspan_ha/irk_remove", { irk_hex: hex });
+            ctx.state._irkPanelStatus = null;
+            ctx.actions.renderRooms();
+          } catch(e) { ctx.toast(e.message || "Remove failed", true); }
+        });
+        tdAct.appendChild(rmBtn);
+      } else if (d.source === "private_ble_device" && d.entry_id) {
+        const rmBtn = el("button", { class: "btn tiny", style: "color:#fca5a5;border-color:#7f1d1d;background:#2a0a0a" }, "Delete");
+        rmBtn.addEventListener("click", async () => {
+          if (!confirm(`Delete HA integration entry for "${d.name}"? This removes the private_ble_device config entry.`)) return;
+          try {
+            await ctx.actions.wsCall("padspan_ha/private_ble_delete_irk", { entry_id: d.entry_id });
+            ctx.state._irkPanelStatus = null;
+            ctx.actions.renderRooms();
+          } catch(e) { ctx.toast(e.message || "Delete failed", true); }
+        });
+        tdAct.appendChild(rmBtn);
+      } else {
+        tdAct.appendChild(el("span", { style: "font-size:10px;color:#64748b" }, d.source === "bluetooth_bond" ? "System" : "HA-managed"));
+      }
+      tr.appendChild(tdAct);
+      tbl.appendChild(tr);
+    }
+    devCard.appendChild(tbl);
+  } else {
+    devCard.appendChild(el("div", { style: "color:#94a3b8;font-size:13px;padding:10px 0" },
+      "No IRK devices registered. Add an IRK below to start resolving rotating MAC addresses."));
+  }
+  wrap.appendChild(devCard);
+
+  // ── Add IRK Form ──
+  const addCard = el("div", { class: "card", style: "margin-bottom:12px" });
+  addCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;margin-bottom:8px;color:#e2e8f0" }, "Add IRK Device"));
+  addCard.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:10px;line-height:1.5" },
+    "Paste the IRK from your phone's settings. Accepts hex (32 chars), base64, colon-separated, or irk:-prefixed format. " +
+    "PadSpan will validate it against live BLE traffic before saving."));
+
+  const nameInp = el("input", {
+    type: "text", placeholder: "Device name (e.g., Garry's Pixel)",
+    style: "background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:6px 10px;font-size:13px;width:100%;box-sizing:border-box",
+  });
+  const irkInp = el("input", {
+    type: "text", placeholder: "IRK (hex, base64, or colon-separated)",
+    style: "background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:6px 10px;font-size:13px;font-family:monospace;width:100%;box-sizing:border-box;margin-top:6px",
+  });
+  const addMsg = el("div", { style: "font-size:11px;margin-top:6px;min-height:16px" });
+
+  const btnRow = el("div", { style: "display:flex;gap:8px;margin-top:8px;flex-wrap:wrap" });
+  const addBtn = el("button", { class: "btn" }, "Add & Validate");
+  const validateBtn = el("button", { class: "btn inline" }, "Test Only");
+  const autoDetectBtn = el("button", { class: "btn inline", style: "margin-left:auto;color:#60a5fa;border-color:#1e4976" }, "Auto-Detect IRKs");
+
+  // Add & Validate handler
+  addBtn.addEventListener("click", async () => {
+    const irk = irkInp.value.trim();
+    const name = nameInp.value.trim();
+    if (!irk) { addMsg.textContent = "Paste an IRK first"; addMsg.style.color = "#f87171"; return; }
+    addBtn.disabled = true; addBtn.textContent = "Validating…";
+    addMsg.textContent = ""; addMsg.style.color = "#94a3b8";
+
+    // Validate first
+    try {
+      const vRes = await ctx.actions.wsCall("padspan_ha/irk_validate", { irk_hex: irk });
+      if (vRes && vRes.matched_count > 0) {
+        addMsg.style.color = "#4ade80";
+        addMsg.textContent = `✓ Validated: matched ${vRes.matched_count} rotating address${vRes.matched_count !== 1 ? "es" : ""}. Saving…`;
+        // Use the validated hex format
+        const useIrk = vRes.irk_hex || irk;
+        try {
+          await ctx.actions.wsCall("padspan_ha/irk_add", { name: name || "PadSpan Device", irk_hex: useIrk });
+          addMsg.style.color = "#4ade80";
+          addMsg.textContent = `✓ Saved "${name || "PadSpan Device"}" — resolving active immediately`;
+          nameInp.value = ""; irkInp.value = "";
+          ctx.state._irkPanelStatus = null;
+          setTimeout(() => ctx.actions.renderRooms(), 500);
+        } catch(e) {
+          addMsg.style.color = "#f87171";
+          addMsg.textContent = e.message || "Save failed";
+        }
+      } else {
+        // No live match — save anyway with warning
+        addMsg.style.color = "#fbbf24";
+        const rpas = vRes ? vRes.rpa_count : 0;
+        addMsg.textContent = rpas > 0
+          ? `⚠ No live match (${rpas} RPAs scanned). Device may be off or out of range. Saving anyway…`
+          : "⚠ No rotating addresses detected. Saving anyway…";
+        try {
+          await ctx.actions.wsCall("padspan_ha/irk_add", { name: name || "PadSpan Device", irk_hex: irk });
+          addMsg.textContent += " ✓ Saved. Will resolve when device comes in range.";
+          nameInp.value = ""; irkInp.value = "";
+          ctx.state._irkPanelStatus = null;
+          setTimeout(() => ctx.actions.renderRooms(), 500);
+        } catch(e) {
+          addMsg.style.color = "#f87171";
+          addMsg.textContent = e.message || "Save failed";
+        }
+      }
+    } catch(e) {
+      addMsg.style.color = "#f87171";
+      addMsg.textContent = e.message || "Invalid IRK format";
+    }
+    addBtn.disabled = false; addBtn.textContent = "Add & Validate";
+  });
+
+  // Test Only handler
+  validateBtn.addEventListener("click", async () => {
+    const irk = irkInp.value.trim();
+    if (!irk) { addMsg.textContent = "Paste an IRK first"; addMsg.style.color = "#f87171"; return; }
+    validateBtn.disabled = true; validateBtn.textContent = "Testing…";
+    addMsg.textContent = ""; addMsg.style.color = "#94a3b8";
+    try {
+      const vRes = await ctx.actions.wsCall("padspan_ha/irk_validate", { irk_hex: irk });
+      if (vRes && vRes.matched_count > 0) {
+        addMsg.style.color = "#4ade80";
+        const fmt = vRes.matched_format ? ` (format: ${vRes.matched_format})` : "";
+        addMsg.textContent = `✓ Valid! Matched ${vRes.matched_count} rotating address${vRes.matched_count !== 1 ? "es" : ""}${fmt}. Addresses: ${(vRes.matched_addresses || []).slice(0, 5).join(", ")}`;
+      } else {
+        addMsg.style.color = "#fbbf24";
+        addMsg.textContent = `No match found. ${vRes.rpa_count || 0} RPAs tested. ${vRes.candidates_tried || 0} format variants tried. Device may be off/out of range.`;
+      }
+    } catch(e) {
+      addMsg.style.color = "#f87171";
+      addMsg.textContent = e.message || "Invalid IRK format";
+    }
+    validateBtn.disabled = false; validateBtn.textContent = "Test Only";
+  });
+
+  // Auto-Detect handler
+  autoDetectBtn.addEventListener("click", async () => {
+    autoDetectBtn.disabled = true; autoDetectBtn.textContent = "Scanning…";
+    addMsg.textContent = ""; addMsg.style.color = "#94a3b8";
+    try {
+      const res = await ctx.actions.wsCall("padspan_ha/irk_auto_detect", {});
+      const found = res.found || [];
+      if (found.length === 0) {
+        addMsg.style.color = "#fbbf24";
+        addMsg.textContent = `No system Bluetooth bonds found (${res.system_bond_count || 0} bonds scanned, ${res.rpa_count || 0} RPAs tested).`;
+      } else {
+        // Show found IRKs
+        addMsg.style.color = "#4ade80";
+        const newOnes = found.filter(f => !f.already_registered);
+        const verified = found.filter(f => f.verified);
+        addMsg.textContent = `Found ${found.length} IRK${found.length !== 1 ? "s" : ""}: ${newOnes.length} new, ${verified.length} verified against live RPAs.`;
+
+        // Auto-add verified new ones
+        for (const f of found) {
+          if (!f.already_registered && f.verified) {
+            try {
+              await ctx.actions.wsCall("padspan_ha/irk_add", { name: f.name || "Auto-detected", irk_hex: f.irk_hex });
+            } catch(_e) {}
+          }
+        }
+        if (newOnes.some(f => f.verified)) {
+          addMsg.textContent += " Verified IRKs saved automatically.";
+          ctx.state._irkPanelStatus = null;
+          setTimeout(() => ctx.actions.renderRooms(), 500);
+        }
+      }
+    } catch(e) {
+      addMsg.style.color = "#f87171";
+      addMsg.textContent = e.message || "Auto-detect failed";
+    }
+    autoDetectBtn.disabled = false; autoDetectBtn.textContent = "Auto-Detect IRKs";
+  });
+
+  btnRow.appendChild(addBtn);
+  btnRow.appendChild(validateBtn);
+  btnRow.appendChild(autoDetectBtn);
+  addCard.appendChild(nameInp);
+  addCard.appendChild(irkInp);
+  addCard.appendChild(btnRow);
+  addCard.appendChild(addMsg);
+  wrap.appendChild(addCard);
+
+  // ── Companion App IRK Status ──
+  if (mobileApps.length || devices.some(d => d.source === "mobile_app")) {
+    const compCard = el("div", { class: "card", style: "margin-bottom:12px" });
+    compCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;margin-bottom:8px;color:#60a5fa" }, "Companion App Status"));
+
+    const appDevices = devices.filter(d => d.source === "mobile_app");
+    if (appDevices.length) {
+      compCard.appendChild(el("div", { style: "font-size:12px;color:#4ade80;margin-bottom:6px" },
+        `✓ ${appDevices.length} companion app${appDevices.length !== 1 ? "s" : ""} with IRK: ${appDevices.map(d => d.name).join(", ")}`));
+    }
+    const appsWithoutIrk = mobileApps.filter(name => !appDevices.some(d => d.name === name));
+    if (appsWithoutIrk.length) {
+      compCard.appendChild(el("div", { style: "font-size:12px;color:#fbbf24;margin-bottom:6px" },
+        `⚠ ${appsWithoutIrk.length} companion app${appsWithoutIrk.length !== 1 ? "s" : ""} without IRK: ${appsWithoutIrk.join(", ")}`));
+      compCard.appendChild(el("div", { style: "font-size:11px;color:#94a3b8;line-height:1.5" },
+        "The HA Companion App stores an IRK when BLE Transmitter is enabled. " +
+        "If the app registered before BLE Transmitter was added (or the IRK field wasn't populated), " +
+        "you may need to manually extract the IRK. On Android: HA Settings → Companion App → Manage Sensors → BLE Transmitter → look for the IRK. " +
+        "On iOS: the IRK is not exposed in the app — use the Mac Keychain method."));
+    }
+    wrap.appendChild(compCard);
+  }
+
+  // ── Troubleshooting Card ──
+  const troubleCard = el("div", { class: "card", style: "margin-bottom:12px" });
+  troubleCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;margin-bottom:8px;color:#e2e8f0" }, "Troubleshooting"));
+  const issues = [];
+  if (devices.length === 0 && rpaCount > 0) {
+    issues.push({ icon: "⚠", color: "#f59e0b", text: `${rpaCount} rotating MAC addresses detected but no IRKs configured. These are likely phones/watches that can't be identified without their IRK.` });
+  }
+  if (!hasIntegration) {
+    issues.push({ icon: "ℹ", color: "#60a5fa", text: "The 'Private BLE Device' integration is not installed. PadSpan can still resolve IRKs directly, but installing the integration provides HA device entities for automations." });
+  }
+  if (devices.length > 0 && rpaCount === 0) {
+    issues.push({ icon: "⚠", color: "#f59e0b", text: "IRKs are registered but no rotating MAC addresses detected. Make sure BLE scanners are online and devices are in range." });
+  }
+  if (issues.length === 0) {
+    issues.push({ icon: "✓", color: "#4ade80", text: "Everything looks good. IRKs are loaded and resolving rotating addresses." });
+  }
+  for (const iss of issues) {
+    troubleCard.appendChild(el("div", { style: `font-size:12px;color:${iss.color};margin-bottom:6px;display:flex;gap:6px` }, [
+      el("span", {}, iss.icon),
+      el("span", {}, iss.text),
+    ]));
+  }
+
+  // Quick reference
+  troubleCard.appendChild(el("div", { style: "font-size:11px;color:#64748b;margin-top:10px;line-height:1.6;border-top:1px solid #1e293b;padding-top:8px" }, [
+    el("div", { style: "font-weight:600;color:#94a3b8;margin-bottom:3px" }, "Where to find IRKs:"),
+    el("div", {}, "Android: Companion App → Settings → Manage Sensors → BLE Transmitter → IRK attribute"),
+    el("div", {}, "iPhone/iPad: Mac → Terminal → sudo defaults read /private/var/root/Library/Preferences/com.apple.bluetoothd.plist → find IRK"),
+    el("div", {}, "Linux bonds: Automatically detected via Auto-Detect button above"),
+    el("div", {}, "Any device: Pair with ESP32 running BLE pairing firmware → IRK shown in serial output"),
+  ]));
+  wrap.appendChild(troubleCard);
+
+  // ── Refresh button ──
+  const refreshBtn = el("button", { class: "btn", style: "margin-bottom:12px" }, "Refresh Status");
+  refreshBtn.addEventListener("click", () => {
+    ctx.state._irkPanelStatus = null;
+    ctx.actions.renderRooms();
+  });
+  wrap.appendChild(refreshBtn);
+
+  return wrap;
+}
+
 
 // ── ESPHome Configs Sub-Tab ──────────────────────────────────────────────────
 // Renders the full ESPHome config library: intro card, hardware recommendations
