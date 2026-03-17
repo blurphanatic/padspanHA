@@ -3175,6 +3175,7 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
             notes=msg.get("notes"),
             floor_id=msg.get("floor_id"),
             room_bounds=msg.get("room_bounds"),
+            rf_barriers=msg.get("rf_barriers"),
             stack=msg.get("stack"),
         )
     except KeyError:

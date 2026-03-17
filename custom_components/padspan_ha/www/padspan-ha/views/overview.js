@@ -1184,6 +1184,7 @@ export function render(ctx){
     const LEGEND_H = 30;  // single-row compact legend
 
     if(ctx.state._overviewPersistentPins === undefined) ctx.state._overviewPersistentPins = !!(ctx.state.settings && ctx.state.settings.overview_persistent_pins);
+    if(ctx.state._overviewShowWalls === undefined) ctx.state._overviewShowWalls = !!(ctx.state.settings && ctx.state.settings.overview_show_walls);
 
     const buildIsoSVG = (focusZ)=>{
       const slabWZ = 18/_ovFG;
@@ -1276,6 +1277,14 @@ export function render(ctx){
             const [lwx,lwy]=mapPt(cx,cy);
             const [lix,liy]=iso(lwx,lwy,z);
             s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
+          }
+          // RF barriers — dotted white lines
+          if(ctx.state._overviewShowWalls){
+            for(const bar of (m.rf_barriers||[])){
+              if(!bar.points||bar.points.length<2) continue;
+              const bp = bar.points.map(p=>{const[wx,wy]=mapPt(p[0],p[1]);return pt(iso(wx,wy,z));}).join(" ");
+              s += `<polyline points="${bp}" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round"/>`;
+            }
           }
           // Placed receivers (with scanner tooltip + name label)
           // Show ALL stored receivers — match calibration Tune tab behavior.
@@ -1814,6 +1823,23 @@ export function render(ctx){
       ctx.actions.settingsSet({ overview_persistent_pins: ctx.state._overviewPersistentPins });
     });
     ctrlRow.appendChild(ovPersistentBtn);
+
+    const ovWallsBtn = document.createElement("button");
+    ovWallsBtn.className = "btn inline";
+    ovWallsBtn.style.cssText = ctx.state._overviewShowWalls
+      ? "background:#1a1a2e;border-color:#6366f1;color:#a5b4fc;font-weight:700"
+      : "color:#94a3b8";
+    ovWallsBtn.textContent = ctx.state._overviewShowWalls ? "⊞ Walls ON" : "⊞ Walls";
+    ovWallsBtn.addEventListener("click", ()=>{
+      ctx.state._overviewShowWalls = !ctx.state._overviewShowWalls;
+      ovWallsBtn.style.cssText = ctx.state._overviewShowWalls
+        ? "background:#1a1a2e;border-color:#6366f1;color:#a5b4fc;font-weight:700"
+        : "color:#94a3b8";
+      ovWallsBtn.textContent = ctx.state._overviewShowWalls ? "⊞ Walls ON" : "⊞ Walls";
+      isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+      ctx.actions.settingsSet({ overview_show_walls: ctx.state._overviewShowWalls });
+    });
+    ctrlRow.appendChild(ovWallsBtn);
 
     outer.appendChild(ctrlRow);
     outer.appendChild(isoWrap);

@@ -1102,12 +1102,15 @@ function _edit(ctx, map){
       }
     }
     ctx.state.maps._draftRoomBounds = JSON.parse(JSON.stringify(map.room_bounds||{}));
+    ctx.state.maps._draftBarriers = JSON.parse(JSON.stringify(map.rf_barriers||[]));
     ctx.state.maps._draftFloorId = map.floor_id || (floors[0] && floors[0].id) || "main";
     ctx.state.maps._draftMapId = map.id;
     ctx.state.maps._selectedRxId = null;
-    ctx.state.maps._mode = "receivers"; // receivers | rooms
+    ctx.state.maps._mode = "receivers"; // receivers | rooms | barriers
     ctx.state.maps._selectedRoom = "";
-    ctx.state.maps._drawing = null; // {room, points:[]}
+    ctx.state.maps._drawing = null; // {room, points:[]} or barrier drawing
+    ctx.state.maps._selectedBarrierIdx = -1;
+    ctx.state.maps._barrierMaterial = "metal";
     ctx.state.maps._recommendPoly = null;
   }
 
@@ -1171,10 +1174,12 @@ function _edit(ctx, map){
 
   // --- Right panel (tools) ---
   const right = el("div",{class:"card", style:"margin-top:10px"},[]);
+  const _modeHelp = {"receivers":"Double-click map to place radio; drag to reposition","rooms":"Click map to add points; double-click to finish","barriers":"Click to draw wall segments; double-click to finish"};
   const modeRow = el("div",{style:"display:flex;gap:8px;flex-wrap:wrap;align-items:center"},[
     el("button",{class:"btn inline"+(ctx.state.maps._mode==="receivers"?" primary":""), onclick:()=>{ ctx.state.maps._mode="receivers"; ctx.state.maps._drawing=null; renderAll(); renderTools(); }}, "Radios"),
     el("button",{class:"btn inline"+(ctx.state.maps._mode==="rooms"?" primary":""), onclick:()=>{ ctx.state.maps._mode="rooms"; ctx.state.maps._selectedRxId=null; renderAll(); renderTools(); }}, "Rooms"),
-    el("span",{class:"muted", style:"font-size:12px"}, ctx.state.maps._mode==="receivers" ? "Double-click map to place radio; drag to reposition" : "Click map to add points; double-click to finish"),
+    el("button",{class:"btn inline"+(ctx.state.maps._mode==="barriers"?" primary":""), style:"background:#1a0a0a;border-color:#7f1d1d;color:#fca5a5", onclick:()=>{ ctx.state.maps._mode="barriers"; ctx.state.maps._selectedRxId=null; ctx.state.maps._drawing=null; renderAll(); renderTools(); }}, "RF Barriers"),
+    el("span",{class:"muted", style:"font-size:12px"}, _modeHelp[ctx.state.maps._mode] || ""),
   ]);
 
   const saveRow = el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;margin-top:10px"},[
@@ -1186,6 +1191,7 @@ function _edit(ctx, map){
           map_id: map.id,
           receivers: ctx.state.maps._draftReceivers,
           room_bounds: ctx.state.maps._draftRoomBounds,
+          rf_barriers: ctx.state.maps._draftBarriers || [],
           floor_id: ctx.state.maps._draftFloorId,
           calibration: map.calibration||{},
           notes: map.notes||""
@@ -1198,6 +1204,7 @@ function _edit(ctx, map){
       // reset drafts from last saved map
       ctx.state.maps._draftReceivers = (map.receivers||[]).map(r=>({id:r.id||"", label:r.label||"", x:Number(r.x||0), y:Number(r.y||0), room:r.room||"", source:r.source||""}));
       ctx.state.maps._draftRoomBounds = JSON.parse(JSON.stringify(map.room_bounds||{}));
+      ctx.state.maps._draftBarriers = JSON.parse(JSON.stringify(map.rf_barriers||[]));
       ctx.state.maps._drawing = null;
       ctx.state.maps._selectedRxId = null;
       ctx.state.maps._selectedRoom = "";
@@ -1265,6 +1272,39 @@ function _edit(ctx, map){
       svg.appendChild(cc);
     }
 
+    // RF Barriers — dashed red/orange polylines
+    const barriers = ctx.state.maps._draftBarriers || [];
+    const _matColors = {metal:"#ef4444",concrete:"#f97316",brick:"#eab308",custom:"#a855f7"};
+    for(let bi = 0; bi < barriers.length; bi++){
+      const bar = barriers[bi];
+      if(!bar.points || bar.points.length < 2) continue;
+      const bc = _matColors[bar.material] || "#ef4444";
+      const bLine = document.createElementNS("http://www.w3.org/2000/svg","polyline");
+      bLine.setAttribute("points", bar.points.map(p=>`${clamp01(p[0])},${clamp01(p[1])}`).join(" "));
+      bLine.setAttribute("fill","none");
+      bLine.setAttribute("stroke", bc);
+      bLine.setAttribute("stroke-width", ctx.state.maps._selectedBarrierIdx === bi ? "0.010" : "0.006");
+      bLine.setAttribute("stroke-dasharray","0.015 0.008");
+      bLine.setAttribute("stroke-linecap","round");
+      if(ctx.state.maps._mode === "barriers"){
+        bLine.style.cursor = "pointer";
+        bLine.addEventListener("click", (ev)=>{ ev.stopPropagation(); ctx.state.maps._selectedBarrierIdx = bi; renderAll(); renderTools(); });
+      }
+      svg.appendChild(bLine);
+      // Label at midpoint
+      if(bar.points.length >= 2){
+        const midI = Math.floor(bar.points.length / 2);
+        const blab = document.createElementNS("http://www.w3.org/2000/svg","text");
+        blab.setAttribute("x", clamp01(bar.points[midI][0]));
+        blab.setAttribute("y", clamp01(bar.points[midI][1] - 0.02));
+        blab.setAttribute("font-size","0.025");
+        blab.setAttribute("text-anchor","middle");
+        blab.setAttribute("fill", bc);
+        blab.textContent = (bar.material||"metal") + " (" + (bar.attenuation_dbm||12) + "dB)";
+        svg.appendChild(blab);
+      }
+    }
+
     // Recommendation polygon overlay
     const recoPoly = ctx.state.maps._recommendPoly;
     if(recoPoly && Array.isArray(recoPoly.polygon) && recoPoly.polygon.length >= 3){
@@ -1297,10 +1337,12 @@ function _edit(ctx, map){
       const pts = ctx.state.maps._drawing.points;
       const ln = document.createElementNS("http://www.w3.org/2000/svg","polyline");
       ln.setAttribute("points", pts.map(p=>`${clamp01(p[0])},${clamp01(p[1])}`).join(" "));
-      const c = roomColor(ctx.state.maps._drawing.room || "Room");
+      const _isBarrierDraw = ctx.state.maps._mode === "barriers";
+      const c = _isBarrierDraw ? (_matColors[ctx.state.maps._barrierMaterial]||"#ef4444") : roomColor(ctx.state.maps._drawing.room || "Room");
       ln.setAttribute("fill","none");
       ln.setAttribute("stroke", c);
-      ln.setAttribute("stroke-width","0.006");
+      ln.setAttribute("stroke-width", _isBarrierDraw ? "0.008" : "0.006");
+      if(_isBarrierDraw) ln.setAttribute("stroke-dasharray","0.015 0.008");
       svg.appendChild(ln);
     }
 
@@ -1471,6 +1513,93 @@ function _edit(ctx, map){
         right.appendChild(el("div",{class:"muted", style:"margin-top:4px;font-size:11px"},
           snap2 ? "No live BLE radios detected. Enable Bluetooth proxy in HA." : "Switch to Live mode to see your BLE scanners."));
       }
+    } else if(ctx.state.maps._mode==="barriers"){
+      right.appendChild(el("div",{class:"muted", style:"margin-top:10px;font-size:12px"}, "RF Barrier tools"));
+
+      // Material selector
+      const matSel = document.createElement("select");
+      matSel.className = "select";
+      for(const [mat, atten] of [["metal",12],["concrete",8],["brick",4],["custom",6]]){
+        const o = document.createElement("option");
+        o.value = mat; o.textContent = `${mat.charAt(0).toUpperCase()+mat.slice(1)} (${atten} dB)`;
+        matSel.appendChild(o);
+      }
+      matSel.value = ctx.state.maps._barrierMaterial || "metal";
+      matSel.addEventListener("change", ()=>{ ctx.state.maps._barrierMaterial = matSel.value; });
+      right.appendChild(el("div",{style:"margin-top:8px"},[
+        el("div",{class:"muted",style:"font-size:12px;margin-bottom:4px"}, "Material"),
+        matSel,
+      ]));
+
+      // Drawing controls
+      const bDrawing = ctx.state.maps._drawing;
+      const bPts = bDrawing ? bDrawing.points.length : 0;
+      const bUndoPt = el("button",{class:"btn inline", onclick:()=>{
+        if(!ctx.state.maps._drawing || !ctx.state.maps._drawing.points.length) return;
+        ctx.state.maps._drawing.points.pop();
+        renderAll(); renderTools();
+      }}, "Undo point");
+      const bFinish = el("button",{class:"btn inline", onclick:()=>{
+        const d = ctx.state.maps._drawing;
+        if(!d || d.points.length < 2){ ctx.toast("Need at least 2 points for a barrier.", true); return; }
+        const mat = ctx.state.maps._barrierMaterial || "metal";
+        const _matAtten = {metal:12,concrete:8,brick:4,custom:6};
+        ctx.state.maps._draftBarriers.push({
+          name: "Barrier " + (ctx.state.maps._draftBarriers.length + 1),
+          material: mat,
+          attenuation_dbm: _matAtten[mat] || 6,
+          points: d.points.map(p=>[clamp01(p[0]), clamp01(p[1])]),
+        });
+        ctx.state.maps._selectedBarrierIdx = ctx.state.maps._draftBarriers.length - 1;
+        ctx.state.maps._drawing = null;
+        renderAll(); renderTools();
+      }}, `Finish (${bPts} pts)`);
+      const bCancel = el("button",{class:"btn inline", onclick:()=>{
+        ctx.state.maps._drawing = null;
+        renderAll(); renderTools();
+      }}, "Cancel");
+      right.appendChild(el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;margin-top:8px"},[
+        bUndoPt, bFinish, bCancel,
+      ]));
+      right.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-top:6px"}, bDrawing
+        ? `Drawing: ${bPts} point${bPts!==1?"s":""} placed. Click on map to add, double-click or Finish to complete.`
+        : "Click on the map to start drawing a barrier wall. At least 2 points needed."));
+
+      // Barrier list
+      const bList = ctx.state.maps._draftBarriers || [];
+      if(bList.length){
+        const layersDiv = el("div",{style:"margin-top:14px"});
+        layersDiv.appendChild(el("div",{class:"muted",style:"font-size:12px;font-weight:600;margin-bottom:6px"},`Barriers (${bList.length})`));
+        const _matColors2 = {metal:"#ef4444",concrete:"#f97316",brick:"#eab308",custom:"#a855f7"};
+        for(let bi = 0; bi < bList.length; bi++){
+          const bar = bList[bi];
+          const bc = _matColors2[bar.material] || "#ef4444";
+          const isSel = ctx.state.maps._selectedBarrierIdx === bi;
+          const delBtn = el("button",{class:"btn tiny"},"Delete");
+          delBtn.addEventListener("click", ()=>{
+            ctx.state.maps._draftBarriers.splice(bi, 1);
+            if(ctx.state.maps._selectedBarrierIdx >= ctx.state.maps._draftBarriers.length) ctx.state.maps._selectedBarrierIdx = -1;
+            renderAll(); renderTools();
+          });
+          const row = el("div",{style:`display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid ${isSel?"#52b788":"#1b3526"};border-radius:6px;background:${isSel?"#0f1f16":"#0a150e"};margin-bottom:4px;cursor:pointer`});
+          row.addEventListener("click", ()=>{ ctx.state.maps._selectedBarrierIdx = bi; renderAll(); renderTools(); });
+          row.appendChild(el("span",{style:`width:10px;height:3px;background:${bc};flex-shrink:0;border-radius:1px`}));
+          row.appendChild(el("div",{style:"flex:1"},[
+            el("div",{style:"font-size:12px;font-weight:600"}, bar.name || `Barrier ${bi+1}`),
+            el("div",{class:"muted",style:"font-size:10px"}, `${bar.material} · ${bar.attenuation_dbm}dB · ${(bar.points||[]).length} pts`),
+          ]));
+          row.appendChild(delBtn);
+          layersDiv.appendChild(row);
+        }
+        const clearAllBtn = el("button",{class:"btn inline",style:"margin-top:6px",onclick:()=>{
+          ctx.state.maps._draftBarriers = [];
+          ctx.state.maps._selectedBarrierIdx = -1;
+          renderAll(); renderTools();
+        }}, "Clear all barriers");
+        layersDiv.appendChild(clearAllBtn);
+        right.appendChild(layersDiv);
+      }
+
     } else {
       right.appendChild(el("div",{class:"muted", style:"margin-top:10px;font-size:12px"}, "Room boundary tools"));
 
@@ -1630,16 +1759,38 @@ function _edit(ctx, map){
       ctx.state.maps._drawing = null;
       renderAll(); refreshList(); renderTools();
     }
+    // barriers mode: dblclick finishes barrier (2+ points)
+    if(ctx.state.maps._mode==="barriers" && ctx.state.maps._drawing){
+      const d = ctx.state.maps._drawing;
+      if(d.points.length >= 2){
+        const mat = ctx.state.maps._barrierMaterial || "metal";
+        const _matAtten = {metal:12,concrete:8,brick:4,custom:6};
+        ctx.state.maps._draftBarriers.push({
+          name: "Barrier " + (ctx.state.maps._draftBarriers.length + 1),
+          material: mat,
+          attenuation_dbm: _matAtten[mat] || 6,
+          points: d.points.map(p=>[clamp01(p[0]), clamp01(p[1])]),
+        });
+        ctx.state.maps._selectedBarrierIdx = ctx.state.maps._draftBarriers.length - 1;
+      }
+      ctx.state.maps._drawing = null;
+      renderAll(); renderTools();
+    }
   });
 
   stage.addEventListener("click", (ev)=>{
-    if(ctx.state.maps._mode!=="rooms") return;
+    if(ctx.state.maps._mode!=="rooms" && ctx.state.maps._mode!=="barriers") return;
     // ignore marker clicks (they stopPropagation already, but defensive)
     if(ev.target && ev.target.classList && ev.target.classList.contains("marker")) return;
-    if(!ctx.state.maps._drawing){
-      // start implicit drawing if room chosen
-      if(!ctx.state.maps._selectedRoom) return;
-      ctx.state.maps._drawing = { room: ctx.state.maps._selectedRoom, points: [] };
+    if(ctx.state.maps._mode==="rooms"){
+      if(!ctx.state.maps._drawing){
+        if(!ctx.state.maps._selectedRoom) return;
+        ctx.state.maps._drawing = { room: ctx.state.maps._selectedRoom, points: [] };
+      }
+    } else if(ctx.state.maps._mode==="barriers"){
+      if(!ctx.state.maps._drawing){
+        ctx.state.maps._drawing = { barrier: true, points: [] };
+      }
     }
     const rect = overlay.getBoundingClientRect();
     const x = (ev.clientX - rect.left) / rect.width;

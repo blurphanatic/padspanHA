@@ -225,6 +225,43 @@ def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
     return ""
 
 
+def _segments_intersect(
+    ax: float, ay: float, bx: float, by: float,
+    cx: float, cy: float, dx: float, dy: float,
+) -> bool:
+    """Return True if segment AB crosses segment CD."""
+    def _cross(o1x: float, o1y: float, o2x: float, o2y: float, o3x: float, o3y: float) -> float:
+        return (o2x - o1x) * (o3y - o1y) - (o2y - o1y) * (o3x - o1x)
+    d1 = _cross(cx, cy, dx, dy, ax, ay)
+    d2 = _cross(cx, cy, dx, dy, bx, by)
+    d3 = _cross(ax, ay, bx, by, cx, cy)
+    d4 = _cross(ax, ay, bx, by, dx, dy)
+    if ((d1 > 0 and d2 < 0) or (d1 < 0 and d2 > 0)) and \
+       ((d3 > 0 and d4 < 0) or (d3 < 0 and d4 > 0)):
+        return True
+    return False
+
+
+def _barrier_attenuation(
+    sx: float, sy: float, s_map: str,
+    rx: float, ry: float, r_map: str,
+    barriers: list[dict],
+) -> float:
+    """Compute total RF attenuation (dBm) for barriers crossing the line from
+    scanner (sx,sy) to room centroid (rx,ry). Only considers barriers on the
+    same map as the scanner."""
+    total = 0.0
+    for bar in barriers:
+        if bar.get("map_id") != s_map:
+            continue
+        pts = bar["points"]
+        for i in range(len(pts) - 1):
+            if _segments_intersect(sx, sy, rx, ry, pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]):
+                total += bar["attenuation_dbm"]
+                break  # one crossing per barrier is enough
+    return total
+
+
 class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Central BLE room-presence engine for PadSpan HA.
 
@@ -287,6 +324,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_room_change_mono: dict[str, float] = {}
         # {room_name: (cx, cy, map_id)} — room centroids (rebuilt each poll)
         self._room_centroids: dict[str, tuple[float, float, str]] = {}
+        # RF barrier data for Gaussian scoring penalty (rebuilt each poll)
+        # {scanner_source: (x, y, map_id)} — scanner positions from map receivers
+        self._scanner_positions: dict[str, tuple[float, float, str]] = {}
+        # List of barrier dicts: [{points, attenuation_dbm, map_id}, ...]
+        self._rf_barriers: list[dict] = []
 
         # ── Adaptive learning rate-limit ───────────────────────────────────────
         # {key: monotonic_ts} — last adaptive observation time per device
@@ -456,6 +498,34 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
         except Exception:
             pass  # centroids are best-effort; gate degrades gracefully
+
+        # ── RF barriers: precompute scanner positions + barrier list ──────────
+        # Used in Gaussian scoring to apply RSSI attenuation when the
+        # scanner→room centroid line crosses an RF barrier wall.
+        try:
+            if _maps_store:
+                _sc_pos: dict[str, tuple[float, float, str]] = {}
+                _barriers: list[dict] = []
+                for _m in (_maps_store.data.get("maps") or []):
+                    _mid = _m.get("id", "")
+                    for _rx in (_m.get("receivers") or []):
+                        _src = _rx.get("source") or _rx.get("id", "")
+                        if _src and _rx.get("x") is not None:
+                            _sc_pos[str(_src)] = (
+                                float(_rx["x"]), float(_rx["y"]), _mid
+                            )
+                    for _bar in (_m.get("rf_barriers") or []):
+                        pts = _bar.get("points") or []
+                        if len(pts) >= 2:
+                            _barriers.append({
+                                "points": [(float(p[0]), float(p[1])) for p in pts],
+                                "attenuation_dbm": float(_bar.get("attenuation_dbm", 6)),
+                                "map_id": _mid,
+                            })
+                self._scanner_positions = _sc_pos
+                self._rf_barriers = _barriers
+        except Exception:
+            pass  # barrier data is best-effort
 
         for obj in objects:
             key = obj.get("key", "")
@@ -822,14 +892,55 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _room = source_to_area.get(_src)
                 if not _room:
                     continue
+                # RF barrier penalty: if scanner→room centroid line crosses
+                # a barrier, subtract attenuation dBm from effective RSSI.
+                _eff_rssi = _rssi
+                if self._rf_barriers and self._scanner_positions and self._room_centroids:
+                    _sp = self._scanner_positions.get(_src)
+                    _rc = self._room_centroids.get(_room)
+                    if _sp and _rc:
+                        _ba = _barrier_attenuation(
+                            _sp[0], _sp[1], _sp[2],
+                            _rc[0], _rc[1], _rc[2],
+                            self._rf_barriers,
+                        )
+                        _eff_rssi -= _ba
                 # Path-loss model: RSSI → estimated distance in meters
                 # d = 10 ^ ((ref_power - rssi) / (10 * n))
-                _dist  = max(0.1, 10.0 ** ((_ref - _rssi) / (10.0 * _n_exp)))
+                _dist  = max(0.1, 10.0 ** ((_ref - _eff_rssi) / (10.0 * _n_exp)))
                 # Gaussian weight: close scanners score ~1.0, far ones → 0
                 _score = math.exp(-(_dist / _sigma) ** 2)
                 if _room not in room_scores or _score > room_scores[_room]:
                     room_scores[_room] = _score
             if room_scores:
+                # ── Room adjacency prior (Phase 2) ──────────────────────
+                # Multiply each room's score by a transition probability
+                # based on centroid distance from the current room.
+                # Adjacent rooms keep full weight; distant rooms are
+                # penalized via a sigmoid, making it much harder for RF
+                # noise to teleport a device across the building.
+                _cur_adj = self._confirmed_room.get(key)
+                if _cur_adj and self._room_centroids:
+                    _c_cur = self._room_centroids.get(_cur_adj)
+                    if _c_cur:
+                        for _rname in list(room_scores):
+                            if _rname == _cur_adj:
+                                continue  # current room keeps full score
+                            _c_tgt = self._room_centroids.get(_rname)
+                            if not _c_tgt:
+                                continue
+                            if _c_cur[2] == _c_tgt[2]:
+                                # Same map: sigmoid on Euclidean distance
+                                _adx = _c_cur[0] - _c_tgt[0]
+                                _ady = _c_cur[1] - _c_tgt[1]
+                                _adist = math.sqrt(_adx * _adx + _ady * _ady)
+                                # Adjacent (dist<0.15) → ~1.0; far (dist>0.40) → ~0.15
+                                _tp = 1.0 / (1.0 + math.exp(10.0 * (_adist - 0.25)))
+                                _tp = max(0.15, _tp)
+                            else:
+                                _tp = 0.20  # different maps → strong penalty
+                            room_scores[_rname] *= _tp
+
                 _best_room = max(room_scores, key=lambda r: room_scores[r])
                 _cur_room = self._confirmed_room.get(key)
                 # ── Hysteresis: prevent boundary flicker ──────────────────
