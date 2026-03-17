@@ -4013,16 +4013,71 @@ function _stack(ctx, maps, helpBtn){
           bakeImg.onerror = () => ctx.toast("Bake failed — image load error", true);
           bakeImg.src = _mapUrl(tgtMap);
         } else {
-          // Store EXACTLY the decomposed values used in the preview CSS.
-          // No _m, no composition — what you see in preview is what you get.
-          alignState.x_offset   = rDx;
-          alignState.y_offset   = rDy;
-          alignState.scale      = rScale;
-          alignState.rotation   = rRotation;
-          alignState.scaleX_adj = rStretch;
-          alignState._m         = null;
-          alignState._m_ar      = null;
-          console.log("[PtAlign Apply] same CSS: " + _buildTransformCSS(rDx, rDy, rRotation, rScale, rStretch));
+          // ── Compose PA result with reference map's own stack transform ──
+          // The solver maps target → FLAT reference.  But in buildStage the
+          // reference is displayed with its own stack transform T_ref.  So the
+          // target needs T_ref ∘ T_pa to align with the displayed reference.
+          //
+          // Centered affine: x' = M*(x-0.5) + d + 0.5
+          // Composition:  new_M = R*P,  new_d = R*pa_d + ref_d
+          const refStk = refMap.stack || {};
+          const hasRefTransform = !!(refStk._m || refStk.x_offset || refStk.y_offset ||
+            refStk.rotation || (refStk.scale && refStk.scale !== 1.0) || (refStk.scale_x_adj && refStk.scale_x_adj !== 1.0));
+
+          // Build reference 2×2 matrix (R) and offset (ref_d)
+          let R11 = 1, R12 = 0, R21 = 0, R22 = 1;
+          let refDxV = 0, refDyV = 0;
+          if (hasRefTransform) {
+            refDxV = refStk.x_offset || 0;
+            refDyV = refStk.y_offset || 0;
+            if (refStk._m && refStk._m.length === 4) {
+              R11 = refStk._m[0]; R12 = refStk._m[1];
+              R21 = refStk._m[2]; R22 = refStk._m[3];
+            } else {
+              const rRad = (refStk.rotation || 0) * Math.PI / 180;
+              const rSx = (refStk.scale || 1) * (refStk.scale_x_adj || 1);
+              const rSy = refStk.scale || 1;
+              R11 = rSx * Math.cos(rRad);
+              R12 = -rSy * Math.sin(rRad) * arHW;
+              R21 = rSx * Math.sin(rRad) / arHW;
+              R22 = rSy * Math.cos(rRad);
+            }
+          }
+
+          // PA result matrix (P) from solver
+          const P11 = rawM[0], P12 = rawM[1], P21 = rawM[2], P22 = rawM[3];
+
+          // Compose: new_M = R * P,  new_d = R * pa_d + ref_d
+          const C11 = R11 * P11 + R12 * P21;
+          const C12 = R11 * P12 + R12 * P22;
+          const C21 = R21 * P11 + R22 * P21;
+          const C22 = R21 * P12 + R22 * P22;
+          const Cdx = R11 * rDx + R12 * rDy + refDxV;
+          const Cdy = R21 * rDx + R22 * rDy + refDyV;
+
+          // Decompose composed matrix for sliders / manual controls
+          const cRot = Math.atan2(C21 * arHW, C11) * 180 / Math.PI;
+          const cSx = Math.sqrt(C11 * C11 + C21 * C21 * arHW * arHW);
+          const cSy = Math.sqrt(C12 * C12 / (arHW * arHW) + C22 * C22);
+          const cScale = cSy;
+          const cStretch = cSx > 0 && cSy > 0 ? cSx / cSy : 1.0;
+
+          // Store composed result with raw matrix for lossless rendering
+          alignState.x_offset   = Math.round(Cdx * 10000) / 10000;
+          alignState.y_offset   = Math.round(Cdy * 10000) / 10000;
+          alignState.scale      = Math.round(cScale * 10000) / 10000;
+          alignState.rotation   = Math.round(cRot * 100) / 100;
+          alignState.scaleX_adj = Math.round(cStretch * 10000) / 10000;
+          alignState._m         = [C11, C12, C21, C22];
+          alignState._m_ar      = arHW;
+          console.log("[PtAlign Apply] ref has transform:", hasRefTransform,
+            "ref_dx=" + refDxV, "ref_dy=" + refDyV);
+          console.log("[PtAlign Apply] PA raw: dx=" + rDx + " dy=" + rDy +
+            " M=[" + rawM.join(",") + "]");
+          console.log("[PtAlign Apply] Composed: dx=" + Cdx.toFixed(4) + " dy=" + Cdy.toFixed(4) +
+            " M=[" + [C11,C12,C21,C22].map(v=>v.toFixed(4)).join(",") + "]");
+          console.log("[PtAlign Apply] Decomposed: scale=" + cScale.toFixed(4) +
+            " rot=" + cRot.toFixed(2) + " stretch=" + cStretch.toFixed(4));
           _close();
           buildStage();
           ctx.toast("Aligned (" + pairs + " pairs, residual " + resPct + "%)");
@@ -4043,7 +4098,7 @@ function _stack(ctx, maps, helpBtn){
         "padding:16px;overflow:auto;min-height:0";
 
       const previewStage = document.createElement("div");
-      previewStage.style.cssText = "position:relative;width:100%;max-width:900px;aspect-ratio:" + _refAR +
+      previewStage.style.cssText = "position:relative;width:100%;max-width:500px;aspect-ratio:" + _refAR +
         ";background:#071008;border:2px solid #1e4976;border-radius:8px;overflow:visible";
 
       // Reference map layer (bottom) — shown FLAT
@@ -4186,7 +4241,7 @@ function _stack(ctx, maps, helpBtn){
       if (_mapUrl(tgtMap)) tgtImg.src = _mapUrl(tgtMap);
 
       // Zoom controls
-      let pvMaxW = 900;
+      let pvMaxW = 500;
       const zoomRow = document.createElement("div");
       zoomRow.style.cssText = "margin-top:6px;display:flex;gap:6px;justify-content:center;align-items:center";
       const _pvZoomBtn = (label, fn) => {
@@ -4201,8 +4256,8 @@ function _stack(ctx, maps, helpBtn){
         previewStage.style.maxWidth = pvMaxW + "px";
       }));
       zoomRow.appendChild(_pvZoomBtn("Fit", () => {
-        pvMaxW = 900;
-        previewStage.style.maxWidth = "900px";
+        pvMaxW = 500;
+        previewStage.style.maxWidth = "500px";
       }));
       zoomRow.appendChild(_pvZoomBtn("Zoom +", () => {
         pvMaxW = Math.min(3000, pvMaxW + 300);
