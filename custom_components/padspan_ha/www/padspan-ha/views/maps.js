@@ -431,16 +431,29 @@ function _deleteMapModal(ctx, srcMap, allMaps){
     const tgtStk = tgt.stack || {};
     // Map-local (0–1) → world (shared coordinate space via stack transform)
     const _mapToWorld = (px, py, stk) => {
-      const sc = stk.scale||1, sx = stk.scale_x_adj||1, ar = stk.ref_ar||1;
       const ox = stk.x_offset||0, oy = stk.y_offset||0;
+      if (stk._m && stk._m.length === 4) {
+        // Raw affine matrix: world = M * (p - 0.5) + 0.5 + offset
+        const u = px - 0.5, v = py - 0.5;
+        const ar = stk._m_ar || stk.ref_ar || 1;
+        return [stk._m[0]*u + stk._m[1]*v + 0.5 + ox, stk._m[2]*u + stk._m[3]*v + 0.5 + oy];
+      }
+      const sc = stk.scale||1, sx = stk.scale_x_adj||1, ar = stk.ref_ar||1;
       const r = (stk.rotation||0)*Math.PI/180;
       const dx=(px-0.5)*sc*sx, dy=(py-0.5)*sc*ar;
       return [(0.5+ox)+dx*Math.cos(r)-dy*Math.sin(r), ar*(0.5+oy)+dx*Math.sin(r)+dy*Math.cos(r)];
     };
     // World → map-local (inverse of _mapToWorld)
     const _worldToMap = (wx, wy, stk) => {
-      const sc = stk.scale||1, sx = stk.scale_x_adj||1, ar = stk.ref_ar||1;
       const ox = stk.x_offset||0, oy = stk.y_offset||0;
+      if (stk._m && stk._m.length === 4) {
+        // Inverse of: world = M * (p - 0.5) + 0.5 + offset
+        const rx = wx - 0.5 - ox, ry = wy - 0.5 - oy;
+        const det = stk._m[0]*stk._m[3] - stk._m[1]*stk._m[2];
+        if (Math.abs(det) < 1e-12) return [0.5, 0.5];
+        return [(stk._m[3]*rx - stk._m[1]*ry)/det + 0.5, (-stk._m[2]*rx + stk._m[0]*ry)/det + 0.5];
+      }
+      const sc = stk.scale||1, sx = stk.scale_x_adj||1, ar = stk.ref_ar||1;
       const r = (stk.rotation||0)*Math.PI/180;
       const rx2=wx-(0.5+ox), ry2=wy-ar*(0.5+oy);
       const dx2=rx2*Math.cos(-r)-ry2*Math.sin(-r);
@@ -2843,6 +2856,8 @@ function _stack(ctx, maps, helpBtn){
       scale:      firstTgt?.stack?.scale      ?? 1.0,
       rotation:   firstTgt?.stack?.rotation   ?? 0.0,
       scaleX_adj: firstTgt?.stack?.scale_x_adj ?? 1.0,
+      _m:         firstTgt?.stack?._m         || null,
+      _m_ar:      firstTgt?.stack?._m_ar      || null,
     };
   }
   const alignState = ctx.state.maps._stackAlign;
@@ -2859,6 +2874,8 @@ function _stack(ctx, maps, helpBtn){
     alignState.y_offset  = newTgt?.stack?.y_offset  ?? 0.0;
     alignState.scale     = newTgt?.stack?.scale     ?? 1.0;
     alignState.rotation  = newTgt?.stack?.rotation  ?? 0.0;
+    alignState._m        = newTgt?.stack?._m        || null;
+    alignState._m_ar     = newTgt?.stack?._m_ar     || null;
   }
 
   // Level options: use HA floor registry if available, fall back to hardcoded names
@@ -3104,7 +3121,8 @@ function _stack(ctx, maps, helpBtn){
   const updateReadout = ()=>{
     const xAdj = alignState.scaleX_adj || 1.0;
     const xStr = Math.abs(xAdj - 1.0) > 0.001 ? `  ScaleX: ${xAdj.toFixed(3)}` : "";
-    readoutDiv.textContent = `X: ${alignState.x_offset.toFixed(3)}  Y: ${alignState.y_offset.toFixed(3)}  Scale: ${alignState.scale.toFixed(3)}  Rot: ${(alignState.rotation||0).toFixed(1)}°${xStr}`;
+    const mStr = alignState._m ? "  [matrix]" : "";
+    readoutDiv.textContent = `X: ${alignState.x_offset.toFixed(3)}  Y: ${alignState.y_offset.toFixed(3)}  Scale: ${alignState.scale.toFixed(3)}  Rot: ${(alignState.rotation||0).toFixed(1)}°${xStr}${mStr}`;
   };
   updateReadout();
   card.appendChild(readoutDiv);
@@ -3144,6 +3162,8 @@ function _stack(ctx, maps, helpBtn){
       alignState.scale      = newTgt?.stack?.scale       ?? 1.0;
       alignState.rotation   = newTgt?.stack?.rotation    ?? 0.0;
       alignState.scaleX_adj = newTgt?.stack?.scale_x_adj ?? 1.0;
+      alignState._m         = newTgt?.stack?._m          || null;
+      alignState._m_ar      = newTgt?.stack?._m_ar       || null;
     }
     alignState.refId    = refId;
     alignState.targetId = tgtId;
@@ -3178,11 +3198,17 @@ function _stack(ctx, maps, helpBtn){
     // Apply reference map's own saved stack transform so it appears in its true aligned position.
     // Without this, a map that was previously aligned rotated/scaled shows flat in the overlay.
     const refStk = refMap.stack || {};
-    if(refStk.x_offset || refStk.y_offset || refStk.rotation || refStk.scale_x_adj || (refStk.scale && refStk.scale !== 1.0)){
-      const rsx = (refStk.scale || 1.0) * (refStk.scale_x_adj || 1.0);
-      const rsy = refStk.scale || 1.0;
+    if(refStk._m || refStk.x_offset || refStk.y_offset || refStk.rotation || refStk.scale_x_adj || (refStk.scale && refStk.scale !== 1.0)){
       refLayer.style.transformOrigin = "50% 50%";
-      refLayer.style.transform = `translate(${(refStk.x_offset||0)*100}%,${(refStk.y_offset||0)*100}%) rotate(${refStk.rotation||0}deg) scale(${rsx},${rsy})`;
+      if (refStk._m && refStk._m.length === 4) {
+        const _rar = refStk._m_ar || 1;
+        const rma = refStk._m[0], rmb = refStk._m[2] * _rar, rmc = refStk._m[1] / _rar, rmd = refStk._m[3];
+        refLayer.style.transform = `translate(${(refStk.x_offset||0)*100}%,${(refStk.y_offset||0)*100}%) matrix(${rma},${rmb},${rmc},${rmd},0,0)`;
+      } else {
+        const rsx = (refStk.scale || 1.0) * (refStk.scale_x_adj || 1.0);
+        const rsy = refStk.scale || 1.0;
+        refLayer.style.transform = `translate(${(refStk.x_offset||0)*100}%,${(refStk.y_offset||0)*100}%) rotate(${refStk.rotation||0}deg) scale(${rsx},${rsy})`;
+      }
     }
     stageWrap.appendChild(refLayer);
 
@@ -3208,14 +3234,18 @@ function _stack(ctx, maps, helpBtn){
       tgtLayerRef = tgtLayer;
 
       applyCurrentTransform = ()=>{
-        // CSS transform chain: translate → rotate → scale.
-        // With transform-origin:50% 50%, rotate and scale happen around the
-        // element's centre. translate() shifts that centre point by
-        // (x_offset, y_offset) as a percentage of the stage dimensions.
-        // scaleX_adj allows non-uniform stretch (X differs from Y).
-        const sx = (alignState.scale || 1.0) * (alignState.scaleX_adj || 1.0);
-        const sy = alignState.scale || 1.0;
-        tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) rotate(${alignState.rotation||0}deg) scale(${sx},${sy})`;
+        if (alignState._m && alignState._m.length === 4) {
+          // Use CSS matrix() directly from solver — lossless affine transform.
+          const _ar = alignState._m_ar || 1;
+          const ma = alignState._m[0], mb = alignState._m[2] * _ar;
+          const mc = alignState._m[1] / _ar, md = alignState._m[3];
+          tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) matrix(${ma},${mb},${mc},${md},0,0)`;
+        } else {
+          // Fallback: decomposed translate → rotate → scale chain.
+          const sx = (alignState.scale || 1.0) * (alignState.scaleX_adj || 1.0);
+          const sy = alignState.scale || 1.0;
+          tgtLayer.style.transform = `translate(${alignState.x_offset*100}%,${alignState.y_offset*100}%) rotate(${alignState.rotation||0}deg) scale(${sx},${sy})`;
+        }
         updateReadout();
         _checkDualMaster(refId, tgtId);
       };
@@ -3301,10 +3331,12 @@ function _stack(ctx, maps, helpBtn){
   _setXBtnState(ctx.state.maps._stackArLocked);
   xMinusBtn.onclick = ()=>{
     alignState.scaleX_adj = Math.max(0.1, Math.round(((alignState.scaleX_adj||1.0) - 0.05)*1000)/1000);
+    alignState._m = null; alignState._m_ar = null;
     applyCurrentTransform();
   };
   xPlusBtn.onclick = ()=>{
     alignState.scaleX_adj = Math.min(5.0, Math.round(((alignState.scaleX_adj||1.0) + 0.05)*1000)/1000);
+    alignState._m = null; alignState._m_ar = null;
     applyCurrentTransform();
   };
 
@@ -3331,6 +3363,7 @@ function _stack(ctx, maps, helpBtn){
     const step = outside ? 0.5 : 0.05;
     const maxScale = outside ? 100.0 : 5.0;
     alignState.scale = Math.min(maxScale, Math.round((alignState.scale + step) * 1000) / 1000);
+    alignState._m = null; alignState._m_ar = null;
     applyCurrentTransform();
   }},"Scale +"));
   ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{
@@ -3338,6 +3371,7 @@ function _stack(ctx, maps, helpBtn){
     const step = outside ? 0.5 : 0.05;
     const minScale = outside ? 0.01 : 0.1;
     alignState.scale = Math.max(minScale, Math.round((alignState.scale - step) * 1000) / 1000);
+    alignState._m = null; alignState._m_ar = null;
     applyCurrentTransform();
   }},"Scale −"));
   ctrlRow.appendChild(lockArBtn);
@@ -3363,9 +3397,9 @@ function _stack(ctx, maps, helpBtn){
 
   // Rotate controls
   ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"Rotate:"));
-  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.rotation = Math.round((alignState.rotation||0) - 15); applyCurrentTransform(); }},"−15°"));
-  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.rotation = Math.round((alignState.rotation||0) + 15); applyCurrentTransform(); }},"﹢15°"));
-  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.rotation = 0; applyCurrentTransform(); }},"0°"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.rotation = Math.round((alignState.rotation||0) - 15); alignState._m=null; alignState._m_ar=null; applyCurrentTransform(); }},"−15°"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.rotation = Math.round((alignState.rotation||0) + 15); alignState._m=null; alignState._m_ar=null; applyCurrentTransform(); }},"﹢15°"));
+  ctrlRow.appendChild(el("button",{class:"btn inline", onclick:()=>{ alignState.rotation = 0; alignState._m=null; alignState._m_ar=null; applyCurrentTransform(); }},"0°"));
 
   // View zoom controls (scales stage content so both maps are visible — zooming out reveals overflowed target maps)
   ctrlRow.appendChild(el("span",{class:"muted",style:"font-size:11px;white-space:nowrap;margin-left:8px"},"View:"));
@@ -3398,7 +3432,7 @@ function _stack(ctx, maps, helpBtn){
   }},"▲"));
 
   // Reset all alignment
-  ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; alignState.rotation=0; alignState.scaleX_adj=1.0; applyCurrentTransform(); }},"Reset"));
+  ctrlRow.appendChild(el("button",{class:"btn inline",style:"margin-left:8px", onclick:()=>{ alignState.x_offset=0.0; alignState.y_offset=0.0; alignState.scale=1.0; alignState.rotation=0; alignState.scaleX_adj=1.0; alignState._m=null; alignState._m_ar=null; applyCurrentTransform(); }},"Reset"));
 
   // ── Point Align ────────────────────────────────────────────────────────────
   // Opens a MODAL OVERLAY (position:fixed) for side-by-side point matching.
@@ -3918,6 +3952,7 @@ function _stack(ctx, maps, helpBtn){
         if (bake && tgtMap.image && tgtMap.image.filename) {
           alignState.x_offset = rDx; alignState.y_offset = rDy;
           alignState.scale = 1.0; alignState.rotation = 0; alignState.scaleX_adj = 1.0;
+          alignState._m = null; alignState._m_ar = null;
           _close();
           buildStage();
           const bakeImg = new Image();
@@ -3949,6 +3984,12 @@ function _stack(ctx, maps, helpBtn){
           alignState.scale      = rScale;
           alignState.rotation   = rRotation;
           alignState.scaleX_adj = rStretch;
+          // Store the raw affine matrix so the stack renderer can use CSS matrix()
+          // instead of the lossy translate→rotate→scale decomposition.
+          if (rawM && rawM.length === 4) {
+            alignState._m    = rawM.slice();
+            alignState._m_ar = arHW || 1;
+          }
           _close();
           buildStage();
           ctx.toast("Aligned (" + pairs + " pairs, residual " + resPct + "%)");
@@ -4152,6 +4193,8 @@ function _stack(ctx, maps, helpBtn){
       scale_x_adj: alignState.scaleX_adj || 1.0,
       ref_map_id: rId||null,
       ref_ar: rM2 ? (rM2.image?.height||600)/(rM2.image?.width||800) : undefined,
+      _m: (overX !== undefined) ? null : (alignState._m || null),
+      _m_ar: (overX !== undefined) ? null : (alignState._m_ar || null),
       ...(tgtWasMaster && !keepTgt ? { is_master: false } : {}),
     });
     await ctx.actions.mapsUpdate({
@@ -4865,7 +4908,9 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
     const stk=m.stack||{}, ox=stk.x_offset||0, oy_=stk.y_offset||0, sc=stk.scale||1.0;
     const sxAdj=stk.scale_x_adj||1.0, ar=(m.image?.height||600)/(m.image?.width||800);
     const arRef=stk.ref_ar||ar, rot=(stk.rotation||0)*Math.PI/180;
-    const bbPt=(px,py)=>{const dx=(px-0.5)*sc*sxAdj,dy=(py-0.5)*sc*arRef,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,arRef*(0.5+oy_)+ry];};
+    const bbPt = (stk._m && stk._m.length === 4)
+      ? (px,py)=>{const u=px-0.5,v=py-0.5;return[stk._m[0]*u+stk._m[1]*v+0.5+ox, stk._m[2]*u+stk._m[3]*v+0.5+oy_];}
+      : (px,py)=>{const dx=(px-0.5)*sc*sxAdj,dy=(py-0.5)*sc*arRef,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,arRef*(0.5+oy_)+ry];};
     if(!_indoorBBByLevel.has(z)) _indoorBBByLevel.set(z,{minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity});
     const bb=_indoorBBByLevel.get(z);
     for(const [cx,cy] of [[0,0],[1,0],[1,1],[0,1]]){const[wx,wy]=bbPt(cx,cy);bb.minX=Math.min(bb.minX,wx);bb.minY=Math.min(bb.minY,wy);bb.maxX=Math.max(bb.maxX,wx);bb.maxY=Math.max(bb.maxY,wy);}
@@ -4917,11 +4962,13 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
       const ar=(m.image?.height||600)/(m.image?.width||800);
       const arRef = stk.ref_ar || ar;
       const rot=(stk.rotation||0)*Math.PI/180;
-      const bbPt=(px,py)=>{
-        const dx=(px-0.5)*sc*sxAdj, dy=(py-0.5)*sc*arRef;
-        const rx=dx*Math.cos(rot)-dy*Math.sin(rot), ry=dx*Math.sin(rot)+dy*Math.cos(rot);
-        return [(0.5+ox)+rx, arRef*(0.5+oy_)+ry];
-      };
+      const bbPt = (stk._m && stk._m.length === 4)
+        ? (px,py)=>{const u=px-0.5,v=py-0.5;return[stk._m[0]*u+stk._m[1]*v+0.5+ox, stk._m[2]*u+stk._m[3]*v+0.5+oy_];}
+        : (px,py)=>{
+          const dx=(px-0.5)*sc*sxAdj, dy=(py-0.5)*sc*arRef;
+          const rx=dx*Math.cos(rot)-dy*Math.sin(rot), ry=dx*Math.sin(rot)+dy*Math.cos(rot);
+          return [(0.5+ox)+rx, arRef*(0.5+oy_)+ry];
+        };
       for(const [cx,cy] of [[0,0],[1,0],[1,1],[0,1]]){
         const [wx,wy]=bbPt(cx,cy);
         minX=Math.min(minX,wx); minY=Math.min(minY,wy);

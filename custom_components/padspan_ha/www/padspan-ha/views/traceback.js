@@ -227,7 +227,9 @@ export function render(ctx) {
         const ar = (m.image?.height || 600) / (m.image?.width || 800);
         const arRef = stk.ref_ar || ar, sxAdj = stk.scale_x_adj || 1.0;
         const rot = (stk.rotation || 0) * Math.PI / 180;
-        const bbPt = (px, py) => { const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef; return [(0.5 + ox) + dx * Math.cos(rot) - dy * Math.sin(rot), arRef * (0.5 + oy_) + dx * Math.sin(rot) + dy * Math.cos(rot)]; };
+        const bbPt = (stk._m && stk._m.length === 4)
+          ? (px, py) => { const u = px - 0.5, v = py - 0.5; return [stk._m[0] * u + stk._m[1] * v + 0.5 + ox, stk._m[2] * u + stk._m[3] * v + 0.5 + oy_]; }
+          : (px, py) => { const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef; return [(0.5 + ox) + dx * Math.cos(rot) - dy * Math.sin(rot), arRef * (0.5 + oy_) + dx * Math.sin(rot) + dy * Math.cos(rot)]; };
         for (const [cx, cy] of [[0, 0], [1, 0], [1, 1], [0, 1]]) { const [wx, wy] = bbPt(cx, cy); x0 = Math.min(x0, wx); y0_ = Math.min(y0_, wy); x1 = Math.max(x1, wx); y1_ = Math.max(y1_, wy); }
       }
       if (!isFinite(x0)) { x0 = 0; y0_ = 0; x1 = 1; y1_ = 0.75; }
@@ -241,7 +243,9 @@ export function render(ctx) {
         const ar = (m.image?.height || 600) / (m.image?.width || 800);
         const arRef = stk.ref_ar || ar, sxAdj = stk.scale_x_adj || 1.0;
         const rotRad = (stk.rotation || 0) * Math.PI / 180;
-        const mapPt = (px, py) => { const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef, rx = dx * Math.cos(rotRad) - dy * Math.sin(rotRad), ry = dx * Math.sin(rotRad) + dy * Math.cos(rotRad); return [(0.5 + ox) + rx, arRef * (0.5 + oy_) + ry]; };
+        const mapPt = (stk._m && stk._m.length === 4)
+          ? (px, py) => { const u = px - 0.5, v = py - 0.5; return [stk._m[0] * u + stk._m[1] * v + 0.5 + ox, stk._m[2] * u + stk._m[3] * v + 0.5 + oy_]; }
+          : (px, py) => { const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef, rx = dx * Math.cos(rotRad) - dy * Math.sin(rotRad), ry = dx * Math.sin(rotRad) + dy * Math.cos(rotRad); return [(0.5 + ox) + rx, arRef * (0.5 + oy_) + ry]; };
         for (const [room, b] of Object.entries(m.room_bounds || {})) {
           if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
           const color = roomColorFn(room);

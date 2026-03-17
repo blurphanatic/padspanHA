@@ -454,14 +454,21 @@ class MapsStore:
     def map_to_world(px: float, py: float, stk: dict) -> tuple[float, float]:
         """Map-local normalised (0-1) → world coords.
 
-        Applies: scale × scale_x_adj → rotate → translate.
-        Mirrors the JS ``mapPt`` function in overview.js / calibration.js.
+        When a raw affine matrix ``_m`` is present (from Point Align solver),
+        uses it directly.  Otherwise falls back to decomposed
+        scale × scale_x_adj → rotate → translate.
+        Mirrors the JS ``_mapToWorld`` function in maps.js.
         """
+        ox = float(stk.get("x_offset", 0.0))
+        oy = float(stk.get("y_offset", 0.0))
+        _m = stk.get("_m")
+        if _m and len(_m) == 4:
+            u, v = px - 0.5, py - 0.5
+            return (_m[0] * u + _m[1] * v + 0.5 + ox,
+                    _m[2] * u + _m[3] * v + 0.5 + oy)
         sc = float(stk.get("scale", 1.0))
         sx_adj = float(stk.get("scale_x_adj", 1.0))
         ref_ar = float(stk.get("ref_ar") or (1.0))
-        ox = float(stk.get("x_offset", 0.0))
-        oy = float(stk.get("y_offset", 0.0))
         rot = math.radians(float(stk.get("rotation", 0.0)))
 
         dx = (px - 0.5) * sc * sx_adj
@@ -473,11 +480,19 @@ class MapsStore:
     @staticmethod
     def world_to_map(wx: float, wy: float, stk: dict) -> tuple[float, float]:
         """World coords → map-local normalised (0-1).  Inverse of map_to_world."""
+        ox = float(stk.get("x_offset", 0.0))
+        oy = float(stk.get("y_offset", 0.0))
+        _m = stk.get("_m")
+        if _m and len(_m) == 4:
+            rx, ry = wx - 0.5 - ox, wy - 0.5 - oy
+            det = _m[0] * _m[3] - _m[1] * _m[2]
+            if abs(det) < 1e-12:
+                return (0.5, 0.5)
+            return ((_m[3] * rx - _m[1] * ry) / det + 0.5,
+                    (-_m[2] * rx + _m[0] * ry) / det + 0.5)
         sc = float(stk.get("scale", 1.0))
         sx_adj = float(stk.get("scale_x_adj", 1.0))
         ref_ar = float(stk.get("ref_ar") or (1.0))
-        ox = float(stk.get("x_offset", 0.0))
-        oy = float(stk.get("y_offset", 0.0))
         rot = math.radians(float(stk.get("rotation", 0.0)))
 
         rx = wx - (0.5 + ox)
