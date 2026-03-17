@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.14.46";
-const BUILD_ID = "20260317T184149Z";
+const APP_VERSION = "0.14.47";
+const BUILD_ID = "20260317T184452Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -514,14 +514,18 @@ class PadSpanHaApp extends HTMLElement {
         this._refreshAll(false);
       }
     } else {
-      // Show loading placeholder — purely inline so it works with no CSS loaded yet
+      // Show loading placeholder with progress — purely inline so it works with no CSS loaded yet
       if(this.$content){
         const lo = document.createElement("div");
-        lo.style.cssText = "padding:24px;color:#52b788;font-family:monospace;font-size:13px";
-        lo.textContent = `Loading PadSpan HA v${APP_VERSION}\u2026`;
+        lo.style.cssText = "padding:40px;text-align:center;font-family:system-ui,sans-serif";
+        lo.innerHTML = `<div style="margin-bottom:16px"><svg width="48" height="48" viewBox="0 0 48 48"><circle cx="24" cy="24" r="20" fill="none" stroke="#1b3526" stroke-width="4"/><circle cx="24" cy="24" r="20" fill="none" stroke="#52b788" stroke-width="4" stroke-linecap="round" stroke-dasharray="80 45"><animateTransform attributeName="transform" type="rotate" from="0 24 24" to="360 24 24" dur="1s" repeatCount="indefinite"/></circle></svg></div>`
+          + `<div style="color:#52b788;font-size:16px;font-weight:700;margin-bottom:6px">PadSpan HA v${APP_VERSION}</div>`
+          + `<div style="color:#64748b;font-size:12px" id="padspan-load-status">Loading modules\u2026</div>`;
         this.$content.appendChild(lo);
       }
       _viewsPromise.then(() => {
+        const statusEl = this.$content?.querySelector("#padspan-load-status");
+        if(statusEl) statusEl.textContent = "Connecting\u2026";
         this._renderNav();       // rebuild nav after complexity may have been restored
         this._renderCurrentView();
         this._startPolling();

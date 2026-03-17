@@ -318,19 +318,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if presence_coord is None:
         presence_coord = PresenceCoordinator(hass)
         hass.data[DOMAIN]["presence_coordinator"] = presence_coord
-    # Attempt first refresh; if it fails (e.g. BLE not yet ready) entities will appear
-    # on the next successful poll cycle (every 10 s) — not a fatal error.
-    try:
-        await presence_coord.async_config_entry_first_refresh()
-    except Exception as err:
-        _LOGGER.info("Presence coordinator initial fetch deferred (BLE may not be ready yet): %s", err)
 
-    # Forward platforms (safe even if they don't create entities yet)
+    # Forward platforms first so entities register quickly, then attempt first
+    # data refresh with a short timeout.  If BLE isn't ready yet, entities will
+    # populate on the next poll cycle (10 s) — this avoids blocking integration
+    # setup for a long time on slow hardware or fresh installs.
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception as err:
         _LOGGER.exception("Forward entry setups failed: %s", err)
         return False
+
+    # First refresh with 8 s timeout — long enough for a normal poll, short
+    # enough not to stall integration setup on slow / fresh systems.
+    import asyncio
+    try:
+        await asyncio.wait_for(
+            presence_coord.async_config_entry_first_refresh(),
+            timeout=8.0,
+        )
+    except asyncio.TimeoutError:
+        _LOGGER.info("Presence coordinator first refresh timed out (8 s) — will retry on next poll")
+    except Exception as err:
+        _LOGGER.info("Presence coordinator initial fetch deferred (BLE may not be ready yet): %s", err)
 
     return True
 
