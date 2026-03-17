@@ -1309,6 +1309,8 @@ export function render(ctx){
 
     if(ctx.state._overviewPersistentPins === undefined) ctx.state._overviewPersistentPins = !!(ctx.state.settings && ctx.state.settings.overview_persistent_pins);
     if(ctx.state._overviewShowWalls === undefined) ctx.state._overviewShowWalls = !!(ctx.state.settings && ctx.state.settings.overview_show_walls);
+    if(ctx.state._overviewShowHeatmap === undefined) ctx.state._overviewShowHeatmap = false;
+    if(ctx.state._overviewShowDistortion === undefined) ctx.state._overviewShowDistortion = false;
 
     const buildIsoSVG = (focusZ)=>{
       const slabWZ = 18/_ovFG;
@@ -1386,7 +1388,7 @@ export function render(ctx){
         if(lidx !== 1){ s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="url(#flrpat_${lidx})" stroke="none"/>`; }
 
         // ── Radio Map heatmap layer (3D isometric, behind room polygons) ──
-        if (_isoRadioMapOn && _isoRadioMapMod && calPoints.length) {
+        if (_isoRadioMapOn && _isoRadioMapMod && calPoints.length && ctx.state._overviewShowHeatmap) {
           for (const m of group) {
             const tf = mapTransforms[m.id]; if (!tf) continue;
             const heatData = _isoRadioMapMod.computeHeatmapGrid(calPoints, m.id, null, m.rf_barriers || []);
@@ -1978,6 +1980,43 @@ export function render(ctx){
       ctx.actions.settingsSet({ overview_show_walls: ctx.state._overviewShowWalls });
     });
     ctrlRow.appendChild(ovWallsBtn);
+
+    // ── Radio Map toggle (only if feature enabled) ────────────────────────
+    if (_isoRadioMapOn) {
+      const ovHeatBtn = document.createElement("button");
+      ovHeatBtn.className = "btn inline";
+      const _heatStyle = (on) => on
+        ? "background:#2d1b4e;border-color:#a855f7;color:#d8b4fe;font-weight:700"
+        : "color:#94a3b8";
+      ovHeatBtn.style.cssText = _heatStyle(ctx.state._overviewShowHeatmap);
+      ovHeatBtn.textContent = ctx.state._overviewShowHeatmap ? "\u25A3 Heatmap ON" : "\u25A3 Heatmap";
+      ovHeatBtn.addEventListener("click", () => {
+        ctx.state._overviewShowHeatmap = !ctx.state._overviewShowHeatmap;
+        ovHeatBtn.style.cssText = _heatStyle(ctx.state._overviewShowHeatmap);
+        ovHeatBtn.textContent = ctx.state._overviewShowHeatmap ? "\u25A3 Heatmap ON" : "\u25A3 Heatmap";
+        isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+      });
+      ctrlRow.appendChild(ovHeatBtn);
+    }
+
+    // ── Distortion Map toggle (only if feature enabled) ───────────────────
+    const _isoDistortionOn = !!(ctx.state.settings && ctx.state.settings.distortion_map_enabled);
+    if (_isoDistortionOn) {
+      const ovDistBtn = document.createElement("button");
+      ovDistBtn.className = "btn inline";
+      const _distStyle = (on) => on
+        ? "background:#431407;border-color:#f97316;color:#fdba74;font-weight:700"
+        : "color:#94a3b8";
+      ovDistBtn.style.cssText = _distStyle(ctx.state._overviewShowDistortion);
+      ovDistBtn.textContent = ctx.state._overviewShowDistortion ? "\u2192 Distortion ON" : "\u2192 Distortion";
+      ovDistBtn.addEventListener("click", () => {
+        ctx.state._overviewShowDistortion = !ctx.state._overviewShowDistortion;
+        ovDistBtn.style.cssText = _distStyle(ctx.state._overviewShowDistortion);
+        ovDistBtn.textContent = ctx.state._overviewShowDistortion ? "\u2192 Distortion ON" : "\u2192 Distortion";
+        isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+      });
+      ctrlRow.appendChild(ovDistBtn);
+    }
 
     outer.appendChild(ctrlRow);
     outer.appendChild(isoWrap);

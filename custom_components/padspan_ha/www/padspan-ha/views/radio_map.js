@@ -390,7 +390,7 @@ export function distortionMapSVG(calPoints, mapId, barriers) {
 // For 3D isometric views: generates heatmap polygons projected through the
 // caller's mapPt + iso transform chain.
 
-const ISO_GRID = 12; // coarser grid for 3D (144 cells per map — performance)
+const ISO_GRID = 24; // 24x24 interpolation grid for 3D (576 cells per map)
 
 /**
  * Compute heatmap grid data for a map (not yet projected).
@@ -453,15 +453,17 @@ export function isoHeatmapSVG(heatData, mapPt, iso, z) {
   const cellW = 1.0 / res;
   let s = "";
 
+  // Slight overlap (0.5 cell) prevents hairline gaps between cells in iso projection
+  const pad = cellW * 0.08;
   for (let gy = 0; gy < res; gy++) {
     for (let gx = 0; gx < res; gx++) {
       const rssi = grid[gy * res + gx];
       if (isNaN(rssi)) continue;
 
       const color = _rssiColor(rssi, minR, maxR);
-      // Project 4 corners of the grid cell through the iso transform
-      const x0 = gx * cellW, y0 = gy * cellW;
-      const x1 = x0 + cellW, y1 = y0 + cellW;
+      // Project 4 corners of the grid cell (with slight padding) through the iso transform
+      const x0 = gx * cellW - pad, y0 = gy * cellW - pad;
+      const x1 = x0 + cellW + pad * 2, y1 = y0 + cellW + pad * 2;
       const [w0x, w0y] = mapPt(x0, y0);
       const [w1x, w1y] = mapPt(x1, y0);
       const [w2x, w2y] = mapPt(x1, y1);
@@ -471,7 +473,9 @@ export function isoHeatmapSVG(heatData, mapPt, iso, z) {
       const p2 = iso(w2x, w2y, z);
       const p3 = iso(w3x, w3y, z);
 
-      s += `<polygon points="${Math.round(p0[0])},${Math.round(p0[1])} ${Math.round(p1[0])},${Math.round(p1[1])} ${Math.round(p2[0])},${Math.round(p2[1])} ${Math.round(p3[0])},${Math.round(p3[1])}" fill="${color}"/>`;
+      // Sub-pixel precision (1 decimal) prevents cells from collapsing to lines
+      const f = v => v.toFixed(1);
+      s += `<polygon points="${f(p0[0])},${f(p0[1])} ${f(p1[0])},${f(p1[1])} ${f(p2[0])},${f(p2[1])} ${f(p3[0])},${f(p3[1])}" fill="${color}"/>`;
     }
   }
 
