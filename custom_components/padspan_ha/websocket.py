@@ -2678,7 +2678,10 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
                     "mqtt_publish_enabled", "lights_panel_enabled", "bermuda_ignore",
                     "tags_room_events_enabled", "tags_nfc_identify_enabled",
                     "tags_phone_autolink_enabled", "quiet_mode",
-                    "overview_2d_mode", "beacon_profiling_enabled"):
+                    "overview_2d_mode", "beacon_profiling_enabled",
+                    "trackability_rating_enabled", "walk_to_identify_enabled",
+                    "radio_map_enabled", "distortion_map_enabled",
+                    "compass_ring_enabled", "replay_timeline_enabled"):
             if key in msg:
                 payload[key] = bool(msg[key])
         if "positioning_algorithm" in msg:
