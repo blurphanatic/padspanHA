@@ -161,7 +161,7 @@ export function render(ctx) {
   _pbleHdr.addEventListener("click", () => {
     ctx.state._pbleExpanded = !ctx.state._pbleExpanded;
     if (ctx.state._pbleExpanded && !ctx.state._pbleStatus) {
-      ctx.actions.wsCommand("padspan_ha/private_ble_status").then(res => {
+      ctx.actions.wsCall("padspan_ha/private_ble_status").then(res => {
         ctx.state._pbleStatus = res;
         ctx.actions.renderRooms();
       }).catch(e => console.error("pble status:", e));
@@ -252,7 +252,7 @@ export function render(ctx) {
           // Refresh status after a short delay to let the backend register the new IRK
           ctx.state._pbleStatus = null;
           setTimeout(() => {
-            ctx.actions.wsCommand("padspan_ha/private_ble_status").then(res => {
+            ctx.actions.wsCall("padspan_ha/private_ble_status").then(res => {
               ctx.state._pbleStatus = res;
               ctx.actions.renderRooms();
             });
@@ -287,7 +287,7 @@ export function render(ctx) {
               const hex = (d.canonical_id || "").replace("irk:", "");
               await ctx.actions.wsCall("padspan_ha/irk_remove", { irk_hex: hex });
               ctx.state._pbleStatus = null;
-              ctx.actions.wsCommand("padspan_ha/private_ble_status").then(res => { ctx.state._pbleStatus = res; ctx.actions.renderRooms(); });
+              ctx.actions.wsCall("padspan_ha/private_ble_status").then(res => { ctx.state._pbleStatus = res; ctx.actions.renderRooms(); });
             });
             rmRow.appendChild(rmBtn);
             rmDiv.appendChild(rmRow);
@@ -318,7 +318,7 @@ export function render(ctx) {
       refreshBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         ctx.state._pbleStatus = null;
-        ctx.actions.wsCommand("padspan_ha/private_ble_status").then(res => {
+        ctx.actions.wsCall("padspan_ha/private_ble_status").then(res => {
           ctx.state._pbleStatus = res;
           ctx.actions.renderRooms();
         });
@@ -1811,7 +1811,7 @@ function renderIrkPanel(ctx) {
   // ── Lazy-load status on first render ──
   if (!ctx.state._irkPanelStatus) {
     ctx.state._irkPanelLoading = true;
-    ctx.actions.wsCommand("padspan_ha/private_ble_status").then(res => {
+    ctx.actions.wsCall("padspan_ha/private_ble_status").then(res => {
       ctx.state._irkPanelStatus = res;
       ctx.state._irkPanelLoading = false;
       ctx.actions.renderRooms();
