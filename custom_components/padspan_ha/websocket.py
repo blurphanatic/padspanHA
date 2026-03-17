@@ -158,6 +158,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_adaptive_status_get)
     websocket_api.async_register_command(hass, ws_adaptive_reset)
     websocket_api.async_register_command(hass, ws_propagation_health)
+    websocket_api.async_register_command(hass, ws_system_critics)
     websocket_api.async_register_command(hass, ws_store_backup_create)
     websocket_api.async_register_command(hass, ws_store_backup_list)
     websocket_api.async_register_command(hass, ws_store_backup_restore)
@@ -4996,6 +4997,314 @@ async def ws_propagation_health(hass: HomeAssistant, connection, msg) -> None:
             "adaptive_enabled": bool(settings.get("adaptive_learning_enabled")),
             "adaptive_maturity": ad.maturity() if ad else 0,
         },
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 4: System Self-Diagnosis ("Critics")
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Aggregates data from the calibration store, adaptive store, presence
+# coordinator (scanner reliability), and maps store into a unified list of
+# actionable diagnostic messages.  Each "critic" describes a specific issue,
+# its severity, and a concrete next step.
+#
+# Categories:
+#   room_confusion  — room pairs with high bidirectional transition counts
+#   map_quality     — per-map LOO position error
+#   scanner         — scanners that persistently disagree with consensus
+#   calibration     — staleness, sparse coverage, scanner RSSI anomalies
+#   propagation     — adaptive-store fingerprint issues
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/system_critics"})
+@websocket_api.async_response
+async def ws_system_critics(hass: HomeAssistant, connection, msg) -> None:
+    """Phase 4: unified system self-diagnosis.
+
+    Collects diagnostics from every data source and emits a flat list of
+    critic messages sorted by severity, plus a room-confusion matrix.
+    """
+    from datetime import datetime, timezone as _tz  # noqa: PLC0415
+    import math as _math  # noqa: PLC0415
+
+    domain = hass.data.get(DOMAIN, {})
+    ad = domain.get(DATA_ADAPTIVE)
+    calib = domain.get(DATA_CALIBRATION)
+    coord = domain.get(DATA_COORDINATOR)
+    maps_store = domain.get(DATA_MAPS)
+    st = domain.get(DATA_SETTINGS)
+    settings: dict[str, Any] = (st.data if st else {}) or {}
+
+    critics: list[dict[str, Any]] = []
+
+    # ── 1. Room Confusion Matrix ──────────────────────────────────────────────
+    # Analyse bidirectional transition counts from the adaptive store.
+    # Rooms that frequently transition back and forth are likely "confused" —
+    # the system keeps oscillating between them.
+    confusion_matrix: list[dict[str, Any]] = []
+    if ad:
+        tc = (ad.data or {}).get("transition_counts", {})
+        # Build symmetric pair counts: confusion(A,B) = tc[A][B] + tc[B][A]
+        pair_counts: dict[tuple[str, str], int] = {}
+        for from_room, dests in tc.items():
+            for to_room, count in dests.items():
+                if from_room == to_room:
+                    continue
+                pair = tuple(sorted([from_room, to_room]))
+                pair_counts[pair] = pair_counts.get(pair, 0) + count
+
+        # Total transitions for rate calculation
+        total_transitions = sum(pair_counts.values()) if pair_counts else 1
+
+        # Sort by count descending — top confused pairs first
+        sorted_pairs = sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)
+
+        for (room_a, room_b), count in sorted_pairs:
+            if count < 4:
+                break  # below noise threshold
+            rate = round(count / total_transitions, 3) if total_transitions else 0
+            confusion_matrix.append({
+                "room_a": room_a,
+                "room_b": room_b,
+                "count": count,
+                "rate": rate,
+            })
+
+        # Flag top confused pairs as critics
+        for entry in confusion_matrix[:5]:
+            count = entry["count"]
+            rate = entry["rate"]
+            room_a, room_b = entry["room_a"], entry["room_b"]
+            if rate >= 0.15:
+                severity = "critical"
+            elif rate >= 0.08 or count >= 20:
+                severity = "warning"
+            else:
+                severity = "info"
+            critics.append({
+                "category": "room_confusion",
+                "severity": severity,
+                "title": f"{room_a} \u2194 {room_b} frequently confused",
+                "message": (
+                    f"{count} bidirectional transitions ({rate:.0%} of all). "
+                    "The system may be oscillating between these rooms."
+                ),
+                "action": (
+                    f"Add calibration points in both {room_a} and {room_b}, "
+                    "especially near the boundary. Consider adding an RF barrier "
+                    "in the map editor if a wall separates them."
+                ),
+            })
+
+    # ── 2. Per-Map Quality (LOO cross-validation) ─────────────────────────────
+    per_map_quality: list[dict[str, Any]] = []
+    if calib:
+        try:
+            maps_data = maps_store.list_maps() if maps_store else []
+            model = calib.compute_model(maps_data)
+            cov_by_map = model.get("coverage_by_map", {})
+            map_name_lookup: dict[str, str] = {}
+            for m in maps_data:
+                map_name_lookup[m.get("id", "")] = m.get("name", m.get("id", ""))
+
+            for mid, cov in cov_by_map.items():
+                loo = cov.get("loo_accuracy")
+                map_name = map_name_lookup.get(mid, mid)
+                point_count = cov.get("point_count", 0)
+                entry = {
+                    "map_id": mid,
+                    "map_name": map_name,
+                    "point_count": point_count,
+                    "mean_error_frac": loo["mean_error_frac"] if loo else None,
+                    "mean_error_m_est": loo["mean_error_m_est"] if loo else None,
+                    "max_error_frac": loo["max_error_frac"] if loo else None,
+                }
+                per_map_quality.append(entry)
+
+                # Generate critic if LOO error is high
+                if loo:
+                    err_m = loo.get("mean_error_m_est", 0)
+                    err_frac = loo.get("mean_error_frac", 0)
+                    if err_frac >= 0.15:
+                        severity = "critical"
+                    elif err_frac >= 0.08:
+                        severity = "warning"
+                    else:
+                        continue  # acceptable
+                    critics.append({
+                        "category": "map_quality",
+                        "severity": severity,
+                        "title": f"Map \u201c{map_name}\u201d has high calibration error",
+                        "message": (
+                            f"LOO mean error: {err_m:.1f}m ({err_frac:.1%} of map). "
+                            f"Max error: {loo.get('max_error_frac', 0):.1%}. "
+                            f"Based on {point_count} calibration points."
+                        ),
+                        "action": (
+                            f"Add more calibration points to \u201c{map_name}\u201d, "
+                            "especially in areas with poor coverage. Check that "
+                            "room boundaries match the physical layout."
+                        ),
+                    })
+                elif point_count < 5:
+                    critics.append({
+                        "category": "map_quality",
+                        "severity": "info",
+                        "title": f"Map \u201c{map_name}\u201d has few calibration points",
+                        "message": f"Only {point_count} point(s). Need \u22655 for LOO validation.",
+                        "action": f"Run a calibration walk-around on \u201c{map_name}\u201d.",
+                    })
+        except Exception:
+            pass
+
+    # ── 3. Scanner Disagreement (from coordinator Phase 3 data) ───────────────
+    scanner_critics: list[dict[str, Any]] = []
+    if coord and hasattr(coord, "_scanner_reliability"):
+        # Get live radio names for friendly display
+        live_radios: list[dict[str, Any]] = []
+        try:
+            live_radios = (
+                coord.data.get("ble", {}).get("radios", []) if coord.data else []
+            )
+        except Exception:
+            pass
+        radio_name_map: dict[str, str] = {}
+        for _r in live_radios:
+            _src = _r.get("source") or ""
+            _nm = _r.get("name") or _r.get("area_name") or _r.get("area") or ""
+            if _src and _nm:
+                radio_name_map[_src] = _nm
+
+        for src, rel in coord._scanner_reliability.items():
+            q = coord._scanner_agree.get(src)
+            polls = len(q) if q else 0
+            if polls < 12:
+                continue  # not enough data
+            agree_pct = round(sum(q) / polls * 100, 0) if polls else 100
+            name = radio_name_map.get(src, src)
+            entry = {
+                "source": src,
+                "name": name,
+                "reliability": rel,
+                "agree_pct": agree_pct,
+                "polls": polls,
+            }
+            scanner_critics.append(entry)
+
+            if rel < 0.6:
+                severity = "critical"
+            elif rel < 0.7:
+                severity = "warning"
+            else:
+                continue  # healthy
+            critics.append({
+                "category": "scanner",
+                "severity": severity,
+                "title": f"Scanner \u201c{name}\u201d disagrees with consensus",
+                "message": (
+                    f"Reliability {rel:.2f} ({agree_pct:.0f}% agreement over {polls} polls). "
+                    "This scanner frequently assigns objects to the wrong room."
+                ),
+                "action": (
+                    f"Check scanner \u201c{name}\u201d placement and antenna orientation. "
+                    "Ensure it is in the correct HA area. Consider adjusting its "
+                    "RSSI offset in Settings \u2192 Scanner Map."
+                ),
+            })
+
+    # ── 4. Calibration Staleness & Coverage Gaps ──────────────────────────────
+    if calib:
+        points: list[dict[str, Any]] = calib.data.get("points") or []
+        now_ts = datetime.now(_tz.utc).timestamp()
+
+        # Staleness
+        if points:
+            isos = [p.get("collected_at") or "" for p in points]
+            latest_iso = max((s for s in isos if s), default="")
+            if latest_iso:
+                try:
+                    latest_ts = datetime.fromisoformat(latest_iso).timestamp()
+                    stale_days = round((now_ts - latest_ts) / 86400)
+                    if stale_days > 90:
+                        critics.append({
+                            "category": "calibration",
+                            "severity": "warning",
+                            "title": "Calibration data is stale",
+                            "message": f"Last calibration was {stale_days} days ago.",
+                            "action": "Run a fresh calibration walk-around to account for any changes in furniture, hardware, or RF environment.",
+                        })
+                    elif stale_days > 60:
+                        critics.append({
+                            "category": "calibration",
+                            "severity": "info",
+                            "title": "Calibration data is aging",
+                            "message": f"Last calibration was {stale_days} days ago. Consider refreshing soon.",
+                            "action": "Schedule a calibration session to keep accuracy optimal.",
+                        })
+                except Exception:
+                    pass
+        elif not points:
+            critics.append({
+                "category": "calibration",
+                "severity": "critical",
+                "title": "No calibration data",
+                "message": "The system has zero calibration points. Positioning relies solely on adaptive learning and default models.",
+                "action": "Run the Calibration \u2192 Tune workflow to collect reference data.",
+            })
+
+    # ── 5. Adaptive Learning Health ───────────────────────────────────────────
+    if ad:
+        fp_data = (ad.data or {}).get("room_fingerprints", {})
+        stats = (ad.data or {}).get("stats", {})
+        total_obs = stats.get("total_observations", 0)
+
+        # Rooms with unstable fingerprints (high variance)
+        for room_name, room_fp in fp_data.items():
+            vars_list = [
+                s.get("var", 0) for s in room_fp.values()
+                if s.get("n", 0) >= 10
+            ]
+            if not vars_list:
+                continue
+            avg_var = sum(vars_list) / len(vars_list)
+            if avg_var > 25:
+                critics.append({
+                    "category": "propagation",
+                    "severity": "warning",
+                    "title": f"{room_name} fingerprint is unstable",
+                    "message": f"Average RSSI variance {avg_var:.1f} dBm\u00b2 (target <15). Signal environment is noisy or changing.",
+                    "action": f"Check for interference sources near {room_name} (microwaves, USB3, WiFi APs). Consider adding calibration points.",
+                })
+
+        if not settings.get("adaptive_learning_enabled") and total_obs == 0:
+            critics.append({
+                "category": "propagation",
+                "severity": "info",
+                "title": "Adaptive learning is disabled",
+                "message": "The system is not passively learning from confirmed room assignments.",
+                "action": "Enable adaptive learning in Settings \u2192 Presence to improve accuracy over time.",
+            })
+
+    # ── Sort by severity ──────────────────────────────────────────────────────
+    _sev_order = {"critical": 0, "warning": 1, "info": 2}
+    critics.sort(key=lambda c: (_sev_order.get(c["severity"], 9), c["category"]))
+
+    # ── Summary counts ────────────────────────────────────────────────────────
+    summary = {
+        "total": len(critics),
+        "critical": sum(1 for c in critics if c["severity"] == "critical"),
+        "warning": sum(1 for c in critics if c["severity"] == "warning"),
+        "info": sum(1 for c in critics if c["severity"] == "info"),
+        "healthy": len(critics) == 0,
+    }
+
+    connection.send_result(msg["id"], {
+        "summary": summary,
+        "critics": critics,
+        "confusion_matrix": confusion_matrix[:20],  # cap at 20 pairs
+        "per_map_quality": per_map_quality,
+        "scanner_critics": scanner_critics,
     })
 
 

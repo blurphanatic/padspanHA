@@ -3,11 +3,19 @@
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 /**
- * Health view — quick system status summary.
- * Shows UI version/build, data mode, last refresh timing, and best-effort
- * live discovery counts (rooms, radios, tags). Lightweight counterpart
- * to the full Diagnostics JSON dump.
+ * Health view — system status summary + Phase 4 System Critics.
+ *
+ * Top section: quick system info (version, build, data mode, refresh timing).
+ * Scanner Health: Phase 3 per-scanner reliability table.
+ * System Critics: Phase 4 unified self-diagnosis — room confusion, map quality,
+ *   scanner issues, calibration status, and propagation health.  Fetched via
+ *   the padspan_ha/system_critics WS handler on each render.
  */
+
+// Cache for critics data — refreshed when view is active
+let _criticsCache = null;
+let _criticsFetchTs = 0;
+const _CRITICS_TTL_MS = 30000; // refresh every 30s
 
 export function render(ctx){
   const { el } = ctx.helpers;
@@ -24,7 +32,7 @@ export function render(ctx){
       el("div",{style:"font-weight:700"},"System"),
       el("div",{class:"mono"}, `UI v${ctx.state.version} • build ${ctx.state.buildId}`),
       el("div",{class:"mono"}, `Data mode: ${ctx.state.dataMode.toUpperCase()}`),
-      el("div",{class:"mono"}, `Refresh: ${ctx.state.timing.lastRefreshMs ?? "—"}ms`),
+      el("div",{class:"mono"}, `Refresh: ${ctx.state.timing.lastRefreshMs ?? "\u2014"}ms`),
     ]),
     el("div",{class:"card"},[
       el("div",{style:"font-weight:700"},"Live Discovery (best-effort)"),
@@ -60,7 +68,7 @@ export function render(ctx){
         sid ? el("span",{class:"pill",style:"font-family:monospace;font-size:10px;padding:0 4px"},sid) : null,
       ].filter(Boolean)));
       tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap"},name));
-      tbl.appendChild(el("div",{class:"muted"},d.room || "—"));
+      tbl.appendChild(el("div",{class:"muted"},d.room || "\u2014"));
       tbl.appendChild(el("div",{style:`color:${dotColor}`},`${d.agree_pct}%`));
       tbl.appendChild(el("div",{class:"mono"},String(rel)));
     }
@@ -77,5 +85,184 @@ export function render(ctx){
     root.appendChild(shCard);
   }
 
+  // ── Phase 4: System Critics ─────────────────────────────────────────────
+  const criticsContainer = el("div",{id:"health-critics",style:"margin-top:16px"});
+  root.appendChild(criticsContainer);
+
+  // Fetch critics data (async, updates the container when ready)
+  _fetchAndRenderCritics(ctx, criticsContainer);
+
   return root;
+}
+
+
+// ── Critics fetch & render ────────────────────────────────────────────────
+
+async function _fetchAndRenderCritics(ctx, container) {
+  const { el } = ctx.helpers;
+  const now = Date.now();
+
+  // Use cache if fresh enough
+  if (_criticsCache && (now - _criticsFetchTs) < _CRITICS_TTL_MS) {
+    _renderCritics(ctx, container, _criticsCache);
+    return;
+  }
+
+  // Loading state
+  container.innerHTML = "";
+  container.appendChild(el("div",{class:"card",style:"text-align:center;color:#94a3b8;padding:20px"},
+    "Loading system diagnostics\u2026"
+  ));
+
+  try {
+    const res = await ctx.actions.callWS({ type: "padspan_ha/system_critics" });
+    _criticsCache = res;
+    _criticsFetchTs = Date.now();
+    _renderCritics(ctx, container, res);
+  } catch (err) {
+    container.innerHTML = "";
+    container.appendChild(el("div",{class:"card",style:"color:#fca5a5"},
+      `Failed to load system critics: ${err.message || err}`
+    ));
+  }
+}
+
+function _renderCritics(ctx, container, data) {
+  const { el } = ctx.helpers;
+  container.innerHTML = "";
+
+  const { summary, critics, confusion_matrix, per_map_quality } = data;
+
+  // ── Summary Banner ──────────────────────────────────────────────────────
+  const bannerColor = summary.healthy ? "#52b788" :
+    summary.critical > 0 ? "#f87171" :
+    summary.warning > 0 ? "#f59e0b" : "#52b788";
+  const bannerBg = summary.healthy ? "rgba(82,183,136,.08)" :
+    summary.critical > 0 ? "rgba(248,113,113,.08)" :
+    summary.warning > 0 ? "rgba(245,158,11,.08)" : "rgba(82,183,136,.08)";
+  const bannerText = summary.healthy
+    ? "All systems healthy \u2014 no issues detected."
+    : `${summary.total} issue${summary.total !== 1 ? "s" : ""} found: ` +
+      [
+        summary.critical > 0 ? `${summary.critical} critical` : "",
+        summary.warning > 0 ? `${summary.warning} warning` : "",
+        summary.info > 0 ? `${summary.info} info` : "",
+      ].filter(Boolean).join(", ");
+
+  container.appendChild(el("div",{
+    class:"card",
+    style:`border:1px solid ${bannerColor}33;background:${bannerBg};margin-bottom:12px`
+  },[
+    el("div",{style:`display:flex;align-items:center;gap:8px`},[
+      el("div",{style:`font-weight:800;font-size:15px;color:${bannerColor}`},"System Critics"),
+      el("div",{class:"pill",style:`background:${bannerColor}22;color:${bannerColor};font-size:10px;padding:2px 8px`},
+        summary.healthy ? "HEALTHY" : `${summary.total} ISSUE${summary.total !== 1 ? "S" : ""}`
+      ),
+    ]),
+    el("div",{style:`font-size:12px;color:${bannerColor};margin-top:4px`}, bannerText),
+  ]));
+
+  // ── Critic Cards ────────────────────────────────────────────────────────
+  if (critics.length) {
+    const sevColors = {
+      critical: { bg: "rgba(248,113,113,.06)", border: "#f8717133", text: "#fca5a5", icon: "\u26d4" },
+      warning:  { bg: "rgba(245,158,11,.06)",  border: "#f59e0b33", text: "#fbbf24", icon: "\u26a0" },
+      info:     { bg: "rgba(148,163,184,.06)", border: "#94a3b833", text: "#94a3b8", icon: "\u2139" },
+    };
+
+    for (const critic of critics) {
+      const sev = sevColors[critic.severity] || sevColors.info;
+      const card = el("div",{
+        class:"card",
+        style:`border:1px solid ${sev.border};background:${sev.bg};margin-bottom:8px;padding:12px`
+      });
+      card.innerHTML = `
+        <div style="display:flex;align-items:flex-start;gap:8px">
+          <span style="font-size:14px;line-height:1">${sev.icon}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:12px;color:${sev.text};text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">
+              ${_escHtml(critic.category.replace(/_/g, " "))} \u2022 ${_escHtml(critic.severity)}
+            </div>
+            <div style="font-weight:600;font-size:13px;color:#e2e8f0;margin-bottom:4px">${_escHtml(critic.title)}</div>
+            <div style="font-size:11px;color:#94a3b8;line-height:1.5">${_escHtml(critic.message)}</div>
+            <div style="font-size:11px;color:#5eead4;margin-top:6px;line-height:1.4"><b>Action:</b> ${_escHtml(critic.action)}</div>
+          </div>
+        </div>
+      `;
+      container.appendChild(card);
+    }
+  }
+
+  // ── Room Confusion Matrix ───────────────────────────────────────────────
+  if (confusion_matrix && confusion_matrix.length) {
+    const cmCard = el("div",{class:"card",style:"margin-top:12px"});
+    cmCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:8px"},"Room Confusion Matrix"));
+    cmCard.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:8px"},
+      "Bidirectional transitions between room pairs. High counts suggest the system oscillates between these rooms."
+    ));
+
+    const tbl = el("div",{style:"display:grid;grid-template-columns:1fr 1fr auto auto;gap:4px 10px;font-size:11px;align-items:center"});
+    // Header
+    for (const h of ["Room A","Room B","Transitions","Rate"]) {
+      tbl.appendChild(el("div",{style:"font-weight:600;color:#94a3b8;font-size:10px;text-transform:uppercase"},h));
+    }
+    // Find max count for heat coloring
+    const maxCount = confusion_matrix.length ? confusion_matrix[0].count : 1;
+    for (const entry of confusion_matrix.slice(0, 15)) {
+      const heat = Math.min(1, entry.count / Math.max(maxCount, 1));
+      const heatColor = heat > 0.6 ? "#f87171" : heat > 0.3 ? "#f59e0b" : "#52b788";
+      tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, entry.room_a));
+      tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, entry.room_b));
+      tbl.appendChild(el("div",{style:`color:${heatColor};font-weight:600;text-align:right`}, String(entry.count)));
+      tbl.appendChild(el("div",{class:"muted",style:"text-align:right"}, `${(entry.rate * 100).toFixed(1)}%`));
+    }
+    cmCard.appendChild(tbl);
+    container.appendChild(cmCard);
+  }
+
+  // ── Per-Map Quality ─────────────────────────────────────────────────────
+  if (per_map_quality && per_map_quality.length) {
+    const mqCard = el("div",{class:"card",style:"margin-top:12px"});
+    mqCard.appendChild(el("div",{style:"font-weight:700;margin-bottom:8px"},"Map Calibration Quality"));
+    mqCard.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:8px"},
+      "Leave-one-out cross-validation error per map. Lower is better."
+    ));
+
+    const tbl = el("div",{style:"display:grid;grid-template-columns:1fr auto auto auto;gap:4px 10px;font-size:11px;align-items:center"});
+    for (const h of ["Map","Points","Mean Error","Max Error"]) {
+      tbl.appendChild(el("div",{style:"font-weight:600;color:#94a3b8;font-size:10px;text-transform:uppercase"},h));
+    }
+    for (const m of per_map_quality) {
+      const errFrac = m.mean_error_frac;
+      const errColor = errFrac == null ? "#94a3b8" :
+        errFrac >= 0.15 ? "#f87171" : errFrac >= 0.08 ? "#f59e0b" : "#52b788";
+      tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, m.map_name || m.map_id));
+      tbl.appendChild(el("div",{style:"text-align:right"}, String(m.point_count)));
+      tbl.appendChild(el("div",{style:`color:${errColor};text-align:right`},
+        errFrac != null ? `${m.mean_error_m_est}m (${(errFrac * 100).toFixed(1)}%)` : "\u2014"
+      ));
+      tbl.appendChild(el("div",{class:"muted",style:"text-align:right"},
+        m.max_error_frac != null ? `${(m.max_error_frac * 100).toFixed(1)}%` : "\u2014"
+      ));
+    }
+    mqCard.appendChild(tbl);
+    container.appendChild(mqCard);
+  }
+
+  // ── Refresh button ──────────────────────────────────────────────────────
+  const refreshBtn = el("button",{class:"btn",style:"margin-top:12px;width:auto;padding:6px 16px"}, "Refresh Critics");
+  refreshBtn.addEventListener("click", () => {
+    _criticsCache = null;
+    _criticsFetchTs = 0;
+    _fetchAndRenderCritics(ctx, container);
+  });
+  container.appendChild(refreshBtn);
+}
+
+function _escHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }

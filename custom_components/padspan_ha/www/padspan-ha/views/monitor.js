@@ -648,7 +648,122 @@ function _health(ctx, el){
       el("div",{class:"mono"},`Advertisements: ${(snap.ble.advertisements||[]).length}`),
     ]));
   }
+
+  // ── Phase 4: System Critics Summary ────────────────────────────────────
+  const criticsWrap = el("div",{style:"grid-column:1/-1;margin-top:4px"});
+  wrap.appendChild(criticsWrap);
+  _fetchCriticsInline(ctx, el, criticsWrap);
+
   return wrap;
+}
+
+// ── Phase 4: Inline critics for Monitor → Health sub-tab ─────────────────
+let _monCriticsCache = null;
+let _monCriticsFetchTs = 0;
+
+async function _fetchCriticsInline(ctx, el, container) {
+  const now = Date.now();
+  if (_monCriticsCache && (now - _monCriticsFetchTs) < 30000) {
+    _renderCriticsInline(ctx, el, container, _monCriticsCache);
+    return;
+  }
+  container.innerHTML = "";
+  container.appendChild(el("div",{class:"card",style:"text-align:center;color:#94a3b8;padding:16px"},
+    "Loading system critics\u2026"
+  ));
+  try {
+    const res = await ctx.actions.callWS({ type: "padspan_ha/system_critics" });
+    _monCriticsCache = res;
+    _monCriticsFetchTs = Date.now();
+    _renderCriticsInline(ctx, el, container, res);
+  } catch (err) {
+    container.innerHTML = "";
+    container.appendChild(el("div",{class:"card",style:"color:#fca5a5"},
+      `Failed to load system critics: ${err.message || err}`
+    ));
+  }
+}
+
+function _renderCriticsInline(ctx, el, container, data) {
+  container.innerHTML = "";
+  const { summary, critics, confusion_matrix } = data;
+
+  // Summary banner
+  const bannerColor = summary.healthy ? "#52b788" :
+    summary.critical > 0 ? "#f87171" :
+    summary.warning > 0 ? "#f59e0b" : "#52b788";
+  const bannerText = summary.healthy
+    ? "All systems healthy \u2014 no issues detected."
+    : `${summary.total} issue${summary.total !== 1 ? "s" : ""}: ` +
+      [
+        summary.critical > 0 ? `${summary.critical} critical` : "",
+        summary.warning > 0 ? `${summary.warning} warning` : "",
+        summary.info > 0 ? `${summary.info} info` : "",
+      ].filter(Boolean).join(", ");
+
+  const banner = el("div",{class:"card",style:`border:1px solid ${bannerColor}33;background:${bannerColor}08`},[
+    el("div",{style:`display:flex;align-items:center;gap:8px`},[
+      el("div",{style:`font-weight:800;font-size:14px;color:${bannerColor}`},"System Critics (Phase 4)"),
+      el("div",{class:"pill",style:`background:${bannerColor}22;color:${bannerColor};font-size:10px;padding:2px 8px`},
+        summary.healthy ? "HEALTHY" : `${summary.total} ISSUE${summary.total !== 1 ? "S" : ""}`
+      ),
+    ]),
+    el("div",{style:`font-size:11px;color:${bannerColor};margin-top:4px`}, bannerText),
+  ]);
+  container.appendChild(banner);
+
+  // Show top 5 critics inline
+  const sevColors = {
+    critical: { text: "#fca5a5", icon: "\u26d4" },
+    warning:  { text: "#fbbf24", icon: "\u26a0" },
+    info:     { text: "#94a3b8", icon: "\u2139" },
+  };
+  const topCritics = critics.slice(0, 5);
+  if (topCritics.length) {
+    const list = el("div",{style:"margin-top:8px"});
+    for (const c of topCritics) {
+      const sev = sevColors[c.severity] || sevColors.info;
+      const row = el("div",{style:`display:flex;align-items:flex-start;gap:6px;padding:6px 0;border-bottom:1px solid #1e3a2c;font-size:11px`});
+      row.innerHTML = `<span style="color:${sev.text}">${sev.icon}</span>
+        <span style="color:${sev.text};font-weight:600">${_escHtmlMon(c.title)}</span>
+        <span style="color:#64748b;margin-left:auto;white-space:nowrap;font-size:10px">${_escHtmlMon(c.category.replace(/_/g," "))}</span>`;
+      list.appendChild(row);
+    }
+    if (critics.length > 5) {
+      list.appendChild(el("div",{style:"font-size:10px;color:#64748b;padding-top:4px"},
+        `+ ${critics.length - 5} more issue${critics.length - 5 > 1 ? "s" : ""}\u2026`
+      ));
+    }
+    container.appendChild(list);
+  }
+
+  // Room confusion mini-table (top 5)
+  if (confusion_matrix && confusion_matrix.length) {
+    const cm = el("div",{style:"margin-top:10px"});
+    cm.appendChild(el("div",{style:"font-weight:600;font-size:11px;color:#94a3b8;margin-bottom:4px"},"Top Confused Room Pairs"));
+    const tbl = el("div",{style:"display:grid;grid-template-columns:1fr 1fr auto;gap:2px 8px;font-size:11px"});
+    for (const entry of confusion_matrix.slice(0, 5)) {
+      const heat = entry.rate >= 0.15 ? "#f87171" : entry.rate >= 0.08 ? "#f59e0b" : "#94a3b8";
+      tbl.appendChild(el("div",{}, entry.room_a));
+      tbl.appendChild(el("div",{}, entry.room_b));
+      tbl.appendChild(el("div",{style:`color:${heat};text-align:right`}, `${entry.count}x`));
+    }
+    cm.appendChild(tbl);
+    container.appendChild(cm);
+  }
+
+  // Refresh button
+  const refreshBtn = el("button",{class:"btn",style:"margin-top:8px;width:auto;padding:4px 12px;font-size:11px"}, "Refresh");
+  refreshBtn.addEventListener("click", () => {
+    _monCriticsCache = null;
+    _monCriticsFetchTs = 0;
+    _fetchCriticsInline(ctx, el, container);
+  });
+  container.appendChild(refreshBtn);
+}
+
+function _escHtmlMon(str) {
+  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
 
