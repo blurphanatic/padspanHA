@@ -22,47 +22,90 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.14.47";
-const BUILD_ID = "20260317T184452Z";
+const APP_VERSION = "0.14.48";
+const BUILD_ID = "20260317T185059Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
-// Using dynamic import() instead of static imports so that a single failing
-// module cannot prevent customElements.define() from running (which would blank
-// the entire panel). All imports run in parallel via Promise.allSettled; a
-// failure in one view makes only that view unavailable, not the whole panel.
+// Two-phase loading for fast first paint:
+//   Phase 1 (critical): sample_data, help_content, overview, follow — enough to
+//                        render the default view immediately.
+//   Phase 2 (deferred): remaining views load in background after first render.
+// On-demand: if the user navigates to a view that hasn't loaded yet,
+// _loadView() fetches it immediately and re-renders.
 let SAMPLE_SNAPSHOT = null;
 let HELP = {};
 const VIEWS = {};
 
-const _viewsPromise = Promise.allSettled([
+// Map of view id → module path for on-demand loading
+const _VIEW_PATHS = {
+  follow:       "./views/follow.js",
+  overview:     "./views/overview.js",
+  objects:      "./views/objects.js",
+  devices:      "./views/devices.js",
+  bluetooth:    "./views/bluetooth.js",
+  presence:     "./views/presence.js",
+  history:      "./views/history.js",
+  monitor:      "./views/monitor.js",
+  maps:         "./views/maps.js",
+  events:       "./views/events.js",
+  health:       "./views/health.js",
+  settings:     "./views/settings.js",
+  manage:       "./views/manage.js",
+  debug:        "./views/debug.js",
+  diagnostics:  "./views/diagnostics.js",
+  qa:           "./views/qa.js",
+  training:     "./views/training.js",
+  calibration:  "./views/calibration.js",
+  traceback:    "./views/traceback.js",
+  sandbox:      "./views/sandbox.js",
+};
+
+// Track in-flight imports to avoid duplicate fetches
+const _viewLoading = {};
+
+/** Load a single view on demand. Returns a promise that resolves when ready. */
+function _loadView(id) {
+  if (VIEWS[id]) return Promise.resolve(VIEWS[id]);
+  if (_viewLoading[id]) return _viewLoading[id];
+  const path = _VIEW_PATHS[id];
+  if (!path) return Promise.resolve(null);
+  _viewLoading[id] = import(`${path}?b=${BUILD_ID}`)
+    .then(m => { VIEWS[id] = m; delete _viewLoading[id]; return m; })
+    .catch(err => { console.warn("PadSpan: failed to load view", id, err); delete _viewLoading[id]; return null; });
+  return _viewLoading[id];
+}
+
+// Phase 1: critical modules — just enough for the default view
+const _criticalPromise = Promise.allSettled([
   import(`./sample_data.js?b=${BUILD_ID}`).then(m => { SAMPLE_SNAPSHOT = m.SAMPLE_SNAPSHOT || null; }),
   import(`./help_content.js?b=${BUILD_ID}`).then(m => { HELP = m.HELP || {}; }),
-  import(`./views/follow.js?b=${BUILD_ID}`).then(m => { VIEWS.follow = m; }),
   import(`./views/overview.js?b=${BUILD_ID}`).then(m => { VIEWS.overview = m; }),
-  import(`./views/objects.js?b=${BUILD_ID}`).then(m => { VIEWS.objects = m; }),
-  import(`./views/devices.js?b=${BUILD_ID}`).then(m => { VIEWS.devices = m; }),
-  import(`./views/bluetooth.js?b=${BUILD_ID}`).then(m => { VIEWS.bluetooth = m; }),
-  import(`./views/presence.js?b=${BUILD_ID}`).then(m => { VIEWS.presence = m; }),
-  import(`./views/history.js?b=${BUILD_ID}`).then(m => { VIEWS.history = m; }),
-  import(`./views/monitor.js?b=${BUILD_ID}`).then(m => { VIEWS.monitor = m; }),
-  import(`./views/maps.js?b=${BUILD_ID}`).then(m => { VIEWS.maps = m; }),
-  import(`./views/events.js?b=${BUILD_ID}`).then(m => { VIEWS.events = m; }),
-  import(`./views/health.js?b=${BUILD_ID}`).then(m => { VIEWS.health = m; }),
-  import(`./views/settings.js?b=${BUILD_ID}`).then(m => { VIEWS.settings = m; }),
-  import(`./views/manage.js?b=${BUILD_ID}`).then(m => { VIEWS.manage = m; }),
-  import(`./views/debug.js?b=${BUILD_ID}`).then(m => { VIEWS.debug = m; }),
-  import(`./views/diagnostics.js?b=${BUILD_ID}`).then(m => { VIEWS.diagnostics = m; }),
-  import(`./views/qa.js?b=${BUILD_ID}`).then(m => { VIEWS.qa = m; }),
-  import(`./views/training.js?b=${BUILD_ID}`).then(m => { VIEWS.training = m; }),
-  import(`./views/calibration.js?b=${BUILD_ID}`).then(m => { VIEWS.calibration = m; }),
-  import(`./views/traceback.js?b=${BUILD_ID}`).then(m => { VIEWS.traceback = m; }),
-  import(`./views/sandbox.js?b=${BUILD_ID}`).then(m => { VIEWS.sandbox = m; }),
+  import(`./views/follow.js?b=${BUILD_ID}`).then(m => { VIEWS.follow = m; }),
 ]).then(results => {
   results.forEach((r, i) => {
-    if(r.status === "rejected") console.warn("PadSpan: view module [" + i + "] failed to load:", r.reason);
+    if(r.status === "rejected") console.warn("PadSpan: critical module [" + i + "] failed to load:", r.reason);
   });
 });
+
+// Phase 2: remaining views — loaded in background after first paint
+const _deferredViewIds = Object.keys(_VIEW_PATHS).filter(id => id !== "overview" && id !== "follow");
+let _deferredStarted = false;
+function _startDeferredLoads() {
+  if (_deferredStarted) return;
+  _deferredStarted = true;
+  // Stagger slightly to avoid hammering the network on slow hardware
+  Promise.allSettled(
+    _deferredViewIds.map(id =>
+      import(`${_VIEW_PATHS[id]}?b=${BUILD_ID}`)
+        .then(m => { VIEWS[id] = m; })
+        .catch(err => console.warn("PadSpan: deferred view", id, "failed:", err))
+    )
+  );
+}
+
+// Backwards compat: anything that awaits _viewsPromise still works
+const _viewsPromise = _criticalPromise;
 
 // ── Sidebar Menu Definition ──────────────────────────────────────────────────
 // Each entry: [route_id, display_label, mdi_icon].
@@ -301,15 +344,17 @@ class PadSpanHaApp extends HTMLElement {
     this._hass = hass;
     if(!this._booted){
       this._booted = true;
-      // Wait for all view modules to be ready before the first full refresh
-      _viewsPromise.then(() => {
+      // Wait for critical view modules (overview + follow), then render immediately.
+      // Deferred views load in background after first paint.
+      _criticalPromise.then(() => {
+        _startDeferredLoads();
         this._refreshAll(false);
         if(this.state.dataMode === "live") this._startPolling();
       });
     } else if(hass && prevHass && hass !== prevHass && hass.connection !== prevHass.connection){
       // HA reconnected with a new WS connection (e.g. after network blip) — re-bootstrap
       this._pollInFlight = false;
-      _viewsPromise.then(() => {
+      _criticalPromise.then(() => {
         this._ensureShadowDom();
         this._refreshAll(false);
         if(this.state.dataMode === "live") this._startDataPoll();
@@ -523,7 +568,8 @@ class PadSpanHaApp extends HTMLElement {
           + `<div style="color:#64748b;font-size:12px" id="padspan-load-status">Loading modules\u2026</div>`;
         this.$content.appendChild(lo);
       }
-      _viewsPromise.then(() => {
+      _criticalPromise.then(() => {
+        _startDeferredLoads();
         const statusEl = this.$content?.querySelector("#padspan-load-status");
         if(statusEl) statusEl.textContent = "Connecting\u2026";
         this._renderNav();       // rebuild nav after complexity may have been restored
@@ -1141,7 +1187,13 @@ class PadSpanHaApp extends HTMLElement {
       this._logEvent("view_change", id);
       if (this._closeDrawer) this._closeDrawer();
       this._renderNav();
-      this._renderCurrentView();
+      // On-demand: if the view module isn't loaded yet, fetch it then render
+      if (!VIEWS[id] && _VIEW_PATHS[id]) {
+        this._renderCurrentView(); // shows skeleton placeholder
+        _loadView(id).then(() => this._renderCurrentView());
+      } else {
+        this._renderCurrentView();
+      }
     };
 
     for(const [id,label] of items.map(x=>[x[0],x[1]])) {

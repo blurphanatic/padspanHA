@@ -69,19 +69,21 @@ SERVICE_SET_MAP = "set_room_tag_map"
 SERVICE_SCHEMA = vol.Schema({vol.Required("room_tag_map"): dict})
 
 
-async def _ensure_stores(hass: HomeAssistant) -> None:
-    """Create/load every persistent store exactly once per HA runtime.
+async def _ensure_stores(hass: HomeAssistant, *, critical_only: bool = False) -> None:
+    """Create/load persistent stores exactly once per HA runtime.
 
-    Each store is guarded by a DATA_* key in hass.data[DOMAIN] so reload
-    cycles don't double-init.  Stores are independent so we load them in
-    parallel via asyncio.gather() for faster startup.
+    Two tiers:
+      critical (settings, maps, model) — needed for entity setup; always blocking.
+      deferred (objects, alerts, movement, adaptive, calibration, traceback, tag)
+        — used by the panel/websocket API but not needed for entities to register.
+        When critical_only=True these are skipped and should be loaded via
+        _ensure_deferred_stores() in the background.
     """
     import asyncio
 
     hass.data.setdefault(DOMAIN, {})
 
-    # ── Parallel store init ─────────────────────────────────────────────────
-    # Build a list of (DATA_KEY, factory_coro) pairs for stores not yet loaded.
+    # ── Store factory helpers ────────────────────────────────────────────────
     # Each factory returns (DATA_KEY, store_instance, debug_msg).
 
     async def _init_settings():
@@ -140,31 +142,43 @@ async def _ensure_stores(hass: HomeAssistant) -> None:
         await tag_int.async_setup()
         return (DATA_TAG_INTEGRATION, tag_int, "TagIntegration ready")
 
-    # Collect only stores that aren't already loaded
-    factories = []
+    # ── Critical stores (block startup) ──────────────────────────────────────
+    critical = []
     if DATA_SETTINGS not in hass.data[DOMAIN]:
-        factories.append(_init_settings())
+        critical.append(_init_settings())
     if DATA_MAPS not in hass.data[DOMAIN]:
-        factories.append(_init_maps())
+        critical.append(_init_maps())
     if DATA_MODEL not in hass.data[DOMAIN]:
-        factories.append(_init_model())
-    if DATA_OBJECTS not in hass.data[DOMAIN]:
-        factories.append(_init_objects())
-    if DATA_ALERTS not in hass.data[DOMAIN]:
-        factories.append(_init_alerts())
-    if DATA_MOVEMENT not in hass.data[DOMAIN]:
-        factories.append(_init_movement())
-    if DATA_ADAPTIVE not in hass.data[DOMAIN]:
-        factories.append(_init_adaptive())
-    if DATA_CALIBRATION not in hass.data[DOMAIN]:
-        factories.append(_init_calibration())
-    if DATA_TRACEBACK not in hass.data[DOMAIN]:
-        factories.append(_init_traceback())
-    if DATA_TAG_INTEGRATION not in hass.data[DOMAIN]:
-        factories.append(_init_tag())
+        critical.append(_init_model())
 
-    if factories:
-        results = await asyncio.gather(*factories)
+    if critical:
+        results = await asyncio.gather(*critical)
+        for data_key, store, msg in results:
+            hass.data[DOMAIN][data_key] = store
+            _LOGGER.debug(msg)
+
+    if critical_only:
+        return
+
+    # ── Deferred stores (panel/API features) ─────────────────────────────────
+    deferred = []
+    if DATA_OBJECTS not in hass.data[DOMAIN]:
+        deferred.append(_init_objects())
+    if DATA_ALERTS not in hass.data[DOMAIN]:
+        deferred.append(_init_alerts())
+    if DATA_MOVEMENT not in hass.data[DOMAIN]:
+        deferred.append(_init_movement())
+    if DATA_ADAPTIVE not in hass.data[DOMAIN]:
+        deferred.append(_init_adaptive())
+    if DATA_CALIBRATION not in hass.data[DOMAIN]:
+        deferred.append(_init_calibration())
+    if DATA_TRACEBACK not in hass.data[DOMAIN]:
+        deferred.append(_init_traceback())
+    if DATA_TAG_INTEGRATION not in hass.data[DOMAIN]:
+        deferred.append(_init_tag())
+
+    if deferred:
+        results = await asyncio.gather(*deferred)
         for data_key, store, msg in results:
             hass.data[DOMAIN][data_key] = store
             _LOGGER.debug(msg)
@@ -173,6 +187,14 @@ async def _ensure_stores(hass: HomeAssistant) -> None:
     cal = hass.data[DOMAIN].get(DATA_CALIBRATION)
     if cal and not cal.rf_trained and len(cal.data.get("points", [])) >= 4:
         hass.async_create_task(cal._async_train_rf())
+
+
+async def _ensure_deferred_stores(hass: HomeAssistant) -> None:
+    """Load non-critical stores in background. Safe to call multiple times."""
+    try:
+        await _ensure_stores(hass, critical_only=False)
+    except Exception as err:
+        _LOGGER.warning("Deferred store init error: %s", err)
 
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -184,9 +206,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     _LOGGER.info("PadSpan HA starting v%s (build %s)", BUILD_VERSION, BUILD_ID)
 
-    # Persistent stores used by panel + websocket API
+    # Critical stores only (settings, maps, model) — enough for entities
     try:
-        await _ensure_stores(hass)
+        await _ensure_stores(hass, critical_only=True)
     except Exception as err:  # defensive: do not break HA startup
         _LOGGER.exception("Store init failed: %s", err)
 
@@ -202,12 +224,20 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     except Exception as err:
         _LOGGER.exception("Panel registration failed: %s", err)
 
-    # Live Bluetooth feed (scanners + advertisements)
-    try:
-        from .bluetooth_live import async_setup_bluetooth_live
-        await async_setup_bluetooth_live(hass)
-    except Exception as err:
-        _LOGGER.debug("Bluetooth live setup skipped: %s", err)
+    # Deferred stores + Bluetooth live — loaded in background so async_setup
+    # returns fast and HA can proceed to config entry setup immediately.
+    async def _background_init():
+        try:
+            await _ensure_deferred_stores(hass)
+        except Exception as err:
+            _LOGGER.debug("Deferred store init error: %s", err)
+        try:
+            from .bluetooth_live import async_setup_bluetooth_live
+            await async_setup_bluetooth_live(hass)
+        except Exception as err:
+            _LOGGER.debug("Bluetooth live setup skipped: %s", err)
+
+    hass.async_create_task(_background_init())
 
     async def _set_map(call: ServiceCall) -> None:
         coord: PadSpanCoordinator | None = hass.data.get(DOMAIN, {}).get("coordinator")
@@ -286,9 +316,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:
         _LOGGER.warning("Panel re-registration failed: %s", err)
 
-    # Ensure stores are present (reload-safe)
+    # Ensure critical stores are present (reload-safe); deferred stores
+    # are loaded in background by async_setup's _background_init task.
     try:
-        await _ensure_stores(hass)
+        await _ensure_stores(hass, critical_only=True)
     except Exception as err:
         _LOGGER.exception("Store init failed during setup_entry: %s", err)
 
