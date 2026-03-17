@@ -45,7 +45,7 @@ export function render(ctx){
   const setTab = (t) => { ctx.state._settingsTab = t; ctx.actions.renderRooms(); };
 
   const tabBar = el("div",{class:"tabs", style:"margin-bottom:14px;flex-wrap:wrap;gap:4px"});
-  for(const [id, label] of [["appearance","Appearance"],["scannermap","Scanner Map"],["presence","Presence"],["ui","UI Structure"]]){
+  for(const [id, label] of [["appearance","Appearance"],["scannermap","Scanner Map"],["presence","Presence"],["features","Features"],["ui","UI Structure"]]){
     tabBar.appendChild(el("button",{
       class:"tab" + (activeTab===id ? " active" : ""),
       onclick:()=>setTab(id),
@@ -57,6 +57,8 @@ export function render(ctx){
     root.appendChild(_settingsAppearance(ctx, el, helpBtn, draft, haFloors, haAreas, roomColor, false));
   } else if(activeTab === "presence"){
     root.appendChild(_settingsPresence(ctx, el));
+  } else if(activeTab === "features"){
+    root.appendChild(_settingsFeatures(ctx, el));
   } else if(activeTab === "ui"){
     root.appendChild(_settingsUI(ctx, el));
   } else {
@@ -1877,6 +1879,86 @@ function _settingsPresence(ctx, el){
       bermudaStatusEl,
     ]),
   ]));
+
+  return wrap;
+}
+
+// ── Features tab (experimental toggles) ──────────────────────────────────────
+// Enterprise-preview features gated behind settings toggles.
+// All default to off and are labeled experimental.
+function _settingsFeatures(ctx, el){
+  const settings = ctx.state.settings || {};
+  const wrap = el("div",{});
+
+  const headerCard = el("div",{class:"card",style:"border:1px solid #1a4228;background:#0f1a12;margin-bottom:14px"});
+  headerCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#52b788;margin-bottom:6px"}, "Experimental Features"));
+  headerCard.appendChild(el("div",{style:"font-size:12px;color:#94a3b8;line-height:1.5"},
+    "These features are under active development. Enable them to preview and help test. " +
+    "They may change or be removed in future releases. Feedback welcome."));
+  wrap.appendChild(headerCard);
+
+  const features = [
+    {
+      key: "trackability_rating_enabled",
+      label: "Trackability Rating",
+      desc: "Per-device Easy/Medium/Hard score based on signal stability, confidence, and advertisement frequency. " +
+            "Helps identify which devices are reliable trackers and which need better placement or a dedicated beacon.",
+    },
+    {
+      key: "walk_to_identify_enabled",
+      label: "Walk-to-Identify",
+      desc: "Discover unknown BLE devices by walking into a room. PadSpan correlates signal strength changes with your " +
+            "reported location to isolate which device belongs to which person — no MAC addresses needed.",
+    },
+    {
+      key: "radio_map_enabled",
+      label: "Radio Map",
+      desc: "RSSI heatmap overlay on floor plan maps. Visualizes signal coverage from calibration data so you can see " +
+            "dead zones, strong corridors, and receiver reach at a glance.",
+    },
+    {
+      key: "distortion_map_enabled",
+      label: "Distortion Map",
+      desc: "Shows where calibration predictions disagree with reality. Renders disagreement vectors on the map to reveal " +
+            "areas where walls, furniture, or interference cause positioning errors.",
+    },
+    {
+      key: "compass_ring_enabled",
+      label: "Compass Ring Calibration",
+      desc: "Structured calibration protocol: stand at a point and rotate slowly to capture RSSI from all angles. " +
+            "Tests whether directional antenna patterns affect your receiver setup.",
+    },
+    {
+      key: "replay_timeline_enabled",
+      label: "Replay Timeline",
+      desc: "Enhanced movement playback with scoring explainability. See why PadSpan placed a device in each room: " +
+            "which scanners voted, their weights, confidence breakdown, and the scoring pipeline decision at each step.",
+    },
+  ];
+
+  for(const f of features){
+    const on = settings[f.key] === true;
+    const card = el("div",{class:"card",style:"margin-bottom:10px"});
+    const row = el("div",{style:"display:flex;align-items:center;justify-content:space-between;gap:12px"});
+    const left = el("div",{style:"flex:1"});
+    left.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px"}, [
+      el("span",{style:"font-weight:700;font-size:13px"}, f.label),
+      el("span",{style:"font-size:9px;padding:1px 6px;border-radius:3px;background:rgba(245,158,11,.15);color:#f59e0b;font-weight:600;text-transform:uppercase"}, "experimental"),
+    ]));
+    left.appendChild(el("div",{style:"font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.4"}, f.desc));
+    const toggle = el("input",{type:"checkbox",style:"width:18px;height:18px;accent-color:#52b788;cursor:pointer;flex-shrink:0"});
+    toggle.checked = on;
+    toggle.addEventListener("change", async()=>{
+      try {
+        await ctx.actions.settingsSet({ [f.key]: toggle.checked });
+        ctx.toast(`${f.label}: ${toggle.checked ? "enabled" : "disabled"}`);
+      } catch(e){ ctx.toast("Failed to save", true); }
+    });
+    row.appendChild(left);
+    row.appendChild(toggle);
+    card.appendChild(row);
+    wrap.appendChild(card);
+  }
 
   return wrap;
 }

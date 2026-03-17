@@ -81,6 +81,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "beacon_group_overrides": {},         # device_id → model_key override (ungroup/regroup)
     # Private BLE IRK devices (managed in PadSpan — no separate integration needed)
     "irk_devices": [],                    # [{name: str, irk_hex: str}]
+    # ── Enterprise preview features (off by default) ─────────────────────────
+    "trackability_rating_enabled": False,   # per-device Easy/Medium/Hard trackability score
+    "walk_to_identify_enabled": False,      # spatial correlation device discovery ("who just walked in?")
+    "radio_map_enabled": False,             # RSSI heatmap overlay on floor plan maps
+    "distortion_map_enabled": False,        # calibration disagreement visualization
+    "compass_ring_enabled": False,          # structured rotate-in-place calibration protocol
+    "replay_timeline_enabled": False,       # movement replay with scoring explainability
 }
 
 
