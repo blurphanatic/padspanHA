@@ -557,6 +557,22 @@ function renderScanners(ctx, radios, sources, adsAll) {
     };
     makeResetBtn();
 
+    // Scanner health badge (Phase 3: per-scanner reliability)
+    const _sh = (snap && snap.scanner_health && snap.scanner_health[src]) || null;
+    let healthBadge = null;
+    if (_sh && _sh.polls >= 6) {
+      const rel = _sh.reliability;
+      const pct = _sh.agree_pct;
+      const hColor = rel >= 0.9 ? "#52b788" : rel >= 0.7 ? "#f59e0b" : "#f87171";
+      const hBg    = rel >= 0.9 ? "rgba(82,183,136,.12)" : rel >= 0.7 ? "rgba(245,158,11,.12)" : "rgba(248,113,113,.15)";
+      const hLabel  = rel >= 0.9 ? "Reliable" : rel >= 0.7 ? "Fair" : "Unreliable";
+      healthBadge = el("div", { style: `display:flex;align-items:center;gap:6px;margin-top:3px;font-size:10px` }, [
+        el("span", { style: `display:inline-block;width:8px;height:8px;border-radius:50%;background:${hColor}` }),
+        el("span", { style: `color:${hColor};font-weight:600` }, hLabel),
+        el("span", { class: "muted" }, `${pct}% agreement · weight ${rel} · ${_sh.polls} polls`),
+      ]);
+    }
+
     const subParts = [
       r.area_name ? el("span", { class: "pill", style: "font-size:10px" }, r.area_name) : el("span", { class: "muted", style: "font-size:10px" }, "no room"),
       el("div", { class: "bt-scanner-src", style: "font-size:10px" }, src || "—"),
@@ -568,7 +584,7 @@ function renderScanners(ctx, radios, sources, adsAll) {
     const subRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px" }, subParts);
 
     const div = el("div", { class: "bt-scanner-row" + (r.lost || r.disabled ? " warn" : "") }, [
-      el("div", { class: "bt-scanner-main" }, [ nameRow, subRow, offsetRow, resetWrap ]),
+      el("div", { class: "bt-scanner-main" }, [ nameRow, subRow, healthBadge, offsetRow, resetWrap ].filter(Boolean)),
       el("div", { class: "bt-scanner-meta" }, meta.join(" • ") || "—"),
     ]);
     if(r.lost || r.disabled) div.style.opacity = "0.7";

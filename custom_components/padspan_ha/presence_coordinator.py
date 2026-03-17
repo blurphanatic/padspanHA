@@ -142,6 +142,15 @@ _AWAY_GRACE_POLLS: int = 2
 _VG_RAPID_COOLDOWN_S: float = 15.0    # seconds after a room change during which the next change is gated
 _VG_ADJACENT_THRESHOLD: float = 0.30  # normalised centroid distance — rooms within this are "adjacent"
 
+# ── Per-scanner reliability scoring (Phase 3) ────────────────────────────────
+# Each scanner accumulates a rolling "disagreement" count — how often its best
+# RSSI implies a different room than the consensus (confirmed room).
+# reliability = 1 / (1 + disagreement_rate)  where rate ∈ [0, 1].
+# Used as a weight multiplier on each scanner's Gaussian score.
+_RELIABILITY_WINDOW: int = 30         # rolling window size (polls)
+_RELIABILITY_MIN_POLLS: int = 6       # min observations before weight differs from 1.0
+_RELIABILITY_FLOOR: float = 0.15      # minimum weight — never zero-out a scanner entirely
+
 # ── k-NN live fingerprint gating ─────────────────────────────────────────────
 # Minimum calibration points before k-NN is consulted for live room assignment.
 _KNN_MIN_POINTS: int = 5
@@ -329,6 +338,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._scanner_positions: dict[str, tuple[float, float, str]] = {}
         # List of barrier dicts: [{points, attenuation_dbm, map_id}, ...]
         self._rf_barriers: list[dict] = []
+
+        # ── Per-scanner reliability (Phase 3) ─────────────────────────────────
+        # {source: deque of bools} — True = scanner agreed with consensus this poll
+        self._scanner_agree: dict[str, deque] = {}
+        # {source: float} — cached reliability weight ∈ [_RELIABILITY_FLOOR, 1.0]
+        self._scanner_reliability: dict[str, float] = {}
 
         # ── Adaptive learning rate-limit ───────────────────────────────────────
         # {key: monotonic_ts} — last adaptive observation time per device
@@ -705,6 +720,22 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 pass
             self._pending_room_changes.clear()
 
+        # ── Scanner health summary (Phase 3) ──────────────────────────────────
+        # Expose per-scanner reliability weights for the UI to display.
+        # Stored under a special key that won't collide with object keys.
+        _sh: dict[str, Any] = {}
+        for _src, _rel in self._scanner_reliability.items():
+            _q = self._scanner_agree.get(_src)
+            _polls = len(_q) if _q else 0
+            _agree_pct = round(sum(_q) / _polls * 100, 0) if _polls else 100
+            _sh[_src] = {
+                "reliability": _rel,
+                "agree_pct": _agree_pct,
+                "polls": _polls,
+                "room": source_to_area.get(_src, ""),
+            }
+        result["__scanner_health__"] = _sh
+
         # ── Experimental MQTT publishing ─────────────────────────────────────
         await self._async_mqtt_publish(result)
 
@@ -910,6 +941,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _dist  = max(0.1, 10.0 ** ((_ref - _eff_rssi) / (10.0 * _n_exp)))
                 # Gaussian weight: close scanners score ~1.0, far ones → 0
                 _score = math.exp(-(_dist / _sigma) ** 2)
+                # Phase 3: reliability weight — downweight scanners that
+                # frequently disagree with the consensus room assignment.
+                _rel = self._scanner_reliability.get(_src, 1.0)
+                _score *= _rel
                 if _room not in room_scores or _score > room_scores[_room]:
                     room_scores[_room] = _score
             if room_scores:
@@ -1246,6 +1281,32 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._confirmed_room[key] = confirmed
         self._room_confidence[key] = confidence
         self._rssi_margin_confidence[key] = rssi_margin_confidence
+
+        # ── Phase 3: per-scanner reliability update ──────────────────────────
+        # For each scanner that reported RSSI for this device, check if the
+        # scanner's own room matches the confirmed room.  Scanners that
+        # consistently point to the wrong room get downweighted in Gaussian
+        # scoring.  Only update when we have a stable confirmation (conf >= 0.6).
+        if confirmed and confidence >= 0.6 and ema:
+            for _src in ema:
+                _src_room = source_to_area.get(_src)
+                if not _src_room:
+                    continue
+                _agreed = (_src_room == confirmed)
+                _q = self._scanner_agree.get(_src)
+                if _q is None:
+                    _q = deque(maxlen=_RELIABILITY_WINDOW)
+                    self._scanner_agree[_src] = _q
+                _q.append(_agreed)
+                if len(_q) >= _RELIABILITY_MIN_POLLS:
+                    _agree_rate = sum(_q) / len(_q)
+                    # Disagree rate = fraction of polls where scanner's room != consensus
+                    _disagree = 1.0 - _agree_rate
+                    # reliability = 1/(1+disagree) — ranges from 0.5 (always wrong) to 1.0 (always right)
+                    _w = 1.0 / (1.0 + _disagree)
+                    self._scanner_reliability[_src] = max(_RELIABILITY_FLOOR, round(_w, 3))
+                else:
+                    self._scanner_reliability[_src] = 1.0
 
         # ── Adaptive learning: record observation ────────────────────────────
         # Feed confirmed room assignments back into the adaptive store so it

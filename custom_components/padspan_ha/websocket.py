@@ -2522,6 +2522,16 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception:
         pass
 
+    # ── Scanner health (Phase 3) ─────────────────────────────────────────────
+    try:
+        _pc_sh = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+        if _pc_sh and _pc_sh.data:
+            _sh = _pc_sh.data.get("__scanner_health__")
+            if _sh:
+                snapshot["scanner_health"] = _sh
+    except Exception:
+        pass
+
     return snapshot
 
 @websocket_api.websocket_command({"type": "padspan_ha/settings_get"})
