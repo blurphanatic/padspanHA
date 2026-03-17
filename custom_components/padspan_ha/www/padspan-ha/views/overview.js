@@ -1278,12 +1278,15 @@ export function render(ctx){
             const [lix,liy]=iso(lwx,lwy,z);
             s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
           }
-          // RF barriers — dotted white lines
+          // RF barriers — dotted white lines on 3D map
           if(ctx.state._overviewShowWalls){
-            for(const bar of (m.rf_barriers||[])){
-              if(!bar.points||bar.points.length<2) continue;
-              const bp = bar.points.map(p=>{const[wx,wy]=mapPt(p[0],p[1]);return pt(iso(wx,wy,z));}).join(" ");
-              s += `<polyline points="${bp}" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round"/>`;
+            const _bars = m.rf_barriers || [];
+            for(let bi=0;bi<_bars.length;bi++){
+              const bar = _bars[bi];
+              const bpts = bar.points || bar.pts || [];
+              if(bpts.length<2) continue;
+              const bp = bpts.map(p=>{const[wx,wy]=mapPt(Number(p[0]),Number(p[1]));return pt(iso(wx,wy,z));}).join(" ");
+              s += `<polyline points="${bp}" fill="none" stroke="#ffffff" stroke-opacity="0.85" stroke-width="2.5" stroke-dasharray="4 8" stroke-linecap="round"/>`;
             }
           }
           // Placed receivers (with scanner tooltip + name label)

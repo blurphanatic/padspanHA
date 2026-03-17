@@ -1284,7 +1284,7 @@ function _edit(ctx, map){
       bLine.setAttribute("fill","none");
       bLine.setAttribute("stroke", bc);
       bLine.setAttribute("stroke-width", ctx.state.maps._selectedBarrierIdx === bi ? "0.010" : "0.006");
-      bLine.setAttribute("stroke-dasharray","0.015 0.008");
+      bLine.setAttribute("stroke-dasharray","0.006 0.018");
       bLine.setAttribute("stroke-linecap","round");
       if(ctx.state.maps._mode === "barriers"){
         bLine.style.cursor = "pointer";
@@ -1342,7 +1342,7 @@ function _edit(ctx, map){
       ln.setAttribute("fill","none");
       ln.setAttribute("stroke", c);
       ln.setAttribute("stroke-width", _isBarrierDraw ? "0.008" : "0.006");
-      if(_isBarrierDraw) ln.setAttribute("stroke-dasharray","0.015 0.008");
+      if(_isBarrierDraw) ln.setAttribute("stroke-dasharray","0.006 0.018");
       svg.appendChild(ln);
     }
 
