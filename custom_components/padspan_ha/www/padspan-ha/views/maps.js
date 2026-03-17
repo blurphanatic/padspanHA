@@ -1121,14 +1121,27 @@ function _edit(ctx, map){
     : null;
 
   // Rooms eligible for this map's floor
-  const areaNames = (ctx.state.model?.areas || []).map(a => a.name);
+  const _modelAreas = ctx.state.model?.areas || [];
+  const areaNames = _modelAreas.map(a => a.name);
   const tagMapNames = Object.keys(ctx.state.roomTagMap || {});
-  const allRooms = [...new Set([...areaNames, ...tagMapNames])].sort();
+  // Also pull room names from live snapshot rooms (fallback when model_get hasn't loaded)
+  const _snapRooms = [];
+  if(ctx.state.live?.snapshot?.room_tag_map_live) _snapRooms.push(...Object.keys(ctx.state.live.snapshot.room_tag_map_live));
+  if(ctx.state.live?.snapshot?.room_tag_map) _snapRooms.push(...Object.keys(ctx.state.live.snapshot.room_tag_map));
+  const allRooms = [...new Set([...areaNames, ...tagMapNames, ..._snapRooms])].sort();
   const mapFloorId = ctx.state.maps._draftFloorId || "main";
+  // Build area→floor lookup from HA area registry (authoritative source)
+  const _areaFloor = {};
+  for(const a of _modelAreas) if(a.floor_id) _areaFloor[a.name] = a.floor_id;
   const eligibleRooms = allRooms.filter(r=>{
+    // Check area registry first (HA's authoritative floor assignment)
+    const areaFid = _areaFloor[r];
+    if(areaFid) return areaFid === mapFloorId;
+    // Fall back to room_meta (PadSpan's own metadata)
     const meta = ctx.state.model?.room_meta?.[r];
-    const fid = meta?.floor_id || mapFloorId;
-    return fid === mapFloorId;
+    if(meta?.floor_id) return meta.floor_id === mapFloorId;
+    // No floor info → show on all floors (don't hide rooms)
+    return true;
   });
 
   const titleBtns = el("div",{style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end"},[
