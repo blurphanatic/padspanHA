@@ -3126,6 +3126,7 @@ async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("room_bounds"): dict,
         vol.Optional("stack"): dict,
         vol.Optional("beacons"): list,
+        vol.Optional("rf_barriers"): list,
     }
 )
 @websocket_api.async_response
