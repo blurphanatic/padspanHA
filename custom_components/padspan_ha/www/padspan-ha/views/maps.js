@@ -3910,11 +3910,40 @@ function _stack(ctx, maps, helpBtn){
       toolbar.appendChild(help);
     };
 
+    // ── Shared CSS transform generator ────────────────────────────────────
+    // SINGLE source of truth: both preview and Apply/buildStage use this
+    // exact string to position the target.  No matrix(), no _m — just the
+    // decomposed translate → rotate → scale(sx, sy) that CSS handles natively.
+    const _buildTransformCSS = (dx, dy, rot, sc, stretch) => {
+      const sx = sc * (stretch || 1);
+      return "translate(" + (dx * 100) + "%," + (dy * 100) + "%) rotate(" + rot + "deg) scale(" + sx + "," + sc + ")";
+    };
+
+    // Compute where a target-local normalised point ends up after the
+    // decomposed CSS transform, in the stage's normalised [0,1]² coords.
+    // This lets us place diagnostic dots that MUST visually coincide with
+    // the CSS-transformed image pixels — if they don't, the CSS is wrong.
+    const _transformPt = (tx, ty, dx, dy, rot, sc, stretch, arHW_) => {
+      const sx = sc * (stretch || 1), sy = sc;
+      const r = rot * Math.PI / 180;
+      const u = tx - 0.5, v = ty - 0.5;
+      // CSS pixel-space: rotate(scale(u,v)) then translate, around center.
+      // In normalised coords the AR enters via pixel ↔ normalised conversion.
+      const su = sx * u, sv = sy * v;
+      const rx = Math.cos(r) * su - Math.sin(r) * sv * arHW_;
+      const ry = Math.sin(r) * su / arHW_ + Math.cos(r) * sv;
+      return [rx + 0.5 + dx, ry + 0.5 + dy];
+    };
+
     // ── Preview screen — shows the computed alignment before applying ──────
     const _showPreview = (rDx, rDy, rScale, rRotation, rStretch, resPct, pairs, perPoint, rawM, arHW) => {
       // Replace the point-picking UI with a preview of the result
       toolbar.innerHTML = "";
       panelsRow.innerHTML = "";
+
+      // Build the CSS string — SAME formula used by Apply and buildStage
+      const cssTransform = _buildTransformCSS(rDx, rDy, rRotation, rScale, rStretch);
+      console.log("[PtAlign Preview] CSS: " + cssTransform);
 
       // -- Toolbar: result summary + Apply/Discard buttons --
       const title = document.createElement("span");
@@ -3948,7 +3977,7 @@ function _stack(ctx, maps, helpBtn){
       backBtn.onclick = () => _rebuild();
       toolbar.appendChild(backBtn);
 
-      // Apply button
+      // Apply button — stores ONLY decomposed values (same ones used for CSS above)
       const applyBtn = document.createElement("button");
       applyBtn.style.cssText = "font-size:12px;padding:4px 16px;font-weight:600;border-radius:4px;cursor:pointer;" +
         "border:1px solid #52b788;background:#1b4a2e;color:#e2e8f0";
@@ -3984,78 +4013,16 @@ function _stack(ctx, maps, helpBtn){
           bakeImg.onerror = () => ctx.toast("Bake failed — image load error", true);
           bakeImg.src = _mapUrl(tgtMap);
         } else {
-          // ── Compose PA result with reference map's stack transform ──
-          // The solver maps flat_target → flat_reference.  But in the stack view,
-          // the reference may have its own transform (if it's not the master).
-          // To make the target land on top of the displayed reference, we need:
-          //   composed = ref_stack ∘ pa_result
-          // If the reference has no transform, composition is identity (PA as-is).
-          const refStk = refMap.stack || {};
-          let rM = null, rDxR = 0, rDyR = 0;
-          if (refStk._m && refStk._m.length === 4) {
-            rM = refStk._m;
-            rDxR = refStk.x_offset || 0;
-            rDyR = refStk.y_offset || 0;
-          } else if ((refStk.rotation && refStk.rotation !== 0) ||
-                     (refStk.scale && refStk.scale !== 1) ||
-                     (refStk.scale_x_adj && refStk.scale_x_adj !== 1) ||
-                     refStk.x_offset || refStk.y_offset) {
-            // Convert decomposed → _m using STAGE AR (= arHW from this PA session)
-            const rTheta = (refStk.rotation || 0) * Math.PI / 180;
-            const rsx = (refStk.scale || 1) * (refStk.scale_x_adj || 1);
-            const rsy = refStk.scale || 1;
-            rM = [
-              Math.cos(rTheta) * rsx,
-              -Math.sin(rTheta) * rsy * arHW,
-              Math.sin(rTheta) * rsx / arHW,
-              Math.cos(rTheta) * rsy
-            ];
-            rDxR = refStk.x_offset || 0;
-            rDyR = refStk.y_offset || 0;
-          }
-
-          let finalM, finalDx, finalDy;
-          if (rM && rawM && rawM.length === 4) {
-            // Compose: C_m = R * P (2x2 multiply), d_c = R * d_p + d_r
-            finalM = [
-              rM[0]*rawM[0] + rM[1]*rawM[2],
-              rM[0]*rawM[1] + rM[1]*rawM[3],
-              rM[2]*rawM[0] + rM[3]*rawM[2],
-              rM[2]*rawM[1] + rM[3]*rawM[3]
-            ];
-            finalDx = rM[0]*rDx + rM[1]*rDy + rDxR;
-            finalDy = rM[2]*rDx + rM[3]*rDy + rDyR;
-            console.log("[PtAlign] Composed with ref stack: refM=[" +
-              rM.map(v=>v.toFixed(4)).join(",") + "] refOff=(" + rDxR.toFixed(4) + "," + rDyR.toFixed(4) + ")");
-            console.log("[PtAlign] Composed _m=[" + finalM.map(v=>v.toFixed(4)).join(",") +
-              "] offset=(" + finalDx.toFixed(4) + "," + finalDy.toFixed(4) + ")");
-          } else {
-            finalM = rawM && rawM.length === 4 ? rawM.slice() : null;
-            finalDx = rDx;
-            finalDy = rDy;
-          }
-
-          // Decompose composed matrix for manual controls / display
-          if (finalM) {
-            const _ar2 = arHW || 1;
-            const cRot = Math.atan2(finalM[2] * _ar2, finalM[0]) * 180 / Math.PI;
-            const cSx = Math.sqrt(finalM[0]*finalM[0] + finalM[2]*finalM[2] * _ar2*_ar2);
-            const cSy = Math.sqrt(finalM[1]*finalM[1] / (_ar2*_ar2) + finalM[3]*finalM[3]);
-            alignState.scale      = cSy || 1;
-            alignState.rotation   = cRot;
-            alignState.scaleX_adj = (cSx > 0 && cSy > 0) ? cSx / cSy : 1;
-            alignState._m         = finalM;
-            alignState._m_ar      = _ar2;
-          } else {
-            alignState.scale      = rScale;
-            alignState.rotation   = rRotation;
-            alignState.scaleX_adj = rStretch;
-            alignState._m         = null;
-            alignState._m_ar      = null;
-          }
-          alignState.x_offset = finalDx;
-          alignState.y_offset = finalDy;
-
+          // Store EXACTLY the decomposed values used in the preview CSS.
+          // No _m, no composition — what you see in preview is what you get.
+          alignState.x_offset   = rDx;
+          alignState.y_offset   = rDy;
+          alignState.scale      = rScale;
+          alignState.rotation   = rRotation;
+          alignState.scaleX_adj = rStretch;
+          alignState._m         = null;
+          alignState._m_ar      = null;
+          console.log("[PtAlign Apply] same CSS: " + _buildTransformCSS(rDx, rDy, rRotation, rScale, rStretch));
           _close();
           buildStage();
           ctx.toast("Aligned (" + pairs + " pairs, residual " + resPct + "%)");
@@ -4077,10 +4044,9 @@ function _stack(ctx, maps, helpBtn){
 
       const previewStage = document.createElement("div");
       previewStage.style.cssText = "position:relative;width:100%;max-width:900px;aspect-ratio:" + _refAR +
-        ";max-height:calc(100vh - 120px);background:#071008;border:2px solid #1e4976;border-radius:8px;overflow:visible";
+        ";background:#071008;border:2px solid #1e4976;border-radius:8px;overflow:visible";
 
-      // Reference map layer (bottom) — shown FLAT (no stack transform) because the
-      // solver computes target→reference in the reference's own coordinate space.
+      // Reference map layer (bottom) — shown FLAT
       const refUrl = _mapUrl(refMap);
       if (refUrl) {
         const ri = document.createElement("img");
@@ -4093,29 +4059,13 @@ function _stack(ctx, maps, helpBtn){
       refLabel.textContent = "Ref: " + (refMap.name || refMap.id);
       previewStage.appendChild(refLabel);
 
-      // Target map layer (top, with computed transform)
-      // Uses CSS matrix() directly from the solver's raw coefficients — bypasses
-      // decomposition entirely so there's zero chance of scale/rotation/AR error.
-      // CSS matrix(a, b, c, d, e, f) where: out_x = a*x + c*y + e, out_y = b*x + d*y + f
-      // With transform-origin 50%: a=m11, b=m21*ar, c=m12/ar, d=m22, e=dx*W, f=dy*H.
-      // Since we don't know pixel size, we use translate(%) for translation.
+      // Target map layer — uses THE SAME decomposed CSS as Apply/buildStage
       const tgtUrl = _mapUrl(tgtMap);
       if (tgtUrl) {
         const tgtLayer = document.createElement("div");
         tgtLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;" +
           "transform-origin:50% 50%;opacity:0.55;pointer-events:none";
-        if (rawM && rawM.length === 4) {
-          const _ar = arHW || 1;
-          // CSS matrix params: a=m11, b=m21*ar, c=m12/ar, d=m22
-          const ma = rawM[0], mb = rawM[2] * _ar, mc = rawM[1] / _ar, md = rawM[3];
-          tgtLayer.style.transform = "translate(" + (rDx * 100) + "%," + (rDy * 100) +
-            "%) matrix(" + ma + "," + mb + "," + mc + "," + md + ",0,0)";
-        } else {
-          // Fallback to decomposed params
-          const csssx = rScale * rStretch, csssy = rScale;
-          tgtLayer.style.transform = "translate(" + (rDx * 100) + "%," + (rDy * 100) +
-            "%) rotate(" + rRotation + "deg) scale(" + csssx + "," + csssy + ")";
-        }
+        tgtLayer.style.transform = cssTransform;
         const ti = document.createElement("img");
         ti.src = tgtUrl;
         ti.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill;display:block";
@@ -4127,12 +4077,11 @@ function _stack(ctx, maps, helpBtn){
       tgtLabel.textContent = "Tgt: " + (tgtMap.name || tgtMap.id);
       previewStage.appendChild(tgtLabel);
 
-      // Diagnostic markers: green = ref points, yellow = CSS-predicted target positions
-      // If these overlap, the solver is correct. If not, there's a transform error.
+      // Diagnostic markers on the FLAT reference layer (no transform on this div)
       const markerLayer = document.createElement("div");
       markerLayer.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5";
       for (const pp of (perPoint || [])) {
-        // Reference point (green circle)
+        // Reference point (green circle) — where the point should be
         const refDot = document.createElement("div");
         refDot.style.cssText = "position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid #52b788;" +
           "background:#52b78844;transform:translate(-50%,-50%);font-size:8px;color:#52b788;text-align:center;line-height:10px;" +
@@ -4140,20 +4089,103 @@ function _stack(ctx, maps, helpBtn){
         refDot.textContent = String(pp.idx);
         refDot.title = "Ref " + pp.idx + " (" + pp.refX.toFixed(3) + "," + pp.refY.toFixed(3) + ")";
         markerLayer.appendChild(refDot);
-        // Predicted position (yellow X)
+
+        // Predicted position via DECOMPOSED transform (yellow) — should overlap green
+        const [predXd, predYd] = _transformPt(
+          tgtPts[pp.idx - 1].x, tgtPts[pp.idx - 1].y,
+          rDx, rDy, rRotation, rScale, rStretch, arHW);
         const predDot = document.createElement("div");
         predDot.style.cssText = "position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid #f59e0b;" +
           "background:#f59e0b44;transform:translate(-50%,-50%);font-size:8px;color:#f59e0b;text-align:center;line-height:10px;" +
-          "left:" + (pp.predX * 100) + "%;top:" + (pp.predY * 100) + "%";
+          "left:" + (predXd * 100) + "%;top:" + (predYd * 100) + "%";
         predDot.textContent = String(pp.idx);
-        predDot.title = "CSS pred " + pp.idx + " (" + pp.predX.toFixed(3) + "," + pp.predY.toFixed(3) + ")";
+        predDot.title = "Decomposed pred " + pp.idx + " (" + predXd.toFixed(3) + "," + predYd.toFixed(3) + ")";
         markerLayer.appendChild(predDot);
+      }
+
+      // Target corner markers — four cyan dots showing exactly where the CSS places
+      // the target's corners.  These MUST visually coincide with the transformed
+      // target image's corners; if they don't, we have a CSS rendering mismatch.
+      for (const [cx, cy, label] of [[0,0,"TL"],[1,0,"TR"],[1,1,"BR"],[0,1,"BL"]]) {
+        const [wx, wy] = _transformPt(cx, cy, rDx, rDy, rRotation, rScale, rStretch, arHW);
+        const cd = document.createElement("div");
+        cd.style.cssText = "position:absolute;width:10px;height:10px;border-radius:50%;background:#0ff;border:1px solid #088;" +
+          "transform:translate(-50%,-50%);z-index:6;opacity:0.8;left:" + (wx * 100) + "%;top:" + (wy * 100) + "%";
+        cd.title = "Tgt " + label + " (" + wx.toFixed(3) + "," + wy.toFixed(3) + ")";
+        markerLayer.appendChild(cd);
       }
       previewStage.appendChild(markerLayer);
 
       previewPanel.appendChild(previewStage);
 
-      // Zoom controls — changes max-width to physically resize the stage
+      // ── Canvas verification — draws the transform using Canvas 2D API ──
+      // This COMPLETELY bypasses CSS transforms.  If the canvas looks right
+      // but the CSS overlay doesn't, the bug is in CSS.  If the canvas is
+      // ALSO wrong, the solver math has a bug.
+      const canvasTitle = document.createElement("div");
+      canvasTitle.style.cssText = "margin-top:12px;font-size:11px;color:#64748b;text-align:center";
+      canvasTitle.textContent = "Canvas verification (no CSS transforms):";
+      previewPanel.appendChild(canvasTitle);
+
+      const cvs = document.createElement("canvas");
+      const cvsW = 600, cvsH = Math.round(600 * arHW);
+      cvs.width = cvsW; cvs.height = cvsH;
+      cvs.style.cssText = "border:1px solid #1e4976;border-radius:4px;max-width:100%";
+      previewPanel.appendChild(cvs);
+
+      // Load both images and draw
+      const refImg = new Image(); refImg.crossOrigin = "anonymous";
+      const tgtImg = new Image(); tgtImg.crossOrigin = "anonymous";
+      let refLoaded = false, tgtLoaded = false;
+      const _drawCanvas = () => {
+        if (!refLoaded || !tgtLoaded) return;
+        const cc = cvs.getContext("2d");
+        // Reference image: fill canvas
+        cc.globalAlpha = 0.6;
+        cc.drawImage(refImg, 0, 0, cvsW, cvsH);
+        // Target image: apply transform using Canvas 2D API
+        cc.globalAlpha = 0.5;
+        cc.save();
+        const cxP = cvsW / 2, cyP = cvsH / 2;
+        // translate(dx, dy) — in pixel space
+        cc.translate(rDx * cvsW, rDy * cvsH);
+        // Now rotate + scale around center
+        cc.translate(cxP, cyP);
+        cc.rotate(rRotation * Math.PI / 180);
+        cc.scale(rScale * rStretch, rScale);
+        cc.translate(-cxP, -cyP);
+        cc.drawImage(tgtImg, 0, 0, cvsW, cvsH);
+        cc.restore();
+        // Draw ref points (green circles)
+        cc.globalAlpha = 1.0;
+        for (let i = 0; i < (perPoint || []).length; i++) {
+          const pp = perPoint[i];
+          cc.beginPath();
+          cc.arc(pp.refX * cvsW, pp.refY * cvsH, 6, 0, 2 * Math.PI);
+          cc.strokeStyle = "#52b788"; cc.lineWidth = 2; cc.stroke();
+          cc.fillStyle = "#52b78866"; cc.fill();
+        }
+        // Draw predicted tgt positions (yellow circles) — via decomposed math
+        for (let i = 0; i < (perPoint || []).length; i++) {
+          const pp = perPoint[i];
+          const [predXd, predYd] = _transformPt(
+            tgtPts[pp.idx - 1].x, tgtPts[pp.idx - 1].y,
+            rDx, rDy, rRotation, rScale, rStretch, arHW);
+          cc.beginPath();
+          cc.arc(predXd * cvsW, predYd * cvsH, 4, 0, 2 * Math.PI);
+          cc.strokeStyle = "#f59e0b"; cc.lineWidth = 2; cc.stroke();
+          cc.fillStyle = "#f59e0b66"; cc.fill();
+        }
+        console.log("[PtAlign Canvas] drawn. cvsW=" + cvsW + " cvsH=" + cvsH +
+          " arHW=" + arHW.toFixed(4) + " dx=" + rDx + " dy=" + rDy +
+          " rot=" + rRotation + " scale=" + rScale + " stretch=" + rStretch);
+      };
+      refImg.onload = () => { refLoaded = true; _drawCanvas(); };
+      tgtImg.onload = () => { tgtLoaded = true; _drawCanvas(); };
+      if (_mapUrl(refMap)) refImg.src = _mapUrl(refMap);
+      if (_mapUrl(tgtMap)) tgtImg.src = _mapUrl(tgtMap);
+
+      // Zoom controls
       let pvMaxW = 900;
       const zoomRow = document.createElement("div");
       zoomRow.style.cssText = "margin-top:6px;display:flex;gap:6px;justify-content:center;align-items:center";
@@ -4183,10 +4215,11 @@ function _stack(ctx, maps, helpBtn){
       readout.style.cssText = "margin-top:8px;font-size:11px;color:#64748b;text-align:center;font-family:monospace";
       readout.textContent = "X:" + rDx.toFixed(4) + "  Y:" + rDy.toFixed(4) +
         "  Scale:" + rScale.toFixed(4) + "  Rot:" + rRotation.toFixed(1) + "\u00b0" +
-        (Math.abs(rStretch - 1.0) > 0.005 ? "  Stretch:" + rStretch.toFixed(4) : "");
+        (Math.abs(rStretch - 1.0) > 0.005 ? "  Stretch:" + rStretch.toFixed(4) : "") +
+        "  | CSS: " + cssTransform;
       previewPanel.appendChild(readout);
 
-      // Per-point residual breakdown — shows how well each pair matched
+      // Per-point residual breakdown
       if (perPoint && perPoint.length) {
         const ppDiv = document.createElement("div");
         ppDiv.style.cssText = "margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;justify-content:center";
@@ -4200,7 +4233,6 @@ function _stack(ctx, maps, helpBtn){
           ppDiv.appendChild(chip);
         }
         previewPanel.appendChild(ppDiv);
-        // Tip about bad points
         const worstPt = perPoint.reduce((a, b) => b.pct > a.pct ? b : a, perPoint[0]);
         if (worstPt.pct > 3) {
           const tip = document.createElement("div");
