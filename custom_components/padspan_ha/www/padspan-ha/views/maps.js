@@ -117,6 +117,143 @@ function _floorName(ctx, floor_id){
   return f ? (f.name || f.id) : id;
 }
 
+// ── Compare All Maps ─────────────────────────────────────────────────────────
+// Cross-map room-boundary comparison.  For every pair of visible maps that
+// share the same room name, transforms the room centroid from each map into
+// world coordinates (via the map's stack transform) and computes the Euclidean
+// distance.  The worst-case error across all room pairs is the headline metric.
+//
+// Hidden maps (via the 3D Stack visibility toggle) are excluded so the user can
+// remove a suspect map and re-run to see if the error drops.
+function _compareAllMaps(ctx, maps, resultDiv) {
+  const { el } = ctx.helpers;
+  resultDiv.innerHTML = "";
+
+  const hiddenIds = (ctx.state.maps && ctx.state.maps._hiddenMapIds) || new Set();
+  const visMaps = maps.filter(m => !hiddenIds.has(m.id));
+  if (visMaps.length < 2) {
+    resultDiv.appendChild(el("div",{style:"padding:10px;font-size:12px;color:#f59e0b"},
+      "Need at least 2 visible maps to compare. Toggle visibility in 3D Stack tab."));
+    return;
+  }
+
+  // Compute world-coordinate centroid for each room on each map.
+  // World transform: the map's stack alignment (offset, rotation, scale) maps
+  // normalised [0,1] map coords into a common world space anchored on the master.
+  const _worldCentroid = (map, cx, cy) => {
+    const stk = map.stack || {};
+    const refAr = stk.ref_ar || ((map.image?.height || 600) / (map.image?.width || 800));
+    const dx = stk.x_offset || 0, dy = stk.y_offset || 0;
+    const u = cx - 0.5, v = cy - 0.5;
+    if (stk._m && stk._m.length === 4) {
+      const wx = stk._m[0] * u + stk._m[1] * v + dx + 0.5;
+      const wy = stk._m[2] * u + stk._m[3] * v + dy + 0.5;
+      return [wx, wy * refAr];
+    }
+    const rot = (stk.rotation || 0) * Math.PI / 180;
+    const sx = (stk.scale || 1) * (stk.scale_x_adj || 1);
+    const sy = stk.scale || 1;
+    const rx = Math.cos(rot) * sx * u - Math.sin(rot) * sy * v * refAr;
+    const ry = Math.sin(rot) * sx * u / refAr + Math.cos(rot) * sy * v;
+    return [rx + dx + 0.5, (ry + dy + 0.5) * refAr];
+  };
+
+  // Build {roomName: [{map, wx, wy}]} for all visible maps
+  const roomEntries = {};
+  for (const m of visMaps) {
+    for (const [rname, b] of Object.entries(m.room_bounds || {})) {
+      let cx = 0.5, cy = 0.5;
+      if (b.type === "circle") {
+        cx = b.cx || 0.5; cy = b.cy || 0.5;
+      } else if (b.type === "poly" && b.points && b.points.length >= 3) {
+        cx = b.points.reduce((s, p) => s + p[0], 0) / b.points.length;
+        cy = b.points.reduce((s, p) => s + p[1], 0) / b.points.length;
+      }
+      const [wx, wy] = _worldCentroid(m, cx, cy);
+      if (!roomEntries[rname]) roomEntries[rname] = [];
+      roomEntries[rname].push({ map: m, wx, wy, cx, cy });
+    }
+  }
+
+  // For each room that appears on 2+ maps, compute pairwise error
+  const pairs = [];
+  let worstErr = 0, worstRoom = "", worstMaps = "";
+  for (const [rname, entries] of Object.entries(roomEntries)) {
+    if (entries.length < 2) continue;
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        const a = entries[i], b = entries[j];
+        const dx = a.wx - b.wx, dy = a.wy - b.wy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const pct = Math.round(dist * 1000) / 10; // % of normalised space
+        pairs.push({ room: rname, mapA: a.map.name || a.map.id, mapB: b.map.name || b.map.id, dist, pct });
+        if (dist > worstErr) {
+          worstErr = dist;
+          worstRoom = rname;
+          worstMaps = (a.map.name || a.map.id) + " vs " + (b.map.name || b.map.id);
+        }
+      }
+    }
+  }
+
+  if (!pairs.length) {
+    resultDiv.appendChild(el("div",{style:"padding:10px;font-size:12px;color:#94a3b8"},
+      "No shared rooms found between visible maps. Room names must match exactly."));
+    return;
+  }
+
+  // Sort worst-first
+  pairs.sort((a, b) => b.dist - a.dist);
+  const avgErr = pairs.reduce((s, p) => s + p.dist, 0) / pairs.length;
+  const avgPct = Math.round(avgErr * 1000) / 10;
+  const worstPct = Math.round(worstErr * 1000) / 10;
+
+  // Rating
+  const _rating = (pct) => pct < 2 ? ["Excellent", "#52b788"] : pct < 5 ? ["Good", "#7dd3fc"] : pct < 10 ? ["Fair", "#f59e0b"] : ["Poor", "#f87171"];
+  const [overallLabel, overallColor] = _rating(worstPct);
+
+  // Build result card
+  const card = el("div",{style:"margin-top:10px;padding:12px;border-radius:8px;background:#071210;border:1px solid " + overallColor + "44"});
+
+  // Headline
+  const headline = el("div",{style:"display:flex;align-items:center;gap:10px;flex-wrap:wrap"});
+  headline.appendChild(el("span",{style:"font-size:14px;font-weight:700;color:" + overallColor}, overallLabel));
+  headline.appendChild(el("span",{style:"font-size:12px;color:#94a3b8"},
+    "Worst error: " + worstPct + "% (" + worstRoom + ")"));
+  headline.appendChild(el("span",{style:"font-size:11px;color:#64748b"},
+    "Avg: " + avgPct + "% across " + pairs.length + " room pair(s)"));
+  card.appendChild(headline);
+
+  // Detail table
+  const table = el("div",{style:"margin-top:8px;font-size:11px;font-family:monospace"});
+  for (const p of pairs.slice(0, 20)) {
+    const [lbl, col] = _rating(p.pct);
+    const row = el("div",{style:"display:flex;gap:8px;padding:2px 0;border-bottom:1px solid #1a2a1a"});
+    row.appendChild(el("span",{style:"width:100px;color:" + col + ";font-weight:600"}, p.pct.toFixed(1) + "%"));
+    row.appendChild(el("span",{style:"flex:1;color:#e2e8f0"}, p.room));
+    row.appendChild(el("span",{style:"color:#64748b"}, p.mapA + " vs " + p.mapB));
+    table.appendChild(row);
+  }
+  if (pairs.length > 20) {
+    table.appendChild(el("div",{style:"color:#64748b;padding:4px 0"}, "...and " + (pairs.length - 20) + " more"));
+  }
+  card.appendChild(table);
+
+  // Tip
+  if (worstPct > 5) {
+    const tip = el("div",{style:"margin-top:8px;font-size:11px;color:#f59e0b"});
+    tip.textContent = "Tip: Hide the worst map in 3D Stack → Floor Assignment, then re-run Compare to isolate it. " +
+      "Worst offender: \"" + worstRoom + "\" between " + worstMaps + ".";
+    card.appendChild(tip);
+  }
+
+  // Close button
+  const closeBtn = el("button",{class:"btn inline",style:"margin-top:8px;font-size:11px",onclick:()=>{resultDiv.innerHTML="";}}, "Close");
+  card.appendChild(closeBtn);
+
+  resultDiv.appendChild(card);
+}
+
 // ── Library Tab ──────────────────────────────────────────────────────────────
 // Lists all uploaded maps with thumbnails, master badges, and action buttons.
 // Masters sort to the top. Each row shows receiver count, dimensions, floor,
@@ -125,14 +262,19 @@ function _floorName(ctx, floor_id){
 function _library(ctx, maps, activeId, helpBtn, isBasic){
   const { el } = ctx.helpers;
   helpBtn = helpBtn || (()=>null);
+  const _compareResultDiv = el("div",{});
   const wrap = el("div",{class:"card"},[
     el("div",{class:"card-head"},[
-      el("div",{style:"display:flex;align-items:center;gap:10px"},[
+      el("div",{style:"display:flex;align-items:center;gap:10px;flex-wrap:wrap"},[
         el("div",{class:"muted"}, isBasic ? "Your floor plans" : "Maps Library"),
         el("div",{class:"muted"},`${maps.length} map(s)`),
+        ...(!isBasic && maps.length >= 2 ? [el("button",{class:"btn inline",style:"font-size:11px;padding:2px 10px;background:#0a1a2a;border-color:#1e4976;color:#7dd3fc",
+          onclick:()=>{ _compareAllMaps(ctx, maps, _compareResultDiv); }
+        }, "Compare Maps")] : []),
       ]),
       helpBtn("maps_library"),
     ]),
+    _compareResultDiv,
   ]);
 
   // Sample mode: always show the demo floor plan regardless of real map count

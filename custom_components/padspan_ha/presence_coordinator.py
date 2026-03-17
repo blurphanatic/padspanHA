@@ -127,6 +127,21 @@ _EMA_SILENCE_DBM: float = -100.0
 # Grace period = _AWAY_GRACE_POLLS * _SCAN_INTERVAL = 2 * 10s = 20s.
 _AWAY_GRACE_POLLS: int = 2
 
+# ── Velocity gate ────────────────────────────────────────────────────────────
+# Prevents "teleportation" — objects jumping to non-adjacent rooms faster than
+# physically possible.  After a room change is confirmed, any subsequent change
+# within the cooldown window requires UNANIMOUS vote agreement (all votes must
+# agree) instead of the normal majority threshold.  This makes it progressively
+# harder to hop rooms in rapid succession.
+#
+# The distance component uses room centroids: distant rooms (centroid distance
+# > _VG_ADJACENT_THRESHOLD in normalised [0,1] coords) also require unanimous
+# agreement regardless of timing.  This catches slow-drift teleportation where
+# a device creeps across the building over 30+ seconds without passing through
+# intermediate rooms.
+_VG_RAPID_COOLDOWN_S: float = 15.0    # seconds after a room change during which the next change is gated
+_VG_ADJACENT_THRESHOLD: float = 0.30  # normalised centroid distance — rooms within this are "adjacent"
+
 # ── k-NN live fingerprint gating ─────────────────────────────────────────────
 # Minimum calibration points before k-NN is consulted for live room assignment.
 _KNN_MIN_POINTS: int = 5
@@ -134,6 +149,40 @@ _KNN_MIN_POINTS: int = 5
 # With the normalized confidence formula (mean-sq-error / REF_VARIANCE), a
 # per-scanner RMS error of ~8 dBm gives ~28% confidence, ~5 dBm gives ~50%.
 _KNN_LIVE_THRESHOLD: float = 0.15
+
+
+def _room_centroids_from_maps(maps_list: list) -> dict[str, tuple[float, float, str]]:
+    """Compute room centroids from all maps' room_bounds.
+
+    Returns {room_name: (cx, cy, map_id)} where (cx, cy) is the centroid in
+    normalised [0,1] map coordinates.  If a room appears on multiple maps, the
+    master map takes precedence.
+    """
+    centroids: dict[str, tuple[float, float, str]] = {}
+    master_id = ""
+    for m in (maps_list or []):
+        mid = m.get("id", "")
+        is_master = (m.get("stack") or {}).get("is_master", False)
+        if is_master:
+            master_id = mid
+        for rname, b in (m.get("room_bounds") or {}).items():
+            # Skip if already have from master map
+            if rname in centroids and centroids[rname][2] == master_id:
+                continue
+            btype = b.get("type", "")
+            cx, cy = 0.5, 0.5
+            if btype == "circle":
+                cx = float(b.get("cx", 0.5))
+                cy = float(b.get("cy", 0.5))
+            elif btype == "poly":
+                pts = b.get("points") or []
+                if len(pts) >= 3:
+                    cx = sum(float(p[0]) for p in pts) / len(pts)
+                    cy = sum(float(p[1]) for p in pts) / len(pts)
+            # Prefer master map's centroid
+            if rname not in centroids or is_master:
+                centroids[rname] = (cx, cy, mid)
+    return centroids
 
 
 def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
@@ -232,6 +281,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ── Beacon auto-calibration rate-limit ──────────────────────────────────
         # {key: monotonic_ts} — last auto-calibration injection time per beacon
         self._beacon_autocal_last: dict[str, float] = {}
+
+        # ── Velocity gate state ────────────────────────────────────────────────
+        # {key: monotonic_ts} — when each device last changed rooms
+        self._last_room_change_mono: dict[str, float] = {}
+        # {room_name: (cx, cy, map_id)} — room centroids (rebuilt each poll)
+        self._room_centroids: dict[str, tuple[float, float, str]] = {}
 
         # ── Adaptive learning rate-limit ───────────────────────────────────────
         # {key: monotonic_ts} — last adaptive observation time per device
@@ -392,6 +447,15 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             }
         except Exception:
             pass
+
+        # ── Velocity gate: compute room centroids once per poll ────────────
+        try:
+            if _maps_store:
+                self._room_centroids = _room_centroids_from_maps(
+                    _maps_store.data.get("maps") or []
+                )
+        except Exception:
+            pass  # centroids are best-effort; gate degrades gracefully
 
         for obj in objects:
             key = obj.get("key", "")
@@ -1022,13 +1086,51 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             confidence = round(top_count / len(votes), 2)
             if top_count >= vote_threshold:
                 if top_room != confirmed:
-                    _LOGGER.debug(
-                        "Room confirmed for %s: %s → %s (votes %s, confidence %.0f%%)",
-                        key, confirmed, top_room, dict(counts), confidence * 100,
-                    )
-                    # Track room change for alert processing
-                    self._pending_room_changes.append((key, confirmed, top_room))
-                confirmed = top_room
+                    # ── Velocity gate ────────────────────────────────────
+                    # Two checks prevent teleportation:
+                    #  1. Rapid-fire: if device changed rooms very recently,
+                    #     require UNANIMOUS vote (all votes agree).
+                    #  2. Distance: if rooms are far apart (non-adjacent),
+                    #     also require unanimous vote.
+                    # Both checks are soft: they raise the bar for evidence,
+                    # not block transitions entirely.
+                    _vg_block = False
+                    if confirmed is not None:
+                        _now_mono = time.monotonic()
+                        # Check 1: rapid transition cooldown
+                        _last_change = self._last_room_change_mono.get(key, 0.0)
+                        _elapsed = _now_mono - _last_change if _last_change else 999.0
+                        _is_rapid = _elapsed < _VG_RAPID_COOLDOWN_S
+                        # Check 2: room distance (non-adjacent)
+                        _is_distant = False
+                        _c1 = self._room_centroids.get(confirmed)
+                        _c2 = self._room_centroids.get(top_room)
+                        if _c1 and _c2:
+                            # Only compute distance if on same map
+                            if _c1[2] == _c2[2]:
+                                _dx = _c1[0] - _c2[0]
+                                _dy = _c1[1] - _c2[1]
+                                _cdist = math.sqrt(_dx * _dx + _dy * _dy)
+                                _is_distant = _cdist > _VG_ADJACENT_THRESHOLD
+                            else:
+                                _is_distant = True  # different maps → always "distant"
+                        if (_is_rapid or _is_distant) and top_count < len(votes):
+                            # Not unanimous — hold current room
+                            _vg_block = True
+                            _LOGGER.debug(
+                                "Velocity gate blocked %s: %s → %s (rapid=%.1fs, distant=%s, votes=%d/%d)",
+                                key[:30], confirmed, top_room, _elapsed,
+                                _is_distant, top_count, len(votes),
+                            )
+                    if not _vg_block:
+                        _LOGGER.debug(
+                            "Room confirmed for %s: %s → %s (votes %s, confidence %.0f%%)",
+                            key, confirmed, top_room, dict(counts), confidence * 100,
+                        )
+                        # Track room change for alert processing
+                        self._pending_room_changes.append((key, confirmed, top_room))
+                        self._last_room_change_mono[key] = time.monotonic()
+                        confirmed = top_room
 
         self._confirmed_room[key] = confirmed
         self._room_confidence[key] = confidence
@@ -1087,6 +1189,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._knn_position.pop(key, None)
         self._beacon_autocal_last.pop(key, None)
         self._adaptive_last_obs.pop(key, None)
+        self._last_room_change_mono.pop(key, None)
         self._ema_rssi.pop(key, None)
         self._kalman_p.pop(key, None)
 
