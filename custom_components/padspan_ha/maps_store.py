@@ -303,6 +303,20 @@ class MapsStore:
                 new_stack["tie_ins"] = stack["tie_ins"] if isinstance(stack["tie_ins"], list) else []
             elif m.get("stack", {}).get("tie_ins"):
                 new_stack["tie_ins"] = m["stack"]["tie_ins"]
+            # Raw affine matrix from Point Align solver — stored as [m11,m12,m21,m22].
+            # If present, the stack renderer uses CSS matrix() instead of the lossy
+            # decomposed scale/rotation/scaleX_adj fallback.
+            if "_m" in stack:
+                raw_m = stack.get("_m")
+                if isinstance(raw_m, list) and len(raw_m) == 4:
+                    new_stack["_m"] = [float(v) for v in raw_m]
+                    new_stack["_m_ar"] = float(stack.get("_m_ar", 1.0))
+                else:
+                    new_stack["_m"] = None
+                    new_stack["_m_ar"] = None
+            elif m.get("stack", {}).get("_m"):
+                new_stack["_m"] = m["stack"]["_m"]
+                new_stack["_m_ar"] = m["stack"].get("_m_ar")
             m["stack"] = new_stack
 
         m["updated"] = _now_iso()
@@ -464,8 +478,10 @@ class MapsStore:
         _m = stk.get("_m")
         if _m and len(_m) == 4:
             u, v = px - 0.5, py - 0.5
-            return (_m[0] * u + _m[1] * v + 0.5 + ox,
-                    _m[2] * u + _m[3] * v + 0.5 + oy)
+            ar = float(stk.get("_m_ar") or stk.get("ref_ar") or 1.0)
+            rx = _m[0] * u + _m[1] * v + 0.5 + ox
+            ry = _m[2] * u + _m[3] * v + 0.5 + oy
+            return (rx, ar * ry)
         sc = float(stk.get("scale", 1.0))
         sx_adj = float(stk.get("scale_x_adj", 1.0))
         ref_ar = float(stk.get("ref_ar") or (1.0))
@@ -484,7 +500,9 @@ class MapsStore:
         oy = float(stk.get("y_offset", 0.0))
         _m = stk.get("_m")
         if _m and len(_m) == 4:
-            rx, ry = wx - 0.5 - ox, wy - 0.5 - oy
+            ar = float(stk.get("_m_ar") or stk.get("ref_ar") or 1.0)
+            rx = wx - 0.5 - ox
+            ry = wy / ar - 0.5 - oy  # undo AR scaling applied in map_to_world
             det = _m[0] * _m[3] - _m[1] * _m[2]
             if abs(det) < 1e-12:
                 return (0.5, 0.5)

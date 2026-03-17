@@ -1032,7 +1032,7 @@ export function render(ctx){
       const ar=(m.image?.height||600)/(m.image?.width||800);
       const arRef=stk.ref_ar||ar, sxAdj=stk.scale_x_adj||1.0;
       const rot=(stk.rotation||0)*Math.PI/180;
-      const bbPt=(stk._m&&stk._m.length===4)?(px,py)=>{const u=px-0.5,v=py-0.5;return[stk._m[0]*u+stk._m[1]*v+0.5+ox,stk._m[2]*u+stk._m[3]*v+0.5+oy_];}:(px,py)=>{const dx=(px-0.5)*sc*sxAdj,dy=(py-0.5)*sc*arRef,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,arRef*(0.5+oy_)+ry];};
+      const bbPt=(stk._m&&stk._m.length===4)?(px,py)=>{const u=px-0.5,v=py-0.5;return[stk._m[0]*u+stk._m[1]*v+0.5+ox,arRef*(stk._m[2]*u+stk._m[3]*v+0.5+oy_)];}:(px,py)=>{const dx=(px-0.5)*sc*sxAdj,dy=(py-0.5)*sc*arRef,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,arRef*(0.5+oy_)+ry];};
       for(const [cx,cy] of [[0,0],[1,0],[1,1],[0,1]]){const[wx,wy]=bbPt(cx,cy);_indoorBB.minX=Math.min(_indoorBB.minX,wx);_indoorBB.minY=Math.min(_indoorBB.minY,wy);_indoorBB.maxX=Math.max(_indoorBB.maxX,wx);_indoorBB.maxY=Math.max(_indoorBB.maxY,wy);}
     }
     if(!isFinite(_indoorBB.minX)){_indoorBB={minX:0,minY:0,maxX:1,maxY:0.75};}
@@ -1051,7 +1051,7 @@ export function render(ctx){
         const arRefT=stk.ref_ar||ar, sxAdjT=stk.scale_x_adj||1.0;
         const rotRad=(stk.rotation||0)*Math.PI/180;
         const _mPt = (stk._m && stk._m.length === 4)
-          ? (px,py)=>{ const u=px-0.5,v=py-0.5; return[stk._m[0]*u+stk._m[1]*v+0.5+ox, stk._m[2]*u+stk._m[3]*v+0.5+oy_]; }
+          ? (px,py)=>{ const u=px-0.5,v=py-0.5; return[stk._m[0]*u+stk._m[1]*v+0.5+ox, arRefT*(stk._m[2]*u+stk._m[3]*v+0.5+oy_)]; }
           : (px,py)=>{
               const dx=(px-0.5)*sc*sxAdjT, dy=(py-0.5)*sc*arRefT;
               const rx=dx*Math.cos(rotRad)-dy*Math.sin(rotRad);
@@ -1244,7 +1244,7 @@ export function render(ctx){
           const ar=(m.image?.height||600)/(m.image?.width||800);
           const arRefBB=stk.ref_ar||ar, sxAdjBB=stk.scale_x_adj||1.0;
           const rot=(stk.rotation||0)*Math.PI/180;
-          const bbPt=(stk._m&&stk._m.length===4)?(px,py)=>{const u=px-0.5,v=py-0.5;return[stk._m[0]*u+stk._m[1]*v+0.5+ox,stk._m[2]*u+stk._m[3]*v+0.5+oy__];}:(px,py)=>{const dx=(px-0.5)*sc*sxAdjBB,dy=(py-0.5)*sc*arRefBB,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,arRefBB*(0.5+oy__)+ry];};
+          const bbPt=(stk._m&&stk._m.length===4)?(px,py)=>{const u=px-0.5,v=py-0.5;return[stk._m[0]*u+stk._m[1]*v+0.5+ox,arRefBB*(stk._m[2]*u+stk._m[3]*v+0.5+oy__)];}:(px,py)=>{const dx=(px-0.5)*sc*sxAdjBB,dy=(py-0.5)*sc*arRefBB,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,arRefBB*(0.5+oy__)+ry];};
           for(const [cx,cy] of [[0,0],[1,0],[1,1],[0,1]]){const[wx,wy]=bbPt(cx,cy);x0=Math.min(x0,wx);y0_=Math.min(y0_,wy);x1=Math.max(x1,wx);y1_=Math.max(y1_,wy);}
         }
         // Level with only outside maps: use global indoor BB

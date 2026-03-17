@@ -433,10 +433,13 @@ function _deleteMapModal(ctx, srcMap, allMaps){
     const _mapToWorld = (px, py, stk) => {
       const ox = stk.x_offset||0, oy = stk.y_offset||0;
       if (stk._m && stk._m.length === 4) {
-        // Raw affine matrix: world = M * (p - 0.5) + 0.5 + offset
+        // Raw affine matrix: world = (M * (p - 0.5) + 0.5 + offset) with y scaled by ar
+        // to match the anisotropic world space used by the decomposed path.
         const u = px - 0.5, v = py - 0.5;
         const ar = stk._m_ar || stk.ref_ar || 1;
-        return [stk._m[0]*u + stk._m[1]*v + 0.5 + ox, stk._m[2]*u + stk._m[3]*v + 0.5 + oy];
+        const rx = stk._m[0]*u + stk._m[1]*v + 0.5 + ox;
+        const ry = stk._m[2]*u + stk._m[3]*v + 0.5 + oy;
+        return [rx, ar * ry];
       }
       const sc = stk.scale||1, sx = stk.scale_x_adj||1, ar = stk.ref_ar||1;
       const r = (stk.rotation||0)*Math.PI/180;
@@ -447,8 +450,10 @@ function _deleteMapModal(ctx, srcMap, allMaps){
     const _worldToMap = (wx, wy, stk) => {
       const ox = stk.x_offset||0, oy = stk.y_offset||0;
       if (stk._m && stk._m.length === 4) {
-        // Inverse of: world = M * (p - 0.5) + 0.5 + offset
-        const rx = wx - 0.5 - ox, ry = wy - 0.5 - oy;
+        // Inverse of: world_x = M_x(p) + 0.5 + ox, world_y = ar * (M_y(p) + 0.5 + oy)
+        const ar = stk._m_ar || stk.ref_ar || 1;
+        const rx = wx - 0.5 - ox;
+        const ry = wy / ar - 0.5 - oy; // undo AR scaling
         const det = stk._m[0]*stk._m[3] - stk._m[1]*stk._m[2];
         if (Math.abs(det) < 1e-12) return [0.5, 0.5];
         return [(stk._m[3]*rx - stk._m[1]*ry)/det + 0.5, (-stk._m[2]*rx + stk._m[0]*ry)/det + 0.5];
@@ -3979,17 +3984,78 @@ function _stack(ctx, maps, helpBtn){
           bakeImg.onerror = () => ctx.toast("Bake failed — image load error", true);
           bakeImg.src = _mapUrl(tgtMap);
         } else {
-          alignState.x_offset   = rDx;
-          alignState.y_offset   = rDy;
-          alignState.scale      = rScale;
-          alignState.rotation   = rRotation;
-          alignState.scaleX_adj = rStretch;
-          // Store the raw affine matrix so the stack renderer can use CSS matrix()
-          // instead of the lossy translate→rotate→scale decomposition.
-          if (rawM && rawM.length === 4) {
-            alignState._m    = rawM.slice();
-            alignState._m_ar = arHW || 1;
+          // ── Compose PA result with reference map's stack transform ──
+          // The solver maps flat_target → flat_reference.  But in the stack view,
+          // the reference may have its own transform (if it's not the master).
+          // To make the target land on top of the displayed reference, we need:
+          //   composed = ref_stack ∘ pa_result
+          // If the reference has no transform, composition is identity (PA as-is).
+          const refStk = refMap.stack || {};
+          let rM = null, rDxR = 0, rDyR = 0;
+          if (refStk._m && refStk._m.length === 4) {
+            rM = refStk._m;
+            rDxR = refStk.x_offset || 0;
+            rDyR = refStk.y_offset || 0;
+          } else if ((refStk.rotation && refStk.rotation !== 0) ||
+                     (refStk.scale && refStk.scale !== 1) ||
+                     (refStk.scale_x_adj && refStk.scale_x_adj !== 1) ||
+                     refStk.x_offset || refStk.y_offset) {
+            // Convert decomposed → _m using STAGE AR (= arHW from this PA session)
+            const rTheta = (refStk.rotation || 0) * Math.PI / 180;
+            const rsx = (refStk.scale || 1) * (refStk.scale_x_adj || 1);
+            const rsy = refStk.scale || 1;
+            rM = [
+              Math.cos(rTheta) * rsx,
+              -Math.sin(rTheta) * rsy * arHW,
+              Math.sin(rTheta) * rsx / arHW,
+              Math.cos(rTheta) * rsy
+            ];
+            rDxR = refStk.x_offset || 0;
+            rDyR = refStk.y_offset || 0;
           }
+
+          let finalM, finalDx, finalDy;
+          if (rM && rawM && rawM.length === 4) {
+            // Compose: C_m = R * P (2x2 multiply), d_c = R * d_p + d_r
+            finalM = [
+              rM[0]*rawM[0] + rM[1]*rawM[2],
+              rM[0]*rawM[1] + rM[1]*rawM[3],
+              rM[2]*rawM[0] + rM[3]*rawM[2],
+              rM[2]*rawM[1] + rM[3]*rawM[3]
+            ];
+            finalDx = rM[0]*rDx + rM[1]*rDy + rDxR;
+            finalDy = rM[2]*rDx + rM[3]*rDy + rDyR;
+            console.log("[PtAlign] Composed with ref stack: refM=[" +
+              rM.map(v=>v.toFixed(4)).join(",") + "] refOff=(" + rDxR.toFixed(4) + "," + rDyR.toFixed(4) + ")");
+            console.log("[PtAlign] Composed _m=[" + finalM.map(v=>v.toFixed(4)).join(",") +
+              "] offset=(" + finalDx.toFixed(4) + "," + finalDy.toFixed(4) + ")");
+          } else {
+            finalM = rawM && rawM.length === 4 ? rawM.slice() : null;
+            finalDx = rDx;
+            finalDy = rDy;
+          }
+
+          // Decompose composed matrix for manual controls / display
+          if (finalM) {
+            const _ar2 = arHW || 1;
+            const cRot = Math.atan2(finalM[2] * _ar2, finalM[0]) * 180 / Math.PI;
+            const cSx = Math.sqrt(finalM[0]*finalM[0] + finalM[2]*finalM[2] * _ar2*_ar2);
+            const cSy = Math.sqrt(finalM[1]*finalM[1] / (_ar2*_ar2) + finalM[3]*finalM[3]);
+            alignState.scale      = cSy || 1;
+            alignState.rotation   = cRot;
+            alignState.scaleX_adj = (cSx > 0 && cSy > 0) ? cSx / cSy : 1;
+            alignState._m         = finalM;
+            alignState._m_ar      = _ar2;
+          } else {
+            alignState.scale      = rScale;
+            alignState.rotation   = rRotation;
+            alignState.scaleX_adj = rStretch;
+            alignState._m         = null;
+            alignState._m_ar      = null;
+          }
+          alignState.x_offset = finalDx;
+          alignState.y_offset = finalDy;
+
           _close();
           buildStage();
           ctx.toast("Aligned (" + pairs + " pairs, residual " + resPct + "%)");
@@ -4011,9 +4077,10 @@ function _stack(ctx, maps, helpBtn){
 
       const previewStage = document.createElement("div");
       previewStage.style.cssText = "position:relative;width:100%;max-width:900px;aspect-ratio:" + _refAR +
-        ";max-height:calc(100vh - 120px);background:#071008;border:2px solid #1e4976;border-radius:8px;overflow:hidden";
+        ";max-height:calc(100vh - 120px);background:#071008;border:2px solid #1e4976;border-radius:8px;overflow:visible";
 
-      // Reference map layer (bottom)
+      // Reference map layer (bottom) — shown FLAT (no stack transform) because the
+      // solver computes target→reference in the reference's own coordinate space.
       const refUrl = _mapUrl(refMap);
       if (refUrl) {
         const ri = document.createElement("img");
@@ -4909,7 +4976,7 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
     const sxAdj=stk.scale_x_adj||1.0, ar=(m.image?.height||600)/(m.image?.width||800);
     const arRef=stk.ref_ar||ar, rot=(stk.rotation||0)*Math.PI/180;
     const bbPt = (stk._m && stk._m.length === 4)
-      ? (px,py)=>{const u=px-0.5,v=py-0.5;return[stk._m[0]*u+stk._m[1]*v+0.5+ox, stk._m[2]*u+stk._m[3]*v+0.5+oy_];}
+      ? (px,py)=>{const u=px-0.5,v=py-0.5;return[stk._m[0]*u+stk._m[1]*v+0.5+ox, arRef*(stk._m[2]*u+stk._m[3]*v+0.5+oy_)];}
       : (px,py)=>{const dx=(px-0.5)*sc*sxAdj,dy=(py-0.5)*sc*arRef,rx=dx*Math.cos(rot)-dy*Math.sin(rot),ry=dx*Math.sin(rot)+dy*Math.cos(rot);return[(0.5+ox)+rx,arRef*(0.5+oy_)+ry];};
     if(!_indoorBBByLevel.has(z)) _indoorBBByLevel.set(z,{minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity});
     const bb=_indoorBBByLevel.get(z);
@@ -4963,7 +5030,7 @@ function _stackIsoSVG(maps, ctx, levelOptions, focusLevel=null, floorGap=200, ho
       const arRef = stk.ref_ar || ar;
       const rot=(stk.rotation||0)*Math.PI/180;
       const bbPt = (stk._m && stk._m.length === 4)
-        ? (px,py)=>{const u=px-0.5,v=py-0.5;return[stk._m[0]*u+stk._m[1]*v+0.5+ox, stk._m[2]*u+stk._m[3]*v+0.5+oy_];}
+        ? (px,py)=>{const u=px-0.5,v=py-0.5;return[stk._m[0]*u+stk._m[1]*v+0.5+ox, arRef*(stk._m[2]*u+stk._m[3]*v+0.5+oy_)];}
         : (px,py)=>{
           const dx=(px-0.5)*sc*sxAdj, dy=(py-0.5)*sc*arRef;
           const rx=dx*Math.cos(rot)-dy*Math.sin(rot), ry=dx*Math.sin(rot)+dy*Math.cos(rot);
