@@ -1132,6 +1132,16 @@ export function render(ctx){
     }
     const calPoints = (ctx.state.calibration?.points) || [];
 
+    // ── Lazy-load radio_map module for 3D heatmap overlay ──────────────────
+    const _isoRadioMapOn = !!(ctx.state.settings && ctx.state.settings.radio_map_enabled);
+    let _isoRadioMapMod = ctx.state._2dRadioMapMod || null; // reuse same cache
+    if (_isoRadioMapOn && !_isoRadioMapMod) {
+      import("./radio_map.js?b=" + (ctx.state.buildId || "")).then(mod => {
+        ctx.state._2dRadioMapMod = mod;
+        ctx.actions.renderRooms();
+      }).catch(e => console.warn("PadSpan: radio_map module load failed", e));
+    }
+
     // Per-map coord transform: image-fraction (0-1) → ISO screen pixel
     // Uses the same mapPt formula as the room-polygon renderer so positions align exactly.
     // Built from ALL maps (not just visible) so objects on hidden maps can still be positioned.
@@ -1374,6 +1384,17 @@ export function render(ctx){
         s += `<polygon points="${pts([BL,BR,BR_b,BL_b])}" fill="#0a1a12" fill-opacity="0.3" stroke="#253e2e" stroke-width="0.8"/>`;
         s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="#0f2017" fill-opacity="0.06" stroke="${lyrColor}" stroke-width="1.5" stroke-dasharray="10,5" opacity="0.5"/>`;
         if(lidx !== 1){ s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="url(#flrpat_${lidx})" stroke="none"/>`; }
+
+        // ── Radio Map heatmap layer (3D isometric, behind room polygons) ──
+        if (_isoRadioMapOn && _isoRadioMapMod && calPoints.length) {
+          for (const m of group) {
+            const tf = mapTransforms[m.id]; if (!tf) continue;
+            const heatData = _isoRadioMapMod.computeHeatmapGrid(calPoints, m.id, null, m.rf_barriers || []);
+            if (heatData) {
+              s += _isoRadioMapMod.isoHeatmapSVG(heatData, tf.mapPt, iso, z);
+            }
+          }
+        }
 
         // Room polygons
         for(const m of group){

@@ -384,3 +384,103 @@ export function distortionMapSVG(calPoints, mapId, barriers) {
 
   return s;
 }
+
+
+// ── Isometric Heatmap Generator ──────────────────────────────────────────────
+// For 3D isometric views: generates heatmap polygons projected through the
+// caller's mapPt + iso transform chain.
+
+const ISO_GRID = 12; // coarser grid for 3D (144 cells per map — performance)
+
+/**
+ * Compute heatmap grid data for a map (not yet projected).
+ * Returns {grid: Float32Array, minR, maxR, res} or null if no data.
+ */
+export function computeHeatmapGrid(calPoints, mapId, scannerSource, barriers) {
+  const mapPts = (calPoints || []).filter(p => p.map_id === mapId);
+  if (!mapPts.length) return null;
+
+  const dataPoints = [];
+  for (const pt of mapPts) {
+    const readings = pt.scanner_readings || [];
+    if (scannerSource) {
+      const r = readings.find(rd => rd.source === scannerSource);
+      if (r && r.mean_rssi != null) {
+        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: r.mean_rssi });
+      }
+    } else {
+      const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
+      if (rssis.length) {
+        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: Math.max(...rssis) });
+      }
+    }
+  }
+  if (!dataPoints.length) return null;
+
+  const allRssi = dataPoints.map(p => p.rssi);
+  const minR = Math.min(...allRssi);
+  const maxR = Math.max(...allRssi);
+  const res = ISO_GRID;
+  const cellW = 1.0 / res;
+  const grid = new Float32Array(res * res);
+  const mapBarriers = barriers || [];
+
+  for (let gy = 0; gy < res; gy++) {
+    for (let gx = 0; gx < res; gx++) {
+      const qx = (gx + 0.5) * cellW;
+      const qy = (gy + 0.5) * cellW;
+      const rssi = _idw(qx, qy, dataPoints, mapBarriers);
+      grid[gy * res + gx] = rssi != null ? rssi : NaN;
+    }
+  }
+
+  return { grid, minR, maxR, res, dataPoints };
+}
+
+/**
+ * Generate isometric heatmap SVG fragment for one map.
+ * The caller provides mapPt (normalized → world) and iso (world → screen) functions.
+ *
+ * @param {Object} heatData - from computeHeatmapGrid()
+ * @param {Function} mapPt - (x_frac, y_frac) → [wx, wy]
+ * @param {Function} iso - (wx, wy, z) → [sx, sy]
+ * @param {number} z - z-level for this map
+ * @returns {string} SVG polygon elements
+ */
+export function isoHeatmapSVG(heatData, mapPt, iso, z) {
+  if (!heatData) return "";
+  const { grid, minR, maxR, res } = heatData;
+  const cellW = 1.0 / res;
+  let s = "";
+
+  for (let gy = 0; gy < res; gy++) {
+    for (let gx = 0; gx < res; gx++) {
+      const rssi = grid[gy * res + gx];
+      if (isNaN(rssi)) continue;
+
+      const color = _rssiColor(rssi, minR, maxR);
+      // Project 4 corners of the grid cell through the iso transform
+      const x0 = gx * cellW, y0 = gy * cellW;
+      const x1 = x0 + cellW, y1 = y0 + cellW;
+      const [w0x, w0y] = mapPt(x0, y0);
+      const [w1x, w1y] = mapPt(x1, y0);
+      const [w2x, w2y] = mapPt(x1, y1);
+      const [w3x, w3y] = mapPt(x0, y1);
+      const p0 = iso(w0x, w0y, z);
+      const p1 = iso(w1x, w1y, z);
+      const p2 = iso(w2x, w2y, z);
+      const p3 = iso(w3x, w3y, z);
+
+      s += `<polygon points="${Math.round(p0[0])},${Math.round(p0[1])} ${Math.round(p1[0])},${Math.round(p1[1])} ${Math.round(p2[0])},${Math.round(p2[1])} ${Math.round(p3[0])},${Math.round(p3[1])}" fill="${color}"/>`;
+    }
+  }
+
+  // Calibration point markers projected to iso
+  for (const dp of heatData.dataPoints) {
+    const [wx, wy] = mapPt(dp.x_frac, dp.y_frac);
+    const [sx, sy] = iso(wx, wy, z);
+    s += `<circle cx="${Math.round(sx)}" cy="${Math.round(sy)}" r="3" fill="#e2e8f0" stroke="#071008" stroke-width="0.8" opacity="0.7"/>`;
+  }
+
+  return s;
+}
