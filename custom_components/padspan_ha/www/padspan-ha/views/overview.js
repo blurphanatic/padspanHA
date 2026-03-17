@@ -594,8 +594,49 @@ export function render(ctx){
     const imgUrl = activeMap.image?.filename ? `/local/padspan_ha/maps/${activeMap.image.filename}` : null;
 
     // Filter state (persists within session)
-    if(ctx.state._2dFilters === undefined) ctx.state._2dFilters = { scanners: true, tagged: true, unknown: false, rooms: true, mapImg: true };
+    if(ctx.state._2dFilters === undefined) ctx.state._2dFilters = { scanners: true, tagged: true, unknown: false, rooms: true, mapImg: true, radioMap: false, distortion: false };
     const F = ctx.state._2dFilters;
+
+    // Radio map state (must be declared before buildSVG closure captures them)
+    let _radioMapScanner = ctx.state._2dRadioMapScanner || null;
+    const _radioMapOn = !!(ctx.state.settings && ctx.state.settings.radio_map_enabled);
+    const _distortionOn = !!(ctx.state.settings && ctx.state.settings.distortion_map_enabled);
+
+    // Lazy-load calibration data for radio map / distortion map overlays
+    let _calPoints = ctx.state._2dCalPoints || null;
+    let _radioMapMod = ctx.state._2dRadioMapMod || null;
+    if ((F.radioMap || F.distortion) && !_calPoints) {
+      // Fetch calibration data once, then re-render
+      (async () => {
+        try {
+          const calData = await ctx.actions.calibrationGet();
+          ctx.state._2dCalPoints = calData.points || [];
+          _calPoints = ctx.state._2dCalPoints;
+          // Also compute available scanners for the scanner selector
+          if (_radioMapMod) {
+            ctx.state._2dCalScanners = _radioMapMod.getMapScanners(_calPoints, activeMap.id);
+          }
+          // Trigger re-render of the SVG
+          if (svgDiv) svgDiv.innerHTML = buildSVG();
+          if (typeof _updateScannerBar === "function") _updateScannerBar();
+        } catch (e) { console.warn("PadSpan: calibration fetch for radio map failed", e); }
+      })();
+    }
+    // Lazy-load the radio_map module
+    if ((_radioMapOn || _distortionOn) && !_radioMapMod) {
+      (async () => {
+        try {
+          const mod = await import("./radio_map.js?b=" + (ctx.state.buildId || ""));
+          ctx.state._2dRadioMapMod = mod;
+          _radioMapMod = mod;
+          // Recompute scanner list if cal data is already loaded
+          if (_calPoints) {
+            ctx.state._2dCalScanners = mod.getMapScanners(_calPoints, activeMap.id);
+          }
+          if (svgDiv) svgDiv.innerHTML = buildSVG();
+        } catch (e) { console.warn("PadSpan: radio_map module load failed", e); }
+      })();
+    }
 
     // Zoom/pan state
     if(ctx.state._2dZoom === undefined) ctx.state._2dZoom = 1.0;
@@ -631,6 +672,18 @@ export function render(ctx){
         s += `<rect x="0" y="0" width="1" height="1" fill="#0d1f12"/>`;
       } else {
         s += `<rect x="0" y="0" width="1" height="1" fill="#0d1f12"/>`;
+      }
+
+      // ── Radio Map heatmap layer (behind room boundaries and objects) ──
+      if (F.radioMap && _radioMapMod && _calPoints && _calPoints.length) {
+        const rmSvg = _radioMapMod.radioMapSVG(_calPoints, activeMap.id, _radioMapScanner, receivers, activeMap.rf_barriers || []);
+        if (rmSvg) s += rmSvg;
+      }
+
+      // ── Distortion Map layer (behind room boundaries and objects) ──
+      if (F.distortion && _radioMapMod && _calPoints && _calPoints.length) {
+        const dmSvg = _radioMapMod.distortionMapSVG(_calPoints, activeMap.id, activeMap.rf_barriers || []);
+        if (dmSvg) s += dmSvg;
       }
 
       // Room boundaries
@@ -734,6 +787,7 @@ export function render(ctx){
     const filterBar = document.createElement("div");
     filterBar.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px";
 
+    let _updateScannerBar = null; // set later if radio map enabled
     const makeFilterBtn = (key, label, color) => {
       const btn = document.createElement("button");
       btn.className = "btn inline";
@@ -748,6 +802,8 @@ export function render(ctx){
         F[key] = !F[key];
         update();
         svgDiv.innerHTML = buildSVG();
+        // Update scanner selector visibility when Radio Map toggled
+        if (key === "radioMap" && _updateScannerBar) _updateScannerBar();
       });
       return btn;
     };
@@ -762,7 +818,65 @@ export function render(ctx){
     filterBar.appendChild(makeFilterBtn("scanners", "Scanners", "#52b788"));
     filterBar.appendChild(makeFilterBtn("tagged", "Tagged", "#5eead4"));
     filterBar.appendChild(makeFilterBtn("unknown", "Unknown", "#f59e0b"));
+
+    // ── Radio Map & Distortion Map toggles (experimental, gated behind settings) ──
+    if (_radioMapOn || _distortionOn) {
+      const sep2d2 = document.createElement("span");
+      sep2d2.style.cssText = "width:1px;height:16px;background:#334155;margin:0 2px";
+      filterBar.appendChild(sep2d2);
+      if (_radioMapOn) filterBar.appendChild(makeFilterBtn("radioMap", "Radio Map", "#e879f9"));
+      if (_distortionOn) filterBar.appendChild(makeFilterBtn("distortion", "Distortion", "#fb923c"));
+    }
     outer.appendChild(filterBar);
+
+    // Scanner selector for per-scanner radio map (shown when radio map is active)
+    const scannerBar = document.createElement("div");
+    scannerBar.style.cssText = "display:none;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px";
+    if (_radioMapOn) {
+      _updateScannerBar = () => {
+        if (!F.radioMap) { scannerBar.style.display = "none"; return; }
+        scannerBar.style.display = "flex";
+        scannerBar.innerHTML = "";
+        const lbl = document.createElement("span");
+        lbl.style.cssText = "font-size:11px;color:#94a3b8";
+        lbl.textContent = "Scanner:";
+        scannerBar.appendChild(lbl);
+        // "Combined" button
+        const combBtn = document.createElement("button");
+        combBtn.className = "btn inline";
+        combBtn.style.cssText = !_radioMapScanner
+          ? "font-size:10px;padding:2px 8px;background:#0a2a1a;border-color:#e879f9;color:#e879f9;font-weight:700"
+          : "font-size:10px;padding:2px 8px;color:#64748b";
+        combBtn.textContent = "Combined";
+        combBtn.addEventListener("click", () => {
+          _radioMapScanner = null;
+          ctx.state._2dRadioMapScanner = null;
+          _updateScannerBar();
+          svgDiv.innerHTML = buildSVG();
+        });
+        scannerBar.appendChild(combBtn);
+        // Per-scanner buttons (from calibration data)
+        const calScanners = ctx.state._2dCalScanners || [];
+        for (const sc of calScanners) {
+          const btn = document.createElement("button");
+          btn.className = "btn inline";
+          const isActive = _radioMapScanner === sc.source;
+          btn.style.cssText = isActive
+            ? "font-size:10px;padding:2px 8px;background:#0a2a1a;border-color:#e879f9;color:#e879f9;font-weight:700"
+            : "font-size:10px;padding:2px 8px;color:#64748b";
+          btn.textContent = (sc.name || sc.source).substring(0, 20);
+          btn.addEventListener("click", () => {
+            _radioMapScanner = sc.source;
+            ctx.state._2dRadioMapScanner = sc.source;
+            _updateScannerBar();
+            svgDiv.innerHTML = buildSVG();
+          });
+          scannerBar.appendChild(btn);
+        }
+      };
+      _updateScannerBar();
+    }
+    outer.appendChild(scannerBar);
 
     // Map selector (only if multi-floor)
     if(multiFloor){
