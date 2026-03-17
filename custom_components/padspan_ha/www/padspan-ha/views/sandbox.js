@@ -274,8 +274,52 @@ export function render(ctx){
       return col;
     };
 
+    // Separate floors into "big" (≥3 rooms, own column) and "small" (≤2 rooms, stacked)
+    const _bigFloors = [];
+    const _smallFloors = [];
     for(const fo of floorOrder){
-      towerWrap.appendChild(_buildTower(floorMap.get(fo.id) || [], fo.label));
+      const fr = floorMap.get(fo.id) || [];
+      if(fr.length >= 3) _bigFloors.push(fo);
+      else _smallFloors.push(fo);
+    }
+
+    // Big floors get proportional flex based on room count
+    for(const fo of _bigFloors){
+      const fr = floorMap.get(fo.id) || [];
+      const tower = _buildTower(fr, fo.label);
+      tower.style.flex = String(Math.max(2, fr.length));
+      tower.style.minWidth = "90px";
+      towerWrap.appendChild(tower);
+    }
+
+    // Small floors stack vertically in a single shared column
+    if(_smallFloors.length > 0){
+      const stackCol = el("div",{style:"flex:1;min-width:56px;display:flex;flex-direction:column;gap:8px;align-items:stretch;justify-content:flex-end"});
+      for(const fo of _smallFloors){
+        const fr = floorMap.get(fo.id) || [];
+        // Mini tower — label + tower inline, no separate col wrapper
+        const miniLabel = el("div",{style:"font-size:8px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;text-align:center"}, fo.label);
+        const miniTower = el("div",{style:"border-radius:5px;overflow:hidden;border:1px solid #1e3a2a;background:#0a1a0f"});
+        if(fr.length === 0){
+          miniTower.appendChild(el("div",{style:"height:24px;display:flex;align-items:center;justify-content:center;color:#253e2e;font-size:8px;font-style:italic"},"empty"));
+        } else {
+          for(let i = 0; i < fr.length; i++){
+            const r = fr[i];
+            const band = el("div",{style:`min-height:22px;padding:3px 5px;background:linear-gradient(135deg,${r.color}18 0%,${r.color}35 100%);border-bottom:${i<fr.length-1?`1px solid ${r.color}20`:"none"};display:flex;align-items:center;gap:3px`});
+            band.appendChild(el("div",{style:`width:2px;align-self:stretch;background:${r.color};border-radius:1px;flex-shrink:0;opacity:0.7`}));
+            band.appendChild(el("div",{style:`flex:1;min-width:0;font-size:8px;font-weight:600;color:${r.color};overflow:hidden;text-overflow:ellipsis;white-space:nowrap`}, r.room));
+            if(r.count > 0) band.appendChild(el("div",{style:`font-size:9px;font-weight:800;color:${r.color};flex-shrink:0`}, String(r.count)));
+            band.style.cursor = "pointer";
+            band.addEventListener("click", ()=> ctx.actions.showRoomDetail(r.room));
+            miniTower.appendChild(band);
+          }
+        }
+        const miniWrap = el("div",{});
+        miniWrap.appendChild(miniLabel);
+        miniWrap.appendChild(miniTower);
+        stackCol.appendChild(miniWrap);
+      }
+      towerWrap.appendChild(stackCol);
     }
 
     // Fallback: no floors at all → single tower
