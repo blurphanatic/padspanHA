@@ -148,6 +148,8 @@ export function render(ctx) {
       tb.range = res.range || { start: 0, end: 0, count: 0 };
       tb.frameIdx = 0;
       tb._staticKeys = null;  // recompute on next render
+      tb._colorMap = null;
+      tb._scannerSet = null;
 
       // If filtering by object and no frames found, auto-expand to full data range
       if (tb.filterKey && !tb.frames.length && tb.range && tb.range.start > 0) {
@@ -159,6 +161,8 @@ export function render(ctx) {
         });
         tb.frames = fullRes.frames || [];
         tb._staticKeys = null;  // recompute on next render
+      tb._colorMap = null;
+      tb._scannerSet = null;
         if (tb.frames.length) {
           tb._autoExpanded = true;
         }
@@ -265,10 +269,14 @@ export function render(ctx) {
     // Overlay: playback objects at this frame
     if (tb.frames.length && frameIdx >= 0 && frameIdx < tb.frames.length) {
       const frame = tb.frames[frameIdx];
-      const _scannerSrcSet = new Set(((ctx.state.live?.snapshot?.ble?.radios) || []).map(r => String(r.source || "").toUpperCase()).filter(Boolean));
-      for (const r of ((ctx.state.live?.snapshot?.ble?.radios) || [])) {
-        if (r.name) _scannerSrcSet.add(String(r.name).toUpperCase());
+      // Cache scanner set — doesn't change during playback
+      if (!tb._scannerSet) {
+        tb._scannerSet = new Set(((ctx.state.live?.snapshot?.ble?.radios) || []).map(r => String(r.source || "").toUpperCase()).filter(Boolean));
+        for (const r of ((ctx.state.live?.snapshot?.ble?.radios) || [])) {
+          if (r.name) tb._scannerSet.add(String(r.name).toUpperCase());
+        }
       }
+      const _scannerSrcSet = tb._scannerSet;
       // Build set of objects that never change rooms (static — useless in movement playback).
       if (!tb._staticKeys) {
         const _roomByKey = {};
@@ -284,23 +292,35 @@ export function render(ctx) {
           if (rooms.size <= 1) tb._staticKeys.add(k);
         }
       }
+      // Count how many objects actually move between rooms
+      const _movingCount = (frame.o || []).filter(o => {
+        const ku = String(o.k || "").toUpperCase();
+        if (_scannerSrcSet.has(ku)) return false;
+        return !tb._staticKeys.has(o.k);
+      }).length;
+      // Only hide static objects if there are enough moving ones to make it useful
+      // (otherwise show everything so playback isn't empty)
+      const _hideStatic = _movingCount >= 2;
       const objs = (frame.o || []).filter(o => {
         const ku = String(o.k || "").toUpperCase();
         if (_scannerSrcSet.has(ku)) return false;
         if (tb.filterKey && o.k === tb.filterKey) return true;
-        if (tb._staticKeys.has(o.k)) return false;
+        if (_hideStatic && tb._staticKeys.has(o.k)) return false;
         return true;
       });
       const _roomCount = {};
       const TB_COLORS = ["#fbbf24", "#60a5fa", "#f87171", "#34d399", "#c4b5fd", "#fb923c", "#5eead4", "#f472b6", "#a3e635", "#818cf8"];
-      const _colorMap = {};
-      let _ci = 0;
-      // Assign colors to ALL objects across all frames so colors are stable
-      for (const f of tb.frames) {
-        for (const o of (f.o || [])) {
-          if (!_colorMap[o.k]) { _colorMap[o.k] = TB_COLORS[_ci % TB_COLORS.length]; _ci++; }
+      // Cache color map on tb so it's computed once per data load, not per frame
+      if (!tb._colorMap) {
+        tb._colorMap = {};
+        let _ci = 0;
+        for (const f of tb.frames) {
+          for (const o of (f.o || [])) {
+            if (!tb._colorMap[o.k]) { tb._colorMap[o.k] = TB_COLORS[_ci % TB_COLORS.length]; _ci++; }
+          }
         }
       }
+      const _colorMap = tb._colorMap;
 
       // ── Trail: connected lines + fading dots showing recent path ──
       const trailLen = Math.min(12, frameIdx);
@@ -311,7 +331,7 @@ export function render(ctx) {
         const tf = tb.frames[ti];
         for (const to of (tf.o || [])) {
           if (_scannerSrcSet.has(String(to.k || "").toUpperCase())) continue;
-          if (tb._staticKeys && tb._staticKeys.has(to.k) && to.k !== tb.filterKey) continue;
+          if (_hideStatic && tb._staticKeys && tb._staticKeys.has(to.k) && to.k !== tb.filterKey) continue;
           if (!to.r || !roomIsoPos[to.r]) continue;
           if (!_trails[to.k]) _trails[to.k] = [];
           const pos = roomIsoPos[to.r];
