@@ -162,26 +162,27 @@ export function render(ctx){
     const haFloors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
     const haAreas  = (ctx.state.model && Array.isArray(ctx.state.model.areas))  ? ctx.state.model.areas  : [];
 
-    // Group rooms by floor; rooms not matched to a floor go into "Unassigned"
-    const floorMap = new Map(); // floorLabel → [{room, color, count}]
-    const floorOrder = []; // ordered labels (by level desc so top floor is left)
-
-    // Build a lookup: room name → floor_id
+    // Build a lookup: room name → floor_id (from HA areas)
     const roomFloorId = {};
     for(const area of haAreas) roomFloorId[area.name] = area.floor_id || "";
 
-    // Collect unique floors sorted by level descending (top floor first / leftmost)
-    const usedFloorIds = new Set(Object.values(roomFloorId));
-    const sortedFloors = [...haFloors].filter(f => usedFloorIds.has(f.id)).sort((a,b) => (b.level||0) - (a.level||0));
+    // Include ALL HA floors (not just those with discovered rooms)
+    const sortedFloors = [...haFloors].sort((a,b) => (b.level||0) - (a.level||0));
+    const floorOrder = [];
     for(const f of sortedFloors) floorOrder.push({ id: f.id, label: f.name || `Level ${f.level}` });
 
+    // Also include all HA area names as potential rooms (even if not yet discovered)
+    const allAreaNames = haAreas.map(a => a.name);
+    const allRoomNames = new Set([...rooms, ...allAreaNames]);
+
     // Rooms without a floor
-    const hasUnassigned = rooms.some(r => !roomFloorId[r] || !sortedFloors.some(f => f.id === roomFloorId[r]));
+    const hasUnassigned = [...allRoomNames].some(r => !roomFloorId[r] || !sortedFloors.some(f => f.id === roomFloorId[r]));
     if(hasUnassigned) floorOrder.push({ id: "__none__", label: "Unassigned" });
 
-    // Populate floor groups
+    // Populate floor groups — include undiscovered rooms (count=0)
+    const floorMap = new Map();
     for(const fo of floorOrder) floorMap.set(fo.id, []);
-    for(const room of rooms){
+    for(const room of allRoomNames){
       const fid = roomFloorId[room] || "";
       const bucket = (fid && floorMap.has(fid)) ? fid : "__none__";
       if(!floorMap.has(bucket)) floorMap.set(bucket, []);
@@ -193,7 +194,7 @@ export function render(ctx){
     const floorCard = el("div",{class:"card",style:"overflow:hidden"});
     floorCard.appendChild(el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"},[
       el("div",{style:"font-weight:700"},"Floor Towers"),
-      el("span",{class:"muted",style:"font-size:11px"}, `${rooms.length} rooms \u00B7 ${sortedFloors.length} floor${sortedFloors.length!==1?"s":""}`),
+      el("span",{class:"muted",style:"font-size:11px"}, `${allRoomNames.size} rooms \u00B7 ${sortedFloors.length} floor${sortedFloors.length!==1?"s":""}`),
     ]));
 
     // Inject glow keyframes
@@ -204,17 +205,24 @@ export function render(ctx){
       document.head.appendChild(st);
     }
 
-    // Tower layout: each floor is a column with a rooftop label, rooms fill vertically
-    const totalDevices = objects.length;
-    const towerWrap = el("div",{style:"display:flex;gap:10px;align-items:flex-end;min-height:160px;padding-top:24px"});
+    // Tower layout: horizontal scroll, each floor is a fixed-width column
+    const towerWrap = el("div",{style:"display:flex;gap:10px;align-items:flex-end;min-height:160px;padding-top:24px;overflow-x:auto;padding-bottom:4px"});
 
-    const _buildTower = (floorRooms, label) => {
-      const col = el("div",{style:"flex:1;min-width:56px;display:flex;flex-direction:column;align-items:stretch"});
+    // Calculate column width: fill available space, but guarantee room for text
+    const floorCount = floorOrder.length || 1;
+    const colWidth = Math.max(120, Math.floor(460 / floorCount));
 
-      // Floor label — sits above the tower like a rooftop sign
-      col.appendChild(el("div",{style:"font-size:9px;font-weight:800;color:#e2e8f0;text-align:center;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"}, label));
+    for(const fo of floorOrder){
+      const floorRooms = floorMap.get(fo.id) || [];
+      // Sort: rooms with devices first (desc), then alphabetical
+      floorRooms.sort((a,b) => (b.count - a.count) || a.room.localeCompare(b.room));
 
-      // Tower body — rounded container with room bands inside
+      const col = el("div",{style:`width:${colWidth}px;min-width:${colWidth}px;display:flex;flex-direction:column;align-items:stretch`});
+
+      // Floor label
+      col.appendChild(el("div",{style:`font-size:10px;font-weight:800;color:#e2e8f0;text-align:center;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:${colWidth}px`}, fo.label));
+
+      // Tower body
       const tower = el("div",{style:"border-radius:6px;overflow:hidden;border:1px solid #1e3a2a;background:#0a1a0f"});
 
       if(floorRooms.length === 0){
@@ -224,21 +232,15 @@ export function render(ctx){
           const r = floorRooms[i];
           const hasDevices = r.count > 0;
           const glowAnim = hasDevices ? "animation:padspan-glow 3s ease-in-out infinite;" : "";
+          const dimStyle = hasDevices ? "" : "opacity:0.5;";
 
-          // Room band — gradient fill, no gaps between bands for a solid tower look
-          const band = el("div",{style:`
-            min-height:28px;padding:4px 6px;cursor:pointer;position:relative;
-            background:linear-gradient(135deg, ${r.color}18 0%, ${r.color}35 100%);
-            border-bottom:${i < floorRooms.length-1 ? `1px solid ${r.color}20` : "none"};
-            display:flex;align-items:center;gap:4px;
-            transition:all 0.2s ease;${glowAnim}
-          `.replace(/\s+/g," ")});
+          const band = el("div",{style:`min-height:26px;padding:3px 6px;cursor:pointer;position:relative;background:linear-gradient(135deg, ${r.color}18 0%, ${r.color}35 100%);border-bottom:${i < floorRooms.length-1 ? `1px solid ${r.color}20` : "none"};display:flex;align-items:center;gap:4px;transition:all 0.2s ease;${glowAnim}${dimStyle}`.replace(/\s+/g," ")});
 
           // Left color accent bar
           band.appendChild(el("div",{style:`width:3px;align-self:stretch;background:${r.color};border-radius:2px;flex-shrink:0;opacity:0.7`}));
 
-          // Room name
-          band.appendChild(el("div",{style:`flex:1;min-width:0;font-size:9px;font-weight:600;color:${r.color};overflow:hidden;text-overflow:ellipsis;white-space:nowrap`}, r.room));
+          // Room name — allow wrapping for long names
+          band.appendChild(el("div",{style:`flex:1;min-width:0;font-size:10px;font-weight:600;color:${r.color};line-height:1.2;word-break:break-word`}, r.room));
 
           // Device count pips — small dots for 1-3, number for 4+
           if(r.count > 0 && r.count <= 3){
@@ -255,10 +257,12 @@ export function render(ctx){
           band.addEventListener("mouseenter", ()=>{
             band.style.background = `linear-gradient(135deg, ${r.color}30 0%, ${r.color}50 100%)`;
             band.style.boxShadow = `inset 0 0 12px ${r.color}25, 0 0 8px ${r.color}15`;
+            band.style.opacity = "1";
           });
           band.addEventListener("mouseleave", ()=>{
             band.style.background = `linear-gradient(135deg, ${r.color}18 0%, ${r.color}35 100%)`;
             band.style.boxShadow = "";
+            band.style.opacity = hasDevices ? "1" : "0.5";
           });
           band.addEventListener("click", ()=> ctx.actions.showRoomDetail(r.room));
           tower.appendChild(band);
@@ -271,65 +275,30 @@ export function render(ctx){
       const floorTotal = floorRooms.reduce((s,r)=>s+r.count, 0);
       col.appendChild(el("div",{style:"font-size:9px;color:#475569;text-align:center;margin-top:4px"}, floorTotal > 0 ? `${floorTotal} device${floorTotal!==1?"s":""}` : "\u00B7"));
 
-      return col;
-    };
-
-    // Separate floors into "big" (≥3 rooms, own column) and "small" (≤2 rooms, stacked)
-    const _bigFloors = [];
-    const _smallFloors = [];
-    for(const fo of floorOrder){
-      const fr = floorMap.get(fo.id) || [];
-      if(fr.length >= 3) _bigFloors.push(fo);
-      else _smallFloors.push(fo);
+      towerWrap.appendChild(col);
     }
 
-    // Big floors get proportional flex based on room count
-    for(const fo of _bigFloors){
-      const fr = floorMap.get(fo.id) || [];
-      const tower = _buildTower(fr, fo.label);
-      tower.style.flex = String(Math.max(2, fr.length));
-      tower.style.minWidth = "90px";
-      towerWrap.appendChild(tower);
-    }
-
-    // Small floors stack vertically in a single shared column
-    if(_smallFloors.length > 0){
-      const stackCol = el("div",{style:"flex:1;min-width:56px;display:flex;flex-direction:column;gap:8px;align-items:stretch;justify-content:flex-end"});
-      for(const fo of _smallFloors){
-        const fr = floorMap.get(fo.id) || [];
-        // Mini tower — label + tower inline, no separate col wrapper
-        const miniLabel = el("div",{style:"font-size:8px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;text-align:center"}, fo.label);
-        const miniTower = el("div",{style:"border-radius:5px;overflow:hidden;border:1px solid #1e3a2a;background:#0a1a0f"});
-        if(fr.length === 0){
-          miniTower.appendChild(el("div",{style:"height:24px;display:flex;align-items:center;justify-content:center;color:#253e2e;font-size:8px;font-style:italic"},"empty"));
-        } else {
-          for(let i = 0; i < fr.length; i++){
-            const r = fr[i];
-            const band = el("div",{style:`min-height:22px;padding:3px 5px;background:linear-gradient(135deg,${r.color}18 0%,${r.color}35 100%);border-bottom:${i<fr.length-1?`1px solid ${r.color}20`:"none"};display:flex;align-items:center;gap:3px`});
-            band.appendChild(el("div",{style:`width:2px;align-self:stretch;background:${r.color};border-radius:1px;flex-shrink:0;opacity:0.7`}));
-            band.appendChild(el("div",{style:`flex:1;min-width:0;font-size:8px;font-weight:600;color:${r.color};overflow:hidden;text-overflow:ellipsis;white-space:nowrap`}, r.room));
-            if(r.count > 0) band.appendChild(el("div",{style:`font-size:9px;font-weight:800;color:${r.color};flex-shrink:0`}, String(r.count)));
-            band.style.cursor = "pointer";
-            band.addEventListener("click", ()=> ctx.actions.showRoomDetail(r.room));
-            miniTower.appendChild(band);
-          }
-        }
-        const miniWrap = el("div",{});
-        miniWrap.appendChild(miniLabel);
-        miniWrap.appendChild(miniTower);
-        stackCol.appendChild(miniWrap);
-      }
-      towerWrap.appendChild(stackCol);
-    }
-
-    // Fallback: no floors at all → single tower
+    // Fallback: no floors at all → single tower with all rooms
     if(floorOrder.length === 0){
       const allRooms = rooms.map(room => ({
         room,
         color: ctx.helpers.roomColor(room),
         count: objects.filter(o=>o.room===room).length,
       }));
-      towerWrap.appendChild(_buildTower(allRooms, "All Rooms"));
+      const col = el("div",{style:"flex:1;min-width:120px;display:flex;flex-direction:column;align-items:stretch"});
+      col.appendChild(el("div",{style:"font-size:10px;font-weight:800;color:#e2e8f0;text-align:center;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em"}, "All Rooms"));
+      const tower = el("div",{style:"border-radius:6px;overflow:hidden;border:1px solid #1e3a2a;background:#0a1a0f"});
+      for(let i = 0; i < allRooms.length; i++){
+        const r = allRooms[i];
+        const band = el("div",{style:`min-height:26px;padding:3px 6px;cursor:pointer;background:linear-gradient(135deg, ${r.color}18 0%, ${r.color}35 100%);border-bottom:${i < allRooms.length-1 ? `1px solid ${r.color}20` : "none"};display:flex;align-items:center;gap:4px`});
+        band.appendChild(el("div",{style:`width:3px;align-self:stretch;background:${r.color};border-radius:2px;flex-shrink:0;opacity:0.7`}));
+        band.appendChild(el("div",{style:`flex:1;min-width:0;font-size:10px;font-weight:600;color:${r.color};word-break:break-word`}, r.room));
+        if(r.count > 0) band.appendChild(el("div",{style:`font-size:10px;font-weight:800;color:${r.color};flex-shrink:0`}, String(r.count)));
+        band.addEventListener("click", ()=> ctx.actions.showRoomDetail(r.room));
+        tower.appendChild(band);
+      }
+      col.appendChild(tower);
+      towerWrap.appendChild(col);
     }
 
     floorCard.appendChild(towerWrap);
