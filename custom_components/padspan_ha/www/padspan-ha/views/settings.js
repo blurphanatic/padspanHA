@@ -264,19 +264,20 @@ function _scannerMap(ctx, el, haFloors){
         const cy  = (r.y_frac * vbH).toFixed(2);
         const col = PALETTE[i % PALETTE.length];
         const conf = r.confidence;
-        const outerR = (2.5 + conf * 4).toFixed(1);   // 2.5–6.5 SVG units
+        const outerR = (1.8 + conf * 3).toFixed(1);   // 1.8–4.8 SVG units
+        const confPct = Math.round(conf * 100);
 
         // Confidence ring
         const ringOp = (0.15 + conf * 0.45).toFixed(2);
-        markersSvg += `<circle cx="${cx}" cy="${cy}" r="${outerR}" fill="${col}" fill-opacity="0.12" stroke="${col}" stroke-width="0.7" stroke-dasharray="1.5 1" opacity="${ringOp}"/>`;
+        markersSvg += `<circle cx="${cx}" cy="${cy}" r="${outerR}" fill="${col}" fill-opacity="0.10" stroke="${col}" stroke-width="0.4" stroke-dasharray="1 0.8" opacity="${ringOp}"/>`;
         // Centre dot
-        markersSvg += `<circle cx="${cx}" cy="${cy}" r="1.4" fill="${col}" stroke="white" stroke-width="0.5" opacity="0.95"/>`;
+        markersSvg += `<circle cx="${cx}" cy="${cy}" r="1.0" fill="${col}" stroke="white" stroke-width="0.3" opacity="0.95"/>`;
         // Number label on dot
-        markersSvg += `<text x="${cx}" y="${(parseFloat(cy)+0.5).toFixed(1)}" text-anchor="middle" dominant-baseline="middle" font-size="1.8" fill="white" font-weight="bold">${i+1}</text>`;
-        // Room name above ring
-        const labelY = (r.y_frac * vbH - parseFloat(outerR) - 0.8).toFixed(1);
-        const shortName = r.name.length > 12 ? r.name.slice(0,10)+"…" : r.name;
-        markersSvg += `<text x="${cx}" y="${labelY}" text-anchor="middle" font-size="2.4" fill="${col}" font-weight="bold" paint-order="stroke" stroke="#071008" stroke-width="0.7">${esc(shortName)}</text>`;
+        markersSvg += `<text x="${cx}" y="${(parseFloat(cy)+0.35).toFixed(1)}" text-anchor="middle" dominant-baseline="middle" font-size="1.2" fill="white" font-weight="bold">${i+1}</text>`;
+        // Scanner name + confidence — compact label above marker
+        const labelY = (r.y_frac * vbH - parseFloat(outerR) - 0.5).toFixed(1);
+        const shortName = r.name.length > 14 ? r.name.slice(0,12)+"…" : r.name;
+        markersSvg += `<text x="${cx}" y="${labelY}" text-anchor="middle" font-size="1.5" fill="${col}" font-weight="600" paint-order="stroke" stroke="#071008" stroke-width="0.5">${esc(shortName)} ${confPct}%</text>`;
       });
 
       const mapDiv = el("div",{style:"border-radius:6px;overflow:hidden;border:1px solid #1b3526;margin-bottom:8px"});
