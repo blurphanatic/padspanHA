@@ -2585,6 +2585,12 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("beacon_profiling_enabled"): bool,
         vol.Optional("beacon_tune_disabled"): list,
         vol.Optional("beacon_group_overrides"): dict,
+        vol.Optional("trackability_rating_enabled"): bool,
+        vol.Optional("walk_to_identify_enabled"): bool,
+        vol.Optional("radio_map_enabled"): bool,
+        vol.Optional("distortion_map_enabled"): bool,
+        vol.Optional("compass_ring_enabled"): bool,
+        vol.Optional("replay_timeline_enabled"): bool,
     }
 )
 @websocket_api.async_response
