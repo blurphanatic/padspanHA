@@ -1260,53 +1260,54 @@ function renderVisualization(ctx, radios, ads, objIndex) {
 
   s += `</svg>`;
 
-  // ── Render SVG + HTML click overlay ─────────────────────────────────────
-  // SVG click handlers are unreliable in HA WebViews due to namespace issues.
-  // Solution: position invisible HTML divs on top of each clickable area.
-  // HTML click handlers work 100% reliably in all environments.
   const svgWrap = document.createElement("div");
-  svgWrap.style.position = "relative";
   svgWrap.innerHTML = s;
 
-  // Get the SVG's rendered size to compute click target positions
-  const svgEl = svgWrap.querySelector("svg");
-  const svgW = w; // SVG viewBox width
-  const svgH = h; // SVG viewBox height
-
-  // Create click overlay container (positioned over the SVG)
-  const clickOverlay = document.createElement("div");
-  clickOverlay.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:2`;
-
-  // Helper: create an HTML click target at SVG coordinates
-  function _makeClickTarget(cx, cy, width, height, callback) {
-    const div = document.createElement("div");
-    // Convert SVG coords to percentage positions
-    const leftPct = ((cx - width/2) / svgW * 100).toFixed(2);
-    const topPct = ((cy - height/2) / svgH * 100).toFixed(2);
-    const wPct = (width / svgW * 100).toFixed(2);
-    const hPct = (height / svgH * 100).toFixed(2);
-    div.style.cssText = `position:absolute;left:${leftPct}%;top:${topPct}%;width:${wPct}%;height:${hPct}%;cursor:pointer;pointer-events:all`;
-    div.addEventListener("click", (e) => { e.stopPropagation(); callback(); });
-    return div;
-  }
-
-  // Scanner click targets (left column)
-  for (let si = 0; si < scannerNodes.length; si++) {
-    const sn = scannerNodes[si];
-    if (_scannerClicks[si]) {
-      clickOverlay.appendChild(_makeClickTarget(sn.x - 140, sn.y, 300, 22, _scannerClicks[si]));
-    }
-  }
-
-  // Device click targets (right column)
-  for (let di = 0; di < deviceNodes.length; di++) {
-    const d = deviceNodes[di];
-    if (_deviceClicks[di]) {
-      clickOverlay.appendChild(_makeClickTarget(d.x + 140, d.y, 300, 18, _deviceClicks[di]));
-    }
-  }
-
-  svgWrap.appendChild(clickOverlay);
+  // ── Click handlers: use requestAnimationFrame to attach AFTER DOM render ────
+  // All previous attempts to attach clicks during render failed because SVG
+  // elements parsed via innerHTML may not be fully queryable until the next
+  // frame. We schedule attachment to run after the browser has processed the DOM.
+  requestAnimationFrame(() => {
+    try {
+      // Try querySelectorAll first (works in most browsers)
+      const gEls = svgWrap.querySelectorAll("g[data-vs], g[data-vd]");
+      if (gEls.length > 0) {
+        gEls.forEach(g => {
+          const vs = g.getAttribute("data-vs");
+          const vd = g.getAttribute("data-vd");
+          if (vs != null) {
+            const idx = parseInt(vs, 10);
+            if (_scannerClicks[idx]) g.addEventListener("click", (e) => { e.stopPropagation(); _scannerClicks[idx](); });
+          }
+          if (vd != null) {
+            const idx = parseInt(vd, 10);
+            if (_deviceClicks[idx]) g.addEventListener("click", (e) => { e.stopPropagation(); _deviceClicks[idx](); });
+          }
+        });
+      } else {
+        // Fallback: walk ALL elements manually
+        const all = svgWrap.getElementsByTagName("*");
+        for (let i = 0; i < all.length; i++) {
+          const el = all[i];
+          let vs = null, vd = null;
+          try { vs = el.getAttribute("data-vs"); } catch(_){}
+          try { vd = el.getAttribute("data-vd"); } catch(_){}
+          if (vs != null && vs !== "") {
+            const idx = parseInt(String(vs), 10);
+            if (!isNaN(idx) && _scannerClicks[idx]) {
+              el.addEventListener("click", (e) => { e.stopPropagation(); _scannerClicks[idx](); });
+            }
+          }
+          if (vd != null && vd !== "") {
+            const idx = parseInt(String(vd), 10);
+            if (!isNaN(idx) && _deviceClicks[idx]) {
+              el.addEventListener("click", (e) => { e.stopPropagation(); _deviceClicks[idx](); });
+            }
+          }
+        }
+      }
+    } catch(err) { console.warn("PadSpan: BT viz click attach failed", err); }
+  });
 
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),
