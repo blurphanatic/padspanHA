@@ -1180,7 +1180,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // created in the HTML namespace are invisible in HA's WebView.
   // Embedded <style> provides hover effects: labels turn teal, circles glow.
   let s = `<svg class="bt-viz" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
-  s += `<style>.bt-viz-click{cursor:pointer}.bt-viz-click text.bt-viz-label{fill:#7dd3fc}.bt-viz-click:hover text.bt-viz-label{fill:#5eead4}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}</style>`;
+  s += `<style>.bt-viz-click{cursor:pointer}.bt-viz-click text.bt-viz-label{fill:#7dd3fc}.bt-viz-click:hover text.bt-viz-label{fill:#5eead4}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}.bt-viz-click:hover .bt-viz-uline{stroke:#5eead4;opacity:.8}</style>`;
 
   // Lines first (back layer) — RSSI-colored connections between scanner and device circles
   for (const d of deviceNodes) {
@@ -1208,10 +1208,14 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   for (let si = 0; si < scannerNodes.length; si++) {
     const sn = scannerNodes[si];
     const textX = sn.x - 12;  // 12px left of circle centre (7r + 5px gap)
+    const lblText = trunc(sn.label);
+    const lblW = Math.min(lblText.length * 7.2, 270); // approximate text width at 12px
     s += `<g data-vs="${si}" class="bt-viz-click" style="cursor:pointer">`;
-    s += `<rect x="${Math.max(0, textX - 280)}" y="${sn.y - 10}" width="${280 + 24}" height="20" fill="rgba(0,0,0,0)" pointer-events="all"/>`;
+    s += `<rect x="${Math.max(0, textX - 280)}" y="${sn.y - 12}" width="${280 + 24}" height="24" fill="rgba(0,0,0,0)" pointer-events="all"/>`;
     s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner" pointer-events="all"/>`;
-    s += `<text x="${textX}" y="${sn.y}" class="bt-viz-label" text-anchor="end" dominant-baseline="middle" pointer-events="all">${_escSvg(trunc(sn.label))}</text>`;
+    s += `<text x="${textX}" y="${sn.y}" class="bt-viz-label" text-anchor="end" dominant-baseline="middle" pointer-events="all">${_escSvg(lblText)}</text>`;
+    // SVG underline (text-decoration doesn't work on SVG <text>)
+    s += `<line x1="${textX - lblW}" y1="${sn.y + 7}" x2="${textX}" y2="${sn.y + 7}" stroke="#7dd3fc" stroke-width="1" opacity="0.4" class="bt-viz-uline"/>`;
     s += `</g>`;
     _scannerClicks[si] = () => {
       const radio = radios.find(r => String(r.source || "") === sn.id);
@@ -1262,31 +1266,31 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   const svgWrap = document.createElement("div");
   svgWrap.innerHTML = s;
 
-  // ── Attach click handlers directly to each <g> element ──────────────────────
-  // getElementsByTagName("g") is the most reliable DOM method for SVG elements
-  // across all browsers/WebViews. We attach individual listeners to each <g>
-  // that has a data-vs or data-vd attribute.
-  const _allGs = svgWrap.getElementsByTagName("g");
-  for (let _gi = 0; _gi < _allGs.length; _gi++) {
-    const _g = _allGs[_gi];
-    const _vs = _g.getAttribute("data-vs");
-    if (_vs !== null) {
-      _g.addEventListener("click", (e) => {
+  // ── Click handler: event delegation on the wrapper div ──────────────────────
+  // Using delegation instead of per-element listeners avoids SVG DOM namespace
+  // issues in HA WebViews where getAttribute on SVG elements can be unreliable.
+  svgWrap.addEventListener("click", (e) => {
+    // Walk up from click target to find the nearest <g> with data-vs or data-vd
+    let node = e.target;
+    while (node && node !== svgWrap) {
+      // Check for data attributes — try both getAttribute and dataset
+      const vs = node.getAttribute ? node.getAttribute("data-vs") : null;
+      if (vs !== null && vs !== undefined) {
         e.stopPropagation();
-        const idx = parseInt(_vs, 10);
+        const idx = parseInt(vs, 10);
         if (_scannerClicks[idx]) _scannerClicks[idx]();
-      });
-      continue;
-    }
-    const _vd = _g.getAttribute("data-vd");
-    if (_vd !== null) {
-      _g.addEventListener("click", (e) => {
+        return;
+      }
+      const vd = node.getAttribute ? node.getAttribute("data-vd") : null;
+      if (vd !== null && vd !== undefined) {
         e.stopPropagation();
-        const idx = parseInt(_vd, 10);
+        const idx = parseInt(vd, 10);
         if (_deviceClicks[idx]) _deviceClicks[idx]();
-      });
+        return;
+      }
+      node = node.parentNode;
     }
-  }
+  });
 
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),
