@@ -777,7 +777,7 @@ export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, a
     const tf = mapTransforms[m.id]; if (!tf || !tf.mapPt) continue;
     const mZ = tf.z;
     const floorDist = Math.abs(mZ - z);
-    if (floorDist > 2) continue;
+    if (floorDist > 0) continue; // same floor only — cross-floor bleed removed
     for (const r of (m.receivers || [])) {
       if (r.x == null || r.y == null) continue;
       const [wx, wy] = tf.mapPt(r.x, r.y);
@@ -910,7 +910,7 @@ export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) 
     if (!tf || !tf.mapPt) continue;
     const ptZ = tf.z;
     const floorDist = Math.abs(ptZ - z);
-    if (floorDist > 2) continue; // skip floors more than 2 levels away
+    if (floorDist > 0) continue; // same floor only — cross-floor bleed removed // skip floors more than 2 levels away
     const readings = pt.scanner_readings || [];
     const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
     if (!rssis.length) continue;
@@ -1058,7 +1058,7 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
     const mpt = mapPtFns[m.id]; if (!mpt) continue;
     const mZ = _allMapZ[m.id] ?? 0;
     const floorDist = Math.abs(mZ - _floorZ);
-    if (floorDist > 2) continue;
+    if (floorDist > 0) continue; // same floor only — cross-floor bleed removed
     for (const r of (m.receivers || [])) {
       if (r.x == null || r.y == null) continue;
       const [wx, wy] = mpt(r.x, r.y);
@@ -1211,7 +1211,7 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
     const ptZ = _allMapZ[pt.map_id];
     if (ptZ == null) continue;
     const floorDist = Math.abs(ptZ - _floorZ);
-    if (floorDist > 2) continue; // skip floors more than 2 levels away
+    if (floorDist > 0) continue; // same floor only — cross-floor bleed removed // skip floors more than 2 levels away
 
     const readings = pt.scanner_readings || [];
     let rssi;
@@ -1561,7 +1561,7 @@ export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, all
     const mpt = mapPtFns[pt.map_id]; if (!mpt) continue;
     const ptZ = _allMapZ[pt.map_id]; if (ptZ == null) continue;
     const floorDist = Math.abs(ptZ - _floorZ);
-    if (floorDist > 2) continue;
+    if (floorDist > 0) continue; // same floor only — cross-floor bleed removed
     const query = {};
     for (const r of (pt.scanner_readings || [])) {
       if (r.source && r.mean_rssi != null) query[r.source] = r.mean_rssi;
