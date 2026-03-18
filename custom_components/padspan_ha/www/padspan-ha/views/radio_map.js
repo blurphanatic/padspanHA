@@ -28,27 +28,37 @@ const BARRIER_PENALTY_DB_TO_DIST = 0.01; // each dB of barrier attenuation adds 
 
 // ── Color Scales ─────────────────────────────────────────────────────────────
 
-// RSSI → color: green (strong) → yellow → red (weak)
-// Uses a smooth 3-stop gradient: red → yellow → green with solid opacity
-function _rssiColor(rssi, minR, maxR) {
-  if (rssi == null) return "rgba(60,60,60,0.12)";
-  const t = Math.max(0, Math.min(1, (rssi - minR) / (maxR - minR))); // 0=weak, 1=strong
-  // 3-stop: red(0) → yellow(0.5) → green(1.0)
+// RSSI → color using ABSOLUTE dBm thresholds (not relative to data range).
+// This makes colors consistent across maps and highlights weak areas in red.
+// -30 dBm = excellent (green), -60 = good (yellow-green), -80 = poor (red), -95+ = dead (dark red)
+function _rssiColor(rssi, _minR, _maxR) {
+  if (rssi == null || isNaN(rssi)) return "rgba(60,60,60,0.15)";
+  // Absolute scale: -30 (best) to -95 (worst)
+  const BEST = -30, WORST = -95;
+  const t = Math.max(0, Math.min(1, (rssi - WORST) / (BEST - WORST))); // 0=dead, 1=excellent
+  // Bias toward red: use power curve so more of the range is yellow→red
+  const tb = Math.pow(t, 0.7); // 0.7 exponent shifts midpoint toward red
   let r, g, b;
-  if (t < 0.5) {
-    // red → yellow
-    const u = t * 2; // 0→1
-    r = 220;
-    g = Math.round(40 + u * 180);  // 40→220
-    b = 30;
+  if (tb < 0.35) {
+    // dark red → red (dead zone → weak)
+    const u = tb / 0.35;
+    r = Math.round(100 + u * 140);  // 100→240
+    g = Math.round(u * 40);         // 0→40
+    b = 20;
+  } else if (tb < 0.65) {
+    // red → yellow (weak → decent)
+    const u = (tb - 0.35) / 0.30;
+    r = Math.round(240 - u * 20);   // 240→220
+    g = Math.round(40 + u * 180);   // 40→220
+    b = 25;
   } else {
-    // yellow → green
-    const u = (t - 0.5) * 2; // 0→1
-    r = Math.round(220 - u * 180); // 220→40
-    g = Math.round(220 - u * 30);  // 220→190
-    b = Math.round(30 + u * 90);   // 30→120
+    // yellow → green (decent → strong)
+    const u = (tb - 0.65) / 0.35;
+    r = Math.round(220 - u * 180);  // 220→40
+    g = Math.round(220 - u * 30);   // 220→190
+    b = Math.round(25 + u * 100);   // 25→125
   }
-  return `rgba(${r},${g},${b},0.55)`;
+  return `rgba(${r},${g},${b},0.6)`;
 }
 
 // Error magnitude → color: green (low) → yellow → red (high)
@@ -173,8 +183,9 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
       // Combined: strongest scanner signal at each point
       const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
       if (rssis.length) {
-        const maxRssi = Math.max(...rssis);
-        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: maxRssi });
+        // Use mean RSSI across all scanners (not max — max is too uniform across points)
+        const meanRssi = rssis.reduce((a, b) => a + b, 0) / rssis.length;
+        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: meanRssi });
       }
     }
   }
@@ -225,24 +236,24 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
     }
   }
 
-  // RSSI legend (bottom-left corner)
+  // RSSI legend (bottom-left corner) — absolute dBm scale
   const legendY = 0.90;
-  s += `<rect x="0.02" y="${legendY - 0.01}" width="0.32" height="0.09" rx="0.008" fill="rgba(7,16,8,0.85)"/>`;
+  s += `<rect x="0.02" y="${legendY - 0.01}" width="0.34" height="0.09" rx="0.008" fill="rgba(7,16,8,0.85)"/>`;
   s += `<text x="0.035" y="${legendY + 0.01}" fill="#e2e8f0" font-size="0.018" font-weight="600" font-family="system-ui,sans-serif">${scannerSource ? "Scanner" : "Combined"} Radio Map</text>`;
-  const steps = 5;
-  const barW = 0.04;
-  for (let i = 0; i < steps; i++) {
-    const t = i / (steps - 1);
-    const rssiVal = minR + t * (maxR - minR);
-    const color = _rssiColor(rssiVal, minR, maxR).replace(",0.35)", ",0.8)");
+  const legLabels = ["-95","-80","-65","-50","-35"];
+  const legValues = [-95,-80,-65,-50,-35];
+  const barW = 0.05;
+  for (let i = 0; i < legValues.length; i++) {
+    const color = _rssiColor(legValues[i]).replace(",0.6)", ",0.9)");
     s += `<rect x="${(0.035 + i * barW).toFixed(3)}" y="${legendY + 0.025}" width="${barW.toFixed(3)}" height="0.015" fill="${color}"/>`;
   }
-  s += `<text x="0.035" y="${legendY + 0.06}" fill="#94a3b8" font-size="0.015" font-family="system-ui,sans-serif">${Math.round(minR)} dBm</text>`;
-  s += `<text x="${(0.035 + (steps - 1) * barW + 0.005).toFixed(3)}" y="${legendY + 0.06}" fill="#94a3b8" font-size="0.015" font-family="system-ui,sans-serif">${Math.round(maxR)} dBm</text>`;
+  s += `<text x="0.035" y="${legendY + 0.06}" fill="#fca5a5" font-size="0.013" font-family="system-ui,sans-serif">-95 dBm (dead)</text>`;
+  s += `<text x="${(0.035 + 4 * barW).toFixed(3)}" y="${legendY + 0.06}" fill="#52b788" font-size="0.013" font-family="system-ui,sans-serif">-35 dBm</text>`;
+  s += `<text x="0.035" y="${legendY + 0.075}" fill="#94a3b8" font-size="0.012" font-family="system-ui,sans-serif">${dataPoints.length} cal points \u2022 range ${Math.round(minR)} to ${Math.round(maxR)} dBm</text>`;
   // Wall legend
   if (mapBarriers.length) {
-    s += `<line x1="0.035" y1="${legendY + 0.072}" x2="0.075" y2="${legendY + 0.072}" stroke="#f87171" stroke-width="0.003" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
-    s += `<text x="0.082" y="${legendY + 0.076}" fill="#94a3b8" font-size="0.013" font-family="system-ui,sans-serif">RF barrier (wall)</text>`;
+    s += `<line x1="0.22" y1="${legendY + 0.072}" x2="0.26" y2="${legendY + 0.072}" stroke="#f87171" stroke-width="0.003" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
+    s += `<text x="0.265" y="${legendY + 0.076}" fill="#94a3b8" font-size="0.012" font-family="system-ui,sans-serif">RF wall</text>`;
   }
 
   return s;
