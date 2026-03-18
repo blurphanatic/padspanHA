@@ -878,32 +878,90 @@ export function render(ctx){
     }
     outer.appendChild(scannerBar);
 
-    // Map selector (only if multi-floor)
+    // Floor / Map selector (only if multiple visible maps)
     if(multiFloor){
       const mapBar = document.createElement("div");
       mapBar.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px";
-      const mapLbl = document.createElement("span");
-      mapLbl.style.cssText = "font-size:12px;color:#94a3b8";
-      mapLbl.textContent = "Map:";
-      mapBar.appendChild(mapLbl);
 
+      // Group maps by floor for the selector
+      const haFloors = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
+      const floorGroups = new Map(); // floorLabel → [mapIndex, ...]
       for(let mi = 0; mi < visible.length; mi++){
         const m = visible[mi];
-        const mbtn = document.createElement("button");
-        mbtn.className = "btn inline";
-        mbtn.style.cssText = mi === focusIdx
-          ? "font-size:11px;padding:2px 10px;background:#0a2a1a;border-color:#52b788;color:#52b788;font-weight:700"
-          : "font-size:11px;padding:2px 10px;color:#94a3b8";
-        mbtn.textContent = m.name || m.id || `Map ${mi+1}`;
-        const idx = mi;
-        mbtn.addEventListener("click", () => {
-          ctx.state._2dFocusIdx = idx;
-          ctx.state._2dZoom = 1.0;
-          ctx.state._2dPanX = 0;
-          ctx.state._2dPanY = 0;
-          ctx.actions.renderRooms();
-        });
-        mapBar.appendChild(mbtn);
+        const floorId = m.stack?.floor_id || m.floor_id || "";
+        const haFlr = haFloors.find(f => String(f.id) === String(floorId));
+        const flLbl = haFlr ? (haFlr.name || haFlr.id) : (m.name || m.id || `Map ${mi+1}`);
+        if(!floorGroups.has(flLbl)) floorGroups.set(flLbl, []);
+        floorGroups.get(flLbl).push(mi);
+      }
+
+      // If we have distinct floors, show floor buttons; otherwise fall back to map buttons
+      const useFloors = floorGroups.size > 1 || (floorGroups.size === 1 && [...floorGroups.values()][0].length > 1);
+      const lbl = document.createElement("span");
+      lbl.style.cssText = "font-size:12px;color:#94a3b8";
+      lbl.textContent = useFloors ? "Floor:" : "Map:";
+      mapBar.appendChild(lbl);
+
+      if(useFloors){
+        for(const [floorName, mapIndices] of floorGroups){
+          const isActive = mapIndices.includes(focusIdx);
+          const fbtn = document.createElement("button");
+          fbtn.className = "btn inline";
+          fbtn.style.cssText = isActive
+            ? "font-size:11px;padding:2px 10px;background:#0a2a1a;border-color:#52b788;color:#52b788;font-weight:700"
+            : "font-size:11px;padding:2px 10px;color:#94a3b8";
+          fbtn.textContent = floorName;
+          const firstIdx = mapIndices[0];
+          fbtn.addEventListener("click", () => {
+            ctx.state._2dFocusIdx = firstIdx;
+            ctx.state._2dZoom = 1.0;
+            ctx.state._2dPanX = 0;
+            ctx.state._2dPanY = 0;
+            ctx.actions.renderRooms();
+          });
+          mapBar.appendChild(fbtn);
+          // If this floor has multiple maps and is active, show sub-buttons
+          if(isActive && mapIndices.length > 1){
+            for(const mi of mapIndices){
+              const m = visible[mi];
+              const sbtn = document.createElement("button");
+              sbtn.className = "btn inline";
+              sbtn.style.cssText = mi === focusIdx
+                ? "font-size:10px;padding:1px 6px;background:#0a2a1a;border-color:#94a3b8;color:#e2e8f0;font-weight:600"
+                : "font-size:10px;padding:1px 6px;color:#64748b";
+              sbtn.textContent = m.name || m.id;
+              const idx = mi;
+              sbtn.addEventListener("click", () => {
+                ctx.state._2dFocusIdx = idx;
+                ctx.state._2dZoom = 1.0;
+                ctx.state._2dPanX = 0;
+                ctx.state._2dPanY = 0;
+                ctx.actions.renderRooms();
+              });
+              mapBar.appendChild(sbtn);
+            }
+          }
+        }
+      } else {
+        // Fallback: individual map buttons
+        for(let mi = 0; mi < visible.length; mi++){
+          const m = visible[mi];
+          const mbtn = document.createElement("button");
+          mbtn.className = "btn inline";
+          mbtn.style.cssText = mi === focusIdx
+            ? "font-size:11px;padding:2px 10px;background:#0a2a1a;border-color:#52b788;color:#52b788;font-weight:700"
+            : "font-size:11px;padding:2px 10px;color:#94a3b8";
+          mbtn.textContent = m.name || m.id || `Map ${mi+1}`;
+          const idx = mi;
+          mbtn.addEventListener("click", () => {
+            ctx.state._2dFocusIdx = idx;
+            ctx.state._2dZoom = 1.0;
+            ctx.state._2dPanX = 0;
+            ctx.state._2dPanY = 0;
+            ctx.actions.renderRooms();
+          });
+          mapBar.appendChild(mbtn);
+        }
       }
       outer.appendChild(mapBar);
     }

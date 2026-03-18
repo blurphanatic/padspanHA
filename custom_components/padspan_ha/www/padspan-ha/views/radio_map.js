@@ -21,22 +21,34 @@
  * Gated behind: settings.radio_map_enabled / settings.distortion_map_enabled
  */
 
-const GRID_RES = 20;       // 20x20 interpolation grid (400 cells)
+const GRID_RES = 30;       // 30x30 interpolation grid (900 cells) for 2D
 const IDW_POWER = 2.0;     // IDW exponent (higher = more local)
 const KNN_K = 3;           // k for LOO cross-validation
 const BARRIER_PENALTY_DB_TO_DIST = 0.01; // each dB of barrier attenuation adds this much "virtual distance"
 
 // ── Color Scales ─────────────────────────────────────────────────────────────
 
-// RSSI → color: green (strong) → yellow → red (weak) → gray (no data)
+// RSSI → color: green (strong) → yellow → red (weak)
+// Uses a smooth 3-stop gradient: red → yellow → green with solid opacity
 function _rssiColor(rssi, minR, maxR) {
-  if (rssi == null) return "rgba(100,100,100,0.08)";
+  if (rssi == null) return "rgba(60,60,60,0.12)";
   const t = Math.max(0, Math.min(1, (rssi - minR) / (maxR - minR))); // 0=weak, 1=strong
-  // green(strong) → yellow(mid) → red(weak)
-  const r = Math.round(t < 0.5 ? 240 - t * 2 * 120 : 120 * (1 - (t - 0.5) * 2));
-  const g = Math.round(t < 0.5 ? 60 + t * 2 * 180 : 240);
-  const b = Math.round(40);
-  return `rgba(${r},${g},${b},0.35)`;
+  // 3-stop: red(0) → yellow(0.5) → green(1.0)
+  let r, g, b;
+  if (t < 0.5) {
+    // red → yellow
+    const u = t * 2; // 0→1
+    r = 220;
+    g = Math.round(40 + u * 180);  // 40→220
+    b = 30;
+  } else {
+    // yellow → green
+    const u = (t - 0.5) * 2; // 0→1
+    r = Math.round(220 - u * 180); // 220→40
+    g = Math.round(220 - u * 30);  // 220→190
+    b = Math.round(30 + u * 90);   // 30→120
+  }
+  return `rgba(${r},${g},${b},0.55)`;
 }
 
 // Error magnitude → color: green (low) → yellow → red (high)
@@ -390,7 +402,7 @@ export function distortionMapSVG(calPoints, mapId, barriers) {
 // For 3D isometric views: generates heatmap polygons projected through the
 // caller's mapPt + iso transform chain.
 
-const ISO_GRID = 24; // 24x24 interpolation grid for 3D (576 cells per map)
+const ISO_GRID = 28; // 28x28 interpolation grid for 3D (784 cells per map)
 
 /**
  * Compute heatmap grid data for a map (not yet projected).
