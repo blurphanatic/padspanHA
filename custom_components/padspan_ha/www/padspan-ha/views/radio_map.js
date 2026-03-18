@@ -871,8 +871,8 @@ export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, a
       // Blend model + adaptive
       let finalRssi = best;
       if (_sourceBlend > 0 && _adaptiveFingerprints && _isoRoomBoundsW.length) {
-        const aR = _adaptiveRSSI(qwx, qwy, _isoRoomBoundsW);
-        if (aR != null) finalRssi = best * (1 - _sourceBlend/100) + aR * (_sourceBlend/100);
+        const aOff = _adaptiveOffset(qwx, qwy, _isoRoomBoundsW);
+        if (aOff != null) finalRssi = best + aOff * (_sourceBlend / 100);
       }
       gridRssi[gy * res + gx] = finalRssi;
       if (finalRssi > maxR) maxR = finalRssi;
@@ -1147,8 +1147,8 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
       // Blend model + adaptive data
       let finalRssi = best;
       if (blend > 0 && roomBoundsWorld.length) {
-        const adaptRssi = _adaptiveRSSI(qwx, qwy, roomBoundsWorld);
-        if (adaptRssi != null) finalRssi = best * (1 - blend) + adaptRssi * blend;
+        const aOff = _adaptiveOffset(qwx, qwy, roomBoundsWorld);
+        if (aOff != null) finalRssi = best + aOff * blend;
       }
       gridRssi[gy * res + gx] = finalRssi;
       if (finalRssi > maxR) maxR = finalRssi;
@@ -1376,27 +1376,37 @@ export function setSourceBlend(v) { _sourceBlend = Math.max(0, Math.min(100, v ?
 export function setAdaptiveData(fps) { _adaptiveFingerprints = fps; }
 
 /**
- * Get adaptive RSSI at a world point by finding which room it falls in
- * and returning the best scanner's mean RSSI for that room.
- * Returns null if no data available.
+ * Get adaptive correction for a world point.
+ * Returns a dBm OFFSET (positive = real coverage is better than model,
+ * negative = worse) based on the mean observed RSSI vs fleet average.
+ * Returns null if no data.
  */
-function _adaptiveRSSI(wx, wy, roomBoundsWorld) {
+function _adaptiveOffset(wx, wy, roomBoundsWorld) {
   if (!_adaptiveFingerprints || !roomBoundsWorld) return null;
-  // Find which room this point is in
   for (const { room, polyW } of roomBoundsWorld) {
-    // Ray-casting point-in-polygon test (world coords)
     let inside = false;
     for (let i = 0, j = polyW.length - 1; i < polyW.length; j = i++) {
       const [xi, yi] = polyW[i], [xj, yj] = polyW[j];
       if (((yi > wy) !== (yj > wy)) && (wx < (xj - xi) * (wy - yi) / (yj - yi) + xi)) inside = !inside;
     }
     if (!inside) continue;
-    // Found the room — get best scanner RSSI from adaptive data
     const roomFp = _adaptiveFingerprints[room];
     if (!roomFp) return null;
     const vals = Object.values(roomFp);
     if (!vals.length) return null;
-    return Math.max(...vals); // best scanner in this room
+    // Mean across all scanners for this room (not max — mean represents overall coverage quality)
+    const roomMean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    // Compare to fleet average: how does this room compare to the typical room?
+    // Fleet average from all rooms' means
+    let fleetSum = 0, fleetN = 0;
+    for (const rFp of Object.values(_adaptiveFingerprints)) {
+      const rv = Object.values(rFp);
+      if (rv.length) { fleetSum += rv.reduce((a,b)=>a+b,0)/rv.length; fleetN++; }
+    }
+    const fleetMean = fleetN > 0 ? fleetSum / fleetN : roomMean;
+    // Offset: positive = this room is better than average, negative = worse
+    // Clamped to ±15 dB to prevent extreme shifts
+    return Math.max(-15, Math.min(15, roomMean - fleetMean));
   }
   return null;
 }
