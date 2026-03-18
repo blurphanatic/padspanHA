@@ -121,6 +121,24 @@ export function render(ctx) {
   const untaggedCount = allDevices.filter(d => !d.tagged && d.type !== "entity").length;
   const missingCount = allDevices.filter(d => d.missing).length;
 
+  // Clickable KPI card factory — clicking sets the device filter
+  function _mkDevKpi(num, label, filterVal) {
+    const isActive = filter === filterVal;
+    const kpi = el("div", {
+      class: "kpi",
+      style: `cursor:pointer;${isActive ? "border:1px solid #52b788;border-radius:8px;background:#0a2a1a" : ""}`,
+      title: `Click to filter: ${label}`,
+    }, [
+      el("div", { class: "kpi-num" }, num),
+      el("div", { class: "kpi-lbl" }, label),
+    ]);
+    kpi.addEventListener("click", () => {
+      ctx.state.devFilter = filterVal;
+      ctx.actions.renderRooms();
+    });
+    return kpi;
+  }
+
   // ── Header ────────────────────────────────────────────────────────────────
   const header = el("div", { class: "row", style: "margin-bottom:14px" }, [
     el("div", { class: "grow" }, [
@@ -128,11 +146,12 @@ export function render(ctx) {
       el("div", { class: "muted" }, "All tracked devices: HA entities, tagged BLE objects, and unidentified BLE devices."),
     ]),
     el("div", { class: "bt-kpis" }, [
-      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(allDevices.length)), el("div", { class: "kpi-lbl" }, "Total")]),
-      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(entityCount)), el("div", { class: "kpi-lbl" }, "Entities")]),
-      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(taggedCount)), el("div", { class: "kpi-lbl" }, "Tagged")]),
-      el("div", { class: "kpi" }, [el("div", { class: "kpi-num" }, String(untaggedCount)), el("div", { class: "kpi-lbl" }, "Untagged")]),
-    ]),
+      _mkDevKpi(String(allDevices.length), "Total", "all"),
+      _mkDevKpi(String(entityCount), "Entities", "entity"),
+      _mkDevKpi(String(taggedCount), "Tagged", "tagged"),
+      _mkDevKpi(String(untaggedCount), "Untagged", "untagged"),
+      missingCount ? _mkDevKpi(String(missingCount), "Missing", "missing") : null,
+    ].filter(Boolean)),
   ]);
 
   // ── Controls ──────────────────────────────────────────────────────────────

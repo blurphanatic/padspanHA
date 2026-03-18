@@ -226,7 +226,7 @@ export function render(ctx){
 
   const objSearchInput = el("input",{type:"text", placeholder:"Search address, name, label…", value: ctx.state.objSearch});
   const objKindSel = el("select",{class:"btn"});
-  [{v:"all",t:"All"},{v:"ble",t:"BLE / beacon devices"},{v:"entity",t:"HA entities only"}]
+  [{v:"all",t:"All"},{v:"ble",t:"BLE (all)"},{v:"ble_only",t:"BLE only"},{v:"ibeacon",t:"iBeacon"},{v:"private_ble",t:"Private BLE"},{v:"entity",t:"HA entities"}]
     .forEach(o=>objKindSel.appendChild(el("option",{value:o.v},o.t)));
   objKindSel.value = ctx.state.objKind;
 
@@ -411,9 +411,13 @@ export function render(ctx){
       let ok = true;
       // Entity objects always pass the age filter (they're real-time from HA)
       if(kind !== "entity" && age > maxAge) ok = false;
-      // "ble" filter covers ble, private_ble, and ibeacon (all physical BLE devices)
+      // Kind filter
       if(k === "ble" && kind !== "ble" && kind !== "private_ble" && kind !== "ibeacon") ok = false;
-      else if(k !== "all" && k !== "ble" && kind !== k) ok = false;
+      else if(k === "ble_only" && kind !== "ble") ok = false;
+      else if(k === "ibeacon" && kind !== "ibeacon") ok = false;
+      else if(k === "private_ble" && kind !== "private_ble") ok = false;
+      else if(k === "entity" && kind !== "entity") ok = false;
+      else if(k !== "all" && k !== "ble" && k !== "ble_only" && k !== "ibeacon" && k !== "private_ble" && k !== "entity" && kind !== k) ok = false;
       if(s === "identified" && !ident) ok = false;
       if(s === "unidentified" && ident) ok = false;
       if(s === "away" && !away) ok = false;
@@ -703,8 +707,8 @@ export function render(ctx){
         ? el("span",{class:"badge",style:"background:#0a2a1a;color:#52b788;border-color:#166534;font-weight:700"}, "Quiet Mode")
         : null,
       _quietMode ? null : (summary ? _mkFilterBadge(`${summary.ble||0} BLE`, "", "ble", "all") : null),
-      _quietMode ? null : (summary && summary.ibeacon ? _mkFilterBadge(`${summary.ibeacon} iBeacon`, "background:#2a1a00;color:#fbbf24;border-color:#92400e", "ble", "all") : null),
-      _quietMode ? null : (summary && summary.private_ble ? _mkFilterBadge(`${summary.private_ble} Private BLE`, "background:#0a1a3a;color:#93c5fd;border-color:#1e4976", "ble", "all") : null),
+      _quietMode ? null : (summary && summary.ibeacon ? _mkFilterBadge(`${summary.ibeacon} iBeacon`, "background:#2a1a00;color:#fbbf24;border-color:#92400e", "ibeacon", "all") : null),
+      _quietMode ? null : (summary && summary.private_ble ? _mkFilterBadge(`${summary.private_ble} Private BLE`, "background:#0a1a3a;color:#93c5fd;border-color:#1e4976", "private_ble", "all") : null),
       _quietMode ? null : (summary ? _mkFilterBadge(`${summary.unidentified||0} unidentified`, "", "all", "unidentified", true) : null),
       summary ? _mkFilterBadge(`${summary.entities||0} entities`, "", "entity", "all") : null,
       awayCount ? _mkFilterBadge(`${awayCount} away`, "background:#3a0a0a;color:#f87171;border-color:#7f1d1d", "all", "away") : null,

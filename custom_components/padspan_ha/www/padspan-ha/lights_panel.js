@@ -12,8 +12,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.15.15";
-const BUILD_ID = "20260318T221444Z";
+const APP_VERSION = "0.15.16";
+const BUILD_ID = "20260318T221923Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
