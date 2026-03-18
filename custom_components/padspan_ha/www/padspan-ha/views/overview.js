@@ -2076,6 +2076,7 @@ export function render(ctx){
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           isoDiv.innerHTML = buildIsoSVG(focusZ);
+          ctx.state._isoBuildPending = false;
           _isoProgressFill.style.transition = "width 0.2s";
           _isoProgressFill.style.width = "100%";
           _isoProgressFill.style.background = "#52b788";
@@ -2085,6 +2086,8 @@ export function render(ctx){
     }
 
     // Initial load: show loading placeholder, defer heavy SVG build until DOM is ready
+    // Set a flag so the 5s poll doesn't clobber us before the first build finishes
+    ctx.state._isoBuildPending = true;
     isoDiv.innerHTML = `<div style="text-align:center;padding:60px 0;color:#52b788;font-size:13px">Building 3D map\u2026</div>`;
     _isoProgressFill.style.transition = "none";
     _isoProgressFill.style.width = "40%";
