@@ -28,41 +28,103 @@ const BARRIER_PENALTY_DB_TO_DIST = 0.01; // each dB of barrier attenuation adds 
 
 // ── Color Scales ─────────────────────────────────────────────────────────────
 
-// RSSI → color using ABSOLUTE dBm thresholds (not relative to data range).
-// This makes colors consistent across maps and highlights weak areas prominently.
-// -30 dBm = excellent (green), -55 = good (yellow-green), -75 = marginal (orange), -85 = poor (red), -95+ = dead (dark red)
-function _rssiColor(rssi) {
-  if (rssi == null || isNaN(rssi)) return "rgba(60,60,60,0.15)";
-  // Absolute scale: -30 (best) to -95 (worst)
-  const BEST = -30, WORST = -95;
-  const t = Math.max(0, Math.min(1, (rssi - WORST) / (BEST - WORST))); // 0=dead, 1=excellent
-  // Strong red bias: power curve 0.55 makes ~70% of the visual range red→orange
+// ── Hatch Pattern System ─────────────────────────────────────────────────────
+// 16 color buckets from -95 to -30 dBm. Each bucket gets a <pattern> with 45°
+// diagonal lines in that color. Grid cells reference url(#rmh_N) instead of
+// solid fills, letting the map image show through the gaps.
+
+const HATCH_BUCKETS = 16;
+const HATCH_WORST = -95;
+const HATCH_BEST  = -30;
+const HATCH_RANGE = HATCH_BEST - HATCH_WORST;
+
+// Compute opaque RGB for a bucket index (0 = worst, HATCH_BUCKETS-1 = best)
+function _bucketRGB(idx) {
+  const t = idx / (HATCH_BUCKETS - 1); // 0=dead, 1=excellent
   const tb = Math.pow(t, 0.55);
   let r, g, b;
   if (tb < 0.25) {
-    // dark red → bright red (dead → very weak)
     const u = tb / 0.25;
-    r = Math.round(80 + u * 170);   // 80→250
-    g = Math.round(u * 20);         // 0→20
+    r = Math.round(80 + u * 170);
+    g = Math.round(u * 20);
     b = 15;
   } else if (tb < 0.50) {
-    // bright red → orange (weak → marginal)
     const u = (tb - 0.25) / 0.25;
     r = 250;
-    g = Math.round(20 + u * 130);   // 20→150
-    b = Math.round(15 + u * 10);    // 15→25
+    g = Math.round(20 + u * 130);
+    b = Math.round(15 + u * 10);
   } else if (tb < 0.75) {
-    // orange → yellow (marginal → decent)
     const u = (tb - 0.50) / 0.25;
-    r = Math.round(250 - u * 30);   // 250→220
-    g = Math.round(150 + u * 70);   // 150→220
+    r = Math.round(250 - u * 30);
+    g = Math.round(150 + u * 70);
     b = 25;
   } else {
-    // yellow → green (decent → excellent)
     const u = (tb - 0.75) / 0.25;
-    r = Math.round(220 - u * 180);  // 220→40
-    g = Math.round(220 - u * 30);   // 220→190
-    b = Math.round(25 + u * 110);   // 25→135
+    r = Math.round(220 - u * 180);
+    g = Math.round(220 - u * 30);
+    b = Math.round(25 + u * 110);
+  }
+  return `rgb(${r},${g},${b})`;
+}
+
+// Map RSSI → bucket index
+function _rssiBucket(rssi) {
+  if (rssi == null || isNaN(rssi)) return -1;
+  return Math.max(0, Math.min(HATCH_BUCKETS - 1,
+    Math.round((rssi - HATCH_WORST) / HATCH_RANGE * (HATCH_BUCKETS - 1))
+  ));
+}
+
+/**
+ * Generate <defs> block with 45° crosshatch patterns for heatmap cells.
+ * @param {string} prefix - unique prefix to avoid SVG ID collisions (e.g. "rm2d", "rmiso", "rmfl")
+ * @param {number} spacing - pattern tile size in the coordinate system (e.g. 0.012 for viewBox 0-1)
+ * @param {number} lineW - stroke width of hatch lines
+ * @returns {string} SVG <defs>...</defs> block
+ */
+export function hatchDefs(prefix, spacing, lineW) {
+  let s = "<defs>";
+  for (let i = 0; i < HATCH_BUCKETS; i++) {
+    const c = _bucketRGB(i);
+    const sp = spacing.toFixed(5);
+    const lw = lineW.toFixed(5);
+    // 45° crosshatch: two diagonal lines per tile
+    s += `<pattern id="${prefix}_${i}" x="0" y="0" width="${sp}" height="${sp}" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">`;
+    s += `<line x1="0" y1="0" x2="0" y2="${sp}" stroke="${c}" stroke-width="${lw}" opacity="0.75"/>`;
+    s += `</pattern>`;
+  }
+  // Null bucket for no-data cells
+  s += `<pattern id="${prefix}_null" x="0" y="0" width="${spacing.toFixed(5)}" height="${spacing.toFixed(5)}" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">`;
+  s += `<line x1="0" y1="0" x2="0" y2="${spacing.toFixed(5)}" stroke="#333" stroke-width="${lineW.toFixed(5)}" opacity="0.1"/>`;
+  s += `</pattern>`;
+  s += "</defs>";
+  return s;
+}
+
+/** Get fill attribute for a cell: url(#prefix_N) */
+function _hatchFill(prefix, rssi) {
+  const idx = _rssiBucket(rssi);
+  return idx < 0 ? `url(#${prefix}_null)` : `url(#${prefix}_${idx})`;
+}
+
+// Legacy solid fill (still used for legends and iso 3D where patterns are complex)
+function _rssiColor(rssi) {
+  if (rssi == null || isNaN(rssi)) return "rgba(60,60,60,0.15)";
+  const t = Math.max(0, Math.min(1, (rssi - HATCH_WORST) / HATCH_RANGE));
+  const tb = Math.pow(t, 0.55);
+  let r, g, b;
+  if (tb < 0.25) {
+    const u = tb / 0.25;
+    r = Math.round(80 + u * 170); g = Math.round(u * 20); b = 15;
+  } else if (tb < 0.50) {
+    const u = (tb - 0.25) / 0.25;
+    r = 250; g = Math.round(20 + u * 130); b = Math.round(15 + u * 10);
+  } else if (tb < 0.75) {
+    const u = (tb - 0.50) / 0.25;
+    r = Math.round(250 - u * 30); g = Math.round(150 + u * 70); b = 25;
+  } else {
+    const u = (tb - 0.75) / 0.25;
+    r = Math.round(220 - u * 180); g = Math.round(220 - u * 30); b = Math.round(25 + u * 110);
   }
   return `rgba(${r},${g},${b},0.6)`;
 }
@@ -204,18 +266,19 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
   const maxR = Math.max(...allRssi);
   const mapBarriers = (barriers || []);
 
-  // Build interpolation grid with barrier-aware IDW
+  // Build interpolation grid with barrier-aware IDW + 45° crosshatch patterns
   const cellW = 1.0 / GRID_RES;
   const cellH = 1.0 / GRID_RES;
-  let s = "";
+  const _pfx = "rm2d";
+  let s = hatchDefs(_pfx, 0.010, 0.004);
 
   for (let gy = 0; gy < GRID_RES; gy++) {
     for (let gx = 0; gx < GRID_RES; gx++) {
       const qx = (gx + 0.5) * cellW;
       const qy = (gy + 0.5) * cellH;
       const rssi = _idw(qx, qy, dataPoints, mapBarriers);
-      const color = _rssiColor(rssi);
-      s += `<rect x="${(gx * cellW).toFixed(4)}" y="${(gy * cellH).toFixed(4)}" width="${cellW.toFixed(4)}" height="${cellH.toFixed(4)}" fill="${color}" rx="0.005"/>`;
+      const fill = _hatchFill(_pfx, rssi);
+      s += `<rect x="${(gx * cellW).toFixed(4)}" y="${(gy * cellH).toFixed(4)}" width="${cellW.toFixed(4)}" height="${cellH.toFixed(4)}" fill="${fill}"/>`;
     }
   }
 
@@ -246,15 +309,14 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
   const legendY = 0.90;
   s += `<rect x="0.02" y="${legendY - 0.01}" width="0.34" height="0.09" rx="0.008" fill="rgba(7,16,8,0.85)"/>`;
   s += `<text x="0.035" y="${legendY + 0.01}" fill="#e2e8f0" font-size="0.018" font-weight="600" font-family="system-ui,sans-serif">${scannerSource ? "Scanner" : "Combined"} Radio Map</text>`;
-  const legLabels = ["-95","-80","-65","-50","-35"];
-  const legValues = [-95,-80,-65,-50,-35];
-  const barW = 0.05;
-  for (let i = 0; i < legValues.length; i++) {
-    const color = _rssiColor(legValues[i]).replace(",0.6)", ",0.9)");
-    s += `<rect x="${(0.035 + i * barW).toFixed(3)}" y="${legendY + 0.025}" width="${barW.toFixed(3)}" height="0.015" fill="${color}"/>`;
+  const legSteps = 8;
+  const barW = 0.03;
+  for (let i = 0; i < legSteps; i++) {
+    const bucketIdx = Math.round(i / (legSteps - 1) * (HATCH_BUCKETS - 1));
+    s += `<rect x="${(0.035 + i * barW).toFixed(3)}" y="${legendY + 0.025}" width="${barW.toFixed(3)}" height="0.015" fill="${_bucketRGB(bucketIdx)}"/>`;
   }
   s += `<text x="0.035" y="${legendY + 0.06}" fill="#fca5a5" font-size="0.013" font-family="system-ui,sans-serif">-95 dBm (dead)</text>`;
-  s += `<text x="${(0.035 + 4 * barW).toFixed(3)}" y="${legendY + 0.06}" fill="#52b788" font-size="0.013" font-family="system-ui,sans-serif">-35 dBm</text>`;
+  s += `<text x="${(0.035 + (legSteps - 1) * barW).toFixed(3)}" y="${legendY + 0.06}" fill="#52b788" font-size="0.013" font-family="system-ui,sans-serif">-35 dBm</text>`;
   s += `<text x="0.035" y="${legendY + 0.075}" fill="#94a3b8" font-size="0.012" font-family="system-ui,sans-serif">${dataPoints.length} cal points \u2022 range ${Math.round(minR)} to ${Math.round(maxR)} dBm</text>`;
   // Wall legend
   if (mapBarriers.length) {
@@ -440,7 +502,8 @@ export function computeHeatmapGrid(calPoints, mapId, scannerSource, barriers) {
     } else {
       const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
       if (rssis.length) {
-        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: Math.max(...rssis) });
+        const meanRssi = rssis.reduce((a, b) => a + b, 0) / rssis.length;
+        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: meanRssi });
       }
     }
   }
@@ -480,16 +543,18 @@ export function isoHeatmapSVG(heatData, mapPt, iso, z) {
   if (!heatData) return "";
   const { grid, minR, maxR, res } = heatData;
   const cellW = 1.0 / res;
-  let s = "";
+  // 3D iso uses pixel coordinates — pattern spacing in pixels
+  const _pfx = "rmiso";
+  let s = hatchDefs(_pfx, 6, 2.5);
 
-  // Slight overlap (0.5 cell) prevents hairline gaps between cells in iso projection
+  // Slight overlap prevents hairline gaps between cells in iso projection
   const pad = cellW * 0.08;
   for (let gy = 0; gy < res; gy++) {
     for (let gx = 0; gx < res; gx++) {
       const rssi = grid[gy * res + gx];
       if (isNaN(rssi)) continue;
 
-      const color = _rssiColor(rssi);
+      const fill = _hatchFill(_pfx, rssi);
       // Project 4 corners of the grid cell (with slight padding) through the iso transform
       const x0 = gx * cellW - pad, y0 = gy * cellW - pad;
       const x1 = x0 + cellW + pad * 2, y1 = y0 + cellW + pad * 2;
@@ -504,7 +569,7 @@ export function isoHeatmapSVG(heatData, mapPt, iso, z) {
 
       // Sub-pixel precision (1 decimal) prevents cells from collapsing to lines
       const f = v => v.toFixed(1);
-      s += `<polygon points="${f(p0[0])},${f(p0[1])} ${f(p1[0])},${f(p1[1])} ${f(p2[0])},${f(p2[1])} ${f(p3[0])},${f(p3[1])}" fill="${color}"/>`;
+      s += `<polygon points="${f(p0[0])},${f(p0[1])} ${f(p1[0])},${f(p1[1])} ${f(p2[0])},${f(p2[1])} ${f(p3[0])},${f(p3[1])}" fill="${fill}"/>`;
     }
   }
 
@@ -597,14 +662,15 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
   const cellW = wW / FLOOR_GRID;
   const cellH = wH / FLOOR_GRID;
   const f = v => v.toFixed(5);
-  let s = "";
+  const _pfx = "rmfl";
+  let s = hatchDefs(_pfx, 0.008, 0.003);
 
   for (let gy = 0; gy < FLOOR_GRID; gy++) {
     for (let gx = 0; gx < FLOOR_GRID; gx++) {
       const qwx = wBB.minX + (gx + 0.5) * cellW;
       const qwy = wBB.minY + (gy + 0.5) * cellH;
       const rssi = _idw(qwx, qwy, idwPoints, worldBarriers);
-      const color = _rssiColor(rssi);
+      const fill = _hatchFill(_pfx, rssi);
 
       // Convert cell corners from world → view coords
       const [v0x, v0y] = w2v(wBB.minX + gx * cellW, wBB.minY + gy * cellH);
@@ -612,7 +678,7 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
       const [v2x, v2y] = w2v(wBB.minX + (gx+1) * cellW, wBB.minY + (gy+1) * cellH);
       const [v3x, v3y] = w2v(wBB.minX + gx * cellW, wBB.minY + (gy+1) * cellH);
 
-      s += `<polygon points="${f(v0x)},${f(v0y)} ${f(v1x)},${f(v1y)} ${f(v2x)},${f(v2y)} ${f(v3x)},${f(v3y)}" fill="${color}"/>`;
+      s += `<polygon points="${f(v0x)},${f(v0y)} ${f(v1x)},${f(v1y)} ${f(v2x)},${f(v2y)} ${f(v3x)},${f(v3y)}" fill="${fill}"/>`;
     }
   }
 
@@ -639,14 +705,14 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
   const ly = 0.92;
   s += `<rect x="0.02" y="${ly - 0.01}" width="0.34" height="0.07" rx="0.006" fill="rgba(7,16,8,0.85)"/>`;
   s += `<text x="0.035" y="${ly + 0.008}" fill="#e2e8f0" font-size="0.014" font-weight="600" font-family="system-ui,sans-serif">${scannerSource ? "Scanner" : "Floor"} Radio Map</text>`;
-  const legValues = [-95,-80,-65,-50,-35];
-  const bw = 0.045;
-  for (let i = 0; i < legValues.length; i++) {
-    const c = _rssiColor(legValues[i]).replace(",0.6)", ",0.9)");
-    s += `<rect x="${(0.035 + i * bw).toFixed(3)}" y="${ly + 0.02}" width="${bw.toFixed(3)}" height="0.012" fill="${c}"/>`;
+  const flLegSteps = 8;
+  const bw = 0.028;
+  for (let i = 0; i < flLegSteps; i++) {
+    const bucketIdx = Math.round(i / (flLegSteps - 1) * (HATCH_BUCKETS - 1));
+    s += `<rect x="${(0.035 + i * bw).toFixed(3)}" y="${ly + 0.02}" width="${bw.toFixed(3)}" height="0.012" fill="${_bucketRGB(bucketIdx)}"/>`;
   }
   s += `<text x="0.035" y="${ly + 0.048}" fill="#fca5a5" font-size="0.01" font-family="system-ui,sans-serif">-95</text>`;
-  s += `<text x="${(0.035 + 4 * bw).toFixed(3)}" y="${ly + 0.048}" fill="#52b788" font-size="0.01" font-family="system-ui,sans-serif">-35 dBm</text>`;
+  s += `<text x="${(0.035 + (flLegSteps - 1) * bw).toFixed(3)}" y="${ly + 0.048}" fill="#52b788" font-size="0.01" font-family="system-ui,sans-serif">-35 dBm</text>`;
   s += `<text x="0.035" y="${ly + 0.058}" fill="#94a3b8" font-size="0.009" font-family="system-ui,sans-serif">${worldPoints.length} points from ${floorMapIds.size} map${floorMapIds.size > 1 ? "s" : ""}</text>`;
 
   return s;
