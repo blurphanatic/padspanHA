@@ -814,10 +814,13 @@ export function render(ctx){
             const isOnline = !!liveR;
             const rxColor = isOnline ? "#52b788" : "#4a6052";
             const rxName = (r.label || (liveR && liveR.name) || r.source || "radio").substring(0, 16);
+            const rxSrc2d = _esc(src);
+            s += `<g data-scanner-src="${rxSrc2d}" style="cursor:pointer">`;
             s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_mkR*1.8}" fill="none" stroke="${rxColor}" stroke-width="${_sw*0.5}" opacity="0.3"/>`;
             s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_mkR}" fill="none" stroke="${rxColor}" stroke-width="${_sw*0.7}" opacity="0.6"/>`;
             s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_mkR*0.5}" fill="${rxColor}" opacity="0.9"/>`;
-            s += `<text x="${_f(px)}" y="${_f(py - _mkR*2.2)}" text-anchor="middle" fill="${rxColor}" font-size="${_fsScan}" font-weight="600">${_esc(rxName)}</text>`;
+            s += `<text x="${_f(px)}" y="${_f(py - _mkR*2.2)}" text-anchor="middle" fill="${rxColor}" font-size="${_fsScan}" font-weight="600" style="text-decoration:underline">${_esc(rxName)}</text>`;
+            s += `</g>`;
           }
         }
       }
@@ -861,16 +864,23 @@ export function render(ctx){
         }
 
         const lbl = (o.user_label || o.name || "").substring(0, 14);
+        const _oKey = _esc(o.key || o.address || o.entity_id || "");
 
         if (isFollowed) {
+          s += `<g data-obj-key="${_oKey}" style="cursor:pointer">`;
           s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*2}" fill="#fbbf24" fill-opacity="0.15"/>`;
           s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#fbbf24" stroke="#071008" stroke-width="${_sw*0.5}"/>`;
           if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*2)}" text-anchor="middle" fill="#fbbf24" font-size="${_fsObj}" font-weight="600">${_esc(lbl)}</text>`;
+          s += `</g>`;
         } else if (isTagged) {
+          s += `<g data-obj-key="${_oKey}" style="cursor:pointer">`;
           s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#5eead4" stroke="#071008" stroke-width="${_sw*0.5}" opacity="0.9"/>`;
           if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8)}" text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="0.85">${_esc(lbl)}</text>`;
+          s += `</g>`;
         } else {
+          s += `<g data-obj-key="${_oKey}" style="cursor:pointer">`;
           s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*0.7}" fill="#f59e0b" stroke="#071008" stroke-width="${_sw*0.3}" opacity="0.5"/>`;
+          s += `</g>`;
         }
       }
 
@@ -1147,6 +1157,29 @@ export function render(ctx){
       zoom = 1.0; panX = 0; panY = 0;
       ctx.state._2dZoom = 1; ctx.state._2dPanX = 0; ctx.state._2dPanY = 0;
       applyTransform();
+    });
+
+    // Click handler for 2D SVG: scanners and objects
+    svgDiv.addEventListener("click", (e) => {
+      // Scanner click
+      const sg = e.target.closest("[data-scanner-src]");
+      if (sg) {
+        const src = sg.getAttribute("data-scanner-src");
+        if (src) {
+          const radio = liveRadios.find(r => r.source === src);
+          if (radio) { ctx.actions.showScannerDetail(radio); return; }
+        }
+      }
+      // Object click
+      const og = e.target.closest("[data-obj-key]");
+      if (og) {
+        const objKey = og.getAttribute("data-obj-key");
+        if (objKey) {
+          const obj = objects.find(o =>
+            (o.key||"") === objKey || (o.address||"") === objKey || (o.entity_id||"") === objKey);
+          if (obj) ctx.actions.showObjectDetail(obj);
+        }
+      }
     });
 
     svgWrap.appendChild(svgDiv);
@@ -1607,11 +1640,12 @@ export function render(ctx){
             const _rTip = `${rsid} · ${(isLive ? liveRadio.name : null)||r.label||r.id||"receiver"}${r.room ? "\nArea: "+r.room : ""}${isLive && liveRadio.scanning!=null ? "\nScanning: "+(liveRadio.scanning?"Yes":"No") : ""}${!isLive ? "\n(offline)" : ""}`;
             const rxColor = isLive ? "#52b788" : "#4a6052";
             const rxOp = isLive ? 1.0 : 0.45;
-            s += `<g data-tip="${_esc(_rTip)}" opacity="${rxOp}">`;
+            const rxSrc = _esc((isLive ? liveRadio.source : null) || r.source || r.id || "");
+            s += `<g data-scanner-src="${rxSrc}" data-tip="${_esc(_rTip)}" opacity="${rxOp}" style="cursor:pointer">`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="13" fill="none" stroke="${rxColor}" stroke-width="1.2" opacity="0.3"/>`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="7"  fill="none" stroke="${rxColor}" stroke-width="1.5" opacity="0.6"/>`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4"  fill="${rxColor}" opacity="0.9"/>`;
-            s += `<text x="${Math.round(px)}" y="${Math.round(py)-16}" text-anchor="middle" fill="${rxColor}" font-size="9" font-weight="600">${_esc(rxName)}</text>`;
+            s += `<text x="${Math.round(px)}" y="${Math.round(py)-16}" text-anchor="middle" fill="${rxColor}" font-size="9" font-weight="600" style="text-decoration:underline;cursor:pointer">${_esc(rxName)}</text>`;
             s += `</g>`;
           }
         }
@@ -1913,6 +1947,16 @@ export function render(ctx){
         isoTipEl.style.display = "none";
     });
     isoDiv.addEventListener("click", (e) => {
+      // Check for scanner click first
+      const sg = e.target.closest("[data-scanner-src]");
+      if (sg) {
+        const src = sg.getAttribute("data-scanner-src");
+        if (src) {
+          const radio = allRadios_live.find(r => r.source === src);
+          if (radio) { ctx.actions.showScannerDetail(radio); return; }
+        }
+      }
+      // Then check for object click
       const g = e.target.closest("[data-obj-key]");
       if(!g) return;
       const objKey = g.getAttribute("data-obj-key");
