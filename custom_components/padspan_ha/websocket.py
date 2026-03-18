@@ -2511,17 +2511,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception:
         pass
 
-    # ── Traceback: record object positions for playback ──────────────────────
-    try:
-        from .const import DATA_TRACEBACK
-        tb_store = hass.data.get(DOMAIN, {}).get(DATA_TRACEBACK)
-        if tb_store:
-            _tb_objs = (snapshot.get("objects") or {}).get("list") or []
-            _tb_followed = set(_get_settings(hass).get("followed_addrs") or [])
-            tb_store.record_frame(_tb_objs, followed_set=_tb_followed)
-            await tb_store.async_maybe_save()
-    except Exception:
-        pass
+    # ── Traceback recording moved to ws_live_snapshot (after k-NN overlay) ──
 
     # ── Scanner health (Phase 3) ─────────────────────────────────────────────
     try:
@@ -3039,6 +3029,20 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                 "knn_active": False,
                 "knn_positioned_objects": 0,
             }
+    except Exception:
+        pass
+
+    # ── Traceback: record AFTER all overlays (k-NN, stale injection) ─────────
+    # Objects now have x_frac, y_frac, knn_map_id, room (smoothed),
+    # room_confidence — everything the traceback view needs for precise placement.
+    try:
+        from .const import DATA_TRACEBACK  # noqa: PLC0415
+        _tb_store = hass.data.get(DOMAIN, {}).get(DATA_TRACEBACK)
+        if _tb_store:
+            _tb_objs = (snap.get("objects") or {}).get("list") or []
+            _tb_followed = set(_get_settings(hass).get("followed_addrs") or [])
+            _tb_store.record_frame(_tb_objs, followed_set=_tb_followed)
+            await _tb_store.async_maybe_save()
     except Exception:
         pass
 
