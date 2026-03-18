@@ -651,7 +651,7 @@ export function render(ctx){
     const imgUrl = activeMap.image?.filename ? `/local/padspan_ha/maps/${activeMap.image.filename}` : null;
 
     // Filter state (persists within session)
-    if(ctx.state._2dFilters === undefined) ctx.state._2dFilters = { scanners: true, tagged: true, unknown: false, rooms: true, mapImg: true, radioMap: false, distortion: false };
+    if(ctx.state._2dFilters === undefined) ctx.state._2dFilters = { scanners: true, tagged: true, unknown: false, rooms: true, mapImg: false, radioMap: false, distortion: false };
     const F = ctx.state._2dFilters;
 
     // Radio map state (must be declared before buildSVG closure captures them)
