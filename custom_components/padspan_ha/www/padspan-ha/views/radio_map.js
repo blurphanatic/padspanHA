@@ -327,10 +327,15 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
   s += _barriersSVG(mapBarriers);
 
   // Calibration point markers (small circles at actual positions)
+  // Calibration point markers — colored by their own RSSI value for visual verification.
+  // The number shown IS the value driving the heatmap at that point.
   for (const dp of dataPoints) {
-    s += `<circle cx="${dp.x_frac.toFixed(4)}" cy="${dp.y_frac.toFixed(4)}" r="0.008" fill="#e2e8f0" stroke="#071008" stroke-width="0.002" opacity="0.8"/>`;
-    // RSSI value label next to point
-    s += `<text x="${(dp.x_frac + 0.012).toFixed(4)}" y="${(dp.y_frac + 0.004).toFixed(4)}" fill="#e2e8f0" font-size="0.016" font-family="system-ui,sans-serif" opacity="0.7">${Math.round(dp.rssi)}</text>`;
+    const dpBucket = _rssiBucket(dp.rssi);
+    const dpColor = dpBucket >= 0 ? _bucketRGB(dpBucket) : "#e2e8f0";
+    s += `<circle cx="${dp.x_frac.toFixed(4)}" cy="${dp.y_frac.toFixed(4)}" r="0.010" fill="${dpColor}" stroke="#071008" stroke-width="0.002" opacity="0.9"/>`;
+    // Background rect for readability
+    s += `<rect x="${(dp.x_frac + 0.010).toFixed(4)}" y="${(dp.y_frac - 0.008).toFixed(4)}" width="0.04" height="0.016" rx="0.003" fill="rgba(7,16,8,0.85)"/>`;
+    s += `<text x="${(dp.x_frac + 0.014).toFixed(4)}" y="${(dp.y_frac + 0.004).toFixed(4)}" fill="${dpColor}" font-size="0.014" font-weight="700" font-family="monospace" opacity="0.95">${Math.round(dp.rssi)}</text>`;
   }
 
   // Scanner position marker (if single scanner + position known)
@@ -918,11 +923,14 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
     s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${f(sw)}" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
   }
 
-  // ── 5. Calibration point markers in view coords ────────────────────────────
+  // ── 5. Calibration point markers — colored + labeled for data verification ──
   for (const wp of worldPoints) {
     const [vx, vy] = w2v(wp.wx, wp.wy);
-    s += `<circle cx="${f(vx)}" cy="${f(vy)}" r="0.006" fill="#e2e8f0" stroke="#071008" stroke-width="0.002" opacity="0.8"/>`;
-    s += `<text x="${f(vx + 0.01)}" y="${f(vy + 0.003)}" fill="#e2e8f0" font-size="0.012" font-family="system-ui,sans-serif" opacity="0.6">${Math.round(wp.rssi)}</text>`;
+    const _wpB = _rssiBucket(wp.rssi);
+    const _wpC = _wpB >= 0 ? _bucketRGB(_wpB) : "#e2e8f0";
+    s += `<circle cx="${f(vx)}" cy="${f(vy)}" r="0.008" fill="${_wpC}" stroke="#071008" stroke-width="0.002" opacity="0.9"/>`;
+    s += `<rect x="${f(vx + 0.008)}" y="${f(vy - 0.006)}" width="0.032" height="0.012" rx="0.002" fill="rgba(7,16,8,0.85)"/>`;
+    s += `<text x="${f(vx + 0.012)}" y="${f(vy + 0.003)}" fill="${_wpC}" font-size="0.01" font-weight="700" font-family="monospace" opacity="0.95">${Math.round(wp.rssi)}</text>`;
   }
 
   // ── 6. Legend ──────────────────────────────────────────────────────────────
