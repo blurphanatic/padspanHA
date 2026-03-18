@@ -39,35 +39,42 @@ const HATCH_BEST  = -30;
 const HATCH_RANGE = HATCH_BEST - HATCH_WORST;
 
 // Compute opaque RGB for a bucket index (0 = worst, HATCH_BUCKETS-1 = best)
-// Strong areas are CLEARLY green (#22c55e / #16a34a range), weak areas red
+// Dead zones: very dark red/maroon. Strong areas: vivid bright green.
 function _bucketRGB(idx) {
   const t = idx / (HATCH_BUCKETS - 1); // 0=dead, 1=excellent
-  const tb = Math.pow(t, 0.55);
+  // Moderate bias — 0.7 power lets green show at reasonable signal levels
+  const tb = Math.pow(t, 0.7);
   let r, g, b;
-  if (tb < 0.25) {
-    // dark red → bright red (dead → very weak)
-    const u = tb / 0.25;
-    r = Math.round(80 + u * 170);   // 80→250
-    g = Math.round(u * 20);         // 0→20
-    b = 15;
-  } else if (tb < 0.50) {
+  if (tb < 0.20) {
+    // very dark maroon → dark red (dead zone)
+    const u = tb / 0.20;
+    r = Math.round(30 + u * 90);    // 30→120
+    g = Math.round(u * 8);          // 0→8
+    b = Math.round(5 + u * 5);      // 5→10
+  } else if (tb < 0.40) {
+    // dark red → bright red (very weak → weak)
+    const u = (tb - 0.20) / 0.20;
+    r = Math.round(120 + u * 120);  // 120→240
+    g = Math.round(8 + u * 30);     // 8→38
+    b = 10;
+  } else if (tb < 0.60) {
     // bright red → orange (weak → marginal)
-    const u = (tb - 0.25) / 0.25;
-    r = 250;
-    g = Math.round(20 + u * 140);   // 20→160
-    b = Math.round(15 + u * 10);
-  } else if (tb < 0.75) {
+    const u = (tb - 0.40) / 0.20;
+    r = 240;
+    g = Math.round(38 + u * 140);   // 38→178
+    b = Math.round(10 + u * 15);    // 10→25
+  } else if (tb < 0.80) {
     // orange → yellow-green (marginal → good)
-    const u = (tb - 0.50) / 0.25;
-    r = Math.round(250 - u * 140);  // 250→110
-    g = Math.round(160 + u * 50);   // 160→210
+    const u = (tb - 0.60) / 0.20;
+    r = Math.round(240 - u * 140);  // 240→100
+    g = Math.round(178 + u * 42);   // 178→220
     b = Math.round(25 + u * 15);    // 25→40
   } else {
-    // yellow-green → vivid green (good → excellent)
-    const u = (tb - 0.75) / 0.25;
-    r = Math.round(110 - u * 80);   // 110→30
-    g = Math.round(210 + u * 30);   // 210→240
-    b = Math.round(40 + u * 60);    // 40→100
+    // yellow-green → vivid bright green (good → excellent)
+    const u = (tb - 0.80) / 0.20;
+    r = Math.round(100 - u * 80);   // 100→20
+    g = Math.round(220 + u * 30);   // 220→250
+    b = Math.round(40 + u * 70);    // 40→110
   }
   return `rgb(${r},${g},${b})`;
 }
