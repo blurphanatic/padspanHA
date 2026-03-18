@@ -1657,6 +1657,29 @@ export function render(ctx){
         s += _isoRadioMapMod.isoHatchDefs();
       }
 
+      // Pre-compute GLOBAL RSSI range across all floors for consistent color scale.
+      // Without this, each floor gets its own scale and bad floors look deceptively green.
+      if ((_isoRadioMapOn || _isoDistortionOn) && _isoRadioMapMod && (ctx.state._overviewShowHeatmap || ctx.state._overviewShowDistortion)) {
+        const refPow = ctx.state.settings?.ref_power ?? -59;
+        const plN = ctx.state.settings?.path_loss_exp ?? 2.5;
+        let gMin = 0, gMax = -120;
+        for (const [zz, grp] of [...byLevel.entries()]) {
+          for (const m of grp) {
+            const tf = mapTransforms[m.id]; if (!tf || !tf.mapPt) continue;
+            for (const r of (m.receivers || [])) {
+              if (r.x == null || r.y == null) continue;
+              // Best case: right at the scanner = refPower at 0.3m
+              const best = refPow - 10 * plN * Math.log10(0.3);
+              if (best > gMax) gMax = best;
+              // Worst case: far corner of bounding box (rough estimate)
+              const worst = refPow - 10 * plN * Math.log10(15); // ~15m away
+              if (worst < gMin) gMin = worst;
+            }
+          }
+        }
+        if (_isoRadioMapMod.setGlobalRange) _isoRadioMapMod.setGlobalRange(gMin, gMax);
+      }
+
       for(const [z,group] of [...byLevel.entries()].sort((a,b)=>a[0]-b[0])){
         const isFocused = focusZ===null || (Array.isArray(focusZ) ? focusZ.includes(z) : focusZ===z);
         const go = isFocused ? 1.0 : 0.1;

@@ -93,11 +93,12 @@ let HATCH_RANGE = HATCH_BEST - HATCH_WORST;
 export function setHatchRange(worst, best, gain, contrast) {
   const g = gain || 0;
   const c = contrast || 0;
-  // Gain: shifts both endpoints (positive = more green, negative = more red)
-  // Contrast: positive = narrower range (more extreme colors), negative = wider range (more muted)
-  const pad = Math.max(2, (best - worst) * 0.05);
-  HATCH_WORST = worst - pad + g - c;
-  HATCH_BEST = best + pad + g + c;
+  // Use global range if set (ensures all floors share the same color scale)
+  const w = _globalRangeSet ? _globalMinR : worst;
+  const b = _globalRangeSet ? _globalMaxR : best;
+  const pad = Math.max(2, (b - w) * 0.05);
+  HATCH_WORST = w - pad + g - c;
+  HATCH_BEST = b + pad + g + c;
   HATCH_RANGE = HATCH_BEST - HATCH_WORST;
   if (HATCH_RANGE < 5) { HATCH_WORST = HATCH_BEST - 20; HATCH_RANGE = HATCH_BEST - HATCH_WORST; }
 }
@@ -110,6 +111,19 @@ export function setUserGainContrast(gain, contrast) {
   _userGain = gain || 0;
   _userContrast = contrast || 0;
 }
+
+// Global color range — set ONCE across all floors before rendering any of them.
+// Prevents per-floor scaling that makes bad floors look green.
+let _globalRangeSet = false;
+let _globalMinR = -80, _globalMaxR = -40;
+
+/** Pre-compute the global RSSI range across all floors. Call before the level loop. */
+export function setGlobalRange(minR, maxR) {
+  _globalMinR = minR;
+  _globalMaxR = maxR;
+  _globalRangeSet = true;
+}
+export function clearGlobalRange() { _globalRangeSet = false; }
 
 // Compute opaque RGB for a bucket index (0 = worst, HATCH_BUCKETS-1 = best)
 // Color gradient is pure visual — independent of dBm thresholds.
