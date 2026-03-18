@@ -1404,9 +1404,11 @@ function _adaptiveOffset(wx, wy, roomBoundsWorld) {
       if (rv.length) { fleetSum += rv.reduce((a,b)=>a+b,0)/rv.length; fleetN++; }
     }
     const fleetMean = fleetN > 0 ? fleetSum / fleetN : roomMean;
-    // Offset: positive = this room is better than average, negative = worse
-    // Clamped to ±15 dB to prevent extreme shifts
-    return Math.max(-15, Math.min(15, roomMean - fleetMean));
+    // Offset: ONLY negative (can reveal problems, never boost).
+    // If room is worse than fleet average → negative offset → redder.
+    // If room is better than average → 0 (model already shows it as green).
+    const raw = roomMean - fleetMean;
+    return Math.max(-15, Math.min(0, raw));
   }
   return null;
 }
