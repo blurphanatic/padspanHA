@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.15.17";
-const BUILD_ID = "20260318T224207Z";
+const APP_VERSION = "0.15.18";
+const BUILD_ID = "20260318T224625Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -2248,11 +2248,14 @@ class PadSpanHaApp extends HTMLElement {
     if(this.state._traceback?.active && this.state.view === "traceback") return;
     // Maps upload/stack/edit tabs have fragile state (file inputs, drag handles)
     if(fromPoll && this.state.view === "maps" && (this.state.mapsTab === "upload" || this.state.mapsTab === "stack" || this.state.mapsTab === "edit")) return;
-    // Overview: skip ALL poll re-renders. The 3D SVG is expensive to rebuild and
-    // causes visible flicker + scroll reset. Object positions update infrequently
-    // (room changes ~30s+), so skipping 5s polls doesn't lose meaningful data.
-    // User can refresh by switching tabs or clicking any control.
-    if(fromPoll && this.state.view === "overview") return;
+    // Overview: on polls, only update object dots (cheap) — don't rebuild the
+    // entire SVG which causes flicker + scroll reset. Static layers stay untouched.
+    if(fromPoll && this.state.view === "overview") {
+      if (typeof this.state._isoUpdateObjects === "function") {
+        try { this.state._isoUpdateObjects(); } catch(e) {}
+      }
+      return;
+    }
     // Skip poll re-renders when the user is actively interacting
     if(fromPoll){
       try {

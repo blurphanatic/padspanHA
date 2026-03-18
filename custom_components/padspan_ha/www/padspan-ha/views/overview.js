@@ -1816,6 +1816,7 @@ export function render(ctx){
         return parts.join("|");  // pipe-delimited for data attribute, rendered as lines
       };
 
+      s += `<!-- ISO_OBJECTS_START -->`;
       // Track which object keys are rendered (to avoid duplicate dots for unlabeled layer)
       const _renderedObjKeys = new Set();
 
@@ -2067,16 +2068,27 @@ export function render(ctx){
     _isoProgress.appendChild(_isoProgressFill);
 
     /** Rebuild the 3D SVG with a progress indicator. */
+    /** Full rebuild: replaces entire SVG (expensive — used for initial load + control changes) */
     function _rebuildIso(focusZ) {
-      // Show progress bar immediately
       _isoProgressFill.style.transition = "none";
       _isoProgressFill.style.width = "40%";
       _isoProgressFill.style.background = "#a855f7";
-      // Double rAF: first frame paints the bar, second frame does the heavy SVG build
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           isoDiv.innerHTML = buildIsoSVG(focusZ);
           ctx.state._isoBuildPending = false;
+          // Inject a <g> wrapper for objects so we can swap it on polls
+          const svgEl = isoDiv.querySelector("svg");
+          if (svgEl) {
+            const marker = "<!-- ISO_OBJECTS_START -->";
+            const html = svgEl.innerHTML;
+            const idx = html.indexOf(marker);
+            if (idx >= 0) {
+              const staticPart = html.substring(0, idx);
+              const dynPart = html.substring(idx + marker.length);
+              svgEl.innerHTML = staticPart + `<g id="iso-objects">${dynPart}`;
+            }
+          }
           _isoProgressFill.style.transition = "width 0.2s";
           _isoProgressFill.style.width = "100%";
           _isoProgressFill.style.background = "#52b788";
@@ -2084,6 +2096,32 @@ export function render(ctx){
         });
       });
     }
+
+    /** Light update: only rebuilds object dots (cheap — used for 5s polls) */
+    function _updateIsoObjects() {
+      const svgEl = isoDiv.querySelector("svg");
+      const objGroup = svgEl && svgEl.querySelector("#iso-objects");
+      if (!svgEl || !objGroup) return; // no static base yet, skip
+      // Build the full SVG and extract just the objects portion
+      const fullSvg = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+      const marker = "<!-- ISO_OBJECTS_START -->";
+      const idx = fullSvg.indexOf(marker);
+      if (idx < 0) return;
+      const endSvg = fullSvg.lastIndexOf("</svg>");
+      if (endSvg < 0) return;
+      const dynHtml = fullSvg.substring(idx + marker.length, endSvg);
+      // Swap just the dynamic group contents
+      const tmp = document.createElement("div");
+      tmp.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg">${dynHtml}</svg>`;
+      const tmpSvg = tmp.querySelector("svg");
+      if (tmpSvg) {
+        while (objGroup.firstChild) objGroup.removeChild(objGroup.firstChild);
+        while (tmpSvg.firstChild) objGroup.appendChild(tmpSvg.firstChild);
+      }
+    }
+
+    // Expose the light updater for poll use
+    ctx.state._isoUpdateObjects = _updateIsoObjects;
 
     // Initial load: show loading placeholder, defer heavy SVG build until DOM is ready
     // Set a flag so the 5s poll doesn't clobber us before the first build finishes
