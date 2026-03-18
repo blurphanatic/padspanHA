@@ -1260,43 +1260,46 @@ function renderVisualization(ctx, radios, ads, objIndex) {
 
   s += `</svg>`;
 
-  // ── Render SVG into a proper SVG DOM (not innerHTML on a div) ────────────
-  // innerHTML on a <div> can create HTML-namespace elements that don't handle
-  // SVG getAttribute correctly in all WebViews. Using DOMParser ensures proper
-  // SVG namespace on all elements.
   const svgWrap = document.createElement("div");
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(s, "image/svg+xml");
-    const svgEl = doc.documentElement;
-    if (svgEl && svgEl.tagName === "svg") {
-      svgWrap.appendChild(document.importNode(svgEl, true));
-    } else {
-      svgWrap.innerHTML = s; // fallback
-    }
-  } catch (_e) {
-    svgWrap.innerHTML = s; // fallback
-  }
+  svgWrap.innerHTML = s;
 
-  // ── Click handlers: attach directly to each clickable <g> ──────────────────
-  // Now that SVG is properly namespaced, getAttribute works reliably.
-  const _svgRoot = svgWrap.querySelector("svg");
-  if (_svgRoot) {
-    _svgRoot.querySelectorAll("[data-vs]").forEach(g => {
-      g.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const idx = parseInt(g.getAttribute("data-vs"), 10);
-        if (_scannerClicks[idx]) _scannerClicks[idx]();
-      });
-    });
-    _svgRoot.querySelectorAll("[data-vd]").forEach(g => {
-      g.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const idx = parseInt(g.getAttribute("data-vd"), 10);
-        if (_deviceClicks[idx]) _deviceClicks[idx]();
-      });
-    });
+  // ── Click handlers via exhaustive DOM scan ─────────────────────────────────
+  // Walk ALL elements in the SVG, check every element for data-vs / data-vd
+  // using multiple access methods. This handles HTML-namespace SVG elements,
+  // SVGAnimatedString returns, and any other WebView quirks.
+  function _walkAndAttach(root) {
+    const stack = [root];
+    while (stack.length) {
+      const node = stack.pop();
+      if (node.nodeType !== 1) continue; // elements only
+      // Try every way to read the attribute
+      let vs = null, vd = null;
+      try { vs = node.getAttribute("data-vs"); } catch(_){}
+      if (vs == null && node.dataset) try { vs = node.dataset.vs; } catch(_){}
+      try { vd = node.getAttribute("data-vd"); } catch(_){}
+      if (vd == null && node.dataset) try { vd = node.dataset.vd; } catch(_){}
+      // Coerce SVGAnimatedString to string
+      if (vs && typeof vs === "object" && vs.baseVal != null) vs = vs.baseVal;
+      if (vd && typeof vd === "object" && vd.baseVal != null) vd = vd.baseVal;
+      if (vs != null && vs !== "") {
+        const idx = parseInt(String(vs), 10);
+        if (!isNaN(idx) && _scannerClicks[idx]) {
+          node.style.cursor = "pointer";
+          node.addEventListener("click", (e) => { e.stopPropagation(); _scannerClicks[idx](); });
+        }
+      }
+      if (vd != null && vd !== "") {
+        const idx = parseInt(String(vd), 10);
+        if (!isNaN(idx) && _deviceClicks[idx]) {
+          node.style.cursor = "pointer";
+          node.addEventListener("click", (e) => { e.stopPropagation(); _deviceClicks[idx](); });
+        }
+      }
+      // Push children (in reverse so we process in document order)
+      for (let i = node.childNodes.length - 1; i >= 0; i--) stack.push(node.childNodes[i]);
+    }
   }
+  _walkAndAttach(svgWrap);
 
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),
