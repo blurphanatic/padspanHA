@@ -97,8 +97,9 @@ export function hatchDefs(prefix, spacing, lineW) {
     const c = _bucketRGB(i);
     const sp = spacing.toFixed(5);
     const lw = lineW.toFixed(5);
-    // 45° hatch with dotted lines
-    s += `<pattern id="${prefix}_${i}" x="0" y="0" width="${sp}" height="${sp}" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">`;
+    // Rotate from 45° (red/worst) to 135° (green/best) — 90° sweep
+    const angle = 45 + (i / (HATCH_BUCKETS - 1)) * 90;
+    s += `<pattern id="${prefix}_${i}" x="0" y="0" width="${sp}" height="${sp}" patternUnits="userSpaceOnUse" patternTransform="rotate(${angle.toFixed(1)})">`;
     s += `<line x1="0" y1="0" x2="0" y2="${sp}" stroke="${c}" stroke-width="${lw}" stroke-dasharray="${dash}" stroke-linecap="round" opacity="0.8"/>`;
     s += `</pattern>`;
   }
