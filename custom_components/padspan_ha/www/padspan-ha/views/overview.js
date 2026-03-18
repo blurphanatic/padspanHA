@@ -2321,6 +2321,60 @@ export function render(ctx){
     ctrlRow.appendChild(helpBtn("overview_3d_controls"));
 
     outer.appendChild(ctrlRow);
+
+    // ── 3D Heatmap Gain & Contrast sliders ───────────────────────────────
+    if (_isoRadioMapOn) {
+      const isoHeatCtrl = document.createElement("div");
+      isoHeatCtrl.style.cssText = "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;padding:6px 10px;background:#0a1a12;border:1px solid #1a4228;border-radius:8px";
+
+      const _isoG = ctx.state.settings?.heatmap_gain ?? 0;
+      const _isoC = ctx.state.settings?.heatmap_contrast ?? 0;
+
+      const iGainSlider = document.createElement("input");
+      iGainSlider.type = "range"; iGainSlider.min = "-20"; iGainSlider.max = "20"; iGainSlider.step = "1";
+      iGainSlider.value = String(ctx.state._heatGain ?? _isoG);
+      iGainSlider.style.cssText = "width:90px;accent-color:#a855f7";
+      const iGainLbl = document.createElement("span");
+      iGainLbl.style.cssText = "font-size:10px;color:#d8b4fe;min-width:50px";
+      iGainLbl.textContent = `Gain: ${iGainSlider.value > 0 ? "+" : ""}${iGainSlider.value}`;
+
+      const iContSlider = document.createElement("input");
+      iContSlider.type = "range"; iContSlider.min = "-15"; iContSlider.max = "15"; iContSlider.step = "1";
+      iContSlider.value = String(ctx.state._heatContrast ?? _isoC);
+      iContSlider.style.cssText = "width:90px;accent-color:#a855f7";
+      const iContLbl = document.createElement("span");
+      iContLbl.style.cssText = "font-size:10px;color:#d8b4fe;min-width:65px";
+      iContLbl.textContent = `Contrast: ${iContSlider.value > 0 ? "+" : ""}${iContSlider.value}`;
+
+      const iSaveBtn = document.createElement("button");
+      iSaveBtn.className = "btn inline";
+      iSaveBtn.style.cssText = "font-size:10px;padding:2px 8px;color:#52b788;border-color:#2d6a4f";
+      iSaveBtn.textContent = "Save";
+      iSaveBtn.addEventListener("click", async () => {
+        try {
+          await ctx.actions.settingsSet({ heatmap_gain: parseInt(iGainSlider.value, 10), heatmap_contrast: parseInt(iContSlider.value, 10) });
+          ctx.toast("Heatmap settings saved");
+        } catch(e) { ctx.toast("Failed to save", true); }
+      });
+
+      const _isoHeatUpdate = () => {
+        const g = parseInt(iGainSlider.value, 10), c = parseInt(iContSlider.value, 10);
+        iGainLbl.textContent = `Gain: ${g > 0 ? "+" : ""}${g}`;
+        iContLbl.textContent = `Contrast: ${c > 0 ? "+" : ""}${c}`;
+        ctx.state._heatGain = g;
+        ctx.state._heatContrast = c;
+        isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+      };
+      iGainSlider.addEventListener("input", _isoHeatUpdate);
+      iContSlider.addEventListener("input", _isoHeatUpdate);
+
+      isoHeatCtrl.append(iGainLbl, iGainSlider, iContLbl, iContSlider, iSaveBtn);
+      outer.appendChild(isoHeatCtrl);
+
+      // Show/hide when heatmap toggle changes — use state check on re-render
+      // (the heatmap button triggers a full SVG rebuild which re-renders this view)
+    }
+
     outer.appendChild(isoWrap);
     outer.appendChild(roomListPanel);
 
