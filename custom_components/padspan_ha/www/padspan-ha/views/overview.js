@@ -2292,41 +2292,48 @@ export function render(ctx){
     });
     ctrlRow.appendChild(ovWallsBtn);
 
-    // ── Radio Map toggle (only if feature enabled) ────────────────────────
+    // ── Radio Map + Distortion toggles (mutually exclusive) ────────────────
+    const _heatStyle = (on) => on ? "background:#2d1b4e;border-color:#a855f7;color:#d8b4fe;font-weight:700" : "color:#94a3b8";
+    const _distStyle = (on) => on ? "background:#431407;border-color:#f97316;color:#fdba74;font-weight:700" : "color:#94a3b8";
+    let _ovHeatBtn = null, _ovDistBtn = null;
+
+    const _syncOverlayBtns = () => {
+      if (_ovHeatBtn) {
+        _ovHeatBtn.style.cssText = _heatStyle(ctx.state._overviewShowHeatmap);
+        _ovHeatBtn.textContent = ctx.state._overviewShowHeatmap ? "\u25A3 Heatmap ON" : "\u25A3 Heatmap";
+      }
+      if (_ovDistBtn) {
+        _ovDistBtn.style.cssText = _distStyle(ctx.state._overviewShowDistortion);
+        _ovDistBtn.textContent = ctx.state._overviewShowDistortion ? "\u2192 Distortion ON" : "\u2192 Distortion";
+      }
+      isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+    };
+
     if (_isoRadioMapOn) {
-      const ovHeatBtn = document.createElement("button");
-      ovHeatBtn.className = "btn inline";
-      const _heatStyle = (on) => on
-        ? "background:#2d1b4e;border-color:#a855f7;color:#d8b4fe;font-weight:700"
-        : "color:#94a3b8";
-      ovHeatBtn.style.cssText = _heatStyle(ctx.state._overviewShowHeatmap);
-      ovHeatBtn.textContent = ctx.state._overviewShowHeatmap ? "\u25A3 Heatmap ON" : "\u25A3 Heatmap";
-      ovHeatBtn.addEventListener("click", () => {
+      _ovHeatBtn = document.createElement("button");
+      _ovHeatBtn.className = "btn inline";
+      _ovHeatBtn.style.cssText = _heatStyle(ctx.state._overviewShowHeatmap);
+      _ovHeatBtn.textContent = ctx.state._overviewShowHeatmap ? "\u25A3 Heatmap ON" : "\u25A3 Heatmap";
+      _ovHeatBtn.addEventListener("click", () => {
         ctx.state._overviewShowHeatmap = !ctx.state._overviewShowHeatmap;
-        ovHeatBtn.style.cssText = _heatStyle(ctx.state._overviewShowHeatmap);
-        ovHeatBtn.textContent = ctx.state._overviewShowHeatmap ? "\u25A3 Heatmap ON" : "\u25A3 Heatmap";
-        isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+        if (ctx.state._overviewShowHeatmap) ctx.state._overviewShowDistortion = false; // mutual exclusion
+        _syncOverlayBtns();
       });
-      ctrlRow.appendChild(ovHeatBtn);
+      ctrlRow.appendChild(_ovHeatBtn);
     }
 
-    // ── Distortion Map toggle (only if feature enabled) ───────────────────
     const _isoDistortionOn = !!(ctx.state.settings && ctx.state.settings.distortion_map_enabled);
     if (_isoDistortionOn) {
-      const ovDistBtn = document.createElement("button");
-      ovDistBtn.className = "btn inline";
-      const _distStyle = (on) => on
-        ? "background:#431407;border-color:#f97316;color:#fdba74;font-weight:700"
-        : "color:#94a3b8";
-      ovDistBtn.style.cssText = _distStyle(ctx.state._overviewShowDistortion);
-      ovDistBtn.textContent = ctx.state._overviewShowDistortion ? "\u2192 Distortion ON" : "\u2192 Distortion";
-      ovDistBtn.addEventListener("click", () => {
+      _ovDistBtn = document.createElement("button");
+      _ovDistBtn.className = "btn inline";
+      _ovDistBtn.style.cssText = _distStyle(ctx.state._overviewShowDistortion);
+      _ovDistBtn.textContent = ctx.state._overviewShowDistortion ? "\u2192 Distortion ON" : "\u2192 Distortion";
+      _ovDistBtn.addEventListener("click", () => {
         ctx.state._overviewShowDistortion = !ctx.state._overviewShowDistortion;
-        ovDistBtn.style.cssText = _distStyle(ctx.state._overviewShowDistortion);
-        ovDistBtn.textContent = ctx.state._overviewShowDistortion ? "\u2192 Distortion ON" : "\u2192 Distortion";
-        isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+        if (ctx.state._overviewShowDistortion) ctx.state._overviewShowHeatmap = false; // mutual exclusion
+        _syncOverlayBtns();
       });
-      ctrlRow.appendChild(ovDistBtn);
+      ctrlRow.appendChild(_ovDistBtn);
     }
     ctrlRow.appendChild(helpBtn("overview_3d_controls"));
 

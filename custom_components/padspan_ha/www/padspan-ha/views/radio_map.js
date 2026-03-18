@@ -287,15 +287,13 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
         dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: r.mean_rssi });
       }
     } else {
-      // Combined: mean of the TOP 3 strongest scanners at each point.
-      // Using all scanners drags the mean down (distant scanners at -85 to -95).
-      // Using max is too uniform. Top-3 mean captures "how many good signals reach here".
+      // Combined: strongest single scanner RSSI at each point.
+      // This is the most intuitive metric — "how close is the nearest scanner?"
+      // Near a scanner = strong (-40), far from all = weak (-80).
       const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
       if (rssis.length) {
-        rssis.sort((a, b) => b - a); // strongest first
-        const topN = rssis.slice(0, Math.min(3, rssis.length));
-        const topMean = topN.reduce((a, b) => a + b, 0) / topN.length;
-        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: topMean });
+        const bestRssi = Math.max(...rssis);
+        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: bestRssi });
       }
     }
   }
@@ -599,9 +597,7 @@ export function computeHeatmapGrid(calPoints, mapId, scannerSource, barriers) {
     } else {
       const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
       if (rssis.length) {
-        rssis.sort((a, b) => b - a);
-        const topN = rssis.slice(0, Math.min(3, rssis.length));
-        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: topN.reduce((a, b) => a + b, 0) / topN.length });
+        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: Math.max(...rssis) });
       }
     }
   }
@@ -723,13 +719,10 @@ export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) 
     const readings = pt.scanner_readings || [];
     const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
     if (!rssis.length) continue;
-    rssis.sort((a, b) => b - a);
-    const topN = rssis.slice(0, Math.min(3, rssis.length));
-    let topMean = topN.reduce((a, b) => a + b, 0) / topN.length;
-    // Attenuate cross-floor signal
-    if (floorDist > 0) topMean -= floorDist * FLOOR_ATTEN_DB;
+    let bestRssi = Math.max(...rssis);
+    if (floorDist > 0) bestRssi -= floorDist * FLOOR_ATTEN_DB;
     const [wx, wy] = tf.mapPt(pt.x_frac, pt.y_frac);
-    worldPoints.push({ wx, wy, rssi: topMean });
+    worldPoints.push({ wx, wy, rssi: bestRssi });
   }
   if (!worldPoints.length) return "";
 
@@ -851,9 +844,7 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
     } else {
       const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
       if (!rssis.length) continue;
-      rssis.sort((a, b) => b - a);
-      const topN = rssis.slice(0, Math.min(3, rssis.length));
-      rssi = topN.reduce((a, b) => a + b, 0) / topN.length;
+      rssi = Math.max(...rssis);
     }
     // Attenuate cross-floor signal
     if (floorDist > 0) rssi -= floorDist * FLOOR_ATTEN_DB;
@@ -977,7 +968,7 @@ export function getFloorScanners(calPoints, floorMapIds) {
 // same heatmap colors as the radio map. Distorted cells show where the system
 // confuses physical space.
 
-const DISTORTION_GRID = 16; // 16x16 grid
+const DISTORTION_GRID = 20; // 20x20 grid — regular square cells, no deformation
 
 /**
  * At a world-space query point, build a synthetic RSSI fingerprint by IDW from
@@ -1028,12 +1019,14 @@ function _predictPosition(qwx, qwy, calWorldPts) {
 
 /**
  * 3D Iso deformation grid for one z-level.
+ * Regular square grid that WARPS where positioning predictions disagree with reality.
+ * Grid lines colored with same heatmap colors. Square = accurate, warped = error.
  */
 export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
   if (!calPoints || !groupMaps.length) return "";
   const groupIds = new Set(groupMaps.map(m => m.id));
 
-  // Collect cal points with world positions + RSSI queries
+  // Collect cal points on this level with world positions + RSSI fingerprints
   const calWorldPts = [];
   for (const pt of calPoints) {
     if (!groupIds.has(pt.map_id)) continue;
@@ -1045,18 +1038,15 @@ export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
     }
     if (!Object.keys(query).length) continue;
     const [wx, wy] = tf.mapPt(pt.x_frac, pt.y_frac);
-    // Also compute top-3 RSSI for heatmap coloring
-    const rssis = Object.values(query).sort((a,b) => b - a);
-    const topMean = rssis.slice(0, Math.min(3, rssis.length)).reduce((a,b) => a+b, 0) / Math.min(3, rssis.length);
-    calWorldPts.push({ wx, wy, query, rssi: topMean });
+    const bestRssi = Math.max(...Object.values(query));
+    calWorldPts.push({ wx, wy, query, rssi: bestRssi });
   }
   if (calWorldPts.length < KNN_K + 1) return "";
 
-  // Set heatmap color range from data
   const _rssis = calWorldPts.map(p => p.rssi);
   setHatchRange(Math.min(..._rssis), Math.max(..._rssis), _userGain, _userContrast);
 
-  // World bounding box
+  // World bounding box from ALL maps on this level (not just cal points)
   let bb = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
   for (const m of groupMaps) {
     const tf = mapTransforms[m.id]; if (!tf || !tf.mapPt) continue;
@@ -1072,29 +1062,26 @@ export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
 
   const res = DISTORTION_GRID;
   const cellW = wW / res, cellH = wH / res;
+  const idwPts = calWorldPts.map(p => ({ x_frac: p.wx, y_frac: p.wy, rssi: p.rssi }));
   const f = v => v.toFixed(1);
 
-  // IDW data points for RSSI interpolation
-  const idwPts = calWorldPts.map(p => ({ x_frac: p.wx, y_frac: p.wy, rssi: p.rssi }));
-
-  // Build grid: compute warped position + RSSI at each intersection
-  const grid = []; // [gy][gx] = { wx, wy, pwx, pwy, rssi }
+  // Build grid: at each intersection compute predicted (warped) position + RSSI color
+  const grid = [];
   for (let gy = 0; gy <= res; gy++) {
     grid[gy] = [];
     for (let gx = 0; gx <= res; gx++) {
-      const wx = bb.minX + gx * cellW;
-      const wy = bb.minY + gy * cellH;
+      const wx = bb.minX + gx * cellW, wy = bb.minY + gy * cellH;
       const [pwx, pwy] = _predictPosition(wx, wy, calWorldPts);
       const rssi = _idw(wx, wy, idwPts, []);
       grid[gy][gx] = { wx, wy, pwx, pwy, rssi };
     }
   }
 
-  // Blend factor: how much warping to show (0=regular grid, 1=fully warped)
-  const blend = 0.5; // 50% warp — enough to see distortion without making the grid unreadable
-
+  // Blend: 0.6 = moderate warp (readable but distortion visible)
+  const blend = 0.6;
   let s = "";
-  // Draw grid lines (horizontal then vertical)
+
+  // Horizontal grid lines
   for (let gy = 0; gy <= res; gy++) {
     for (let gx = 0; gx < res; gx++) {
       const a = grid[gy][gx], b = grid[gy][gx + 1];
@@ -1103,11 +1090,11 @@ export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
       const rssi = (a.rssi != null && b.rssi != null) ? (a.rssi + b.rssi) / 2 : a.rssi || b.rssi;
       const bucket = _rssiBucket(rssi);
       const color = bucket >= 0 ? _bucketRGB(bucket) : "#333";
-      const [sx1, sy1] = iso(ax, ay, z);
-      const [sx2, sy2] = iso(bx, by, z);
+      const [sx1, sy1] = iso(ax, ay, z), [sx2, sy2] = iso(bx, by, z);
       s += `<line x1="${f(sx1)}" y1="${f(sy1)}" x2="${f(sx2)}" y2="${f(sy2)}" stroke="${color}" stroke-width="1.5" opacity="0.7"/>`;
     }
   }
+  // Vertical grid lines
   for (let gx = 0; gx <= res; gx++) {
     for (let gy = 0; gy < res; gy++) {
       const a = grid[gy][gx], b = grid[gy + 1][gx];
@@ -1116,23 +1103,17 @@ export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
       const rssi = (a.rssi != null && b.rssi != null) ? (a.rssi + b.rssi) / 2 : a.rssi || b.rssi;
       const bucket = _rssiBucket(rssi);
       const color = bucket >= 0 ? _bucketRGB(bucket) : "#333";
-      const [sx1, sy1] = iso(ax, ay, z);
-      const [sx2, sy2] = iso(bx, by, z);
+      const [sx1, sy1] = iso(ax, ay, z), [sx2, sy2] = iso(bx, by, z);
       s += `<line x1="${f(sx1)}" y1="${f(sy1)}" x2="${f(sx2)}" y2="${f(sy2)}" stroke="${color}" stroke-width="1.5" opacity="0.7"/>`;
     }
-  }
-
-  // Calibration point markers
-  for (const p of calWorldPts) {
-    const [sx, sy] = iso(p.wx, p.wy, z);
-    s += `<circle cx="${f(sx)}" cy="${f(sy)}" r="3" fill="#e2e8f0" stroke="#071008" stroke-width="0.8" opacity="0.6"/>`;
   }
 
   return s;
 }
 
 /**
- * 2D floor deformation grid (for stitched 2D view).
+ * 2D floor deformation grid. Square by default, warps where predictions differ.
+ * Same colors as heatmap. Replaces crosshatch when distortion is on.
  */
 export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, allMaps) {
   if (!calPoints || !floorMaps.length) return "";
@@ -1141,23 +1122,22 @@ export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, all
   const _allMapZ = {};
   for (const m of (allMaps || floorMaps)) { _allMapZ[m.id] = (m.stack?.z_level) ?? 0; }
 
+  // Collect cal points with RSSI fingerprints (for prediction) + best RSSI (for coloring)
   const calWorldPts = [];
   for (const pt of calPoints) {
     const mpt = mapPtFns[pt.map_id]; if (!mpt) continue;
     const ptZ = _allMapZ[pt.map_id]; if (ptZ == null) continue;
-    if (Math.abs(ptZ - _floorZ) > 1) continue;
+    const floorDist = Math.abs(ptZ - _floorZ);
+    if (floorDist > 2) continue;
     const query = {};
     for (const r of (pt.scanner_readings || [])) {
       if (r.source && r.mean_rssi != null) query[r.source] = r.mean_rssi;
     }
     if (!Object.keys(query).length) continue;
     const [wx, wy] = mpt(pt.x_frac, pt.y_frac);
-    const rssis = Object.values(query).sort((a,b) => b - a);
-    const topMean = rssis.slice(0, Math.min(3, rssis.length)).reduce((a,b) => a+b, 0) / Math.min(3, rssis.length);
-    let rssi = topMean;
-    const floorDist = Math.abs(ptZ - _floorZ);
-    if (floorDist > 0) rssi -= floorDist * FLOOR_ATTEN_DB;
-    calWorldPts.push({ wx, wy, query, rssi });
+    let bestRssi = Math.max(...Object.values(query));
+    if (floorDist > 0) bestRssi -= floorDist * FLOOR_ATTEN_DB;
+    calWorldPts.push({ wx, wy, query, rssi: bestRssi });
   }
   if (calWorldPts.length < KNN_K + 1) return "";
 
@@ -1171,8 +1151,9 @@ export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, all
   const cellW = wW / res, cellH = wH / res;
   const idwPts = calWorldPts.map(p => ({ x_frac: p.wx, y_frac: p.wy, rssi: p.rssi }));
   const fv = v => v.toFixed(5);
-  const blend = 0.5;
+  const blend = 0.6;
 
+  // Build grid with warped positions
   const grid = [];
   for (let gy = 0; gy <= res; gy++) {
     grid[gy] = [];
@@ -1195,7 +1176,7 @@ export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, all
       const bucket = _rssiBucket(rssi);
       const color = bucket >= 0 ? _bucketRGB(bucket) : "#333";
       const [vx1, vy1] = w2v(ax, ay), [vx2, vy2] = w2v(bx, by);
-      s += `<line x1="${fv(vx1)}" y1="${fv(vy1)}" x2="${fv(vx2)}" y2="${fv(vy2)}" stroke="${color}" stroke-width="0.003" opacity="0.7"/>`;
+      s += `<line x1="${fv(vx1)}" y1="${fv(vy1)}" x2="${fv(vx2)}" y2="${fv(vy2)}" stroke="${color}" stroke-width="0.003" opacity="0.75"/>`;
     }
   }
   // Vertical grid lines
@@ -1208,14 +1189,8 @@ export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, all
       const bucket = _rssiBucket(rssi);
       const color = bucket >= 0 ? _bucketRGB(bucket) : "#333";
       const [vx1, vy1] = w2v(ax, ay), [vx2, vy2] = w2v(bx, by);
-      s += `<line x1="${fv(vx1)}" y1="${fv(vy1)}" x2="${fv(vx2)}" y2="${fv(vy2)}" stroke="${color}" stroke-width="0.003" opacity="0.7"/>`;
+      s += `<line x1="${fv(vx1)}" y1="${fv(vy1)}" x2="${fv(vx2)}" y2="${fv(vy2)}" stroke="${color}" stroke-width="0.003" opacity="0.75"/>`;
     }
-  }
-
-  // Cal point markers
-  for (const p of calWorldPts) {
-    const [vx, vy] = w2v(p.wx, p.wy);
-    s += `<circle cx="${fv(vx)}" cy="${fv(vy)}" r="0.005" fill="#e2e8f0" stroke="#071008" stroke-width="0.001" opacity="0.6"/>`;
   }
 
   return s;
