@@ -398,30 +398,55 @@ export function render(ctx) {
           _trails[to.k].push({ x: _tpos[0], y: _tpos[1], room: to.r, ti });
         }
       }
-      // Draw trail lines and dots
+      // Draw trail lines with animated arrows showing movement direction
       for (const [key, trail] of Object.entries(_trails)) {
         const col = _colorMap[key] || "#fbbf24";
         if (trail.length >= 2) {
-          // Draw line segments between room changes
           for (let j = 1; j < trail.length; j++) {
             if (trail[j].room !== trail[j - 1].room) {
-              const fade = 0.15 + 0.35 * ((trail[j].ti - trailStart) / Math.max(1, trailLen));
-              s += `<line x1="${Math.round(trail[j - 1].x)}" y1="${Math.round(trail[j - 1].y)}" x2="${Math.round(trail[j].x)}" y2="${Math.round(trail[j].y)}" stroke="${col}" stroke-width="2.5" stroke-dasharray="6,4" opacity="${fade.toFixed(2)}"/>`;
-              // Arrow head at destination
-              const dx = trail[j].x - trail[j - 1].x, dy = trail[j].y - trail[j - 1].y;
+              const fade = 0.15 + 0.4 * ((trail[j].ti - trailStart) / Math.max(1, trailLen));
+              const x1 = trail[j-1].x, y1 = trail[j-1].y;
+              const x2 = trail[j].x, y2 = trail[j].y;
+              const dx = x2 - x1, dy = y2 - y1;
               const len = Math.sqrt(dx * dx + dy * dy);
-              if (len > 10) {
-                const ux = dx / len, uy = dy / len;
-                const ax = trail[j].x - ux * 8, ay = trail[j].y - uy * 8;
-                s += `<polygon points="${Math.round(trail[j].x)},${Math.round(trail[j].y)} ${Math.round(ax - uy * 5)},${Math.round(ay + ux * 5)} ${Math.round(ax + uy * 5)},${Math.round(ay - ux * 5)}" fill="${col}" opacity="${fade.toFixed(2)}"/>`;
-              }
+              if (len < 5) continue;
+              const ux = dx / len, uy = dy / len;
+
+              // Glowing trail line (faint background)
+              s += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${col}" stroke-width="4" opacity="${(fade * 0.2).toFixed(2)}" stroke-linecap="round"/>`;
+              // Main trail line with animated dash (marching ants effect)
+              s += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${col}" stroke-width="2" stroke-dasharray="8,6" opacity="${fade.toFixed(2)}" stroke-linecap="round">`;
+              s += `<animate attributeName="stroke-dashoffset" values="0;-28" dur="0.8s" repeatCount="indefinite"/>`;
+              s += `</line>`;
+
+              // Animated arrow that travels along the path
+              const arrowSize = 6;
+              // Arrow polygon centered at origin, pointing right
+              const ap = `0,0 ${-arrowSize},${ arrowSize * 0.6} ${-arrowSize},${-arrowSize * 0.6}`;
+              const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+              s += `<g opacity="${Math.min(0.9, fade + 0.2).toFixed(2)}">`;
+              // Arrow travels from start to end repeatedly
+              s += `<polygon points="${ap}" fill="${col}">`;
+              s += `<animateMotion dur="1.2s" repeatCount="indefinite" path="M${x1.toFixed(1)},${y1.toFixed(1)} L${x2.toFixed(1)},${y2.toFixed(1)}" rotate="auto"/>`;
+              s += `</polygon>`;
+              s += `</g>`;
+
+              // Static arrowhead at destination (always visible)
+              const tipX = x2 - ux * 3, tipY = y2 - uy * 3;
+              const bx = tipX - ux * 10, by = tipY - uy * 10;
+              s += `<polygon points="${tipX.toFixed(1)},${tipY.toFixed(1)} ${(bx - uy*6).toFixed(1)},${(by + ux*6).toFixed(1)} ${(bx + uy*6).toFixed(1)},${(by - ux*6).toFixed(1)}" fill="${col}" opacity="${fade.toFixed(2)}"/>`;
             }
           }
         }
-        // Trail dots (not for current frame — that gets the big marker)
+        // Trail dots at previous positions (not current frame)
         for (let j = 0; j < trail.length - 1; j++) {
-          const fade = 0.12 + 0.25 * ((trail[j].ti - trailStart) / Math.max(1, trailLen));
+          const fade = 0.15 + 0.3 * ((trail[j].ti - trailStart) / Math.max(1, trailLen));
           s += `<circle cx="${Math.round(trail[j].x)}" cy="${Math.round(trail[j].y)}" r="5" fill="${col}" opacity="${fade.toFixed(2)}" stroke="#071008" stroke-width="0.8"/>`;
+          // Pulse ring on trail dots
+          s += `<circle cx="${Math.round(trail[j].x)}" cy="${Math.round(trail[j].y)}" r="5" fill="none" stroke="${col}" stroke-width="1" opacity="${(fade * 0.4).toFixed(2)}">`;
+          s += `<animate attributeName="r" values="5;12;5" dur="2s" repeatCount="indefinite"/>`;
+          s += `<animate attributeName="opacity" values="${(fade*0.4).toFixed(2)};0;${(fade*0.4).toFixed(2)}" dur="2s" repeatCount="indefinite"/>`;
+          s += `</circle>`;
         }
       }
 
