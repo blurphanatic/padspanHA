@@ -2035,7 +2035,27 @@ export function render(ctx){
 
     const isoDiv = document.createElement("div");
     isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px";
-    isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+
+    // ── 3D map loading progress bar ──────────────────────────────────────
+    const _isoProgress = document.createElement("div");
+    _isoProgress.style.cssText = "position:absolute;top:0;left:0;right:0;height:3px;z-index:5;pointer-events:none";
+    const _isoProgressFill = document.createElement("div");
+    _isoProgressFill.style.cssText = "width:0;height:100%;background:#52b788;border-radius:0 0 2px 0;transition:width 0.2s";
+    _isoProgress.appendChild(_isoProgressFill);
+
+    /** Rebuild the 3D SVG with a progress indicator. */
+    function _rebuildIso(focusZ) {
+      _isoProgressFill.style.width = "40%";
+      _isoProgressFill.style.background = "#a855f7";
+      requestAnimationFrame(() => {
+        isoDiv.innerHTML = buildIsoSVG(focusZ);
+        _isoProgressFill.style.width = "100%";
+        _isoProgressFill.style.background = "#52b788";
+        setTimeout(() => { _isoProgressFill.style.width = "0"; }, 600);
+      });
+    }
+
+    _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx));
 
     // Hover info overlay — upper-left corner of the map
     const isoTipEl = document.createElement("div");
@@ -2043,6 +2063,7 @@ export function render(ctx){
       "border:1px solid #2d6a4f;border-radius:8px;padding:6px 10px;font-size:11px;color:#a7f3d0;" +
       "pointer-events:none;white-space:pre-line;max-width:min(260px,calc(100vw - 40px));z-index:5;display:none;" +
       "font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.5";
+    isoWrap.appendChild(_isoProgress);
     isoWrap.appendChild(isoDiv);
     isoWrap.appendChild(isoTipEl);
 
@@ -2088,7 +2109,7 @@ export function render(ctx){
     focusSlider.addEventListener("input", ()=>{
       ctx.state._overviewIsoFocusIdx = parseInt(focusSlider.value, 10);
       focusLbl.textContent = _getFocusLbl(ctx.state._overviewIsoFocusIdx);
-      isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+      _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx));
     });
 
     // Room list toggle
@@ -2187,7 +2208,7 @@ export function render(ctx){
       _ovFG = ctx.state._overviewFloorGap;
       ovGapLbl.textContent = String(ctx.state._overviewFloorGap);
       _rebuildPositions();
-      isoDiv.innerHTML = buildIsoSVG(ctx.state._overviewIsoFocus);
+      _rebuildIso(ctx.state._overviewIsoFocus);
     });
 
     // L/R horizontal offset slider
@@ -2203,7 +2224,7 @@ export function render(ctx){
       _ovHG = ctx.state._overviewHorizGap;
       ovHorizLbl.textContent = String(ctx.state._overviewHorizGap);
       _rebuildPositions();
-      isoDiv.innerHTML = buildIsoSVG(ctx.state._overviewIsoFocus);
+      _rebuildIso(ctx.state._overviewIsoFocus);
     });
 
     const ctrlRow = document.createElement("div");
@@ -2262,7 +2283,7 @@ export function render(ctx){
       ovHorizSlider.value = "0";   ovHorizLbl.textContent = "0";
       focusSlider.value   = "0";   focusLbl.textContent   = "All floors";
       _rebuildPositions();
-      isoDiv.innerHTML = buildIsoSVG(null);
+      _rebuildIso(null);
       ovResetBtn.disabled = true;
       try{
         await ctx.actions.settingsSet({ overview_iso_floor_gap:150, overview_iso_horiz_gap:0, overview_iso_focus:0 });
@@ -2288,7 +2309,7 @@ export function render(ctx){
         ? "background:#7f1d1d;border-color:#ef4444;color:#fca5a5;font-weight:700"
         : "color:#94a3b8";
       ovPersistentBtn.textContent = ctx.state._overviewPersistentPins ? "⊕ Persistent ON" : "⊕ Persistent";
-      isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+      _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx));
       // Persist to settings so it survives reboots
       ctx.actions.settingsSet({ overview_persistent_pins: ctx.state._overviewPersistentPins });
     });
@@ -2306,7 +2327,7 @@ export function render(ctx){
         ? "background:#1a1a2e;border-color:#6366f1;color:#a5b4fc;font-weight:700"
         : "color:#94a3b8";
       ovWallsBtn.textContent = ctx.state._overviewShowWalls ? "⊞ Walls ON" : "⊞ Walls";
-      isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+      _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx));
       ctx.actions.settingsSet({ overview_show_walls: ctx.state._overviewShowWalls });
     });
     ctrlRow.appendChild(ovWallsBtn);
@@ -2325,7 +2346,7 @@ export function render(ctx){
         _ovDistBtn.style.cssText = _distStyle(ctx.state._overviewShowDistortion);
         _ovDistBtn.textContent = ctx.state._overviewShowDistortion ? "\u2192 Distortion ON" : "\u2192 Distortion";
       }
-      isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+      _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx));
     };
 
     if (_isoRadioMapOn) {
@@ -2456,7 +2477,7 @@ export function render(ctx){
         _showProgress(30, "Rendering...");
         if (_overlayTimer) clearTimeout(_overlayTimer);
         _overlayTimer = setTimeout(() => {
-          isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+          _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx));
           _showProgress(100, sv > 0 && ctx.state._adaptiveObs ? `${ctx.state._adaptiveObs} obs` : "Ready");
         }, 150);
       };
