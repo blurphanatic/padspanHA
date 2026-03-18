@@ -801,6 +801,18 @@ export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, a
     }
   }
 
+  // Room bounds in world coords for adaptive data lookup
+  const _isoRoomBoundsW = [];
+  if (_sourceBlend > 0 && _adaptiveFingerprints) {
+    for (const m of groupMaps) {
+      const tf = mapTransforms[m.id]; if (!tf || !tf.mapPt) continue;
+      for (const [room, b] of Object.entries(m.room_bounds || {})) {
+        if (!b || b.type !== "poly" || !b.points || b.points.length < 3) continue;
+        _isoRoomBoundsW.push({ room, polyW: b.points.map(p => tf.mapPt(Number(p[0]), Number(p[1]))) });
+      }
+    }
+  }
+
   // World bounding box
   let bb = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
   for (const m of groupMaps) {
@@ -842,9 +854,15 @@ export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, a
         }
         if (rssi > best) best = rssi;
       }
-      gridRssi[gy * res + gx] = best;
-      if (best > maxR) maxR = best;
-      if (best < minR) minR = best;
+      // Blend model + adaptive
+      let finalRssi = best;
+      if (_sourceBlend > 0 && _adaptiveFingerprints && _isoRoomBoundsW.length) {
+        const aR = _adaptiveRSSI(qwx, qwy, _isoRoomBoundsW);
+        if (aR != null) finalRssi = best * (1 - _sourceBlend/100) + aR * (_sourceBlend/100);
+      }
+      gridRssi[gy * res + gx] = finalRssi;
+      if (finalRssi > maxR) maxR = finalRssi;
+      if (finalRssi < minR) minR = finalRssi;
     }
   }
 

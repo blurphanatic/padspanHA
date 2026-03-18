@@ -2398,17 +2398,44 @@ export function render(ctx){
         } catch(e) { ctx.toast("Failed to save", true); }
       });
 
+      // Loading progress bar for overlay rendering
+      const progressBar = document.createElement("div");
+      progressBar.style.cssText = "width:60px;height:4px;background:#1a2e1e;border-radius:2px;overflow:hidden;flex-shrink:0";
+      const progressFill = document.createElement("div");
+      progressFill.style.cssText = "width:0;height:100%;background:#52b788;border-radius:2px;transition:width 0.3s";
+      progressBar.appendChild(progressFill);
+
+      const statusLbl = document.createElement("span");
+      statusLbl.style.cssText = "font-size:9px;color:#64748b;min-width:40px";
+      statusLbl.textContent = "";
+
+      const _showProgress = (pct, text) => {
+        progressFill.style.width = pct + "%";
+        statusLbl.textContent = text || "";
+      };
+
       // Fetch adaptive fingerprints once for the source blend
       if (!ctx.state._adaptiveFpLoaded) {
         ctx.state._adaptiveFpLoaded = true;
+        _showProgress(20, "Loading...");
         ctx.actions.callWS({ type: "padspan_ha/adaptive_fingerprints_get" }).then(res => {
           if (res?.fingerprints) {
             ctx.state._adaptiveFps = res.fingerprints;
             ctx.state._adaptiveObs = res.total_observations || 0;
+            const rooms = Object.keys(res.fingerprints).length;
+            _showProgress(100, `${res.total_observations} obs, ${rooms} rooms`);
+          } else {
+            _showProgress(100, "No data");
           }
-        }).catch(() => {});
+        }).catch(() => { _showProgress(100, "Error"); });
+      } else if (ctx.state._adaptiveObs) {
+        const rooms = Object.keys(ctx.state._adaptiveFps || {}).length;
+        statusLbl.textContent = `${ctx.state._adaptiveObs} obs, ${rooms} rooms`;
+        progressFill.style.width = "100%";
       }
 
+      // Debounced update — prevents rebuilding SVG on every slider pixel move
+      let _overlayTimer = null;
       const _isoOverlayUpdate = () => {
         const gv = parseInt(g.sl.value, 10), cv = parseInt(c.sl.value, 10), dv = parseInt(d.sl.value, 10), sv = parseInt(src.sl.value, 10);
         g.lbl.textContent = `Gain: ${gv > 0 ? "+" : ""}${gv}`;
@@ -2425,14 +2452,20 @@ export function render(ctx){
           if (_isoRadioMapMod.setSourceBlend) _isoRadioMapMod.setSourceBlend(sv);
           if (_isoRadioMapMod.setAdaptiveData) _isoRadioMapMod.setAdaptiveData(ctx.state._adaptiveFps || null);
         }
-        isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+        // Debounce: wait 150ms after last slider move before rebuilding SVG
+        _showProgress(30, "Rendering...");
+        if (_overlayTimer) clearTimeout(_overlayTimer);
+        _overlayTimer = setTimeout(() => {
+          isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+          _showProgress(100, sv > 0 && ctx.state._adaptiveObs ? `${ctx.state._adaptiveObs} obs` : "Ready");
+        }, 150);
       };
       g.sl.addEventListener("input", _isoOverlayUpdate);
       c.sl.addEventListener("input", _isoOverlayUpdate);
       d.sl.addEventListener("input", _isoOverlayUpdate);
       src.sl.addEventListener("input", _isoOverlayUpdate);
 
-      isoOverlayCtrl.append(g.lbl, g.sl, c.lbl, c.sl, d.lbl, d.sl, src.lbl, src.sl, iSaveBtn);
+      isoOverlayCtrl.append(g.lbl, g.sl, c.lbl, c.sl, d.lbl, d.sl, src.lbl, src.sl, progressBar, statusLbl, iSaveBtn);
       outer.appendChild(isoOverlayCtrl);
     }
 
