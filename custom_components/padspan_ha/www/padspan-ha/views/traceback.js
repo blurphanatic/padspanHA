@@ -53,22 +53,67 @@ export function render(ctx) {
   const levelColor = (z) => LAYER_PAL[sortedIsoLevels.indexOf(z) % LAYER_PAL.length];
   const LEGEND_H = 30;  // single-row compact legend (matches overview)
 
+  // Build per-map coordinate transforms (matches overview.js mapTransforms)
+  const mapTransforms = {};
+  for (const m of sorted) {
+    const stk = m.stack || {}, z = stk.z_level || 0;
+    const ox = stk.x_offset || 0, oy_ = stk.y_offset || 0, sc = stk.scale || 1.0;
+    const ar = (m.image?.height || 600) / (m.image?.width || 800);
+    const arRef = stk.ref_ar || ar, sxAdj = stk.scale_x_adj || 1.0;
+    const rot = (stk.rotation || 0) * Math.PI / 180;
+    const mapPt = (stk._m && stk._m.length === 4)
+      ? (px, py) => { const u = px - 0.5, v = py - 0.5; return [stk._m[0]*u + stk._m[1]*v + 0.5 + ox, arRef*(stk._m[2]*u + stk._m[3]*v + 0.5 + oy_)]; }
+      : (px, py) => {
+          const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef;
+          const rx = dx * Math.cos(rot) - dy * Math.sin(rot);
+          const ry = dx * Math.sin(rot) + dy * Math.cos(rot);
+          return [(0.5 + ox) + rx, arRef * (0.5 + oy_) + ry];
+        };
+    mapTransforms[m.id] = { z, mapPt };
+  }
+
   // Build room centroid iso positions (rebuilt when sliders change)
+  // Uses full map transform (rotation, affine, ref_ar, scale_x_adj)
   const roomIsoPos = {};
+  const _roomLower = {}; // lowercase → original case for case-insensitive lookup
   function _rebuildRoomPositions() {
     for (const k of Object.keys(roomIsoPos)) delete roomIsoPos[k];
+    for (const k of Object.keys(_roomLower)) delete _roomLower[k];
     for (const m of sorted) {
-      const stk = m.stack || {}, z = stk.z_level || 0, ox = stk.x_offset || 0, oy_ = stk.y_offset || 0, sc = stk.scale || 1.0;
-      const ar = (m.image?.height || 600) / (m.image?.width || 800);
+      const tf = mapTransforms[m.id];
+      if (!tf) continue;
       for (const [room, b] of Object.entries(m.room_bounds || {})) {
         if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
+        if (roomIsoPos[room]) continue; // first map wins
         const cx = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
         const cy = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
-        roomIsoPos[room] = iso(ox + cx * sc, oy_ + cy * sc * ar, z);
+        const [wx, wy] = tf.mapPt(cx, cy);
+        roomIsoPos[room] = iso(wx, wy, tf.z);
+        _roomLower[room.toLowerCase()] = room;
       }
     }
   }
   _rebuildRoomPositions();
+
+  /**
+   * Get ISO screen position for a traceback object entry.
+   * Priority: 1) k-NN map position (x,y,m fields), 2) room centroid (case-insensitive)
+   */
+  function _getObjPos(o) {
+    // k-NN precise position (from new traceback fields)
+    if (o.x != null && o.y != null && o.m && mapTransforms[o.m]) {
+      const tf = mapTransforms[o.m];
+      const [wx, wy] = tf.mapPt(o.x, o.y);
+      return iso(wx, wy, tf.z);
+    }
+    // Room centroid — exact match first, then case-insensitive
+    if (o.r) {
+      if (roomIsoPos[o.r]) return roomIsoPos[o.r];
+      const canonical = _roomLower[(o.r || "").toLowerCase()];
+      if (canonical && roomIsoPos[canonical]) return roomIsoPos[canonical];
+    }
+    return null;
+  }
 
   // Slider positions for floor focus
   const _isoPos = [null];
@@ -341,10 +386,10 @@ export function render(ctx) {
         for (const to of (tf.o || [])) {
           if (_scannerSrcSet.has(String(to.k || "").toUpperCase())) continue;
           if (_hideStatic && tb._staticKeys && tb._staticKeys.has(to.k) && to.k !== tb.filterKey) continue;
-          if (!to.r || !roomIsoPos[to.r]) continue;
+          const _tpos = _getObjPos(to);
+          if (!_tpos) continue;
           if (!_trails[to.k]) _trails[to.k] = [];
-          const pos = roomIsoPos[to.r];
-          _trails[to.k].push({ x: pos[0], y: pos[1], room: to.r, ti });
+          _trails[to.k].push({ x: _tpos[0], y: _tpos[1], room: to.r, ti });
         }
       }
       // Draw trail lines and dots
@@ -376,8 +421,8 @@ export function render(ctx) {
 
       // ── Current frame objects: BIG prominent markers ──
       for (const o of objs) {
-        if (!o.r || !roomIsoPos[o.r]) continue;
-        const pos = roomIsoPos[o.r];
+        const pos = _getObjPos(o);
+        if (!pos) continue;
         const idx = (_roomCount[o.r] || 0);
         _roomCount[o.r] = idx + 1;
         const angle = idx * 2.0;
@@ -575,8 +620,9 @@ export function render(ctx) {
       const room = _resolveRoom(obj);
       let px, py;
 
-      if (room && roomIsoPos[room]) {
-        const pos = roomIsoPos[room];
+      const _rPos = room ? (_getObjPos({r: room}) || null) : null;
+      if (_rPos) {
+        const pos = _rPos;
         const idx = (_roomCount[room] || 0);
         _roomCount[room] = idx + 1;
         const angle = idx * 2.4;

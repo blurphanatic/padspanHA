@@ -83,6 +83,19 @@ class TracebackStore:
                 "k": key,
                 "r": room,
             }
+            # k-NN sub-room position (precise map placement)
+            x_frac = o.get("x_frac")
+            y_frac = o.get("y_frac")
+            knn_map = o.get("knn_map_id")
+            if x_frac is not None and y_frac is not None:
+                entry["x"] = round(float(x_frac), 4)
+                entry["y"] = round(float(y_frac), 4)
+                if knn_map:
+                    entry["m"] = str(knn_map)
+            # Room confidence
+            conf = o.get("room_confidence")
+            if conf is not None:
+                entry["c"] = round(float(conf), 2)
             # Optional enrichment (compact)
             rssi = o.get("rssi")
             if rssi is not None:
