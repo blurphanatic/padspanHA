@@ -2060,12 +2060,8 @@ export function render(ctx){
     const isoDiv = document.createElement("div");
     isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px";
 
-    // ── 3D map loading progress bar ──────────────────────────────────────
-    const _isoProgress = document.createElement("div");
-    _isoProgress.style.cssText = "position:absolute;top:0;left:0;right:0;height:3px;z-index:5;pointer-events:none";
-    const _isoProgressFill = document.createElement("div");
-    _isoProgressFill.style.cssText = "width:0;height:100%;background:#52b788;border-radius:0 0 2px 0;transition:width 0.2s";
-    _isoProgress.appendChild(_isoProgressFill);
+    // ── 3D map loading indicator ────────────────────────────────────────
+    const _isoProgressFill = { style: {} }; // stub — no visual progress bar
 
     /** Rebuild the 3D SVG with a progress indicator. */
     /** Full rebuild: replaces entire SVG (expensive — used for initial load + control changes) */
@@ -2137,7 +2133,6 @@ export function render(ctx){
       "border:1px solid #2d6a4f;border-radius:8px;padding:6px 10px;font-size:11px;color:#a7f3d0;" +
       "pointer-events:none;white-space:pre-line;max-width:min(260px,calc(100vw - 40px));z-index:5;display:none;" +
       "font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.5";
-    isoWrap.appendChild(_isoProgress);
     isoWrap.appendChild(isoDiv);
     isoWrap.appendChild(isoTipEl);
 

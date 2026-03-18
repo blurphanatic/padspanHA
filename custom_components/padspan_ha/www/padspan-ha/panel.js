@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.15.18";
-const BUILD_ID = "20260318T224625Z";
+const APP_VERSION = "0.15.19";
+const BUILD_ID = "20260318T230548Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -860,10 +860,11 @@ class PadSpanHaApp extends HTMLElement {
 
       // Re-render views that show live data.
       const liveViews = new Set(["overview","follow","objects","devices","bluetooth","presence","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage","calibration","maps"]);
-      // Render with poll guard (skips if user is interacting).
-      // But if no successful render in 10s, force it regardless.
+      // Render with poll guard. Overview always uses poll mode (never forced)
+      // because full rebuilds cause flicker + scroll reset.
       const stale = this._lastGoodRender && (performance.now() - this._lastGoodRender > 10_000);
-      if(liveViews.has(this.state.view)) this._renderCurrentView(stale ? false : true);
+      const forceRender = stale && this.state.view !== "overview";
+      if(liveViews.has(this.state.view)) this._renderCurrentView(forceRender ? false : true);
     } catch(e){
       // Non-fatal — snapshot is preserved from last good fetch.
       // Only re-render if screen might be stale (> 10s since last good render).
@@ -2254,6 +2255,7 @@ class PadSpanHaApp extends HTMLElement {
       if (typeof this.state._isoUpdateObjects === "function") {
         try { this.state._isoUpdateObjects(); } catch(e) {}
       }
+      this._lastGoodRender = performance.now(); // prevent stale-check forced rebuild
       return;
     }
     // Skip poll re-renders when the user is actively interacting
