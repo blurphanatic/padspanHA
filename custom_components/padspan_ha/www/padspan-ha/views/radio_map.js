@@ -587,6 +587,102 @@ export function isoHeatmapSVG(heatData, mapPt, iso, z) {
   return s;
 }
 
+/**
+ * Unified world-space iso heatmap for a z-level group (multiple maps merged).
+ * Merges calibration data from all maps on the level, interpolates in world
+ * space, projects through iso. One heatmap per level, not per map.
+ *
+ * @param {Array} calPoints - ALL calibration points
+ * @param {Array} groupMaps - maps on this z-level [{id, rf_barriers, ...}]
+ * @param {Object} mapTransforms - {mapId: {z, mapPt}} transform per map
+ * @param {Function} iso - (wx, wy, z) → [sx, sy]
+ * @param {number} z - z-level
+ * @returns {string} SVG polygon elements
+ */
+export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) {
+  if (!calPoints || !groupMaps.length) return "";
+
+  const groupIds = new Set(groupMaps.map(m => m.id));
+  const _pfx = "rmiso";
+
+  // 1. Collect cal points from all maps on this level → world coords
+  const worldPoints = [];
+  for (const pt of calPoints) {
+    if (!groupIds.has(pt.map_id)) continue;
+    const tf = mapTransforms[pt.map_id];
+    if (!tf || !tf.mapPt) continue;
+    const readings = pt.scanner_readings || [];
+    const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
+    if (!rssis.length) continue;
+    const meanRssi = rssis.reduce((a, b) => a + b, 0) / rssis.length;
+    const [wx, wy] = tf.mapPt(pt.x_frac, pt.y_frac);
+    worldPoints.push({ wx, wy, rssi: meanRssi });
+  }
+  if (!worldPoints.length) return "";
+
+  // 2. Collect barriers from all maps → world coords
+  const worldBarriers = [];
+  for (const m of groupMaps) {
+    const tf = mapTransforms[m.id];
+    if (!tf || !tf.mapPt) continue;
+    for (const bar of (m.rf_barriers || [])) {
+      const pts = bar.points || [];
+      if (pts.length < 2) continue;
+      worldBarriers.push({
+        points: pts.map(p => { const [wx, wy] = tf.mapPt(Number(p[0]), Number(p[1])); return [wx, wy]; }),
+        attenuation_dbm: bar.attenuation_dbm || 6,
+      });
+    }
+  }
+
+  // 3. World bounding box from all maps on this level
+  let bb = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const m of groupMaps) {
+    const tf = mapTransforms[m.id];
+    if (!tf || !tf.mapPt) continue;
+    for (const [cx, cy] of [[0,0],[1,0],[1,1],[0,1]]) {
+      const [wx, wy] = tf.mapPt(cx, cy);
+      bb.minX = Math.min(bb.minX, wx); bb.minY = Math.min(bb.minY, wy);
+      bb.maxX = Math.max(bb.maxX, wx); bb.maxY = Math.max(bb.maxY, wy);
+    }
+  }
+  if (!isFinite(bb.minX)) return "";
+  const wW = bb.maxX - bb.minX, wH = bb.maxY - bb.minY;
+  if (wW < 1e-6 || wH < 1e-6) return "";
+
+  // 4. IDW grid in world space
+  const res = ISO_GRID;
+  const cellW = wW / res, cellH = wH / res;
+  const idwPts = worldPoints.map(p => ({ x_frac: p.wx, y_frac: p.wy, rssi: p.rssi }));
+  const f = v => v.toFixed(1);
+  let s = "";
+
+  for (let gy = 0; gy < res; gy++) {
+    for (let gx = 0; gx < res; gx++) {
+      const qwx = bb.minX + (gx + 0.5) * cellW;
+      const qwy = bb.minY + (gy + 0.5) * cellH;
+      const rssi = _idw(qwx, qwy, idwPts, worldBarriers);
+      const fill = _hatchFill(_pfx, rssi);
+
+      // Cell corners: world → iso screen
+      const c00 = iso(bb.minX + gx * cellW, bb.minY + gy * cellH, z);
+      const c10 = iso(bb.minX + (gx+1) * cellW, bb.minY + gy * cellH, z);
+      const c11 = iso(bb.minX + (gx+1) * cellW, bb.minY + (gy+1) * cellH, z);
+      const c01 = iso(bb.minX + gx * cellW, bb.minY + (gy+1) * cellH, z);
+
+      s += `<polygon points="${f(c00[0])},${f(c00[1])} ${f(c10[0])},${f(c10[1])} ${f(c11[0])},${f(c11[1])} ${f(c01[0])},${f(c01[1])}" fill="${fill}"/>`;
+    }
+  }
+
+  // 5. Cal point markers
+  for (const wp of worldPoints) {
+    const [sx, sy] = iso(wp.wx, wp.wy, z);
+    s += `<circle cx="${Math.round(sx)}" cy="${Math.round(sy)}" r="3" fill="#e2e8f0" stroke="#071008" stroke-width="0.8" opacity="0.7"/>`;
+  }
+
+  return s;
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // World-Space Floor Heatmap

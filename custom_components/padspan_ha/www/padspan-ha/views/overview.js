@@ -1558,13 +1558,10 @@ export function render(ctx){
         if(lidx !== 1){ s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="url(#flrpat_${lidx})" stroke="none"/>`; }
 
         // ── Radio Map heatmap layer (3D isometric, behind room polygons) ──
+        // Unified world-space heatmap per z-level — merges all maps, no stacking
         if (_isoRadioMapOn && _isoRadioMapMod && calPoints.length && ctx.state._overviewShowHeatmap) {
-          for (const m of group) {
-            const tf = mapTransforms[m.id]; if (!tf) continue;
-            const heatData = _isoRadioMapMod.computeHeatmapGrid(calPoints, m.id, null, m.rf_barriers || []);
-            if (heatData) {
-              s += _isoRadioMapMod.isoHeatmapSVG(heatData, tf.mapPt, iso, z);
-            }
+          if (_isoRadioMapMod.isoLevelHeatmapSVG) {
+            s += _isoRadioMapMod.isoLevelHeatmapSVG(calPoints, group, mapTransforms, iso, z);
           }
         }
 
