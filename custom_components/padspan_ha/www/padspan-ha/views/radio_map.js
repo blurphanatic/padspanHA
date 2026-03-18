@@ -1349,7 +1349,7 @@ export function getFloorScanners(calPoints, floorMapIds) {
 // same heatmap colors as the radio map. Distorted cells show where the system
 // confuses physical space.
 
-const DISTORTION_GRID = 20; // 20x20 deformation grid
+const DISTORTION_GRID = 30; // 30x30 deformation grid — finer for smoother lines
 
 // Distortion intensity: 0 = no warp (regular grid), 100 = full warp. User-adjustable.
 let _distortionIntensity = 50; // default 50%
@@ -1490,16 +1490,19 @@ export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
   const wW = bb.maxX - bb.minX, wH = bb.maxY - bb.minY;
   if (wW < 1e-6 || wH < 1e-6) return "";
 
-  const res = DISTORTION_GRID;
-  const cellW = wW / res, cellH = wH / res;
+  // Square cells: use the same cell size for both dimensions
+  const cellSize = Math.min(wW, wH) / DISTORTION_GRID;
+  const resX = Math.max(2, Math.ceil(wW / cellSize));
+  const resY = Math.max(2, Math.ceil(wH / cellSize));
+  const cellW = wW / resX, cellH = wH / resY;
   const idwPts = calWorldPts.map(p => ({ x_frac: p.wx, y_frac: p.wy, rssi: p.rssi }));
   const f = v => v.toFixed(1);
 
-  // Build grid: at each intersection compute predicted (warped) position + RSSI color
+  // Build grid with warped positions
   const grid = [];
-  for (let gy = 0; gy <= res; gy++) {
+  for (let gy = 0; gy <= resY; gy++) {
     grid[gy] = [];
-    for (let gx = 0; gx <= res; gx++) {
+    for (let gx = 0; gx <= resX; gx++) {
       const wx = bb.minX + gx * cellW, wy = bb.minY + gy * cellH;
       const [pwx, pwy] = _predictPosition(wx, wy, calWorldPts);
       const rssi = _idw(wx, wy, idwPts, []);
@@ -1512,8 +1515,8 @@ export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
   let s = "";
 
   // Horizontal grid lines
-  for (let gy = 0; gy <= res; gy++) {
-    for (let gx = 0; gx < res; gx++) {
+  for (let gy = 0; gy <= resY; gy++) {
+    for (let gx = 0; gx < resX; gx++) {
       const a = grid[gy][gx], b = grid[gy][gx + 1];
       const ax = a.wx + (a.pwx - a.wx) * blend, ay = a.wy + (a.pwy - a.wy) * blend;
       const bx = b.wx + (b.pwx - b.wx) * blend, by = b.wy + (b.pwy - b.wy) * blend;
@@ -1525,8 +1528,8 @@ export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
     }
   }
   // Vertical grid lines
-  for (let gx = 0; gx <= res; gx++) {
-    for (let gy = 0; gy < res; gy++) {
+  for (let gx = 0; gx <= resX; gx++) {
+    for (let gy = 0; gy < resY; gy++) {
       const a = grid[gy][gx], b = grid[gy + 1][gx];
       const ax = a.wx + (a.pwx - a.wx) * blend, ay = a.wy + (a.pwy - a.wy) * blend;
       const bx = b.wx + (b.pwx - b.wx) * blend, by = b.wy + (b.pwy - b.wy) * blend;
@@ -1577,17 +1580,19 @@ export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, all
   const wW = wBB.maxX - wBB.minX, wH = wBB.maxY - wBB.minY;
   if (wW < 1e-6 || wH < 1e-6) return "";
 
-  const res = DISTORTION_GRID;
-  const cellW = wW / res, cellH = wH / res;
+  // Square cells
+  const _flCellSize = Math.min(wW, wH) / DISTORTION_GRID;
+  const _flResX = Math.max(2, Math.ceil(wW / _flCellSize));
+  const _flResY = Math.max(2, Math.ceil(wH / _flCellSize));
+  const cellW = wW / _flResX, cellH = wH / _flResY;
   const idwPts = calWorldPts.map(p => ({ x_frac: p.wx, y_frac: p.wy, rssi: p.rssi }));
   const fv = v => v.toFixed(5);
   const blend = _distortionIntensity / 100;
 
-  // Build grid with warped positions
   const grid = [];
-  for (let gy = 0; gy <= res; gy++) {
+  for (let gy = 0; gy <= _flResY; gy++) {
     grid[gy] = [];
-    for (let gx = 0; gx <= res; gx++) {
+    for (let gx = 0; gx <= _flResX; gx++) {
       const wx = wBB.minX + gx * cellW, wy = wBB.minY + gy * cellH;
       const [pwx, pwy] = _predictPosition(wx, wy, calWorldPts);
       const rssi = _idw(wx, wy, idwPts, []);
@@ -1597,8 +1602,8 @@ export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, all
 
   let s = "";
   // Horizontal grid lines
-  for (let gy = 0; gy <= res; gy++) {
-    for (let gx = 0; gx < res; gx++) {
+  for (let gy = 0; gy <= _flResY; gy++) {
+    for (let gx = 0; gx < _flResX; gx++) {
       const a = grid[gy][gx], b = grid[gy][gx + 1];
       const ax = a.wx + (a.pwx - a.wx) * blend, ay = a.wy + (a.pwy - a.wy) * blend;
       const bx = b.wx + (b.pwx - b.wx) * blend, by = b.wy + (b.pwy - b.wy) * blend;
@@ -1610,8 +1615,8 @@ export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, all
     }
   }
   // Vertical grid lines
-  for (let gx = 0; gx <= res; gx++) {
-    for (let gy = 0; gy < res; gy++) {
+  for (let gx = 0; gx <= _flResX; gx++) {
+    for (let gy = 0; gy < _flResY; gy++) {
       const a = grid[gy][gx], b = grid[gy + 1][gx];
       const ax = a.wx + (a.pwx - a.wx) * blend, ay = a.wy + (a.pwy - a.wy) * blend;
       const bx = b.wx + (b.pwx - b.wx) * blend, by = b.wy + (b.pwy - b.wy) * blend;
