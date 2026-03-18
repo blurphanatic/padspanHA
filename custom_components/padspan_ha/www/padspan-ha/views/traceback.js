@@ -159,7 +159,7 @@ export function render(ctx) {
   // ── Clear stale timer from previous render ──────────────────────────
   // If we're re-rendering while a timer is running, kill it so it doesn't
   // write to detached DOM nodes.  We'll restart below if tb.playing is true.
-  if (tb._animTimer) { clearInterval(tb._animTimer); tb._animTimer = null; }
+  if (tb._animTimer) { cancelAnimationFrame(tb._animTimer); tb._animTimer = null; }
 
   function _fmtTime(ts) {
     if (!ts) return "--";

@@ -466,6 +466,18 @@ export const HELP = {
     ],
   },
 
+  // ── Walk-to-Identify ────────────────────────────────────────────────────
+  walk_to_identify: {
+    title: "Walk-to-Identify \u2014 Who's in which room?",
+    body: [
+      "Walk-to-Identify helps you figure out which unknown Bluetooth device belongs to which person \u2014 without needing MAC addresses.",
+      "HOW IT WORKS: Select a room from the dropdown and press 'Who's here?'. PadSpan checks which unidentified devices have the strongest signal from scanners in that room, and ranks them by likelihood of being physically present there.",
+      "The score is based on signal correlation: devices heard strongly by the room's scanners but weakly by scanners in other rooms get high scores. Devices heard equally everywhere score low.",
+      "TOP CANDIDATES appear with a purple 'Likely in [Room]' badge and a match percentage. Click 'Tag' on a candidate to give it a friendly name.",
+      "TIPS: Make sure the person is actually in the room when you press the button. Works best with 4+ scanners spread across different rooms.",
+    ],
+  },
+
   // ── Maps 3D Stack ──────────────────────────────────────────────────────
   maps_stack: {
     title: "3D Stack — Multi-Floor Alignment",
