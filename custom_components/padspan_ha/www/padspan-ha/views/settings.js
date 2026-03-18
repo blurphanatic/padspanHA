@@ -540,10 +540,15 @@ function _toHex(c){
 
 // ── Presence tab ────────────────────────────────────────────────────────────────
 function _settingsPresence(ctx, el){
+  const helpBtn = ctx.helpers.helpBtn;
   const settings = ctx.state.settings || {};
   const inpStyle = "width:72px;text-align:center;background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:13px";
   const rowStyle = "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px";
   const wrap = el("div",{style:"display:flex;flex-direction:column;gap:12px"});
+  wrap.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px"},[
+    el("div",{style:"font-weight:700;font-size:15px;color:#52b788"},"Presence Settings"),
+    helpBtn("settings_presence"),
+  ]));
 
   // ── Quiet Mode ────────────────────────────────────────────────────────────
   {
@@ -1890,8 +1895,12 @@ function _settingsFeatures(ctx, el){
   const settings = ctx.state.settings || {};
   const wrap = el("div",{});
 
+  const helpBtn = ctx.helpers.helpBtn;
   const headerCard = el("div",{class:"card",style:"border:1px solid #1a4228;background:#0f1a12;margin-bottom:14px"});
-  headerCard.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#52b788;margin-bottom:6px"}, "Experimental Features"));
+  headerCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px"},[
+    el("div",{style:"font-weight:700;font-size:14px;color:#52b788;margin-bottom:6px"}, "Experimental Features"),
+    helpBtn("settings_features"),
+  ]));
   headerCard.appendChild(el("div",{style:"font-size:12px;color:#94a3b8;line-height:1.5"},
     "These features are under active development. Enable them to preview and help test. " +
     "They may change or be removed in future releases. Feedback welcome."));

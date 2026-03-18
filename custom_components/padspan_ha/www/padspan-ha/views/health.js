@@ -86,7 +86,11 @@ export function render(ctx){
   }
 
   // ── Phase 4: System Critics ─────────────────────────────────────────────
-  const criticsContainer = el("div",{id:"health-critics",style:"margin-top:16px"});
+  root.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-top:16px"},[
+    el("div",{style:"font-weight:700;font-size:14px;color:#52b788"},"System Critics"),
+    ctx.helpers.helpBtn("health_critics"),
+  ]));
+  const criticsContainer = el("div",{id:"health-critics",style:"margin-top:8px"});
   root.appendChild(criticsContainer);
 
   // Fetch critics data (async, updates the container when ready)

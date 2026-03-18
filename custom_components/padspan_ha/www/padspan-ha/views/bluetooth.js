@@ -81,7 +81,10 @@ export function render(ctx) {
   // ── Page header with KPI summary badges ────────────────────────────────────
   const header = el("div", { class: "row" }, [
     el("div", { class: "grow" }, [
-      el("div", { class: "h1" }, "Bluetooth"),
+      el("div", { style: "display:flex;align-items:center;gap:8px" }, [
+        el("div", { class: "h1" }, "Bluetooth"),
+        ctx.helpers.helpBtn("bluetooth_overview"),
+      ]),
       el(
         "div",
         { class: "muted" },

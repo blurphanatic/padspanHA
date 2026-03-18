@@ -932,6 +932,7 @@ export function render(ctx){
       if (_radioMapOn) filterBar.appendChild(makeFilterBtn("radioMap", "Radio Map", "#e879f9"));
       if (_distortionOn) filterBar.appendChild(makeFilterBtn("distortion", "Distortion", "#fb923c"));
     }
+    filterBar.appendChild(helpBtn("overview_2d_controls"));
     outer.appendChild(filterBar);
 
     // Scanner selector for per-scanner radio map (shown when radio map is active)
@@ -2184,6 +2185,7 @@ export function render(ctx){
       });
       ctrlRow.appendChild(ovDistBtn);
     }
+    ctrlRow.appendChild(helpBtn("overview_3d_controls"));
 
     outer.appendChild(ctrlRow);
     outer.appendChild(isoWrap);

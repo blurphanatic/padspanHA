@@ -281,4 +281,201 @@ export const HELP = {
       "Raw Snapshot Explorer — browse the live data snapshot as a collapsible JSON tree. Copy the full snapshot to clipboard for debugging.",
     ],
   },
+
+  // ── Data Mode (Live / Sample) ──────────────────────────────────────────
+  data_mode: {
+    title: "Data Mode — Live vs Sample",
+    body: [
+      "PadSpan has two data modes that control where the UI gets its information:",
+      "LIVE mode connects to your actual Bluetooth scanners and shows real device positions, signal strengths, and room assignments from your physical home. All changes you make (tagging devices, calibrating, editing maps) are saved and affect your live system.",
+      "SAMPLE mode uses built-in demo data so you can explore every feature without needing hardware. It's safe to experiment — nothing you do in Sample mode changes your real configuration.",
+      "Switch modes using the button in the top-right corner. The current mode is shown as a badge. If you see 'SAMPLE' but expected live data, click it to switch to Live.",
+      "Important: Some management actions (deleting rooms, clearing calibration) are disabled in Sample mode to prevent accidents. Switch to Live to enable them.",
+    ],
+  },
+
+  // ── Complexity Mode ────────────────────────────────────────────────────
+  complexity_mode: {
+    title: "Complexity Mode — Basic / Advanced / Development",
+    body: [
+      "PadSpan's complexity mode controls how many tabs and features are visible in the sidebar:",
+      "BASIC — Shows only the essential tabs: Follow, Overview, Maps, Settings, and Training. Designed for non-technical household members who just want to see where things are.",
+      "ADVANCED — The default for power users. Shows Basic tabs plus Manage, Calibration, and Traceback. You can add more tabs (Objects, Bluetooth, Monitor, etc.) in Settings → UI Structure.",
+      "DEVELOPMENT — Shows everything, including QA, Sandbox, and Debug tabs. Use this when troubleshooting issues or when Claude asks you to check diagnostic data.",
+      "Changing complexity mode doesn't delete any data — it only controls what's visible in the sidebar. Your settings, calibration, and device data are always preserved.",
+    ],
+  },
+
+  // ── Overview 3D Controls ───────────────────────────────────────────────
+  overview_3d_controls: {
+    title: "3D Overview Controls",
+    body: [
+      "The buttons below the 3D floor stack control what's visible on the isometric map:",
+      "PERSISTENT — When ON, shows only your followed (starred) devices with red crosshair markers even when they're away. When OFF, shows all identified devices that are currently present.",
+      "WALLS — Toggles RF barrier (wall) lines on the 3D map. Walls affect how PadSpan calculates signal propagation between rooms. If walls are drawn on your maps, turning this ON helps you see where signal blockage occurs.",
+      "HEATMAP — Shows a radio signal coverage overlay on each floor (requires Radio Map enabled in Settings → Features). Green = strong signal, red = weak. This uses your calibration data to visualize where scanners have good coverage and where dead zones exist.",
+      "DISTORTION — Shows positioning error vectors (requires Distortion Map enabled in Settings → Features). Arrows point from where a device actually is to where PadSpan thinks it is, based on leave-one-out cross-validation of calibration data.",
+      "FLOOR SLIDER — Focuses on a specific floor or pair of adjacent floors. 'All floors' shows the full building. Focusing on a single floor makes it larger and easier to see detail.",
+    ],
+  },
+
+  // ── Overview 2D Controls ───────────────────────────────────────────────
+  overview_2d_controls: {
+    title: "2D Map Controls",
+    body: [
+      "The toggle buttons above the 2D map control which layers are visible:",
+      "MAP — Shows/hides the floor plan image. Turn OFF for a cleaner view with just rooms and devices. Turn ON to see the actual floor plan underneath.",
+      "ROOMS — Shows/hides room boundary polygons and labels. These are drawn from the room boundaries you defined in the Maps → Edit tab.",
+      "SCANNERS — Shows/hides Bluetooth scanner (receiver) positions. Green = online, gray = offline. Scanners are the anchor points for all positioning.",
+      "TAGGED — Shows/hides devices that have been given a name (tagged). These are your known devices like phones, keys, and wearables.",
+      "UNKNOWN — Shows/hides unidentified Bluetooth devices. These are anonymous BLE signals — usually other people's phones, fitness trackers, or IoT devices passing nearby.",
+      "RADIO MAP — Signal strength heatmap overlay (requires Radio Map enabled in Settings → Features). Shows where Bluetooth coverage is strong (green) vs weak (red) based on your calibration data.",
+      "DISTORTION — Positioning error analysis overlay (requires Distortion Map enabled in Settings → Features). Shows where the system's predictions disagree with actual positions.",
+      "FLOOR SELECTOR — When you have multiple floors, click a floor name to switch. If a floor has multiple maps, they are stitched together into one unified view using their alignment transforms.",
+      "SCANNER SELECTOR — When Radio Map is active, choose 'Combined' to see overall coverage or click a specific scanner name to see that scanner's individual reach.",
+      "Zoom with mouse wheel. Pan by clicking and dragging. Click 'Reset zoom' to return to the default view.",
+    ],
+  },
+
+  // ── Settings Presence ──────────────────────────────────────────────────
+  settings_presence: {
+    title: "Presence Settings — Tuning the Positioning Engine",
+    body: [
+      "These sliders control how PadSpan's positioning algorithm behaves. Changes take effect immediately.",
+      "ROOM CHANGE DELAY — How many seconds a device must consistently appear in a new room before PadSpan confirms the move. Higher = more stable (fewer false room changes), lower = faster response. Default: 20s. Range: 0–300s.",
+      "AWAY TIMEOUT — How long after a device's signal disappears before it's marked 'not_home'. If your phone briefly loses signal (e.g., in a Faraday-cage bathroom), a longer timeout prevents false 'away' events. Default: 5 minutes. Range: 1–1440 min.",
+      "SIGNAL LOSS LINGER — Extra grace period for devices with high confidence (room_confidence ≥ 0.6). Prevents established presence from being erased by brief BLE dropouts. Default: 90s. Range: 10–300s.",
+      "BLE MAX AGE — How old a Bluetooth advertisement can be before it's discarded. Older data is less reliable but can help in areas with sparse scanner coverage. Default: 120s. Range: 30–14400s.",
+      "REFERENCE POWER (dBm) — Expected RSSI at 1 meter from a scanner. Used in the path-loss model to estimate distance. Typical range: -50 to -70 dBm. If objects appear too close to scanners, lower this value.",
+      "PATH LOSS EXPONENT — How quickly signal decays with distance. 2.0 = free space, 2.5–3.5 = typical indoor, 4.0+ = heavy walls. Higher values make the system more sensitive to distance differences.",
+      "KALMAN Q (Process Noise) — How much the true RSSI is expected to vary between polls. Higher = faster response to movement, lower = smoother but slower. Default: 0.125.",
+      "KALMAN R (Measurement Noise) — How noisy raw RSSI readings are. Higher = more smoothing, lower = more responsive. Default: 8.0.",
+      "ROOM SIGMA — The Gaussian scoring radius in meters. Controls how much nearby scanners influence room assignment. Smaller = more precise but requires good scanner coverage. Default: 4m.",
+      "ADAPTIVE LEARNING — When enabled, PadSpan passively learns room RSSI fingerprints from confirmed room assignments. Over days/weeks this improves accuracy without manual calibration. No data is sent externally.",
+    ],
+  },
+
+  // ── Settings Features ──────────────────────────────────────────────────
+  settings_features: {
+    title: "Experimental Features — Preview & Test",
+    body: [
+      "These features are under active development. Enable them to preview and help test. They may change or be removed.",
+      "TRACKABILITY RATING — Adds a per-device Easy/Medium/Hard score based on signal stability, confidence, and advertisement frequency. Helps identify which devices are reliable trackers.",
+      "WALK-TO-IDENTIFY — Discover unknown BLE devices by walking into a room. PadSpan correlates signal changes with your location to identify who owns which device.",
+      "RADIO MAP — Signal strength heatmap overlay on floor plan maps. Shows coverage from calibration data — green = strong, red = weak. Appears as a toggle button in Overview (2D and 3D).",
+      "DISTORTION MAP — Shows where calibration predictions disagree with reality. Renders error arrows on the map so you can see where walls or interference cause positioning problems.",
+      "COMPASS RING CALIBRATION — Structured calibration protocol: stand at a point and rotate slowly to capture RSSI from all angles.",
+      "REPLAY TIMELINE — Enhanced movement playback with scoring explainability. See why PadSpan placed a device in each room at each point in time.",
+    ],
+  },
+
+  // ── Manage Danger Zone ─────────────────────────────────────────────────
+  manage_data: {
+    title: "Data Management — Handle with Care",
+    body: [
+      "This tab contains administrative actions that directly modify your Home Assistant data. Most actions cannot be undone.",
+      "ORPHAN CLEANUP — Finds room boundary polygons or receiver markers on maps that reference rooms/areas no longer in Home Assistant. 'Delete orphans' removes these stale references.",
+      "LABEL REMOVAL — Removes user-assigned names (tags) from BLE devices. The device will revert to showing its MAC address. The device itself is not affected — just its friendly name.",
+      "ENTITY DELETION — Removes PadSpan sensor entities from Home Assistant. This clears the entity from dashboards and automations. The device may be recreated on the next scan.",
+      "AREA DELETION — Removes an area (room) from Home Assistant's area registry. WARNING: This affects ALL integrations using that area, not just PadSpan.",
+      "MAP DELETION — Removes an uploaded floor plan map. Calibration data for that map is NOT automatically deleted (it becomes orphaned but can still be used if the map is re-uploaded).",
+      "BACKUP & RESTORE — Creates/restores a complete backup of all PadSpan stores (settings, calibration, maps, object labels, adaptive learning, movement history). Always back up before making major changes.",
+      "INTEGRATION RELOAD — Restarts the PadSpan integration without restarting all of Home Assistant. Use this after manual file changes or when things seem stuck.",
+    ],
+  },
+
+  // ── Manage Factory Reset ───────────────────────────────────────────────
+  manage_factory_reset: {
+    title: "Factory Reset — Nuclear Option",
+    body: [
+      "Factory Reset wipes ALL PadSpan data and returns the integration to a fresh install state.",
+      "This deletes: all calibration data, all maps, all object labels/tags, all adaptive learning history, all movement history, all follow/alert configurations, all traceback recordings, and all settings.",
+      "This does NOT delete: the integration itself, your Home Assistant areas/rooms, or any non-PadSpan entities.",
+      "Consider creating a backup (Manage → Data → Backup) before proceeding. Factory Reset cannot be undone.",
+    ],
+  },
+
+  // ── Calibration Overview ───────────────────────────────────────────────
+  calibration_overview: {
+    title: "Calibration — Teaching PadSpan Your Home",
+    body: [
+      "Calibration captures real Bluetooth signal readings at known positions in your home. PadSpan uses this data to build a fingerprint model that maps signal patterns to physical locations.",
+      "SETUP — Choose which device to calibrate with (usually your phone) and verify scanner connectivity.",
+      "TUNE — The recommended visual calibration method. Place markers on the 3D map where scanners are, collect signal samples, and build the model interactively.",
+      "BEACON TUNE — For stationary Bluetooth beacons (iBeacons, Tiles, AirTags in fixed locations). Pin them on the map so PadSpan knows exactly where they are.",
+      "PIN & LISTEN — Classic calibration: click a spot on the map, stand there physically, and collect signal samples for 15–60 seconds. Repeat across the home.",
+      "ROAM — Walk-around calibration: PadSpan records continuous signal samples as you move through the home. Less precise than Pin & Listen but faster for large areas.",
+      "MODEL — View calibration statistics, LOO accuracy, and per-scanner path-loss fits. Export or clear calibration data.",
+      "More calibration points = better accuracy. Focus on room boundaries, doorways, and areas near walls where signal transitions are sharpest.",
+    ],
+  },
+
+  // ── Traceback ──────────────────────────────────────────────────────────
+  traceback_overview: {
+    title: "Traceback — Movement Replay",
+    body: [
+      "Traceback records a snapshot of all tracked objects every ~10 seconds and lets you play back their movement over time.",
+      "TIMELINE SLIDER — Drag to scrub through recorded frames. Each frame shows where every tracked object was at that moment.",
+      "PLAY / PAUSE — Automatically advances through frames at the selected speed.",
+      "PLAYBACK SPEED — Controls how fast playback runs. '1 min' compresses all frames into 1 minute of playback; '1 hr' plays at near-real-time speed.",
+      "OBJECT FILTER — Focus on a specific device to see only its movement trail. 'All' shows every tracked object.",
+      "HIDE STATIC — Removes objects that never changed rooms during the recording period. Useful for focusing on objects that actually moved.",
+      "DISCOVERY MODE — Shows live objects alongside recorded positions for comparison. Useful for verifying that current positions match expectations.",
+      "Object positions use k-NN fingerprint data when available (precise sub-room placement) or fall back to room centroids. Older recordings before v0.14.71 only have room-level data.",
+    ],
+  },
+
+  // ── Bluetooth View ─────────────────────────────────────────────────────
+  bluetooth_overview: {
+    title: "Bluetooth — Scanner & Signal Analysis",
+    body: [
+      "The Bluetooth tab gives you deep visibility into the raw BLE radio environment.",
+      "VISUALIZATION — Interactive graph showing how scanners and devices are connected. Node size reflects signal strength. Click any node for details.",
+      "MONITOR — Live feed of Bluetooth advertisements. Filter by source scanner or search by MAC address. Shows RSSI, age, and device type.",
+      "SCANNERS — Lists all Bluetooth receivers/scanners with their area assignment, online status, and device count. Click a scanner to assign it to a room — this is critical for positioning accuracy.",
+      "PRIVATE BLE — Manages Identity Resolving Keys (IRKs) for tracking Apple/Android devices that rotate their MAC addresses. Without IRKs, these devices appear as constantly-changing random addresses.",
+    ],
+  },
+
+  // ── Health & System Critics ────────────────────────────────────────────
+  health_critics: {
+    title: "System Critics — Automated Health Diagnosis",
+    body: [
+      "System Critics automatically analyses your PadSpan setup and flags issues that may affect positioning accuracy.",
+      "Each critic has a severity level: CRITICAL (red, major impact), WARNING (amber, should address), INFO (gray, minor or informational).",
+      "ROOM CONFUSION — Detects room pairs where objects frequently bounce back and forth. High confusion means the system can't reliably distinguish between those rooms. Fix: add calibration points near the boundary, or add an RF barrier (wall) in the map editor.",
+      "MAP QUALITY — Checks leave-one-out cross-validation error per map. High error means the calibration data doesn't accurately predict positions. Fix: add more calibration points, especially in areas with poor coverage.",
+      "SCANNER DISAGREEMENT — Flags scanners that consistently disagree with the consensus room assignment. Fix: check scanner placement, antenna orientation, or RSSI offset in Settings → Scanner Map.",
+      "CALIBRATION STALENESS — Warns when calibration data is old. The RF environment changes over time (furniture moves, new devices added). Fix: run a fresh calibration walk-around periodically.",
+      "PROPAGATION HEALTH — Checks adaptive learning fingerprint stability. High variance means the signal environment is noisy or changing. Fix: check for interference sources (WiFi APs, microwaves, USB3 devices).",
+      "Each critic includes a concrete 'Action' step telling you exactly what to do to fix the issue.",
+    ],
+  },
+
+  // ── Maps Edit Tools ────────────────────────────────────────────────────
+  maps_edit: {
+    title: "Map Editor — Drawing Rooms & Placing Scanners",
+    body: [
+      "The map editor has three modes, selectable with the buttons at the top:",
+      "RECEIVERS — Place Bluetooth scanner markers on the map. Double-click the map to add a scanner, then drag to position. Click a placed scanner to select it (shows delete button). Each scanner should be positioned where the physical device is mounted.",
+      "ROOMS — Draw room boundary polygons. Click the map to add polygon points, double-click to finish the shape. Each polygon becomes a named room. Room names should match your Home Assistant Area names exactly.",
+      "RF BARRIERS — Draw wall/barrier lines that block Bluetooth signal. Click to start, click to add points, double-click to finish. Choose material type (metal=12dB, concrete=8dB, brick=4dB) which controls how much the wall attenuates signal. Walls improve positioning accuracy near room boundaries.",
+      "SAVE LAYOUT — Saves all changes (receivers, rooms, barriers) to the server. Changes are not saved automatically.",
+      "REVERT — Discards unsaved changes and reloads the last saved state.",
+      "Important: Room names must match HA Area names for positioning to work. If a room boundary has a different name than the HA Area, objects won't be correctly positioned in that room.",
+    ],
+  },
+
+  // ── Maps 3D Stack ──────────────────────────────────────────────────────
+  maps_stack: {
+    title: "3D Stack — Multi-Floor Alignment",
+    body: [
+      "The 3D Stack tab lets you align multiple floor plan maps so they stack correctly in the isometric building view.",
+      "FLOOR ASSIGNMENT TABLE — Set the z-level (floor number), ceiling height, and visibility for each map. Z-level 0 = ground floor, 1 = first floor, etc. Maps on the same z-level are shown as overlapping layers.",
+      "ALIGNMENT OVERLAY — Position one map relative to another by dragging, rotating, and scaling. Choose a Reference map (fixed) and a Target map (movable). Align structural features like stairwells and exterior walls.",
+      "POINT ALIGN SOLVER — For precise alignment, place matching point pairs on both maps (e.g., the same corner of a stairwell). The solver computes the optimal transform (rotation + scale + position) automatically.",
+      "COMPARE ALL MAPS — Cross-checks room boundaries across all visible maps. Shows the worst-case alignment error as a percentage. Target: <5% for good accuracy.",
+      "Accurate alignment is important because it affects how PadSpan handles cross-floor positioning and how the isometric view renders your building.",
+    ],
+  },
 };

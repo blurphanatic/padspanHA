@@ -788,6 +788,7 @@ export function render(ctx) {
     title.style.cssText = "font-weight:700;font-size:15px;color:#fbbf24";
     title.textContent = "Traceback Playback";
     hdr.appendChild(title);
+    hdr.appendChild(ctx.helpers.helpBtn("traceback_overview"));
     ctrlCard.appendChild(hdr);
 
     // Range preset buttons

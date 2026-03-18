@@ -76,6 +76,7 @@ export function render(ctx){
       ? el("div",{style:"margin-top:10px;font-weight:700;color:#fbbf24"},"⚡ Switch to Live mode to enable management actions.")
       : null,
   ].filter(Boolean)));
+  root.appendChild(ctx.helpers.helpBtn("manage_data"));
 
   // Master gate: all destructive buttons check this flag.
   // In sample mode, buttons render with "disabled" class + .disabled = true.
@@ -2512,6 +2513,10 @@ function _beaconChars(ctx, el){
 // ══════════════════════════════════════════════════════════════════════════════
 function _factoryReset(ctx, el){
   const wrap = el("div",{class:"card",style:"max-width:640px"});
+  wrap.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:12px"},[
+    el("div",{style:"font-weight:700;font-size:15px;color:#fca5a5"},"Factory Reset"),
+    ctx.helpers.helpBtn("manage_factory_reset"),
+  ]));
 
   const dataMode = ctx.state.dataMode || "sample";
   const disabled = dataMode !== "live";
