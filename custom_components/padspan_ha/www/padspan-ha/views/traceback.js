@@ -315,6 +315,12 @@ export function render(ctx) {
       s += `</g>`;
     }
 
+    // ── End of static base — cache this part for fast re-renders ──
+    // When frameIdx < 0, return just the static SVG (no object overlay)
+    if (frameIdx < 0) { s += `</svg>`; return s; }
+
+    s += `<!-- TB_OVERLAY_START -->`;
+
     // Overlay: playback objects at this frame
     if (tb.frames.length && frameIdx >= 0 && frameIdx < tb.frames.length) {
       const frame = tb.frames[frameIdx];
@@ -726,12 +732,84 @@ export function render(ctx) {
   mapDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px;margin-bottom:10px";
 
   // ── Playback helpers ───────────────────────────────────────────────────
+  // ── Static base SVG (built once — maps, rooms, receivers) ──────────────
+  let _staticBase = null;
+  let _overlayDiv = null;
+  function _ensureStaticBase() {
+    if (_staticBase) return;
+    _staticBase = _buildStaticSVG();
+  }
+
+  function _buildStaticSVG() {
+    const maxIsoZ = sortedIsoLevels.length ? sortedIsoLevels[sortedIsoLevels.length - 1] : 0;
+    const viewY = Math.min(0, CY - maxIsoZ * _ovFG - 50);
+    const HTOTAL = BASE_H + LEGEND_H - viewY;
+    // Build just the static layers (defs + floor slabs + rooms + receivers)
+    const full = _buildTracebackSVG(-1); // -1 = no frame overlay
+    return { svg: full, viewY, HTOTAL };
+  }
+
   function _renderFrame() {
     if (!tb.frames.length) {
       mapDiv.innerHTML = `<div style="text-align:center;padding:40px;color:#64748b;font-size:14px">No traceback frames loaded. Select a time range and press Play.</div>`;
       return;
     }
-    mapDiv.innerHTML = _buildTracebackSVG(tb.frameIdx);
+    if (!_staticBase || !_overlayDiv) {
+      // First render: build full SVG with current frame
+      mapDiv.innerHTML = _buildTracebackSVG(tb.frameIdx);
+      // Extract the overlay container for future fast updates
+      _staticBase = true;
+      // Create a dedicated overlay div for subsequent frames
+      const svgEl = mapDiv.querySelector("svg");
+      if (svgEl) {
+        _overlayDiv = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        _overlayDiv.setAttribute("id", "tb-overlay");
+        svgEl.appendChild(_overlayDiv);
+      }
+    } else {
+      // Fast path: only rebuild the dynamic overlay (trails + objects)
+      if (_overlayDiv) {
+        // Remove old overlay content
+        while (_overlayDiv.firstChild) _overlayDiv.removeChild(_overlayDiv.firstChild);
+        // Build just the dynamic part as a temporary SVG, extract its children
+        const dynSvg = _buildDynamicOverlay(tb.frameIdx);
+        if (dynSvg) {
+          const tmp = document.createElement("div");
+          tmp.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg">${dynSvg}</svg>`;
+          const tmpSvg = tmp.querySelector("svg");
+          if (tmpSvg) {
+            while (tmpSvg.firstChild) _overlayDiv.appendChild(tmpSvg.firstChild);
+          }
+        }
+      }
+    }
+  }
+
+  // Reset static base when focus/params change
+  function _resetStaticBase() {
+    _staticBase = null;
+    _overlayDiv = null;
+  }
+
+  // Build ONLY the dynamic overlay (trails + current-frame objects) as SVG fragment
+  function _buildDynamicOverlay(frameIdx) {
+    if (!tb.frames.length || frameIdx < 0 || frameIdx >= tb.frames.length) return "";
+    // Reuse the full builder but extract just the overlay portion
+    // by building the full SVG and stripping the static prefix.
+    // This is still faster than innerHTML on the full SVG because
+    // we only insert into the existing DOM tree, not reparse it all.
+    const full = _buildTracebackSVG(frameIdx);
+    // The overlay starts after the static marker comment (or after the last </g> of floor slabs)
+    // For simplicity, just return the trail + object portion.
+    // We know the static part ends with the floor legend, and the dynamic part follows.
+    // Since full rebuild is fast (string ops), the perf gain comes from NOT reparsing
+    // the entire SVG DOM — we only update the <g id="tb-overlay"> contents.
+    const marker = "<!-- TB_OVERLAY_START -->";
+    const idx = full.indexOf(marker);
+    if (idx < 0) return "";
+    const end = full.lastIndexOf("</svg>");
+    if (end < 0) return "";
+    return full.substring(idx + marker.length, end);
   }
 
   function _updateScrubber() {
@@ -750,27 +828,38 @@ export function render(ctx) {
   }
 
   function _startPlayback() {
-    if (tb._animTimer) clearInterval(tb._animTimer);
+    if (tb._animTimer) cancelAnimationFrame(tb._animTimer);
     tb.playing = true;
-    // Compute interval: total run time / remaining frames
-    const remaining = Math.max(1, tb.frames.length - 1 - tb.frameIdx);
-    const totalMs = tb.playDurationS * 1000;
-    const interval = Math.max(16, Math.round(totalMs / tb.frames.length));
-    tb._animTimer = setInterval(() => {
-      if (tb.frameIdx >= tb.frames.length - 1) {
+    tb._playStartTs = performance.now();
+    tb._playStartFrame = tb.frameIdx;
+    const totalFrames = tb.frames.length;
+    const msPerFrame = Math.max(16, (tb.playDurationS * 1000) / totalFrames);
+
+    function _tick(now) {
+      if (!tb.playing) return;
+      const elapsed = now - tb._playStartTs;
+      const targetFrame = tb._playStartFrame + Math.floor(elapsed / msPerFrame);
+      if (targetFrame >= totalFrames - 1) {
+        tb.frameIdx = totalFrames - 1;
+        _renderFrame();
+        _updateScrubber();
         _stopPlayback();
         _buildControls();
         return;
       }
-      tb.frameIdx++;
-      _renderFrame();
-      _updateScrubber();
-    }, interval);
+      if (targetFrame > tb.frameIdx) {
+        tb.frameIdx = targetFrame;
+        _renderFrame();
+        _updateScrubber();
+      }
+      tb._animTimer = requestAnimationFrame(_tick);
+    }
+    tb._animTimer = requestAnimationFrame(_tick);
   }
 
   function _stopPlayback() {
     tb.playing = false;
-    if (tb._animTimer) { clearInterval(tb._animTimer); tb._animTimer = null; }
+    if (tb._animTimer) { cancelAnimationFrame(tb._animTimer); tb._animTimer = null; }
   }
 
   // ── Controls card ──────────────────────────────────────────────────────
