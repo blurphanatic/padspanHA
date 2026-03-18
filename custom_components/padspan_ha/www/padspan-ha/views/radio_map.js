@@ -1476,7 +1476,7 @@ function _predictPosition(qwx, qwy, calWorldPts) {
  * Regular square grid that WARPS where positioning predictions disagree with reality.
  * Grid lines colored with same heatmap colors. Square = accurate, warped = error.
  */
-export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
+export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z, settings, allMaps, liveSnap) {
   if (!calPoints || !groupMaps.length) return "";
   const groupIds = new Set(groupMaps.map(m => m.id));
 
@@ -1519,20 +1519,61 @@ export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
   const resX = Math.max(2, Math.ceil(wW / cellSize));
   const resY = Math.max(2, Math.ceil(wH / cellSize));
   const cellW = wW / resX, cellH = wH / resY;
-  const idwPts = calWorldPts.map(p => ({ x_frac: p.wx, y_frac: p.wy, rssi: p.rssi }));
   const f = v => v.toFixed(1);
 
-  // Build grid with warped positions
+  // Collect scanners + barriers for model-based coloring (same as heatmap)
+  const refPower = settings?.ref_power ?? DEFAULT_REF_POWER;
+  const pathLossN = settings?.path_loss_exp ?? DEFAULT_PATH_LOSS_N;
+  const _dScanners = [];
+  const _dBarriers = [];
+  // Scanner quality from live data
+  const _dqMap = {};
+  const _dAds = (liveSnap?.ble?.advertisements) || [];
+  if (_dAds.length) {
+    const _sb = {};
+    for (const ad of _dAds) { if (ad.source && ad.rssi != null && (ad.age_s||0)<30) { if (!_sb[ad.source]||ad.rssi>_sb[ad.source]) _sb[ad.source]=ad.rssi; } }
+    const _bv = Object.values(_sb); _bv.sort((a,b)=>a-b);
+    if (_bv.length>1) { const fm=_bv[Math.floor(_bv.length/2)]; for (const [s,b] of Object.entries(_sb)) _dqMap[s]=Math.max(-10,Math.min(10,b-fm)); }
+  }
+  for (const m of (allMaps || groupMaps)) {
+    const tf = mapTransforms[m.id]; if (!tf||!tf.mapPt) continue;
+    const fd = Math.abs(tf.z-z); if (fd>2) continue;
+    for (const r of (m.receivers||[])) { if (r.x==null||r.y==null) continue; const [wx,wy]=tf.mapPt(r.x,r.y); _dScanners.push({wx,wy,floorDist:fd,qualityOffset:_dqMap[r.source||r.id||""]||0}); }
+    for (const bar of (m.rf_barriers||[])) { const pts=bar.points||[]; if(pts.length<2) continue; _dBarriers.push({points:pts.map(p=>{const[wx,wy]=tf.mapPt(Number(p[0]),Number(p[1]));return[wx,wy];}),attenuation_dbm:bar.attenuation_dbm||6}); }
+  }
+  // Room bounds for adaptive offset
+  const _dRoomBW = [];
+  if (_sourceBlend > 0 && _adaptiveFingerprints) {
+    for (const m of groupMaps) { const tf=mapTransforms[m.id]; if(!tf||!tf.mapPt) continue; for (const [room,b] of Object.entries(m.room_bounds||{})) { if(!b||b.type!=="poly"||!b.points||b.points.length<3) continue; _dRoomBW.push({room,polyW:b.points.map(p=>tf.mapPt(Number(p[0]),Number(p[1])))}); } }
+  }
+
+  // Build grid with warped positions + model-based RSSI coloring
+  let minR=0, maxR=-120;
   const grid = [];
   for (let gy = 0; gy <= resY; gy++) {
     grid[gy] = [];
     for (let gx = 0; gx <= resX; gx++) {
       const wx = bb.minX + gx * cellW, wy = bb.minY + gy * cellH;
       const [pwx, pwy] = _predictPosition(wx, wy, calWorldPts);
-      const rssi = _idw(wx, wy, idwPts, []);
-      grid[gy][gx] = { wx, wy, pwx, pwy, rssi };
+      // Model RSSI (same as heatmap)
+      let best = -120;
+      for (const sc of _dScanners) {
+        const dm = Math.max(0.3, Math.sqrt((wx-sc.wx)**2+(wy-sc.wy)**2)*MAP_SCALE_M);
+        let rssi = (refPower+(sc.qualityOffset||0)) - 10*pathLossN*Math.log10(dm);
+        if (sc.floorDist>0) rssi -= sc.floorDist*FLOOR_ATTEN_DB;
+        for (const bar of _dBarriers) { for (let i=0;i<bar.points.length-1;i++) { if(_segmentsIntersect(wx,wy,sc.wx,sc.wy,bar.points[i][0],bar.points[i][1],bar.points[i+1][0],bar.points[i+1][1])) rssi-=bar.attenuation_dbm; } }
+        if (rssi>best) best=rssi;
+      }
+      // Adaptive offset
+      if (_sourceBlend>0 && _dRoomBW.length) {
+        const aOff = _adaptiveOffset(wx, wy, _dRoomBW);
+        if (aOff!=null) best += aOff * (_sourceBlend/100);
+      }
+      if (best>maxR) maxR=best; if (best<minR) minR=best;
+      grid[gy][gx] = { wx, wy, pwx, pwy, rssi: best };
     }
   }
+  setHatchRange(minR, maxR, _userGain, _userContrast);
 
   // Blend: 0.6 = moderate warp (readable but distortion visible)
   const blend = _distortionIntensity / 100;

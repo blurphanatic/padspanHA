@@ -1736,7 +1736,7 @@ export function render(ctx){
             _isoRadioMapMod.setDistortionIntensity(ctx.state._distIntensity ?? ctx.state.settings?.distortion_intensity ?? 50);
           }
           if (_isoRadioMapMod.isoDistortionSVG) {
-            s += _isoRadioMapMod.isoDistortionSVG(calPoints, group, mapTransforms, iso, z);
+            s += _isoRadioMapMod.isoDistortionSVG(calPoints, group, mapTransforms, iso, z, ctx.state.settings, sorted, liveSnap);
           }
         }
 
