@@ -2084,7 +2084,11 @@ export function render(ctx){
       });
     }
 
-    _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx));
+    // Initial load: show loading placeholder, defer heavy SVG build until DOM is ready
+    isoDiv.innerHTML = `<div style="text-align:center;padding:60px 0;color:#52b788;font-size:13px">Building 3D map\u2026</div>`;
+    _isoProgressFill.style.transition = "none";
+    _isoProgressFill.style.width = "40%";
+    _isoProgressFill.style.background = "#a855f7";
 
     // Hover info overlay — upper-left corner of the map
     const isoTipEl = document.createElement("div");
@@ -2521,6 +2525,11 @@ export function render(ctx){
 
     outer.appendChild(isoWrap);
     outer.appendChild(roomListPanel);
+
+    // Deferred initial build: outer is now fully constructed with all elements.
+    // When the browser appends it to the DOM, the rAF fires and builds the SVG
+    // with the progress bar visible.
+    requestAnimationFrame(() => _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx)));
 
     return outer;
   }
