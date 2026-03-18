@@ -106,11 +106,12 @@ export function hatchDefs(prefix, spacing, lineW) {
     // Line width grows with bucket index: weakest = base, strongest = 1.6× base
     const scale = 1.0 + (i / (HATCH_BUCKETS - 1)) * 0.6;
     const lw = (lineW * scale).toFixed(5);
-    // Rotate from 45° (red/worst) to 135° (green/best) — 90° sweep
-    const angle = 45 + (i / (HATCH_BUCKETS - 1)) * 90;
-    // Recalculate dash for scaled line width
+    // Rotate from 45° (red/worst) to 165° (green/best) — 120° sweep
+    const angle = 45 + (i / (HATCH_BUCKETS - 1)) * 120;
+    // Gap is wider for red (more sparse/airy) and tighter for green (more solid/confident)
+    const gapScale = 6.0 - (i / (HATCH_BUCKETS - 1)) * 2.5; // 6.0 (red) → 3.5 (green)
     const dotS = (lineW * scale * 1.2).toFixed(5);
-    const gapS = (lineW * scale * 4.0).toFixed(5);
+    const gapS = (lineW * scale * gapScale).toFixed(5);
     s += `<pattern id="${prefix}_${i}" x="0" y="0" width="${sp}" height="${sp}" patternUnits="userSpaceOnUse" patternTransform="rotate(${angle.toFixed(1)})">`;
     s += `<line x1="0" y1="0" x2="0" y2="${sp}" stroke="${c}" stroke-width="${lw}" stroke-dasharray="${dotS} ${gapS}" stroke-linecap="round" opacity="0.8"/>`;
     s += `</pattern>`;
@@ -257,12 +258,15 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
         dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: r.mean_rssi });
       }
     } else {
-      // Combined: strongest scanner signal at each point
+      // Combined: mean of the TOP 3 strongest scanners at each point.
+      // Using all scanners drags the mean down (distant scanners at -85 to -95).
+      // Using max is too uniform. Top-3 mean captures "how many good signals reach here".
       const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
       if (rssis.length) {
-        // Use mean RSSI across all scanners (not max — max is too uniform across points)
-        const meanRssi = rssis.reduce((a, b) => a + b, 0) / rssis.length;
-        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: meanRssi });
+        rssis.sort((a, b) => b - a); // strongest first
+        const topN = rssis.slice(0, Math.min(3, rssis.length));
+        const topMean = topN.reduce((a, b) => a + b, 0) / topN.length;
+        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: topMean });
       }
     }
   }
@@ -565,8 +569,9 @@ export function computeHeatmapGrid(calPoints, mapId, scannerSource, barriers) {
     } else {
       const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
       if (rssis.length) {
-        const meanRssi = rssis.reduce((a, b) => a + b, 0) / rssis.length;
-        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: meanRssi });
+        rssis.sort((a, b) => b - a);
+        const topN = rssis.slice(0, Math.min(3, rssis.length));
+        dataPoints.push({ x_frac: pt.x_frac, y_frac: pt.y_frac, rssi: topN.reduce((a, b) => a + b, 0) / topN.length });
       }
     }
   }
@@ -680,9 +685,11 @@ export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) 
     const readings = pt.scanner_readings || [];
     const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
     if (!rssis.length) continue;
-    const meanRssi = rssis.reduce((a, b) => a + b, 0) / rssis.length;
+    rssis.sort((a, b) => b - a);
+    const topN = rssis.slice(0, Math.min(3, rssis.length));
+    const topMean = topN.reduce((a, b) => a + b, 0) / topN.length;
     const [wx, wy] = tf.mapPt(pt.x_frac, pt.y_frac);
-    worldPoints.push({ wx, wy, rssi: meanRssi });
+    worldPoints.push({ wx, wy, rssi: topMean });
   }
   if (!worldPoints.length) return "";
 
@@ -792,7 +799,9 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
     } else {
       const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
       if (!rssis.length) continue;
-      rssi = rssis.reduce((a, b) => a + b, 0) / rssis.length;
+      rssis.sort((a, b) => b - a);
+      const topN = rssis.slice(0, Math.min(3, rssis.length));
+      rssi = topN.reduce((a, b) => a + b, 0) / topN.length;
     }
 
     const [wx, wy] = mpt(pt.x_frac, pt.y_frac);
