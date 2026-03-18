@@ -21,7 +21,7 @@
  * Gated behind: settings.radio_map_enabled / settings.distortion_map_enabled
  */
 
-const GRID_RES = 30;       // 30x30 interpolation grid (900 cells) for 2D
+const GRID_RES = 36;       // 36x36 interpolation grid (1296 cells) for 2D
 const IDW_POWER = 2.0;     // IDW exponent (higher = more local)
 const KNN_K = 3;           // k for LOO cross-validation
 const BARRIER_PENALTY_DB_TO_DIST = 0.01; // each dB of barrier attenuation adds this much "virtual distance"
@@ -40,41 +40,40 @@ const HATCH_RANGE = HATCH_BEST - HATCH_WORST;
 
 // Compute opaque RGB for a bucket index (0 = worst, HATCH_BUCKETS-1 = best)
 // Dead zones: very dark red/maroon. Strong areas: vivid bright green.
+// Linear mapping (no power curve) so green shows at typical good-signal levels (-55 to -40 dBm).
 function _bucketRGB(idx) {
-  const t = idx / (HATCH_BUCKETS - 1); // 0=dead, 1=excellent
-  // Moderate bias — 0.7 power lets green show at reasonable signal levels
-  const tb = Math.pow(t, 0.7);
+  const t = idx / (HATCH_BUCKETS - 1); // 0=dead, 1=excellent — LINEAR, no power curve
   let r, g, b;
-  if (tb < 0.20) {
-    // very dark maroon → dark red (dead zone)
-    const u = tb / 0.20;
-    r = Math.round(30 + u * 90);    // 30→120
+  if (t < 0.15) {
+    // very dark maroon → dark red (dead zone: -95 to -85 dBm)
+    const u = t / 0.15;
+    r = Math.round(30 + u * 100);   // 30→130
     g = Math.round(u * 8);          // 0→8
     b = Math.round(5 + u * 5);      // 5→10
-  } else if (tb < 0.40) {
-    // dark red → bright red (very weak → weak)
-    const u = (tb - 0.20) / 0.20;
-    r = Math.round(120 + u * 120);  // 120→240
-    g = Math.round(8 + u * 30);     // 8→38
+  } else if (t < 0.35) {
+    // dark red → bright red (very weak: -85 to -72 dBm)
+    const u = (t - 0.15) / 0.20;
+    r = Math.round(130 + u * 110);  // 130→240
+    g = Math.round(8 + u * 35);     // 8→43
     b = 10;
-  } else if (tb < 0.60) {
-    // bright red → orange (weak → marginal)
-    const u = (tb - 0.40) / 0.20;
+  } else if (t < 0.55) {
+    // bright red → orange-yellow (weak to marginal: -72 to -59 dBm)
+    const u = (t - 0.35) / 0.20;
     r = 240;
-    g = Math.round(38 + u * 140);   // 38→178
+    g = Math.round(43 + u * 170);   // 43→213
     b = Math.round(10 + u * 15);    // 10→25
-  } else if (tb < 0.80) {
-    // orange → yellow-green (marginal → good)
-    const u = (tb - 0.60) / 0.20;
-    r = Math.round(240 - u * 140);  // 240→100
-    g = Math.round(178 + u * 42);   // 178→220
-    b = Math.round(25 + u * 15);    // 25→40
+  } else if (t < 0.75) {
+    // orange-yellow → green (marginal to good: -59 to -46 dBm)
+    const u = (t - 0.55) / 0.20;
+    r = Math.round(240 - u * 200);  // 240→40
+    g = Math.round(213 + u * 27);   // 213→240
+    b = Math.round(25 + u * 55);    // 25→80
   } else {
-    // yellow-green → vivid bright green (good → excellent)
-    const u = (tb - 0.80) / 0.20;
-    r = Math.round(100 - u * 80);   // 100→20
-    g = Math.round(220 + u * 30);   // 220→250
-    b = Math.round(40 + u * 70);    // 40→110
+    // green → vivid bright green (good to excellent: -46 to -30 dBm)
+    const u = (t - 0.75) / 0.25;
+    r = Math.round(40 - u * 25);    // 40→15
+    g = Math.round(240 + u * 15);   // 240→255
+    b = Math.round(80 + u * 50);    // 80→130
   }
   return `rgb(${r},${g},${b})`;
 }
@@ -103,11 +102,16 @@ export function hatchDefs(prefix, spacing, lineW) {
   for (let i = 0; i < HATCH_BUCKETS; i++) {
     const c = _bucketRGB(i);
     const sp = spacing.toFixed(5);
-    const lw = lineW.toFixed(5);
+    // Line width grows with bucket index: weakest = base, strongest = 1.6× base
+    const scale = 1.0 + (i / (HATCH_BUCKETS - 1)) * 0.6;
+    const lw = (lineW * scale).toFixed(5);
     // Rotate from 45° (red/worst) to 135° (green/best) — 90° sweep
     const angle = 45 + (i / (HATCH_BUCKETS - 1)) * 90;
+    // Recalculate dash for scaled line width
+    const dotS = (lineW * scale * 1.2).toFixed(5);
+    const gapS = (lineW * scale * 4.0).toFixed(5);
     s += `<pattern id="${prefix}_${i}" x="0" y="0" width="${sp}" height="${sp}" patternUnits="userSpaceOnUse" patternTransform="rotate(${angle.toFixed(1)})">`;
-    s += `<line x1="0" y1="0" x2="0" y2="${sp}" stroke="${c}" stroke-width="${lw}" stroke-dasharray="${dash}" stroke-linecap="round" opacity="0.8"/>`;
+    s += `<line x1="0" y1="0" x2="0" y2="${sp}" stroke="${c}" stroke-width="${lw}" stroke-dasharray="${dotS} ${gapS}" stroke-linecap="round" opacity="0.8"/>`;
     s += `</pattern>`;
   }
   // Null bucket for no-data cells
@@ -539,7 +543,7 @@ export function distortionMapSVG(calPoints, mapId, barriers, receivers) {
 // For 3D isometric views: generates heatmap polygons projected through the
 // caller's mapPt + iso transform chain.
 
-const ISO_GRID = 28; // 28x28 interpolation grid for 3D (784 cells per map)
+const ISO_GRID = 32; // 32x32 interpolation grid for 3D (1024 cells per map)
 
 /**
  * Compute heatmap grid data for a map (not yet projected).
@@ -753,7 +757,7 @@ export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) 
 // point on Map A contributes to the heatmap in Map B's territory if they
 // share the same floor. Barriers from all maps are also combined.
 
-const FLOOR_GRID = 32; // 32x32 grid in world space
+const FLOOR_GRID = 36; // 36x36 grid in world space
 
 /**
  * Generate a unified floor heatmap in view-normalized coordinates.
