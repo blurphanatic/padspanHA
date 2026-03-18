@@ -23,6 +23,7 @@
 
 const GRID_RES = 42;       // 42x42 interpolation grid (1764 cells) for 2D
 const IDW_POWER = 2.5;     // IDW exponent (higher = more local, sharper near barriers)
+const FLOOR_ATTEN_DB = 12; // dBm penalty per floor for cross-floor signal bleed
 const KNN_K = 3;           // k for LOO cross-validation
 const BARRIER_PENALTY_DB_TO_DIST = 0.01; // each dB of barrier attenuation adds this much "virtual distance"
 
@@ -688,18 +689,27 @@ export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) 
   const groupIds = new Set(groupMaps.map(m => m.id));
   const _pfx = "rmiso";
 
-  // 1. Collect cal points from all maps on this level → world coords
+  // Build z-level lookup for all maps (to find adjacent floors)
+  const _mapZ = {};
+  for (const [mid, tf] of Object.entries(mapTransforms)) { if (tf) _mapZ[mid] = tf.z; }
+
+  // 1. Collect cal points from this level AND adjacent levels → world coords
+  // Adjacent-floor points get an attenuation penalty per floor of separation.
   const worldPoints = [];
   for (const pt of calPoints) {
-    if (!groupIds.has(pt.map_id)) continue;
     const tf = mapTransforms[pt.map_id];
     if (!tf || !tf.mapPt) continue;
+    const ptZ = tf.z;
+    const floorDist = Math.abs(ptZ - z);
+    if (floorDist > 2) continue; // skip floors more than 2 levels away
     const readings = pt.scanner_readings || [];
     const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
     if (!rssis.length) continue;
     rssis.sort((a, b) => b - a);
     const topN = rssis.slice(0, Math.min(3, rssis.length));
-    const topMean = topN.reduce((a, b) => a + b, 0) / topN.length;
+    let topMean = topN.reduce((a, b) => a + b, 0) / topN.length;
+    // Attenuate cross-floor signal
+    if (floorDist > 0) topMean -= floorDist * FLOOR_ATTEN_DB;
     const [wx, wy] = tf.mapPt(pt.x_frac, pt.y_frac);
     worldPoints.push({ wx, wy, rssi: topMean });
   }
@@ -794,17 +804,25 @@ const FLOOR_GRID = 42; // 42x42 grid in world space
  * @param {string|null} scannerSource - specific scanner or null for combined
  * @returns {string} SVG content (rects + markers in view coords)
  */
-export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scannerSource) {
+export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scannerSource, allMaps) {
   if (!calPoints || !floorMaps.length) return "";
 
   const floorMapIds = new Set(floorMaps.map(m => m.id));
+  // Determine this floor's z-level
+  const _floorZ = (floorMaps[0].stack?.z_level) ?? 0;
+  // Build map → z-level lookup from all maps (for cross-floor bleed)
+  const _allMapZ = {};
+  for (const m of (allMaps || floorMaps)) { _allMapZ[m.id] = (m.stack?.z_level) ?? 0; }
 
-  // ── 1. Collect all calibration points on this floor, transform to world coords ──
+  // ── 1. Collect calibration points from this floor AND adjacent floors ──
   const worldPoints = [];
   for (const pt of calPoints) {
-    if (!floorMapIds.has(pt.map_id)) continue;
     const mpt = mapPtFns[pt.map_id];
     if (!mpt) continue;
+    const ptZ = _allMapZ[pt.map_id];
+    if (ptZ == null) continue;
+    const floorDist = Math.abs(ptZ - _floorZ);
+    if (floorDist > 2) continue; // skip floors more than 2 levels away
 
     const readings = pt.scanner_readings || [];
     let rssi;
@@ -819,6 +837,8 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
       const topN = rssis.slice(0, Math.min(3, rssis.length));
       rssi = topN.reduce((a, b) => a + b, 0) / topN.length;
     }
+    // Attenuate cross-floor signal
+    if (floorDist > 0) rssi -= floorDist * FLOOR_ATTEN_DB;
 
     const [wx, wy] = mpt(pt.x_frac, pt.y_frac);
     worldPoints.push({ wx, wy, rssi });

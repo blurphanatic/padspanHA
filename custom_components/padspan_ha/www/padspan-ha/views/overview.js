@@ -601,7 +601,9 @@ export function render(ctx){
     // ── Build mapPt transform for each map (local 0-1 → world coords) ────
     const _OUTSIDE_FID_2D = "__outside__";
     const _mapPts = {};
-    for (const m of renderMaps) {
+    // Build transforms for ALL visible maps (not just renderMaps) so the
+    // heatmap can include adjacent-floor calibration data for cross-floor bleed.
+    for (const m of visible) {
       const stk = m.stack || {};
       const ox = stk.x_offset || 0, oy = stk.y_offset || 0, sc = stk.scale || 1.0;
       const ar = (m.image?.height || 600) / (m.image?.width || 800);
@@ -763,7 +765,7 @@ export function render(ctx){
       // from the unified interpolation (consistent coordinate system, barrier
       // merging, and data from all maps on the floor contributes).
       if (F.radioMap && _radioMapMod && _calPoints && _calPoints.length && _radioMapMod.floorHeatmapSVG) {
-        const floorSvg = _radioMapMod.floorHeatmapSVG(_calPoints, renderMaps, _mapPts, w2v, wBB, _radioMapScanner);
+        const floorSvg = _radioMapMod.floorHeatmapSVG(_calPoints, renderMaps, _mapPts, w2v, wBB, _radioMapScanner, visible);
         if (floorSvg) s += floorSvg;
       }
 
