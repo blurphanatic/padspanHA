@@ -770,7 +770,7 @@ export function render(ctx){
       // ── Distortion Map layer ────────────────────────────────────────────
       if (F.distortion && _radioMapMod && _calPoints && _calPoints.length) {
         for (const m of renderMaps) {
-          const dmSvg = _radioMapMod.distortionMapSVG(_calPoints, m.id, m.rf_barriers || []);
+          const dmSvg = _radioMapMod.distortionMapSVG(_calPoints, m.id, m.rf_barriers || [], m.receivers || []);
           if (dmSvg) {
             if (isStitched) {
               const [vTL_x, vTL_y] = _pt(m, 0, 0);

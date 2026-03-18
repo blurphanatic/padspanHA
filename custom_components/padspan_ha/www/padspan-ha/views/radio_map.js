@@ -350,17 +350,23 @@ export function getMapScanners(calPoints, mapId) {
 
 
 // ── Distortion Map SVG Generator ─────────────────────────────────────────────
+// Shows where calibration predictions disagree with reality:
+//   1. Radio map heatmap underneath (signal context — where coverage is weak)
+//   2. Walls drawn prominently with "danger zone" glow (walls = #1 error source)
+//   3. LOO k-NN error vectors: actual → predicted position
+//   4. Wall-crossing markers when an error vector crosses a barrier
+// Tells you whether per-room correction is needed or if Gaussian + adjacency
+// is already good enough.
 
 /**
- * Generate distortion map SVG: arrows from actual → predicted position.
- * Uses LOO k-NN to compute where the system THINKS each calibration point is,
- * then draws a vector from actual to predicted position.
+ * Generate enhanced distortion map SVG.
  * @param {Array} calPoints - calibration points from calibrationGet()
  * @param {string} mapId - which map to render
  * @param {Array} barriers - RF barriers [{points, attenuation_dbm, material}]
- * @returns {string} SVG string (viewBox 0 0 1 1), empty string if insufficient data
+ * @param {Array} receivers - map receivers (for radio map underlay)
+ * @returns {string} SVG string (viewBox 0 0 1 1)
  */
-export function distortionMapSVG(calPoints, mapId, barriers) {
+export function distortionMapSVG(calPoints, mapId, barriers, receivers) {
   const mapPts = (calPoints || []).filter(p => p.map_id === mapId);
   if (mapPts.length < KNN_K + 1) return "";
 
@@ -375,7 +381,6 @@ export function distortionMapSVG(calPoints, mapId, barriers) {
     }
     if (!Object.keys(query).length) continue;
 
-    // LOO k-NN: find k nearest neighbors by RSSI distance, excluding self
     const scored = [];
     for (let j = 0; j < mapPts.length; j++) {
       if (j === i) continue;
@@ -410,11 +415,16 @@ export function distortionMapSVG(calPoints, mapId, barriers) {
     const errFrac = Math.sqrt((predX - pt.x_frac) ** 2 + (predY - pt.y_frac) ** 2);
     maxErr = Math.max(maxErr, errFrac);
 
+    // Check if the error vector crosses any barrier
+    const wallsCrossed = _barrierAttenuation(pt.x_frac, pt.y_frac, predX, predY, barriers || []);
+
     vectors.push({
       actualX: pt.x_frac, actualY: pt.y_frac,
       predX, predY,
       errFrac,
       room: pt.room || "",
+      wallsCrossed: wallsCrossed > 0,
+      wallDb: wallsCrossed,
     });
   }
 
@@ -422,22 +432,49 @@ export function distortionMapSVG(calPoints, mapId, barriers) {
 
   let s = "";
 
-  // RF barrier overlay (dashed wall lines)
-  s += _barriersSVG(barriers || []);
+  // ── Layer 1: Radio map heatmap underneath (signal context) ──────────────
+  const rmSvg = radioMapSVG(calPoints, mapId, null, receivers || [], barriers || []);
+  if (rmSvg) s += rmSvg;
 
-  // Draw vectors (actual → predicted)
+  // ── Layer 2: Walls with danger zone glow ────────────────────────────────
+  // Walls are the primary source of positioning error. Draw them prominently
+  // with a glowing red halo to mark "danger zones" where errors concentrate.
+  const mapBarriers = barriers || [];
+  const matColors = { metal: "#ff4444", concrete: "#ff6633", brick: "#ff8844", custom: "#ff6666" };
+  for (const bar of mapBarriers) {
+    const pts = bar.points || [];
+    if (pts.length < 2) continue;
+    const color = matColors[bar.material] || matColors.custom;
+    const atten = bar.attenuation_dbm || 6;
+    const sw = Math.max(0.005, Math.min(0.012, atten * 0.001));
+    const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(4)},${p[1].toFixed(4)}`).join(" ");
+    // Glow layer (wider, semi-transparent)
+    s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${(sw * 4).toFixed(4)}" stroke-linecap="round" stroke-linejoin="round" opacity="0.12"/>`;
+    s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${(sw * 2).toFixed(4)}" stroke-linecap="round" stroke-linejoin="round" opacity="0.25"/>`;
+    // Solid wall line
+    s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${sw.toFixed(4)}" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>`;
+    // Attenuation label at midpoint
+    if (pts.length >= 2) {
+      const mx = (Number(pts[0][0]) + Number(pts[pts.length-1][0])) / 2;
+      const my = (Number(pts[0][1]) + Number(pts[pts.length-1][1])) / 2;
+      s += `<text x="${mx.toFixed(4)}" y="${(my - 0.012).toFixed(4)}" text-anchor="middle" fill="${color}" font-size="0.012" font-family="system-ui,sans-serif" font-weight="600" opacity="0.8">${atten}dB</text>`;
+    }
+  }
+
+  // ── Layer 3: Error vectors (actual → predicted) ─────────────────────────
+  let wallCrossCount = 0;
   for (const v of vectors) {
     const color = _errorColor(v.errFrac);
-    const opacity = Math.max(0.4, Math.min(1.0, v.errFrac / 0.15));
-    const sw = Math.max(0.002, Math.min(0.006, v.errFrac * 0.04));
+    const opacity = Math.max(0.5, Math.min(1.0, v.errFrac / 0.12));
+    const sw = Math.max(0.003, Math.min(0.008, v.errFrac * 0.05));
 
-    if (v.errFrac > 0.005) { // Skip negligible errors
-      // Arrow line
-      s += `<line x1="${v.actualX.toFixed(4)}" y1="${v.actualY.toFixed(4)}" x2="${v.predX.toFixed(4)}" y2="${v.predY.toFixed(4)}" stroke="${color}" stroke-width="${sw.toFixed(4)}" opacity="${opacity.toFixed(2)}"/>`;
+    if (v.errFrac > 0.005) {
+      // Arrow line — dashed if it crosses a wall
+      const dashAttr = v.wallsCrossed ? ` stroke-dasharray="0.008,0.004"` : "";
+      s += `<line x1="${v.actualX.toFixed(4)}" y1="${v.actualY.toFixed(4)}" x2="${v.predX.toFixed(4)}" y2="${v.predY.toFixed(4)}" stroke="${color}" stroke-width="${sw.toFixed(4)}"${dashAttr} opacity="${opacity.toFixed(2)}"/>`;
 
-      // Arrowhead at predicted end
-      const dx = v.predX - v.actualX;
-      const dy = v.predY - v.actualY;
+      // Arrowhead
+      const dx = v.predX - v.actualX, dy = v.predY - v.actualY;
       const len = Math.sqrt(dx * dx + dy * dy);
       if (len > 0.01) {
         const ux = dx / len, uy = dy / len;
@@ -449,33 +486,50 @@ export function distortionMapSVG(calPoints, mapId, barriers) {
         const rx = baseX + uy * headW, ry = baseY - ux * headW;
         s += `<polygon points="${tipX.toFixed(4)},${tipY.toFixed(4)} ${lx.toFixed(4)},${ly.toFixed(4)} ${rx.toFixed(4)},${ry.toFixed(4)}" fill="${color}" opacity="${opacity.toFixed(2)}"/>`;
       }
+
+      // Wall-crossing marker: small X where vector intersects a wall
+      if (v.wallsCrossed) {
+        wallCrossCount++;
+        const midX = (v.actualX + v.predX) / 2, midY = (v.actualY + v.predY) / 2;
+        const cr = 0.006;
+        s += `<line x1="${(midX-cr).toFixed(4)}" y1="${(midY-cr).toFixed(4)}" x2="${(midX+cr).toFixed(4)}" y2="${(midY+cr).toFixed(4)}" stroke="#ff4444" stroke-width="0.003" opacity="0.9"/>`;
+        s += `<line x1="${(midX+cr).toFixed(4)}" y1="${(midY-cr).toFixed(4)}" x2="${(midX-cr).toFixed(4)}" y2="${(midY+cr).toFixed(4)}" stroke="#ff4444" stroke-width="0.003" opacity="0.9"/>`;
+      }
     }
 
-    // Dot at actual position
-    s += `<circle cx="${v.actualX.toFixed(4)}" cy="${v.actualY.toFixed(4)}" r="0.007" fill="${color}" stroke="#071008" stroke-width="0.002" opacity="0.9"/>`;
+    // Dot at actual position — outlined with wall-crossing color if applicable
+    const dotStroke = v.wallsCrossed ? "#ff4444" : "#071008";
+    const dotSW = v.wallsCrossed ? "0.003" : "0.002";
+    s += `<circle cx="${v.actualX.toFixed(4)}" cy="${v.actualY.toFixed(4)}" r="0.007" fill="${color}" stroke="${dotStroke}" stroke-width="${dotSW}" opacity="0.9"/>`;
   }
 
-  // Summary stats
+  // ── Layer 4: Summary stats & legend ─────────────────────────────────────
   const meanErr = vectors.reduce((a, v) => a + v.errFrac, 0) / vectors.length;
-  const meanErrM = (meanErr * 15).toFixed(1); // assume 15m map width
+  const meanErrM = (meanErr * 15).toFixed(1);
   const maxErrM = (maxErr * 15).toFixed(1);
 
-  // Legend (bottom-right corner)
-  const ly = 0.88;
-  s += `<rect x="0.60" y="${ly - 0.01}" width="0.38" height="0.11" rx="0.008" fill="rgba(7,16,8,0.85)"/>`;
-  s += `<text x="0.62" y="${ly + 0.015}" fill="#e2e8f0" font-size="0.02" font-weight="600" font-family="system-ui,sans-serif">Distortion Map</text>`;
-  s += `<text x="0.62" y="${ly + 0.04}" fill="#94a3b8" font-size="0.016" font-family="system-ui,sans-serif">Mean: ${meanErrM}m (${(meanErr * 100).toFixed(1)}%) \u2022 Max: ${maxErrM}m</text>`;
-  s += `<text x="0.62" y="${ly + 0.06}" fill="#94a3b8" font-size="0.016" font-family="system-ui,sans-serif">${vectors.length} point${vectors.length !== 1 ? "s" : ""} analysed (LOO k-NN)</text>`;
-
-  // Color scale
-  const scaleSteps = 4;
-  const scaleW = 0.035;
+  const ly = 0.84;
+  s += `<rect x="0.58" y="${ly - 0.01}" width="0.40" height="0.15" rx="0.008" fill="rgba(7,16,8,0.9)"/>`;
+  s += `<text x="0.60" y="${ly + 0.012}" fill="#e2e8f0" font-size="0.018" font-weight="700" font-family="system-ui,sans-serif">Distortion Map</text>`;
+  s += `<text x="0.60" y="${ly + 0.032}" fill="#94a3b8" font-size="0.014" font-family="system-ui,sans-serif">Mean: ${meanErrM}m (${(meanErr * 100).toFixed(1)}%) \u2022 Max: ${maxErrM}m</text>`;
+  s += `<text x="0.60" y="${ly + 0.050}" fill="#94a3b8" font-size="0.013" font-family="system-ui,sans-serif">${vectors.length} points \u2022 ${wallCrossCount} cross wall${wallCrossCount !== 1 ? "s" : ""}</text>`;
+  // Error color scale
+  const scaleSteps = 5;
+  const scaleW = 0.03;
   for (let i = 0; i < scaleSteps; i++) {
     const t = i / (scaleSteps - 1);
-    s += `<rect x="${(0.62 + i * scaleW).toFixed(3)}" y="${ly + 0.07}" width="${scaleW.toFixed(3)}" height="0.012" fill="${_errorColor(t * 0.25)}"/>`;
+    s += `<rect x="${(0.60 + i * scaleW).toFixed(3)}" y="${ly + 0.060}" width="${scaleW.toFixed(3)}" height="0.010" fill="${_errorColor(t * 0.25)}"/>`;
   }
-  s += `<text x="0.62" y="${ly + 0.095}" fill="#64748b" font-size="0.013" font-family="system-ui,sans-serif">0m</text>`;
-  s += `<text x="${(0.62 + (scaleSteps - 1) * scaleW).toFixed(3)}" y="${ly + 0.095}" fill="#64748b" font-size="0.013" font-family="system-ui,sans-serif">\u22653.8m</text>`;
+  s += `<text x="0.60" y="${ly + 0.085}" fill="#52b788" font-size="0.011" font-family="system-ui,sans-serif">0m</text>`;
+  s += `<text x="${(0.60 + (scaleSteps-1) * scaleW).toFixed(3)}" y="${ly + 0.085}" fill="#f87171" font-size="0.011" font-family="system-ui,sans-serif">\u22653.8m</text>`;
+  // Wall legend
+  if (mapBarriers.length) {
+    s += `<line x1="0.60" y1="${ly + 0.098}" x2="0.64" y2="${ly + 0.098}" stroke="#ff4444" stroke-width="0.004" opacity="0.9"/>`;
+    s += `<text x="0.65" y="${ly + 0.101}" fill="#ff6666" font-size="0.011" font-family="system-ui,sans-serif">Wall (error source)</text>`;
+    s += `<text x="0.60" y="${ly + 0.118}" fill="#ff4444" font-size="0.010" font-family="system-ui,sans-serif">\u2716 = prediction crosses wall</text>`;
+    s += `<line x1="0.60" y1="${ly + 0.128}" x2="0.64" y2="${ly + 0.128}" stroke="#fb923c" stroke-width="0.003" stroke-dasharray="0.008,0.004"/>`;
+    s += `<text x="0.65" y="${ly + 0.131}" fill="#94a3b8" font-size="0.010" font-family="system-ui,sans-serif">Dashed = wall-crossing vector</text>`;
+  }
 
   return s;
 }
