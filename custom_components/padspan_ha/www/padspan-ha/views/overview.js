@@ -759,16 +759,12 @@ export function render(ctx){
       }
 
       // ── Radio Map heatmap layer ─────────────────────────────────────────
-      if (F.radioMap && _radioMapMod && _calPoints && _calPoints.length) {
-        if (isStitched && _radioMapMod.floorHeatmapSVG) {
-          // World-space unified floor heatmap — merges data from all maps
-          const floorSvg = _radioMapMod.floorHeatmapSVG(_calPoints, renderMaps, _mapPts, w2v, wBB, _radioMapScanner);
-          if (floorSvg) s += floorSvg;
-        } else {
-          // Single-map mode — per-map heatmap in local coords
-          const rmSvg = _radioMapMod.radioMapSVG(_calPoints, activeMap.id, _radioMapScanner, activeMap.receivers || [], activeMap.rf_barriers || []);
-          if (rmSvg) s += rmSvg;
-        }
+      // Always use world-space floor heatmap — even single-map floors benefit
+      // from the unified interpolation (consistent coordinate system, barrier
+      // merging, and data from all maps on the floor contributes).
+      if (F.radioMap && _radioMapMod && _calPoints && _calPoints.length && _radioMapMod.floorHeatmapSVG) {
+        const floorSvg = _radioMapMod.floorHeatmapSVG(_calPoints, renderMaps, _mapPts, w2v, wBB, _radioMapScanner);
+        if (floorSvg) s += floorSvg;
       }
 
       // ── Distortion Map layer ────────────────────────────────────────────

@@ -39,30 +39,35 @@ const HATCH_BEST  = -30;
 const HATCH_RANGE = HATCH_BEST - HATCH_WORST;
 
 // Compute opaque RGB for a bucket index (0 = worst, HATCH_BUCKETS-1 = best)
+// Strong areas are CLEARLY green (#22c55e / #16a34a range), weak areas red
 function _bucketRGB(idx) {
   const t = idx / (HATCH_BUCKETS - 1); // 0=dead, 1=excellent
   const tb = Math.pow(t, 0.55);
   let r, g, b;
   if (tb < 0.25) {
+    // dark red → bright red (dead → very weak)
     const u = tb / 0.25;
-    r = Math.round(80 + u * 170);
-    g = Math.round(u * 20);
+    r = Math.round(80 + u * 170);   // 80→250
+    g = Math.round(u * 20);         // 0→20
     b = 15;
   } else if (tb < 0.50) {
+    // bright red → orange (weak → marginal)
     const u = (tb - 0.25) / 0.25;
     r = 250;
-    g = Math.round(20 + u * 130);
+    g = Math.round(20 + u * 140);   // 20→160
     b = Math.round(15 + u * 10);
   } else if (tb < 0.75) {
+    // orange → yellow-green (marginal → good)
     const u = (tb - 0.50) / 0.25;
-    r = Math.round(250 - u * 30);
-    g = Math.round(150 + u * 70);
-    b = 25;
+    r = Math.round(250 - u * 140);  // 250→110
+    g = Math.round(160 + u * 50);   // 160→210
+    b = Math.round(25 + u * 15);    // 25→40
   } else {
+    // yellow-green → vivid green (good → excellent)
     const u = (tb - 0.75) / 0.25;
-    r = Math.round(220 - u * 180);
-    g = Math.round(220 - u * 30);
-    b = Math.round(25 + u * 110);
+    r = Math.round(110 - u * 80);   // 110→30
+    g = Math.round(210 + u * 30);   // 210→240
+    b = Math.round(40 + u * 60);    // 40→100
   }
   return `rgb(${r},${g},${b})`;
 }
@@ -84,18 +89,22 @@ function _rssiBucket(rssi) {
  */
 export function hatchDefs(prefix, spacing, lineW) {
   let s = "<defs>";
+  // Tight dot dash for the hatch lines: dot length = 2× line width, gap = 1.5× line width
+  const dotLen = (lineW * 2).toFixed(5);
+  const gapLen = (lineW * 1.5).toFixed(5);
+  const dash = `${dotLen} ${gapLen}`;
   for (let i = 0; i < HATCH_BUCKETS; i++) {
     const c = _bucketRGB(i);
     const sp = spacing.toFixed(5);
     const lw = lineW.toFixed(5);
-    // 45° crosshatch: two diagonal lines per tile
+    // 45° hatch with dotted lines
     s += `<pattern id="${prefix}_${i}" x="0" y="0" width="${sp}" height="${sp}" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">`;
-    s += `<line x1="0" y1="0" x2="0" y2="${sp}" stroke="${c}" stroke-width="${lw}" opacity="0.75"/>`;
+    s += `<line x1="0" y1="0" x2="0" y2="${sp}" stroke="${c}" stroke-width="${lw}" stroke-dasharray="${dash}" stroke-linecap="round" opacity="0.8"/>`;
     s += `</pattern>`;
   }
   // Null bucket for no-data cells
   s += `<pattern id="${prefix}_null" x="0" y="0" width="${spacing.toFixed(5)}" height="${spacing.toFixed(5)}" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">`;
-  s += `<line x1="0" y1="0" x2="0" y2="${spacing.toFixed(5)}" stroke="#333" stroke-width="${lineW.toFixed(5)}" opacity="0.1"/>`;
+  s += `<line x1="0" y1="0" x2="0" y2="${spacing.toFixed(5)}" stroke="#333" stroke-width="${lineW.toFixed(5)}" stroke-dasharray="${dash}" stroke-linecap="round" opacity="0.1"/>`;
   s += `</pattern>`;
   s += "</defs>";
   return s;
@@ -107,26 +116,13 @@ function _hatchFill(prefix, rssi) {
   return idx < 0 ? `url(#${prefix}_null)` : `url(#${prefix}_${idx})`;
 }
 
-// Legacy solid fill (still used for legends and iso 3D where patterns are complex)
+// Legacy solid fill (used for iso 3D cells where patterns don't project well)
 function _rssiColor(rssi) {
   if (rssi == null || isNaN(rssi)) return "rgba(60,60,60,0.15)";
-  const t = Math.max(0, Math.min(1, (rssi - HATCH_WORST) / HATCH_RANGE));
-  const tb = Math.pow(t, 0.55);
-  let r, g, b;
-  if (tb < 0.25) {
-    const u = tb / 0.25;
-    r = Math.round(80 + u * 170); g = Math.round(u * 20); b = 15;
-  } else if (tb < 0.50) {
-    const u = (tb - 0.25) / 0.25;
-    r = 250; g = Math.round(20 + u * 130); b = Math.round(15 + u * 10);
-  } else if (tb < 0.75) {
-    const u = (tb - 0.50) / 0.25;
-    r = Math.round(250 - u * 30); g = Math.round(150 + u * 70); b = 25;
-  } else {
-    const u = (tb - 0.75) / 0.25;
-    r = Math.round(220 - u * 180); g = Math.round(220 - u * 30); b = Math.round(25 + u * 110);
-  }
-  return `rgba(${r},${g},${b},0.6)`;
+  const idx = _rssiBucket(rssi);
+  if (idx < 0) return "rgba(60,60,60,0.15)";
+  // Reuse bucket RGB with alpha for solid fills
+  return _bucketRGB(idx).replace("rgb(", "rgba(").replace(")", ",0.6)");
 }
 
 // Error magnitude → color: green (low) → yellow → red (high)
