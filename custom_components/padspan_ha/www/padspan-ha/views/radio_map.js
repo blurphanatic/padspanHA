@@ -27,6 +27,48 @@ const FLOOR_ATTEN_DB = 12; // dBm penalty per floor for cross-floor signal bleed
 const KNN_K = 3;           // k for LOO cross-validation
 const BARRIER_PENALTY_DB_TO_DIST = 0.01; // each dB of barrier attenuation adds this much "virtual distance"
 
+// ── Model-Based RF Propagation ───────────────────────────────────────────────
+// Computes predicted RSSI at any point based on scanner positions + path-loss
+// model. No calibration data needed — pure physics + wall attenuation.
+const DEFAULT_REF_POWER = -59;   // dBm at 1 meter
+const DEFAULT_PATH_LOSS_N = 2.5; // indoor path-loss exponent
+const MAP_SCALE_M = 15;          // assumed map width in meters (for distance calc)
+
+/**
+ * Compute model-based RSSI at a world-space point from all scanners.
+ * Returns the BEST (strongest) scanner's predicted RSSI.
+ *
+ * @param {number} wx - world X
+ * @param {number} wy - world Y
+ * @param {Array} scanners - [{wx, wy, source}] scanner world positions
+ * @param {Array} barriers - [{points:[[wx,wy],...], attenuation_dbm}] in world coords
+ * @param {number} refPower - reference RSSI at 1m
+ * @param {number} pathLossN - path-loss exponent
+ * @param {number} mapScaleM - map width in meters
+ * @returns {number} predicted best RSSI in dBm
+ */
+function _modelRSSI(wx, wy, scanners, barriers, refPower, pathLossN, mapScaleM) {
+  let bestRssi = -120;
+  for (const sc of scanners) {
+    const dx = wx - sc.wx, dy = wy - sc.wy;
+    const distNorm = Math.sqrt(dx * dx + dy * dy); // normalized distance (0-1 ish)
+    const distM = Math.max(0.3, distNorm * mapScaleM); // meters, floor at 30cm
+    // Path-loss: RSSI = refPower - 10 * n * log10(distance)
+    let rssi = refPower - 10 * pathLossN * Math.log10(distM);
+    // Barrier attenuation: subtract dBm for each wall crossed
+    for (const bar of barriers) {
+      const pts = bar.points || [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        if (_segmentsIntersect(wx, wy, sc.wx, sc.wy, pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1])) {
+          rssi -= (bar.attenuation_dbm || 6);
+        }
+      }
+    }
+    if (rssi > bestRssi) bestRssi = rssi;
+  }
+  return bestRssi;
+}
+
 // ── Color Scales ─────────────────────────────────────────────────────────────
 
 // ── Hatch Pattern System ─────────────────────────────────────────────────────
@@ -702,6 +744,119 @@ export function isoHeatmapSVG(heatData, mapPt, iso, z) {
  * @param {number} z - z-level
  * @returns {string} SVG polygon elements
  */
+/**
+ * Model-based 3D iso heatmap — scanner positions + path-loss physics.
+ */
+export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, allMaps) {
+  if (!groupMaps.length) return "";
+
+  const refPower = settings?.ref_power ?? DEFAULT_REF_POWER;
+  const pathLossN = settings?.path_loss_exp ?? DEFAULT_PATH_LOSS_N;
+  const _mapZ = {};
+  for (const [mid, tf] of Object.entries(mapTransforms)) { if (tf) _mapZ[mid] = tf.z; }
+
+  // Collect scanner world positions
+  const scanners = [];
+  for (const m of (allMaps || groupMaps)) {
+    const tf = mapTransforms[m.id]; if (!tf || !tf.mapPt) continue;
+    const mZ = tf.z;
+    const floorDist = Math.abs(mZ - z);
+    if (floorDist > 2) continue;
+    for (const r of (m.receivers || [])) {
+      if (r.x == null || r.y == null) continue;
+      const [wx, wy] = tf.mapPt(r.x, r.y);
+      scanners.push({ wx, wy, floorDist });
+    }
+  }
+  if (!scanners.length) return "";
+
+  // Collect barriers
+  const worldBarriers = [];
+  for (const m of groupMaps) {
+    const tf = mapTransforms[m.id]; if (!tf || !tf.mapPt) continue;
+    for (const bar of (m.rf_barriers || [])) {
+      const pts = bar.points || [];
+      if (pts.length < 2) continue;
+      worldBarriers.push({
+        points: pts.map(p => { const [wx, wy] = tf.mapPt(Number(p[0]), Number(p[1])); return [wx, wy]; }),
+        attenuation_dbm: bar.attenuation_dbm || 6,
+      });
+    }
+  }
+
+  // World bounding box
+  let bb = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const m of groupMaps) {
+    const tf = mapTransforms[m.id]; if (!tf || !tf.mapPt) continue;
+    for (const [cx, cy] of [[0,0],[1,0],[1,1],[0,1]]) {
+      const [wx, wy] = tf.mapPt(cx, cy);
+      bb.minX = Math.min(bb.minX, wx); bb.minY = Math.min(bb.minY, wy);
+      bb.maxX = Math.max(bb.maxX, wx); bb.maxY = Math.max(bb.maxY, wy);
+    }
+  }
+  if (!isFinite(bb.minX)) return "";
+  const wW = bb.maxX - bb.minX, wH = bb.maxY - bb.minY;
+  if (wW < 1e-6 || wH < 1e-6) return "";
+
+  const res = ISO_GRID;
+  const cellW = wW / res, cellH = wH / res;
+  const f = v => v.toFixed(1);
+
+  // Compute grid
+  let minR = 0, maxR = -120;
+  const gridRssi = new Float32Array(res * res);
+  for (let gy = 0; gy < res; gy++) {
+    for (let gx = 0; gx < res; gx++) {
+      const qwx = bb.minX + (gx + 0.5) * cellW;
+      const qwy = bb.minY + (gy + 0.5) * cellH;
+      let best = -120;
+      for (const sc of scanners) {
+        const dx = qwx - sc.wx, dy = qwy - sc.wy;
+        const distM = Math.max(0.3, Math.sqrt(dx*dx + dy*dy) * MAP_SCALE_M);
+        let rssi = refPower - 10 * pathLossN * Math.log10(distM);
+        if (sc.floorDist > 0) rssi -= sc.floorDist * FLOOR_ATTEN_DB;
+        for (const bar of worldBarriers) {
+          const bpts = bar.points;
+          for (let i = 0; i < bpts.length - 1; i++) {
+            if (_segmentsIntersect(qwx, qwy, sc.wx, sc.wy, bpts[i][0], bpts[i][1], bpts[i+1][0], bpts[i+1][1])) {
+              rssi -= (bar.attenuation_dbm || 6);
+            }
+          }
+        }
+        if (rssi > best) best = rssi;
+      }
+      gridRssi[gy * res + gx] = best;
+      if (best > maxR) maxR = best;
+      if (best < minR) minR = best;
+    }
+  }
+
+  setHatchRange(minR, maxR, _userGain, _userContrast);
+  const _pfx = "rmiso";
+  let s = "";
+
+  const pad = cellW * 0.08;
+  for (let gy = 0; gy < res; gy++) {
+    for (let gx = 0; gx < res; gx++) {
+      const rssi = gridRssi[gy * res + gx];
+      const fill = _hatchFill(_pfx, rssi);
+      const x0 = bb.minX + gx * cellW - pad, y0 = bb.minY + gy * cellH - pad;
+      const x1 = x0 + cellW + pad*2, y1 = y0 + cellH + pad*2;
+      const p0 = iso(x0, y0, z), p1 = iso(x1, y0, z), p2 = iso(x1, y1, z), p3 = iso(x0, y1, z);
+      s += `<polygon points="${f(p0[0])},${f(p0[1])} ${f(p1[0])},${f(p1[1])} ${f(p2[0])},${f(p2[1])} ${f(p3[0])},${f(p3[1])}" fill="${fill}"/>`;
+    }
+  }
+
+  // Scanner markers
+  for (const sc of scanners.filter(sc => sc.floorDist === 0)) {
+    const [sx, sy] = iso(sc.wx, sc.wy, z);
+    s += `<circle cx="${f(sx)}" cy="${f(sy)}" r="4" fill="#52b788" stroke="#071008" stroke-width="1" opacity="0.9"/>`;
+  }
+
+  return s;
+}
+
+// Legacy calibration-based heatmap
 export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) {
   if (!calPoints || !groupMaps.length) return "";
 
@@ -820,6 +975,140 @@ const FLOOR_GRID = 42; // 42x42 grid in world space
  * @param {string|null} scannerSource - specific scanner or null for combined
  * @returns {string} SVG content (rects + markers in view coords)
  */
+/**
+ * Model-based RF heatmap — uses scanner positions + path-loss physics.
+ * No calibration data needed. Shows predicted signal coverage from known
+ * scanner locations, attenuated by walls.
+ */
+export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, allMaps) {
+  if (!floorMaps.length) return "";
+
+  const refPower = settings?.ref_power ?? DEFAULT_REF_POWER;
+  const pathLossN = settings?.path_loss_exp ?? DEFAULT_PATH_LOSS_N;
+  const _floorZ = (floorMaps[0].stack?.z_level) ?? 0;
+  const _allMapZ = {};
+  for (const m of (allMaps || floorMaps)) { _allMapZ[m.id] = (m.stack?.z_level) ?? 0; }
+
+  // Collect scanner world positions from all floor maps + adjacent floors
+  const scanners = [];
+  for (const m of (allMaps || floorMaps)) {
+    const mpt = mapPtFns[m.id]; if (!mpt) continue;
+    const mZ = _allMapZ[m.id] ?? 0;
+    const floorDist = Math.abs(mZ - _floorZ);
+    if (floorDist > 2) continue;
+    for (const r of (m.receivers || [])) {
+      if (r.x == null || r.y == null) continue;
+      const [wx, wy] = mpt(r.x, r.y);
+      scanners.push({ wx, wy, source: r.source || r.id || "", floorDist });
+    }
+  }
+  if (!scanners.length) return "";
+
+  // Collect barriers from all floor maps → world coords
+  const worldBarriers = [];
+  for (const m of (allMaps || floorMaps)) {
+    const mpt = mapPtFns[m.id]; if (!mpt) continue;
+    const mZ = _allMapZ[m.id] ?? 0;
+    if (Math.abs(mZ - _floorZ) > 1) continue;
+    for (const bar of (m.rf_barriers || [])) {
+      const pts = bar.points || [];
+      if (pts.length < 2) continue;
+      worldBarriers.push({
+        points: pts.map(p => { const [wx, wy] = mpt(Number(p[0]), Number(p[1])); return [wx, wy]; }),
+        attenuation_dbm: bar.attenuation_dbm || 6,
+      });
+    }
+  }
+
+  const wW = wBB.maxX - wBB.minX, wH = wBB.maxY - wBB.minY;
+  if (wW < 1e-6 || wH < 1e-6) return "";
+
+  // Compute the model RSSI range for data-adaptive color scaling
+  let minR = 0, maxR = -120;
+  const res = FLOOR_GRID;
+  const cellW = wW / res, cellH = wH / res;
+  const gridRssi = new Float32Array(res * res);
+  for (let gy = 0; gy < res; gy++) {
+    for (let gx = 0; gx < res; gx++) {
+      const qwx = wBB.minX + (gx + 0.5) * cellW;
+      const qwy = wBB.minY + (gy + 0.5) * cellH;
+      // Adjust scanners on other floors with attenuation
+      const adjScanners = scanners.map(sc => sc.floorDist === 0 ? sc : { ...sc, _floorAtten: sc.floorDist * FLOOR_ATTEN_DB });
+      let best = -120;
+      for (const sc of adjScanners) {
+        const dx = qwx - sc.wx, dy = qwy - sc.wy;
+        const distNorm = Math.sqrt(dx * dx + dy * dy);
+        const distM = Math.max(0.3, distNorm * MAP_SCALE_M);
+        let rssi = refPower - 10 * pathLossN * Math.log10(distM);
+        if (sc._floorAtten) rssi -= sc._floorAtten;
+        // Barrier attenuation
+        for (const bar of worldBarriers) {
+          const bpts = bar.points;
+          for (let i = 0; i < bpts.length - 1; i++) {
+            if (_segmentsIntersect(qwx, qwy, sc.wx, sc.wy, bpts[i][0], bpts[i][1], bpts[i+1][0], bpts[i+1][1])) {
+              rssi -= (bar.attenuation_dbm || 6);
+            }
+          }
+        }
+        if (rssi > best) best = rssi;
+      }
+      gridRssi[gy * res + gx] = best;
+      if (best > maxR) maxR = best;
+      if (best < minR) minR = best;
+    }
+  }
+
+  setHatchRange(minR, maxR, _userGain, _userContrast);
+
+  const _pfx = "rmfl";
+  const f = v => v.toFixed(5);
+  let s = hatchDefs(_pfx, 0.008, 0.003);
+
+  for (let gy = 0; gy < res; gy++) {
+    for (let gx = 0; gx < res; gx++) {
+      const rssi = gridRssi[gy * res + gx];
+      const fill = _hatchFill(_pfx, rssi);
+      const [v0x, v0y] = w2v(wBB.minX + gx * cellW, wBB.minY + gy * cellH);
+      const [v1x, v1y] = w2v(wBB.minX + (gx+1) * cellW, wBB.minY + gy * cellH);
+      const [v2x, v2y] = w2v(wBB.minX + (gx+1) * cellW, wBB.minY + (gy+1) * cellH);
+      const [v3x, v3y] = w2v(wBB.minX + gx * cellW, wBB.minY + (gy+1) * cellH);
+      s += `<polygon points="${f(v0x)},${f(v0y)} ${f(v1x)},${f(v1y)} ${f(v2x)},${f(v2y)} ${f(v3x)},${f(v3y)}" fill="${fill}"/>`;
+    }
+  }
+
+  // Barrier lines
+  const matColors = { metal: "#f87171", concrete: "#fb923c", brick: "#fbbf24", custom: "#94a3b8" };
+  for (const bar of worldBarriers) {
+    const color = matColors[bar.material] || matColors.custom;
+    const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm || 6) * 0.0006));
+    const d = bar.points.map((p, i) => { const [vx, vy] = w2v(p[0], p[1]); return `${i === 0 ? "M" : "L"}${f(vx)},${f(vy)}`; }).join(" ");
+    s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${f(sw)}" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
+  }
+
+  // Scanner position markers
+  for (const sc of scanners.filter(sc => sc.floorDist === 0)) {
+    const [vx, vy] = w2v(sc.wx, sc.wy);
+    s += `<circle cx="${f(vx)}" cy="${f(vy)}" r="0.010" fill="#52b788" stroke="#071008" stroke-width="0.002" opacity="0.9"/>`;
+  }
+
+  // Legend
+  const ly = 0.92;
+  s += `<rect x="0.02" y="${ly - 0.01}" width="0.34" height="0.07" rx="0.006" fill="rgba(7,16,8,0.85)"/>`;
+  s += `<text x="0.035" y="${ly + 0.008}" fill="#e2e8f0" font-size="0.014" font-weight="600" font-family="system-ui,sans-serif">Model RF Coverage</text>`;
+  const flLegSteps = 8;
+  const bw = 0.028;
+  for (let i = 0; i < flLegSteps; i++) {
+    const bucketIdx = Math.round(i / (flLegSteps - 1) * (HATCH_BUCKETS - 1));
+    s += `<rect x="${(0.035 + i * bw).toFixed(3)}" y="${ly + 0.02}" width="${bw.toFixed(3)}" height="0.012" fill="${_bucketRGB(bucketIdx)}"/>`;
+  }
+  s += `<text x="0.035" y="${ly + 0.048}" fill="#fca5a5" font-size="0.01" font-family="system-ui,sans-serif">${Math.round(minR)}</text>`;
+  s += `<text x="${(0.035 + (flLegSteps - 1) * bw).toFixed(3)}" y="${ly + 0.048}" fill="#52b788" font-size="0.01" font-family="system-ui,sans-serif">${Math.round(maxR)} dBm</text>`;
+  s += `<text x="0.035" y="${ly + 0.058}" fill="#94a3b8" font-size="0.009" font-family="system-ui,sans-serif">${scanners.filter(sc=>sc.floorDist===0).length} scanners \u2022 path-loss n=${pathLossN}</text>`;
+
+  return s;
+}
+
+// Legacy calibration-based heatmap (kept as fallback)
 export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scannerSource, allMaps) {
   if (!calPoints || !floorMaps.length) return "";
 

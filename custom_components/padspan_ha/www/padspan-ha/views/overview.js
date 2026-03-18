@@ -766,7 +766,14 @@ export function render(ctx){
         if (_radioMapMod.setUserGainContrast) {
           _radioMapMod.setUserGainContrast(ctx.state._heatGain || ctx.state.settings?.heatmap_gain || 0, ctx.state._heatContrast || ctx.state.settings?.heatmap_contrast || 0);
         }
-        const floorSvg = _radioMapMod.floorHeatmapSVG(_calPoints, renderMaps, _mapPts, w2v, wBB, _radioMapScanner, visible);
+        // Prefer model-based heatmap (scanner positions + physics)
+        let floorSvg = "";
+        if (_radioMapMod.modelFloorHeatmapSVG) {
+          floorSvg = _radioMapMod.modelFloorHeatmapSVG(renderMaps, _mapPts, w2v, wBB, ctx.state.settings, visible);
+        }
+        if (!floorSvg && _radioMapMod.floorHeatmapSVG) {
+          floorSvg = _radioMapMod.floorHeatmapSVG(_calPoints, renderMaps, _mapPts, w2v, wBB, _radioMapScanner, visible);
+        }
         if (floorSvg) s += floorSvg;
       }
 
@@ -1685,7 +1692,10 @@ export function render(ctx){
           if (_isoRadioMapMod.setUserGainContrast) {
             _isoRadioMapMod.setUserGainContrast(ctx.state._heatGain || ctx.state.settings?.heatmap_gain || 0, ctx.state._heatContrast || ctx.state.settings?.heatmap_contrast || 0);
           }
-          if (_isoRadioMapMod.isoLevelHeatmapSVG) {
+          // Prefer model-based heatmap
+          if (_isoRadioMapMod.modelIsoHeatmapSVG) {
+            s += _isoRadioMapMod.modelIsoHeatmapSVG(group, mapTransforms, iso, z, ctx.state.settings, sorted);
+          } else if (_isoRadioMapMod.isoLevelHeatmapSVG) {
             s += _isoRadioMapMod.isoLevelHeatmapSVG(calPoints, group, mapTransforms, iso, z);
           }
         }
