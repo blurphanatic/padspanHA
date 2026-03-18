@@ -2068,13 +2068,19 @@ export function render(ctx){
 
     /** Rebuild the 3D SVG with a progress indicator. */
     function _rebuildIso(focusZ) {
+      // Show progress bar immediately
+      _isoProgressFill.style.transition = "none";
       _isoProgressFill.style.width = "40%";
       _isoProgressFill.style.background = "#a855f7";
+      // Double rAF: first frame paints the bar, second frame does the heavy SVG build
       requestAnimationFrame(() => {
-        isoDiv.innerHTML = buildIsoSVG(focusZ);
-        _isoProgressFill.style.width = "100%";
-        _isoProgressFill.style.background = "#52b788";
-        setTimeout(() => { _isoProgressFill.style.width = "0"; }, 600);
+        requestAnimationFrame(() => {
+          isoDiv.innerHTML = buildIsoSVG(focusZ);
+          _isoProgressFill.style.transition = "width 0.2s";
+          _isoProgressFill.style.width = "100%";
+          _isoProgressFill.style.background = "#52b788";
+          setTimeout(() => { _isoProgressFill.style.width = "0"; }, 600);
+        });
       });
     }
 
