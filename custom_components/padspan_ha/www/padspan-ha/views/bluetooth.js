@@ -1180,7 +1180,7 @@ function renderVisualization(ctx, radios, ads, objIndex) {
   // created in the HTML namespace are invisible in HA's WebView.
   // Embedded <style> provides hover effects: labels turn teal, circles glow.
   let s = `<svg class="bt-viz" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
-  s += `<style>.bt-viz-click{cursor:pointer}.bt-viz-click text.bt-viz-label{fill:#7dd3fc}.bt-viz-click:hover text.bt-viz-label{fill:#5eead4}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}.bt-viz-click:hover .bt-viz-uline{stroke:#5eead4;opacity:.8}</style>`;
+  s += `<style>.bt-viz-click{cursor:pointer}.bt-viz-click text.bt-viz-label{fill:#7dd3fc}.bt-viz-click:hover text.bt-viz-label{fill:#5eead4}.bt-viz-click:hover circle{opacity:.8;stroke:#5eead4;stroke-width:2}</style>`;
 
   // Lines first (back layer) — RSSI-colored connections between scanner and device circles
   for (const d of deviceNodes) {
@@ -1209,13 +1209,10 @@ function renderVisualization(ctx, radios, ads, objIndex) {
     const sn = scannerNodes[si];
     const textX = sn.x - 12;  // 12px left of circle centre (7r + 5px gap)
     const lblText = trunc(sn.label);
-    const lblW = Math.min(lblText.length * 7.2, 270); // approximate text width at 12px
     s += `<g data-vs="${si}" class="bt-viz-click" style="cursor:pointer">`;
     s += `<rect x="${Math.max(0, textX - 280)}" y="${sn.y - 12}" width="${280 + 24}" height="24" fill="rgba(0,0,0,0)" pointer-events="all"/>`;
     s += `<circle cx="${sn.x}" cy="${sn.y}" r="7" class="bt-viz-node scanner" pointer-events="all"/>`;
     s += `<text x="${textX}" y="${sn.y}" class="bt-viz-label" text-anchor="end" dominant-baseline="middle" pointer-events="all">${_escSvg(lblText)}</text>`;
-    // SVG underline (text-decoration doesn't work on SVG <text>)
-    s += `<line x1="${textX - lblW}" y1="${sn.y + 7}" x2="${textX}" y2="${sn.y + 7}" stroke="#7dd3fc" stroke-width="1" opacity="0.4" class="bt-viz-uline"/>`;
     s += `</g>`;
     _scannerClicks[si] = () => {
       const radio = radios.find(r => String(r.source || "") === sn.id);
@@ -1263,34 +1260,43 @@ function renderVisualization(ctx, radios, ads, objIndex) {
 
   s += `</svg>`;
 
+  // ── Render SVG into a proper SVG DOM (not innerHTML on a div) ────────────
+  // innerHTML on a <div> can create HTML-namespace elements that don't handle
+  // SVG getAttribute correctly in all WebViews. Using DOMParser ensures proper
+  // SVG namespace on all elements.
   const svgWrap = document.createElement("div");
-  svgWrap.innerHTML = s;
-
-  // ── Click handler: event delegation on the wrapper div ──────────────────────
-  // Using delegation instead of per-element listeners avoids SVG DOM namespace
-  // issues in HA WebViews where getAttribute on SVG elements can be unreliable.
-  svgWrap.addEventListener("click", (e) => {
-    // Walk up from click target to find the nearest <g> with data-vs or data-vd
-    let node = e.target;
-    while (node && node !== svgWrap) {
-      // Check for data attributes — try both getAttribute and dataset
-      const vs = node.getAttribute ? node.getAttribute("data-vs") : null;
-      if (vs !== null && vs !== undefined) {
-        e.stopPropagation();
-        const idx = parseInt(vs, 10);
-        if (_scannerClicks[idx]) _scannerClicks[idx]();
-        return;
-      }
-      const vd = node.getAttribute ? node.getAttribute("data-vd") : null;
-      if (vd !== null && vd !== undefined) {
-        e.stopPropagation();
-        const idx = parseInt(vd, 10);
-        if (_deviceClicks[idx]) _deviceClicks[idx]();
-        return;
-      }
-      node = node.parentNode;
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(s, "image/svg+xml");
+    const svgEl = doc.documentElement;
+    if (svgEl && svgEl.tagName === "svg") {
+      svgWrap.appendChild(document.importNode(svgEl, true));
+    } else {
+      svgWrap.innerHTML = s; // fallback
     }
-  });
+  } catch (_e) {
+    svgWrap.innerHTML = s; // fallback
+  }
+
+  // ── Click handlers: attach directly to each clickable <g> ──────────────────
+  // Now that SVG is properly namespaced, getAttribute works reliably.
+  const _svgRoot = svgWrap.querySelector("svg");
+  if (_svgRoot) {
+    _svgRoot.querySelectorAll("[data-vs]").forEach(g => {
+      g.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const idx = parseInt(g.getAttribute("data-vs"), 10);
+        if (_scannerClicks[idx]) _scannerClicks[idx]();
+      });
+    });
+    _svgRoot.querySelectorAll("[data-vd]").forEach(g => {
+      g.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const idx = parseInt(g.getAttribute("data-vd"), 10);
+        if (_deviceClicks[idx]) _deviceClicks[idx]();
+      });
+    });
+  }
 
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),

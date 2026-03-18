@@ -158,7 +158,6 @@
 .bt-viz-node.device.rssi-unk{fill:rgba(226,232,240,.7)}
 .bt-viz-click:hover .bt-viz-label{fill:#5eead4 !important;opacity:1}
 .bt-viz-click:hover .bt-viz-node.scanner{fill:#5eead4;stroke:#5eead4}
-.bt-viz-click:hover line{opacity:0.9 !important}
 
 /* Devices view */
 .dev-room-list{margin-top:10px;display:flex;flex-direction:column;gap:8px}
