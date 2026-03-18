@@ -62,18 +62,18 @@ function _bucketRGB(idx) {
     r = 240;
     g = Math.round(43 + u * 170);   // 43→213
     b = Math.round(10 + u * 15);    // 10→25
-  } else if (t < 0.75) {
-    // orange-yellow → green (marginal to good: -59 to -46 dBm)
-    const u = (t - 0.55) / 0.20;
-    r = Math.round(240 - u * 200);  // 240→40
-    g = Math.round(213 + u * 27);   // 213→240
-    b = Math.round(25 + u * 55);    // 25→80
+  } else if (t < 0.70) {
+    // orange-yellow → bright lime green (marginal to good: -59 to -49 dBm)
+    const u = (t - 0.55) / 0.15;
+    r = Math.round(240 - u * 210);  // 240→30
+    g = Math.round(213 + u * 42);   // 213→255
+    b = Math.round(25 + u * 25);    // 25→50
   } else {
-    // green → vivid bright green (good to excellent: -46 to -30 dBm)
-    const u = (t - 0.75) / 0.25;
-    r = Math.round(40 - u * 25);    // 40→15
-    g = Math.round(240 + u * 15);   // 240→255
-    b = Math.round(80 + u * 50);    // 80→130
+    // bright lime green → electric neon green (good to excellent: -49 to -30 dBm)
+    const u = (t - 0.70) / 0.30;
+    r = Math.round(30 - u * 30);    // 30→0
+    g = 255;                         // full green channel
+    b = Math.round(50 + u * 80);    // 50→130 (adds cyan punch at peak)
   }
   return `rgb(${r},${g},${b})`;
 }
