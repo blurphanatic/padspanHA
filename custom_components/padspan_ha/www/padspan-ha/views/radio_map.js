@@ -967,3 +967,77 @@ export function getFloorScanners(calPoints, floorMapIds) {
   }
   return Object.values(scannerMap).sort((a, b) => b.pointCount - a.pointCount);
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3D Isometric Distortion Map
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Render LOO k-NN distortion vectors on the 3D isometric map for one z-level.
+ * Merges calibration data from all maps on the level (same as heatmap).
+ */
+export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
+  if (!calPoints || !groupMaps.length) return "";
+
+  const groupIds = new Set(groupMaps.map(m => m.id));
+  const pts = [];
+  for (const pt of calPoints) {
+    if (!groupIds.has(pt.map_id)) continue;
+    const tf = mapTransforms[pt.map_id];
+    if (!tf || !tf.mapPt) continue;
+    const query = {};
+    for (const r of (pt.scanner_readings || [])) {
+      if (r.source && r.mean_rssi != null) query[r.source] = r.mean_rssi;
+    }
+    if (!Object.keys(query).length) continue;
+    const [wx, wy] = tf.mapPt(pt.x_frac, pt.y_frac);
+    pts.push({ wx, wy, query });
+  }
+  if (pts.length < KNN_K + 1) return "";
+
+  let s = "";
+  for (let i = 0; i < pts.length; i++) {
+    const pt = pts[i];
+    const scored = [];
+    for (let j = 0; j < pts.length; j++) {
+      if (j === i) continue;
+      const p2 = pts[j];
+      const shared = Object.keys(pt.query).filter(k => p2.query[k] != null);
+      if (!shared.length) continue;
+      let distSq = 0;
+      for (const k of shared) distSq += (pt.query[k] - p2.query[k]) ** 2;
+      const penalty = 1.0 + 0.3 * Math.max(0, Object.keys(pt.query).length - shared.length);
+      scored.push({ distSq: distSq * penalty, p: p2 });
+    }
+    if (scored.length < KNN_K) continue;
+    scored.sort((a, b) => a.distSq - b.distSq);
+    const topK = scored.slice(0, KNN_K);
+    let wT = 0, pwx = 0, pwy = 0;
+    for (const { distSq, p } of topK) {
+      const w = 1.0 / (Math.sqrt(distSq) + 0.001);
+      pwx += w * p.wx; pwy += w * p.wy; wT += w;
+    }
+    if (wT < 1e-10) continue;
+    pwx /= wT; pwy /= wT;
+
+    const errW = Math.sqrt((pwx - pt.wx) ** 2 + (pwy - pt.wy) ** 2);
+    if (errW < 0.003) continue;
+
+    const color = _errorColor(errW * 5);
+    const [ax, ay] = iso(pt.wx, pt.wy, z);
+    const [px, py] = iso(pwx, pwy, z);
+
+    s += `<line x1="${ax.toFixed(1)}" y1="${ay.toFixed(1)}" x2="${px.toFixed(1)}" y2="${py.toFixed(1)}" stroke="${color}" stroke-width="2" opacity="0.7"/>`;
+    const dx = px - ax, dy = py - ay;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len > 5) {
+      const ux = dx / len, uy = dy / len;
+      const hl = Math.min(8, len * 0.4), hw = hl * 0.6;
+      const bx = px - ux * hl, by = py - uy * hl;
+      s += `<polygon points="${px.toFixed(1)},${py.toFixed(1)} ${(bx-uy*hw).toFixed(1)},${(by+ux*hw).toFixed(1)} ${(bx+uy*hw).toFixed(1)},${(by-ux*hw).toFixed(1)}" fill="${color}" opacity="0.7"/>`;
+    }
+    s += `<circle cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="3.5" fill="${color}" stroke="#071008" stroke-width="0.8" opacity="0.85"/>`;
+  }
+  return s;
+}

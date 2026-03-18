@@ -1680,6 +1680,14 @@ export function render(ctx){
           }
         }
 
+        // ── Distortion Map (3D isometric, behind room polygons) ──
+        const _isoDistortionOn = !!(ctx.state.settings && ctx.state.settings.distortion_map_enabled);
+        if (_isoDistortionOn && _isoRadioMapMod && calPoints.length && ctx.state._overviewShowDistortion) {
+          if (_isoRadioMapMod.isoDistortionSVG) {
+            s += _isoRadioMapMod.isoDistortionSVG(calPoints, group, mapTransforms, iso, z);
+          }
+        }
+
         // Room polygons
         for(const m of group){
           const tf = mapTransforms[m.id]; if(!tf) continue;
