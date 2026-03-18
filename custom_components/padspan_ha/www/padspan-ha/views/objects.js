@@ -679,18 +679,35 @@ export function render(ctx){
 
   // ── Advanced mode: table ──────────────────────────────────────────────────────
   const awayCount = allObjects.filter(_isAway).length;
+  // Badge factory: creates clickable badges that filter the object list
+  function _mkFilterBadge(text, extraStyle, kindVal, statusVal, isWarn) {
+    const badge = el("span", {
+      class: "badge" + (isWarn ? " warn" : ""),
+      style: (extraStyle || "") + ";cursor:pointer",
+      title: "Click to filter",
+    }, text);
+    badge.addEventListener("click", () => {
+      ctx.state.objKind = kindVal;
+      ctx.state.objStatus = statusVal;
+      objKindSel.value = kindVal;
+      objStatusSel.value = statusVal;
+      applyObjFilter();
+    });
+    return badge;
+  }
+
   const inventorySection = el("div",{class:"card"},[
     el("div",{class:"row",style:"margin-bottom:8px"},[
       el("div",{class:"h2",style:"flex:1"}, _quietMode ? "Tracked Objects" : "BLE Scanner Detections"),
       _quietMode
         ? el("span",{class:"badge",style:"background:#0a2a1a;color:#52b788;border-color:#166534;font-weight:700"}, "Quiet Mode")
         : null,
-      _quietMode ? null : (summary ? el("span",{class:"badge"}, `${summary.ble||0} BLE`) : null),
-      _quietMode ? null : (summary && summary.ibeacon ? el("span",{class:"badge",style:"background:#2a1a00;color:#fbbf24;border-color:#92400e"}, `${summary.ibeacon} iBeacon`) : null),
-      _quietMode ? null : (summary && summary.private_ble ? el("span",{class:"badge",style:"background:#0a1a3a;color:#93c5fd;border-color:#1e4976"}, `${summary.private_ble} Private BLE`) : null),
-      _quietMode ? null : (summary ? el("span",{class:"badge warn"}, `${summary.unidentified||0} unidentified`) : null),
-      summary ? el("span",{class:"badge"}, `${summary.entities||0} entities`) : null,
-      awayCount ? el("span",{class:"badge",style:"background:#3a0a0a;color:#f87171;border-color:#7f1d1d"}, `${awayCount} away`) : null,
+      _quietMode ? null : (summary ? _mkFilterBadge(`${summary.ble||0} BLE`, "", "ble", "all") : null),
+      _quietMode ? null : (summary && summary.ibeacon ? _mkFilterBadge(`${summary.ibeacon} iBeacon`, "background:#2a1a00;color:#fbbf24;border-color:#92400e", "ble", "all") : null),
+      _quietMode ? null : (summary && summary.private_ble ? _mkFilterBadge(`${summary.private_ble} Private BLE`, "background:#0a1a3a;color:#93c5fd;border-color:#1e4976", "ble", "all") : null),
+      _quietMode ? null : (summary ? _mkFilterBadge(`${summary.unidentified||0} unidentified`, "", "all", "unidentified", true) : null),
+      summary ? _mkFilterBadge(`${summary.entities||0} entities`, "", "entity", "all") : null,
+      awayCount ? _mkFilterBadge(`${awayCount} away`, "background:#3a0a0a;color:#f87171;border-color:#7f1d1d", "all", "away") : null,
     ].filter(Boolean)),
     el("div",{class:"toolbar"},[objSearchInput, objKindSel, objStatusSel,
       el("div",{style:"display:flex;align-items:center;gap:6px"},
