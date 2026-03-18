@@ -579,18 +579,75 @@ export function render(ctx){
     const _isScanner = ctx.helpers.isScanner;
     const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
 
-    // Determine which map to show (focused floor or first visible)
+    // Determine which maps to show
     const hiddenIds = new Set((ctx.state.settings && ctx.state.settings.hidden_map_ids) || []);
     const visible = maps_list.filter(m => !hiddenIds.has(m.id));
     if(!visible.length) return renderRoomGrid();
 
-    // Multi-map: use focus index or default to first
     const multiFloor = visible.length > 1;
     const focusIdx = ctx.state._2dFocusIdx || 0;
     const activeMap = visible[Math.min(focusIdx, visible.length - 1)];
 
-    const imgW = activeMap.image?.width || 800;
-    const imgH = activeMap.image?.height || 600;
+    // ── Floor stitching: collect all maps on the same floor ──────────────
+    const haFloors2d = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
+    const activeFloorId = activeMap.stack?.floor_id || activeMap.floor_id || "";
+    const floorMaps = visible.filter(m => {
+      const fid = m.stack?.floor_id || m.floor_id || "";
+      return fid === activeFloorId;
+    });
+    // Use all floor maps if there are multiple on this floor, else just activeMap
+    const renderMaps = floorMaps.length > 1 ? floorMaps : [activeMap];
+
+    // ── Build mapPt transform for each map (local 0-1 → world coords) ────
+    const _OUTSIDE_FID_2D = "__outside__";
+    const _mapPts = {};
+    for (const m of renderMaps) {
+      const stk = m.stack || {};
+      const ox = stk.x_offset || 0, oy = stk.y_offset || 0, sc = stk.scale || 1.0;
+      const ar = (m.image?.height || 600) / (m.image?.width || 800);
+      const arRef = stk.ref_ar || ar, sxAdj = stk.scale_x_adj || 1.0;
+      const rot = (stk.rotation || 0) * Math.PI / 180;
+      if (stk._m && stk._m.length === 4) {
+        _mapPts[m.id] = (px, py) => {
+          const u = px - 0.5, v = py - 0.5;
+          return [stk._m[0]*u + stk._m[1]*v + 0.5 + ox, arRef*(stk._m[2]*u + stk._m[3]*v + 0.5 + oy)];
+        };
+      } else {
+        _mapPts[m.id] = (px, py) => {
+          const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef;
+          const rx = dx * Math.cos(rot) - dy * Math.sin(rot);
+          const ry = dx * Math.sin(rot) + dy * Math.cos(rot);
+          return [(0.5 + ox) + rx, arRef * (0.5 + oy) + ry];
+        };
+      }
+    }
+
+    // ── Compute world bounding box of all floor maps ─────────────────────
+    let wBB = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+    for (const m of renderMaps) {
+      const mpt = _mapPts[m.id];
+      if (!mpt) continue;
+      for (const [cx, cy] of [[0,0],[1,0],[1,1],[0,1]]) {
+        const [wx, wy] = mpt(cx, cy);
+        wBB.minX = Math.min(wBB.minX, wx);
+        wBB.minY = Math.min(wBB.minY, wy);
+        wBB.maxX = Math.max(wBB.maxX, wx);
+        wBB.maxY = Math.max(wBB.maxY, wy);
+      }
+    }
+    if (!isFinite(wBB.minX)) wBB = { minX: 0, minY: 0, maxX: 1, maxY: 0.75 };
+    // Add 2% padding
+    const wPad = Math.max(wBB.maxX - wBB.minX, wBB.maxY - wBB.minY) * 0.02;
+    wBB.minX -= wPad; wBB.minY -= wPad; wBB.maxX += wPad; wBB.maxY += wPad;
+    const wW = wBB.maxX - wBB.minX;
+    const wH = wBB.maxY - wBB.minY;
+    // World → view normalized (0-1)
+    const w2v = (wx, wy) => [(wx - wBB.minX) / wW, (wy - wBB.minY) / wH];
+    // Is this a stitched multi-map view?
+    const isStitched = renderMaps.length > 1;
+
+    const imgW = isStitched ? 800 : (activeMap.image?.width || 800);
+    const imgH = isStitched ? Math.round(800 * wH / wW) : (activeMap.image?.height || 600);
     const imgUrl = activeMap.image?.filename ? `/local/padspan_ha/maps/${activeMap.image.filename}` : null;
 
     // Filter state (persists within session)
@@ -660,87 +717,151 @@ export function render(ctx){
     const _fsScan = 0.014;       // scanner label font size
     const _fsObj = 0.013;        // object label font size
 
-    // Build SVG content — uses viewBox="0 0 1 1" + preserveAspectRatio="none"
-    // to match the Maps tab coordinate system exactly (normalized 0..1 space).
+    // ── Point transform helper ───────────────────────────────────────────
+    // In stitched mode, convert local map coords to view coords via world space.
+    // In single-map mode, coords pass through unchanged (0-1 = view space).
+    const _pt = (m, lx, ly) => {
+      if (!isStitched) return [lx, ly];
+      const mpt = _mapPts[m.id];
+      if (!mpt) return [lx, ly];
+      const [wx, wy] = mpt(lx, ly);
+      return w2v(wx, wy);
+    };
+    const _f = v => v.toFixed(5);
+
+    // Build SVG content — viewBox="0 0 1 {aspect}" with xMidYMid meet
+    // for correct aspect ratio in stitched mode.
+    const vAspect = isStitched ? (wH / wW) : 1;
     const buildSVG = () => {
-      let s = `<svg viewBox="0 0 1 1" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" width="100%" height="100%" style="display:block">`;
+      let s = `<svg viewBox="0 0 1 ${_f(vAspect)}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="${isStitched ? "xMidYMid meet" : "none"}" width="100%" height="100%" style="display:block">`;
+      s += `<rect x="0" y="0" width="1" height="${_f(vAspect)}" fill="#0d1f12"/>`;
 
-      // Background image
-      if(F.mapImg && imgUrl){
-        s += `<image href="${imgUrl}" x="0" y="0" width="1" height="1" preserveAspectRatio="none" opacity="0.75"/>`;
-      } else if(!F.mapImg){
-        s += `<rect x="0" y="0" width="1" height="1" fill="#0d1f12"/>`;
-      } else {
-        s += `<rect x="0" y="0" width="1" height="1" fill="#0d1f12"/>`;
+      // ── Map images ──────────────────────────────────────────────────────
+      if (F.mapImg) {
+        for (const m of renderMaps) {
+          const mUrl = m.image?.filename ? `/local/padspan_ha/maps/${m.image.filename}` : null;
+          if (!mUrl) continue;
+          if (isStitched) {
+            // Project the 4 corners to get positioned image via SVG transform
+            const [vTL_x, vTL_y] = _pt(m, 0, 0);
+            const [vTR_x, vTR_y] = _pt(m, 1, 0);
+            const [vBL_x, vBL_y] = _pt(m, 0, 1);
+            // Compute affine transform from unit square to view quadrilateral
+            // For SVG image: use x, y, width, height + transform
+            const dx = vTR_x - vTL_x, dy = vTR_y - vTL_y;
+            const ex = vBL_x - vTL_x, ey = vBL_y - vTL_y;
+            // SVG matrix(a,b,c,d,e,f): maps (x,y) → (a*x+c*y+e, b*x+d*y+f)
+            s += `<image href="${mUrl}" x="0" y="0" width="1" height="1" preserveAspectRatio="none" opacity="0.65" transform="matrix(${_f(dx)},${_f(dy)},${_f(ex)},${_f(ey)},${_f(vTL_x)},${_f(vTL_y)})"/>`;
+          } else {
+            s += `<image href="${mUrl}" x="0" y="0" width="1" height="1" preserveAspectRatio="none" opacity="0.75"/>`;
+          }
+        }
       }
 
-      // ── Radio Map heatmap layer (behind room boundaries and objects) ──
+      // ── Radio Map heatmap layer ─────────────────────────────────────────
       if (F.radioMap && _radioMapMod && _calPoints && _calPoints.length) {
-        const rmSvg = _radioMapMod.radioMapSVG(_calPoints, activeMap.id, _radioMapScanner, receivers, activeMap.rf_barriers || []);
-        if (rmSvg) s += rmSvg;
+        for (const m of renderMaps) {
+          const rmSvg = _radioMapMod.radioMapSVG(_calPoints, m.id, _radioMapScanner, m.receivers || [], m.rf_barriers || []);
+          if (rmSvg) {
+            if (isStitched) {
+              // Wrap in a transform group for this map's coordinate space
+              const [vTL_x, vTL_y] = _pt(m, 0, 0);
+              const [vTR_x, vTR_y] = _pt(m, 1, 0);
+              const [vBL_x, vBL_y] = _pt(m, 0, 1);
+              const dx = vTR_x - vTL_x, dy = vTR_y - vTL_y;
+              const ex = vBL_x - vTL_x, ey = vBL_y - vTL_y;
+              s += `<g transform="matrix(${_f(dx)},${_f(dy)},${_f(ex)},${_f(ey)},${_f(vTL_x)},${_f(vTL_y)})">`;
+              s += `<svg viewBox="0 0 1 1" width="1" height="1" preserveAspectRatio="none">${rmSvg}</svg>`;
+              s += `</g>`;
+            } else {
+              s += rmSvg;
+            }
+          }
+        }
       }
 
-      // ── Distortion Map layer (behind room boundaries and objects) ──
+      // ── Distortion Map layer ────────────────────────────────────────────
       if (F.distortion && _radioMapMod && _calPoints && _calPoints.length) {
-        const dmSvg = _radioMapMod.distortionMapSVG(_calPoints, activeMap.id, activeMap.rf_barriers || []);
-        if (dmSvg) s += dmSvg;
-      }
-
-      // Room boundaries
-      if(F.rooms){
-        for(const [room, b] of Object.entries(activeMap.room_bounds || {})){
-          if(!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
-          const color = roomColorFn(room);
-          const pp = b.points.map(p => `${p[0]},${p[1]}`).join(" ");
-          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.12" stroke="${color}" stroke-width="${_sw}" stroke-opacity="0.7"/>`;
-          // Room label at centroid
-          const cx = b.points.reduce((a,p)=>a+p[0],0) / b.points.length;
-          const cy = b.points.reduce((a,p)=>a+p[1],0) / b.points.length;
-          s += `<text x="${cx.toFixed(4)}" y="${cy.toFixed(4)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="${_fsRoom}" font-weight="600" opacity="0.8">${_esc(room)}</text>`;
+        for (const m of renderMaps) {
+          const dmSvg = _radioMapMod.distortionMapSVG(_calPoints, m.id, m.rf_barriers || []);
+          if (dmSvg) {
+            if (isStitched) {
+              const [vTL_x, vTL_y] = _pt(m, 0, 0);
+              const [vTR_x, vTR_y] = _pt(m, 1, 0);
+              const [vBL_x, vBL_y] = _pt(m, 0, 1);
+              const dx = vTR_x - vTL_x, dy = vTR_y - vTL_y;
+              const ex = vBL_x - vTL_x, ey = vBL_y - vTL_y;
+              s += `<g transform="matrix(${_f(dx)},${_f(dy)},${_f(ex)},${_f(ey)},${_f(vTL_x)},${_f(vTL_y)})">`;
+              s += `<svg viewBox="0 0 1 1" width="1" height="1" preserveAspectRatio="none">${dmSvg}</svg>`;
+              s += `</g>`;
+            } else {
+              s += dmSvg;
+            }
+          }
         }
       }
 
-      // Scanners
-      if(F.scanners){
-        for(const r of receivers){
-          const px = r.x != null ? r.x : 0.5;
-          const py = r.y != null ? r.y : 0.5;
-          const src = r.source || r.id || "";
-          const liveR = liveRadioMap[src];
-          const isOnline = !!liveR;
-          const rxColor = isOnline ? "#52b788" : "#4a6052";
-          const rxName = (r.label || (liveR && liveR.name) || r.source || "radio").substring(0, 16);
-          s += `<circle cx="${px}" cy="${py}" r="${_mkR*1.8}" fill="none" stroke="${rxColor}" stroke-width="${_sw*0.5}" opacity="0.3"/>`;
-          s += `<circle cx="${px}" cy="${py}" r="${_mkR}" fill="none" stroke="${rxColor}" stroke-width="${_sw*0.7}" opacity="0.6"/>`;
-          s += `<circle cx="${px}" cy="${py}" r="${_mkR*0.5}" fill="${rxColor}" opacity="0.9"/>`;
-          s += `<text x="${px}" y="${(py - _mkR*2.2).toFixed(4)}" text-anchor="middle" fill="${rxColor}" font-size="${_fsScan}" font-weight="600">${_esc(rxName)}</text>`;
+      // ── Room boundaries ─────────────────────────────────────────────────
+      if (F.rooms) {
+        for (const m of renderMaps) {
+          for (const [room, b] of Object.entries(m.room_bounds || {})) {
+            if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
+            const color = roomColorFn(room);
+            const pp = b.points.map(p => { const [vx, vy] = _pt(m, p[0], p[1]); return `${_f(vx)},${_f(vy)}`; }).join(" ");
+            s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.12" stroke="${color}" stroke-width="${_sw}" stroke-opacity="0.7"/>`;
+            const cx = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
+            const cy = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
+            const [vcx, vcy] = _pt(m, cx, cy);
+            s += `<text x="${_f(vcx)}" y="${_f(vcy)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="${_fsRoom}" font-weight="600" opacity="0.8">${_esc(room)}</text>`;
+          }
         }
       }
 
-      // Objects positioned on this map (via k-NN or room centroid)
+      // ── Scanners ────────────────────────────────────────────────────────
+      if (F.scanners) {
+        for (const m of renderMaps) {
+          for (const r of (m.receivers || [])) {
+            const [px, py] = _pt(m, r.x != null ? r.x : 0.5, r.y != null ? r.y : 0.5);
+            const src = r.source || r.id || "";
+            const liveR = liveRadioMap[src];
+            const isOnline = !!liveR;
+            const rxColor = isOnline ? "#52b788" : "#4a6052";
+            const rxName = (r.label || (liveR && liveR.name) || r.source || "radio").substring(0, 16);
+            s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_mkR*1.8}" fill="none" stroke="${rxColor}" stroke-width="${_sw*0.5}" opacity="0.3"/>`;
+            s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_mkR}" fill="none" stroke="${rxColor}" stroke-width="${_sw*0.7}" opacity="0.6"/>`;
+            s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_mkR*0.5}" fill="${rxColor}" opacity="0.9"/>`;
+            s += `<text x="${_f(px)}" y="${_f(py - _mkR*2.2)}" text-anchor="middle" fill="${rxColor}" font-size="${_fsScan}" font-weight="600">${_esc(rxName)}</text>`;
+          }
+        }
+      }
+
+      // ── Objects positioned on floor maps ─────────────────────────────────
       const roomCentroids = {};
-      for(const [room, b] of Object.entries(activeMap.room_bounds || {})){
-        if(!b || !b.points || b.points.length < 3) continue;
-        roomCentroids[room] = {
-          x: b.points.reduce((a,p)=>a+p[0],0) / b.points.length,
-          y: b.points.reduce((a,p)=>a+p[1],0) / b.points.length,
-        };
+      for (const m of renderMaps) {
+        for (const [room, b] of Object.entries(m.room_bounds || {})) {
+          if (!b || !b.points || b.points.length < 3) continue;
+          if (roomCentroids[room]) continue; // first map wins
+          const cx = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
+          const cy = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
+          const [vx, vy] = _pt(m, cx, cy);
+          roomCentroids[room] = { x: vx, y: vy };
+        }
       }
 
       const _roomObjIdx = {};
-      for(const o of objects){
+      for (const o of objects) {
         const isTagged = !!(o.user_label || o.identified);
         const isFollowed = ctx.actions.followedHas && (ctx.actions.followedHas(o.address || "") || ctx.actions.followedHas(o.key || ""));
-        if(!F.tagged && isTagged && !isFollowed) continue;
-        if(!F.unknown && !isTagged && !isFollowed) continue;
-        if(_quietMode && !isTagged && !isFollowed) continue;
+        if (!F.tagged && isTagged && !isFollowed) continue;
+        if (!F.unknown && !isTagged && !isFollowed) continue;
+        if (_quietMode && !isTagged && !isFollowed) continue;
 
-        // Position: prefer k-NN on this map, else room centroid on this map
         let px, py;
-        if(typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id === activeMap.id){
-          px = o.x_frac;
-          py = o.y_frac;
-        } else if(o.room && roomCentroids[o.room]){
+        // k-NN position: check all floor maps
+        const knnMap = renderMaps.find(m => o.knn_map_id === m.id);
+        if (typeof o.x_frac === "number" && typeof o.y_frac === "number" && knnMap) {
+          [px, py] = _pt(knnMap, o.x_frac, o.y_frac);
+        } else if (o.room && roomCentroids[o.room]) {
           const c = roomCentroids[o.room];
           const idx = (_roomObjIdx[o.room] || 0);
           _roomObjIdx[o.room] = idx + 1;
@@ -749,23 +870,20 @@ export function render(ctx){
           px = c.x + Math.cos(angle) * Math.min(spread * (1 + idx * 0.3), spread * 3);
           py = c.y + Math.sin(angle) * Math.min(spread * (1 + idx * 0.3), spread * 3);
         } else {
-          continue; // Not positionable on this map
+          continue;
         }
 
         const lbl = (o.user_label || o.name || "").substring(0, 14);
 
-        if(isFollowed){
-          // Followed: yellow marker
-          s += `<circle cx="${px}" cy="${py}" r="${_dotR*2}" fill="#fbbf24" fill-opacity="0.15"/>`;
-          s += `<circle cx="${px}" cy="${py}" r="${_dotR}" fill="#fbbf24" stroke="#071008" stroke-width="${_sw*0.5}"/>`;
-          if(lbl) s += `<text x="${px}" y="${(py - _dotR*2).toFixed(4)}" text-anchor="middle" fill="#fbbf24" font-size="${_fsObj}" font-weight="600">${_esc(lbl)}</text>`;
-        } else if(isTagged){
-          // Tagged: teal dot
-          s += `<circle cx="${px}" cy="${py}" r="${_dotR}" fill="#5eead4" stroke="#071008" stroke-width="${_sw*0.5}" opacity="0.9"/>`;
-          if(lbl) s += `<text x="${px}" y="${(py - _dotR*1.8).toFixed(4)}" text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="0.85">${_esc(lbl)}</text>`;
+        if (isFollowed) {
+          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*2}" fill="#fbbf24" fill-opacity="0.15"/>`;
+          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#fbbf24" stroke="#071008" stroke-width="${_sw*0.5}"/>`;
+          if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*2)}" text-anchor="middle" fill="#fbbf24" font-size="${_fsObj}" font-weight="600">${_esc(lbl)}</text>`;
+        } else if (isTagged) {
+          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#5eead4" stroke="#071008" stroke-width="${_sw*0.5}" opacity="0.9"/>`;
+          if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8)}" text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="0.85">${_esc(lbl)}</text>`;
         } else {
-          // Unknown: dim amber dot (no label)
-          s += `<circle cx="${px}" cy="${py}" r="${_dotR*0.7}" fill="#f59e0b" stroke="#071008" stroke-width="${_sw*0.3}" opacity="0.5"/>`;
+          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*0.7}" fill="#f59e0b" stroke="#071008" stroke-width="${_sw*0.3}" opacity="0.5"/>`;
         }
       }
 
@@ -969,9 +1087,11 @@ export function render(ctx){
     // SVG container with zoom/pan
     const svgWrap = document.createElement("div");
     svgWrap.style.cssText = "position:relative;overflow:hidden;border-radius:8px;background:#071008;cursor:grab;touch-action:none;width:100%";
-    // Compute aspect-ratio container height: fill width, maintain map aspect ratio
-    const aspectPct = (imgH / imgW * 100).toFixed(2);
-    svgWrap.style.paddingBottom = `${Math.min(75, aspectPct)}%`; // cap at 75% viewport height ratio
+    // Compute aspect-ratio container height: fill width, maintain aspect ratio
+    const aspectPct = isStitched
+      ? (wH / wW * 100).toFixed(2)
+      : (imgH / imgW * 100).toFixed(2);
+    svgWrap.style.paddingBottom = `${Math.min(80, Math.max(30, aspectPct))}%`;
 
     const svgDiv = document.createElement("div");
     svgDiv.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;transform-origin:0 0`;
