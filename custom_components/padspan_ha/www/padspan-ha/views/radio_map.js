@@ -747,13 +747,29 @@ export function isoHeatmapSVG(heatData, mapPt, iso, z) {
 /**
  * Model-based 3D iso heatmap — scanner positions + path-loss physics.
  */
-export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, allMaps) {
+export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, allMaps, liveSnap) {
   if (!groupMaps.length) return "";
 
   const refPower = settings?.ref_power ?? DEFAULT_REF_POWER;
   const pathLossN = settings?.path_loss_exp ?? DEFAULT_PATH_LOSS_N;
   const _mapZ = {};
   for (const [mid, tf] of Object.entries(mapTransforms)) { if (tf) _mapZ[mid] = tf.z; }
+
+  // Per-scanner quality from live data
+  const scannerQuality = {};
+  const _isoAds = (liveSnap?.ble?.advertisements) || [];
+  if (_isoAds.length) {
+    const _scBest = {};
+    for (const ad of _isoAds) {
+      if (!ad.source || ad.rssi == null || (ad.age_s||0) > 30) continue;
+      if (!_scBest[ad.source] || ad.rssi > _scBest[ad.source]) _scBest[ad.source] = ad.rssi;
+    }
+    const _bv = Object.values(_scBest); _bv.sort((a,b)=>a-b);
+    if (_bv.length > 1) {
+      const _fm = _bv[Math.floor(_bv.length/2)];
+      for (const [src,best] of Object.entries(_scBest)) scannerQuality[src] = Math.max(-10, Math.min(10, best - _fm));
+    }
+  }
 
   // Collect scanner world positions
   const scanners = [];
@@ -765,7 +781,8 @@ export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, a
     for (const r of (m.receivers || [])) {
       if (r.x == null || r.y == null) continue;
       const [wx, wy] = tf.mapPt(r.x, r.y);
-      scanners.push({ wx, wy, floorDist });
+      const src = r.source || r.id || "";
+      scanners.push({ wx, wy, floorDist, qualityOffset: scannerQuality[src] || 0 });
     }
   }
   if (!scanners.length) return "";
@@ -813,7 +830,7 @@ export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, a
       for (const sc of scanners) {
         const dx = qwx - sc.wx, dy = qwy - sc.wy;
         const distM = Math.max(0.3, Math.sqrt(dx*dx + dy*dy) * MAP_SCALE_M);
-        let rssi = refPower - 10 * pathLossN * Math.log10(distM);
+        let rssi = (refPower + (sc.qualityOffset || 0)) - 10 * pathLossN * Math.log10(distM);
         if (sc.floorDist > 0) rssi -= sc.floorDist * FLOOR_ATTEN_DB;
         for (const bar of worldBarriers) {
           const bpts = bar.points;
@@ -980,7 +997,7 @@ const FLOOR_GRID = 42; // 42x42 grid in world space
  * No calibration data needed. Shows predicted signal coverage from known
  * scanner locations, attenuated by walls.
  */
-export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, allMaps) {
+export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, allMaps, liveSnap) {
   if (!floorMaps.length) return "";
 
   const refPower = settings?.ref_power ?? DEFAULT_REF_POWER;
@@ -988,6 +1005,34 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
   const _floorZ = (floorMaps[0].stack?.z_level) ?? 0;
   const _allMapZ = {};
   for (const m of (allMaps || floorMaps)) { _allMapZ[m.id] = (m.stack?.z_level) ?? 0; }
+
+  // ── Per-scanner quality factor from live advertisement data ──
+  // Computes effective ref_power per scanner based on actual observed signal strength.
+  // Good scanners (strong antenna, good placement) get higher effective power.
+  const scannerQuality = {}; // source → quality offset in dB
+  const ads = (liveSnap?.ble?.advertisements) || [];
+  if (ads.length) {
+    const scannerBestRssi = {}; // source → best RSSI seen from any device
+    const scannerDevCount = {}; // source → device count
+    for (const ad of ads) {
+      if (!ad.source || ad.rssi == null || (ad.age_s || 0) > 30) continue;
+      if (!scannerBestRssi[ad.source] || ad.rssi > scannerBestRssi[ad.source]) {
+        scannerBestRssi[ad.source] = ad.rssi;
+      }
+      scannerDevCount[ad.source] = (scannerDevCount[ad.source] || 0) + 1;
+    }
+    // Fleet best (median of per-scanner bests)
+    const bestVals = Object.values(scannerBestRssi);
+    if (bestVals.length > 1) {
+      bestVals.sort((a, b) => a - b);
+      const fleetMedianBest = bestVals[Math.floor(bestVals.length / 2)];
+      for (const [src, best] of Object.entries(scannerBestRssi)) {
+        // Quality offset: how much better/worse than fleet median
+        // Capped at ±10 dB to prevent extreme distortion
+        scannerQuality[src] = Math.max(-10, Math.min(10, best - fleetMedianBest));
+      }
+    }
+  }
 
   // Collect scanner world positions from all floor maps + adjacent floors
   const scanners = [];
@@ -999,7 +1044,9 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
     for (const r of (m.receivers || [])) {
       if (r.x == null || r.y == null) continue;
       const [wx, wy] = mpt(r.x, r.y);
-      scanners.push({ wx, wy, source: r.source || r.id || "", floorDist });
+      const src = r.source || r.id || "";
+      const qOff = scannerQuality[src] || 0;
+      scanners.push({ wx, wy, source: src, floorDist, qualityOffset: qOff });
     }
   }
   if (!scanners.length) return "";
@@ -1033,14 +1080,14 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
       const qwx = wBB.minX + (gx + 0.5) * cellW;
       const qwy = wBB.minY + (gy + 0.5) * cellH;
       // Adjust scanners on other floors with attenuation
-      const adjScanners = scanners.map(sc => sc.floorDist === 0 ? sc : { ...sc, _floorAtten: sc.floorDist * FLOOR_ATTEN_DB });
       let best = -120;
-      for (const sc of adjScanners) {
+      for (const sc of scanners) {
         const dx = qwx - sc.wx, dy = qwy - sc.wy;
         const distNorm = Math.sqrt(dx * dx + dy * dy);
         const distM = Math.max(0.3, distNorm * MAP_SCALE_M);
-        let rssi = refPower - 10 * pathLossN * Math.log10(distM);
-        if (sc._floorAtten) rssi -= sc._floorAtten;
+        // Per-scanner effective power: base ref_power + quality offset from live data
+        let rssi = (refPower + (sc.qualityOffset || 0)) - 10 * pathLossN * Math.log10(distM);
+        if (sc.floorDist > 0) rssi -= sc.floorDist * FLOOR_ATTEN_DB;
         // Barrier attenuation
         for (const bar of worldBarriers) {
           const bpts = bar.points;
