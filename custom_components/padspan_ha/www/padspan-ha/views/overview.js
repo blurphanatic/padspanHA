@@ -1522,6 +1522,11 @@ export function render(ctx){
         s += `</svg>`; return s;
       }
 
+      // Emit 3D hatch pattern defs once (before any level renders cells)
+      if (_isoRadioMapOn && _isoRadioMapMod && _isoRadioMapMod.isoHatchDefs && ctx.state._overviewShowHeatmap) {
+        s += _isoRadioMapMod.isoHatchDefs();
+      }
+
       for(const [z,group] of [...byLevel.entries()].sort((a,b)=>a[0]-b[0])){
         const isFocused = focusZ===null || (Array.isArray(focusZ) ? focusZ.includes(z) : focusZ===z);
         const go = isFocused ? 1.0 : 0.1;

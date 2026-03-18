@@ -89,9 +89,9 @@ function _rssiBucket(rssi) {
  */
 export function hatchDefs(prefix, spacing, lineW) {
   let s = "<defs>";
-  // Tight dot dash for the hatch lines: dot length = 2× line width, gap = 1.5× line width
-  const dotLen = (lineW * 2).toFixed(5);
-  const gapLen = (lineW * 1.5).toFixed(5);
+  // Airy dotted pattern: short dot, long gap — mostly empty space
+  const dotLen = (lineW * 1.2).toFixed(5);
+  const gapLen = (lineW * 4.0).toFixed(5);
   const dash = `${dotLen} ${gapLen}`;
   for (let i = 0; i < HATCH_BUCKETS; i++) {
     const c = _bucketRGB(i);
@@ -535,13 +535,20 @@ export function computeHeatmapGrid(calPoints, mapId, scannerSource, barriers) {
  * @param {number} z - z-level for this map
  * @returns {string} SVG polygon elements
  */
+/**
+ * Generate <defs> block for 3D iso heatmap patterns. Call ONCE before
+ * rendering any isoHeatmapSVG cells (not per-map).
+ */
+export function isoHatchDefs() {
+  return hatchDefs("rmiso", 6, 2.5);
+}
+
 export function isoHeatmapSVG(heatData, mapPt, iso, z) {
   if (!heatData) return "";
   const { grid, minR, maxR, res } = heatData;
   const cellW = 1.0 / res;
-  // 3D iso uses pixel coordinates — pattern spacing in pixels
   const _pfx = "rmiso";
-  let s = hatchDefs(_pfx, 6, 2.5);
+  let s = "";
 
   // Slight overlap prevents hairline gaps between cells in iso projection
   const pad = cellW * 0.08;
