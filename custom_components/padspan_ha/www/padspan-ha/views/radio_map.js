@@ -23,7 +23,7 @@
 
 const GRID_RES = 42;       // 42x42 interpolation grid (1764 cells) for 2D
 const IDW_POWER = 2.5;     // IDW exponent (higher = more local, sharper near barriers)
-const FLOOR_ATTEN_DB = 12; // dBm penalty per floor for cross-floor signal bleed
+const FLOOR_ATTEN_DB = 20; // dBm penalty per floor — enough to keep cross-floor subtle
 const KNN_K = 3;           // k for LOO cross-validation
 const BARRIER_PENALTY_DB_TO_DIST = 0.01; // each dB of barrier attenuation adds this much "virtual distance"
 
@@ -777,7 +777,7 @@ export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, a
     const tf = mapTransforms[m.id]; if (!tf || !tf.mapPt) continue;
     const mZ = tf.z;
     const floorDist = Math.abs(mZ - z);
-    if (floorDist > 0) continue; // same floor only — cross-floor bleed removed
+    if (floorDist > 2) continue;
     for (const r of (m.receivers || [])) {
       if (r.x == null || r.y == null) continue;
       const [wx, wy] = tf.mapPt(r.x, r.y);
@@ -910,7 +910,7 @@ export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) 
     if (!tf || !tf.mapPt) continue;
     const ptZ = tf.z;
     const floorDist = Math.abs(ptZ - z);
-    if (floorDist > 0) continue; // same floor only — cross-floor bleed removed // skip floors more than 2 levels away
+    if (floorDist > 2) continue; // skip floors more than 2 levels away
     const readings = pt.scanner_readings || [];
     const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
     if (!rssis.length) continue;
@@ -1058,7 +1058,7 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
     const mpt = mapPtFns[m.id]; if (!mpt) continue;
     const mZ = _allMapZ[m.id] ?? 0;
     const floorDist = Math.abs(mZ - _floorZ);
-    if (floorDist > 0) continue; // same floor only — cross-floor bleed removed
+    if (floorDist > 2) continue;
     for (const r of (m.receivers || [])) {
       if (r.x == null || r.y == null) continue;
       const [wx, wy] = mpt(r.x, r.y);
@@ -1211,7 +1211,7 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
     const ptZ = _allMapZ[pt.map_id];
     if (ptZ == null) continue;
     const floorDist = Math.abs(ptZ - _floorZ);
-    if (floorDist > 0) continue; // same floor only — cross-floor bleed removed // skip floors more than 2 levels away
+    if (floorDist > 2) continue; // skip floors more than 2 levels away
 
     const readings = pt.scanner_readings || [];
     let rssi;
@@ -1561,7 +1561,7 @@ export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, all
     const mpt = mapPtFns[pt.map_id]; if (!mpt) continue;
     const ptZ = _allMapZ[pt.map_id]; if (ptZ == null) continue;
     const floorDist = Math.abs(ptZ - _floorZ);
-    if (floorDist > 0) continue; // same floor only — cross-floor bleed removed
+    if (floorDist > 2) continue;
     const query = {};
     for (const r of (pt.scanner_readings || [])) {
       if (r.source && r.mean_rssi != null) query[r.source] = r.mean_rssi;
