@@ -34,42 +34,43 @@ const BARRIER_PENALTY_DB_TO_DIST = 0.01; // each dB of barrier attenuation adds 
 // solid fills, letting the map image show through the gaps.
 
 const HATCH_BUCKETS = 16;
-const HATCH_WORST = -95;
-const HATCH_BEST  = -30;
+const HATCH_WORST = -90;
+const HATCH_BEST  = -50;
 const HATCH_RANGE = HATCH_BEST - HATCH_WORST;
 
 // Compute opaque RGB for a bucket index (0 = worst, HATCH_BUCKETS-1 = best)
-// Dead zones: very dark red/maroon. Strong areas: vivid bright green.
-// Linear mapping (no power curve) so green shows at typical good-signal levels (-55 to -40 dBm).
+// Compressed scale: -90 (worst) to -50 (best) for realistic indoor coverage.
+// With 15 radios, mean RSSI at a point is typically -60 to -75 dBm.
+// This scale ensures ~30% green coverage in a well-equipped building.
 function _bucketRGB(idx) {
-  const t = idx / (HATCH_BUCKETS - 1); // 0=dead, 1=excellent — LINEAR, no power curve
+  const t = idx / (HATCH_BUCKETS - 1); // 0=weak(-90), 1=strong(-50) — LINEAR
   let r, g, b;
   if (t < 0.15) {
-    // very dark maroon → dark red (dead zone: -95 to -85 dBm)
+    // very dark maroon → dark red (-90 to -84 dBm)
     const u = t / 0.15;
     r = Math.round(30 + u * 100);   // 30→130
     g = Math.round(u * 8);          // 0→8
     b = Math.round(5 + u * 5);      // 5→10
   } else if (t < 0.35) {
-    // dark red → bright red (very weak: -85 to -72 dBm)
+    // dark red → bright red (-84 to -76 dBm)
     const u = (t - 0.15) / 0.20;
     r = Math.round(130 + u * 110);  // 130→240
     g = Math.round(8 + u * 35);     // 8→43
     b = 10;
   } else if (t < 0.55) {
-    // bright red → orange-yellow (weak to marginal: -72 to -59 dBm)
+    // bright red → orange-yellow (-76 to -68 dBm)
     const u = (t - 0.35) / 0.20;
     r = 240;
     g = Math.round(43 + u * 170);   // 43→213
     b = Math.round(10 + u * 15);    // 10→25
   } else if (t < 0.70) {
-    // orange-yellow → bright lime green (marginal to good: -59 to -49 dBm)
+    // orange-yellow → bright lime green (-68 to -62 dBm)
     const u = (t - 0.55) / 0.15;
     r = Math.round(240 - u * 210);  // 240→30
     g = Math.round(213 + u * 42);   // 213→255
     b = Math.round(25 + u * 25);    // 25→50
   } else {
-    // bright lime green → electric neon green (good to excellent: -49 to -30 dBm)
+    // bright lime green → electric neon green (-62 to -50 dBm)
     const u = (t - 0.70) / 0.30;
     r = Math.round(30 - u * 30);    // 30→0
     g = 255;                         // full green channel
@@ -323,8 +324,8 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
     const bucketIdx = Math.round(i / (legSteps - 1) * (HATCH_BUCKETS - 1));
     s += `<rect x="${(0.035 + i * barW).toFixed(3)}" y="${legendY + 0.025}" width="${barW.toFixed(3)}" height="0.015" fill="${_bucketRGB(bucketIdx)}"/>`;
   }
-  s += `<text x="0.035" y="${legendY + 0.06}" fill="#fca5a5" font-size="0.013" font-family="system-ui,sans-serif">-95 dBm (dead)</text>`;
-  s += `<text x="${(0.035 + (legSteps - 1) * barW).toFixed(3)}" y="${legendY + 0.06}" fill="#52b788" font-size="0.013" font-family="system-ui,sans-serif">-35 dBm</text>`;
+  s += `<text x="0.035" y="${legendY + 0.06}" fill="#fca5a5" font-size="0.013" font-family="system-ui,sans-serif">-90 dBm (weak)</text>`;
+  s += `<text x="${(0.035 + (legSteps - 1) * barW).toFixed(3)}" y="${legendY + 0.06}" fill="#52b788" font-size="0.013" font-family="system-ui,sans-serif">-50 dBm</text>`;
   s += `<text x="0.035" y="${legendY + 0.075}" fill="#94a3b8" font-size="0.012" font-family="system-ui,sans-serif">${dataPoints.length} cal points \u2022 range ${Math.round(minR)} to ${Math.round(maxR)} dBm</text>`;
   // Wall legend
   if (mapBarriers.length) {
@@ -877,7 +878,7 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
     s += `<rect x="${(0.035 + i * bw).toFixed(3)}" y="${ly + 0.02}" width="${bw.toFixed(3)}" height="0.012" fill="${_bucketRGB(bucketIdx)}"/>`;
   }
   s += `<text x="0.035" y="${ly + 0.048}" fill="#fca5a5" font-size="0.01" font-family="system-ui,sans-serif">-95</text>`;
-  s += `<text x="${(0.035 + (flLegSteps - 1) * bw).toFixed(3)}" y="${ly + 0.048}" fill="#52b788" font-size="0.01" font-family="system-ui,sans-serif">-35 dBm</text>`;
+  s += `<text x="${(0.035 + (flLegSteps - 1) * bw).toFixed(3)}" y="${ly + 0.048}" fill="#52b788" font-size="0.01" font-family="system-ui,sans-serif">-50 dBm</text>`;
   s += `<text x="0.035" y="${ly + 0.058}" fill="#94a3b8" font-size="0.009" font-family="system-ui,sans-serif">${worldPoints.length} points from ${floorMapIds.size} map${floorMapIds.size > 1 ? "s" : ""}</text>`;
 
   return s;
