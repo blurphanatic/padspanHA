@@ -1447,43 +1447,110 @@ function _settingsPresence(ctx, el){
   const savedOffsets = settings.scanner_offsets || {};
   const radios = (ctx.state.live?.snapshot?.ble?.radios) || [];
   if(radios.length){
+    // ── Auto-offset mode selector ──
+    const autoMode = settings.auto_offset_mode || "partial";
+    const autoModeRow = el("div",{style:"display:flex;align-items:center;gap:10px;margin-bottom:12px"});
+    autoModeRow.appendChild(el("span",{style:"font-size:12px;color:#94a3b8"},"Auto-Offset:"));
+    for (const [val, label, desc] of [
+      ["off", "Off", "No automatic correction"],
+      ["partial", "Partial", "50% correction — recommended default"],
+      ["full", "Full", "100% correction to fleet median"],
+    ]) {
+      const btn = el("button",{class:"btn inline",style:
+        autoMode === val
+          ? "font-size:11px;padding:3px 10px;background:#0a2a1a;border-color:#52b788;color:#52b788;font-weight:700"
+          : "font-size:11px;padding:3px 10px;color:#94a3b8"
+      }, label);
+      btn.title = desc;
+      btn.addEventListener("click", async () => {
+        try {
+          await ctx.actions.settingsSet({ auto_offset_mode: val });
+          ctx.toast(`Auto-offset: ${label}`);
+          ctx.actions.renderRooms();
+        } catch(e) { ctx.toast("Failed to save", true); }
+      });
+      autoModeRow.appendChild(btn);
+    }
+
+    // ── Compute auto-offsets from live advertisement data ──
+    // Uses MEDIAN RSSI per scanner (robust to outliers from distant devices).
+    // Remote scanners naturally see weaker signals — that's geography, not hardware.
+    // To avoid penalizing remote scanners, we only compare each scanner's median
+    // to the DEVICE-LEVEL mean: for each device, average across its reporting
+    // scanners, then compare each scanner's reading to that average.
+    const ads = (ctx.state.live?.snapshot?.ble?.advertisements) || [];
+    const scannerMedians = {};
+    const scannerRssis = {};
+    for (const ad of ads) {
+      if (!ad.source || ad.rssi == null || (ad.age_s || 0) > 30) continue;
+      if (!scannerRssis[ad.source]) scannerRssis[ad.source] = [];
+      scannerRssis[ad.source].push(ad.rssi);
+    }
+    // Median per scanner
+    for (const [src, vals] of Object.entries(scannerRssis)) {
+      vals.sort((a, b) => a - b);
+      scannerMedians[src] = vals[Math.floor(vals.length / 2)];
+    }
+    // Fleet median (median of medians)
+    const medVals = Object.values(scannerMedians);
+    medVals.sort((a, b) => a - b);
+    const fleetMedian = medVals.length ? medVals[Math.floor(medVals.length / 2)] : -70;
+
+    // Auto-offset = fleet_median - scanner_median (positive = scanner reads weaker, boost it)
+    // Partial = 50% of the full offset
+    const autoScale = autoMode === "full" ? 1.0 : autoMode === "partial" ? 0.5 : 0;
+
     const offsetRows = el("div",{style:"display:flex;flex-direction:column;gap:8px;margin-top:8px"});
     for(const radio of radios){
       const src = radio.source || radio.name || "";
       if(!src) continue;
-      const currentOffset = savedOffsets[src] != null ? Number(savedOffsets[src]) : 0;
-      const offInp = el("input",{type:"number",min:"-20",max:"20",step:"0.5",value:String(currentOffset),style:inpStyle});
+      const manualOffset = savedOffsets[src] != null ? Number(savedOffsets[src]) : 0;
+      const scanMed = scannerMedians[src];
+      const autoOff = (scanMed != null && autoScale > 0) ? Math.round((fleetMedian - scanMed) * autoScale * 10) / 10 : 0;
+      const effectiveOff = manualOffset + autoOff;
+      const friendlyName = radio.name && radio.name !== src ? radio.name : "";
+
+      const offInp = el("input",{type:"number",min:"-20",max:"20",step:"0.5",value:String(manualOffset),style:inpStyle});
       const offSaveBtn = el("button",{class:"btn inline"},"Save");
       offSaveBtn.addEventListener("click", async()=>{
         const v = Math.max(-20, Math.min(20, parseFloat(offInp.value)||0));
         try {
           await ctx.actions.scannerOffsetSet(src, v);
-          const _toastName = friendlyName || src;
-          ctx.toast(`${_toastName}: offset set to ${v>0?"+":""}${v} dB`);
+          ctx.toast(`${friendlyName || src}: manual offset set to ${v>0?"+":""}${v} dB`);
         } catch(e){ ctx.toast("Failed to save offset", true); }
       });
-      const friendlyName = radio.name && radio.name !== src ? radio.name : "";
+
+      const autoLabel = autoOff !== 0
+        ? el("span",{style:`font-size:10px;color:${autoOff > 0 ? "#52b788" : "#f59e0b"}`}, `auto: ${autoOff > 0?"+":""}${autoOff.toFixed(1)}`)
+        : el("span",{style:"font-size:10px;color:#64748b"}, "auto: 0");
+      const medLabel = scanMed != null
+        ? el("span",{style:"font-size:10px;color:#64748b"}, `med: ${scanMed}dBm`)
+        : null;
+
       offsetRows.appendChild(el("div",{style:rowStyle},[
-        el("div",{style:"min-width:180px;overflow:hidden;text-overflow:ellipsis"},[
+        el("div",{style:"min-width:160px;overflow:hidden;text-overflow:ellipsis"},[
           friendlyName ? el("div",{style:"font-size:12px;color:#a7f3d0;font-weight:600"},friendlyName) : null,
-          el("div",{style:"font-size:11px;color:#94a3b8;font-family:monospace"},src),
+          el("div",{style:"font-size:10px;color:#94a3b8;font-family:monospace"},src.substring(0,30)),
         ].filter(Boolean)),
         offInp,
-        el("div",{class:"muted",style:"font-size:12px"},"dB"),
+        el("div",{class:"muted",style:"font-size:11px"},"dB"),
         offSaveBtn,
-      ]));
+        autoLabel,
+        medLabel,
+      ].filter(Boolean)));
     }
     wrap.appendChild(el("div",{class:"card"},[
       el("div",{class:"h2"},"Scanner RSSI Offsets"),
       el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
-        "Trim the reported signal strength of a specific scanner by a fixed dB amount. " +
-        "Normally not needed — walk-around calibration handles hardware variation automatically. " +
-        "Only adjust if a scanner reads consistently high or low despite good calibration coverage."
+        "Auto-offset normalizes scanner hardware differences using live median RSSI. " +
+        "Partial (default) applies 50% correction — enough to smooth hardware variation without overcorrecting. " +
+        "Remote scanners are NOT penalized — they naturally see weaker signals due to distance, not hardware."
       ),
+      autoModeRow,
       offsetRows,
       el("div",{class:"muted",style:"font-size:11px;margin-top:8px"},
-        "Range: −20 to +20 dB. Positive = scanner reads weaker than reality (boost it). " +
-        "Negative = scanner reads stronger than reality (attenuate it). Set to 0 to remove offset."
+        `Fleet median: ${fleetMedian} dBm \u2022 Manual range: \u221220 to +20 dB \u2022 ` +
+        "Auto + manual offsets stack. Set manual to 0 to use auto only."
       ),
     ]));
   }

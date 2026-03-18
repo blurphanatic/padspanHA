@@ -2584,6 +2584,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("heatmap_gain"): vol.Coerce(int),
         vol.Optional("heatmap_contrast"): vol.Coerce(int),
         vol.Optional("distortion_intensity"): vol.Coerce(int),
+        vol.Optional("auto_offset_mode"): str,
     }
 )
 @websocket_api.async_response
@@ -2665,6 +2666,9 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["heatmap_contrast"] = max(-15, min(15, int(msg["heatmap_contrast"])))
         if "distortion_intensity" in msg:
             payload["distortion_intensity"] = max(0, min(100, int(msg["distortion_intensity"])))
+        if "auto_offset_mode" in msg:
+            mode = str(msg["auto_offset_mode"]).strip().lower()
+            payload["auto_offset_mode"] = mode if mode in ("off", "partial", "full") else "partial"
         if "scanner_offsets" in msg:
             raw = msg["scanner_offsets"]
             if isinstance(raw, dict):
