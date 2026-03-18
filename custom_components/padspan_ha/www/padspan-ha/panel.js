@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.14.93";
-const BUILD_ID = "20260318T183217Z";
+const APP_VERSION = "0.14.94";
+const BUILD_ID = "20260318T183515Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -2196,7 +2196,7 @@ class PadSpanHaApp extends HTMLElement {
         const pct = Math.max(0, Math.min(100, ((rssi ?? -100) + 100) / 60 * 100));
         const bar = el("div", {style:`width:${pct.toFixed(0)}%;height:5px;background:#52b788;border-radius:2px`});
         const barWrap = el("div", {style:"width:60px;background:#1a2e1e;border-radius:2px"}, bar);
-        const ageTxt = d.srcAge != null ? fmtAgo(d.srcAge) : "";
+        const ageTxt = d.srcAge != null ? (()=>{ const s=Math.round(Number(d.srcAge)); if(s<60) return s+"s"; const m=Math.floor(s/60); if(m<60) return m+"m"; return Math.floor(m/60)+"h"; })() : "";
         const dRow = el("div", {style:"display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #0d1f12"}, [
           el("div", {style:"flex:1"}, [
             el("div", {style:"font-weight:600"}, dName),
