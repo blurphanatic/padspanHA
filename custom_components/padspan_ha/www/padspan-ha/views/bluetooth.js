@@ -1260,46 +1260,53 @@ function renderVisualization(ctx, radios, ads, objIndex) {
 
   s += `</svg>`;
 
+  // ── Render SVG + HTML click overlay ─────────────────────────────────────
+  // SVG click handlers are unreliable in HA WebViews due to namespace issues.
+  // Solution: position invisible HTML divs on top of each clickable area.
+  // HTML click handlers work 100% reliably in all environments.
   const svgWrap = document.createElement("div");
+  svgWrap.style.position = "relative";
   svgWrap.innerHTML = s;
 
-  // ── Click handlers via exhaustive DOM scan ─────────────────────────────────
-  // Walk ALL elements in the SVG, check every element for data-vs / data-vd
-  // using multiple access methods. This handles HTML-namespace SVG elements,
-  // SVGAnimatedString returns, and any other WebView quirks.
-  function _walkAndAttach(root) {
-    const stack = [root];
-    while (stack.length) {
-      const node = stack.pop();
-      if (node.nodeType !== 1) continue; // elements only
-      // Try every way to read the attribute
-      let vs = null, vd = null;
-      try { vs = node.getAttribute("data-vs"); } catch(_){}
-      if (vs == null && node.dataset) try { vs = node.dataset.vs; } catch(_){}
-      try { vd = node.getAttribute("data-vd"); } catch(_){}
-      if (vd == null && node.dataset) try { vd = node.dataset.vd; } catch(_){}
-      // Coerce SVGAnimatedString to string
-      if (vs && typeof vs === "object" && vs.baseVal != null) vs = vs.baseVal;
-      if (vd && typeof vd === "object" && vd.baseVal != null) vd = vd.baseVal;
-      if (vs != null && vs !== "") {
-        const idx = parseInt(String(vs), 10);
-        if (!isNaN(idx) && _scannerClicks[idx]) {
-          node.style.cursor = "pointer";
-          node.addEventListener("click", (e) => { e.stopPropagation(); _scannerClicks[idx](); });
-        }
-      }
-      if (vd != null && vd !== "") {
-        const idx = parseInt(String(vd), 10);
-        if (!isNaN(idx) && _deviceClicks[idx]) {
-          node.style.cursor = "pointer";
-          node.addEventListener("click", (e) => { e.stopPropagation(); _deviceClicks[idx](); });
-        }
-      }
-      // Push children (in reverse so we process in document order)
-      for (let i = node.childNodes.length - 1; i >= 0; i--) stack.push(node.childNodes[i]);
+  // Get the SVG's rendered size to compute click target positions
+  const svgEl = svgWrap.querySelector("svg");
+  const svgW = w; // SVG viewBox width
+  const svgH = h; // SVG viewBox height
+
+  // Create click overlay container (positioned over the SVG)
+  const clickOverlay = document.createElement("div");
+  clickOverlay.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:2`;
+
+  // Helper: create an HTML click target at SVG coordinates
+  function _makeClickTarget(cx, cy, width, height, callback) {
+    const div = document.createElement("div");
+    // Convert SVG coords to percentage positions
+    const leftPct = ((cx - width/2) / svgW * 100).toFixed(2);
+    const topPct = ((cy - height/2) / svgH * 100).toFixed(2);
+    const wPct = (width / svgW * 100).toFixed(2);
+    const hPct = (height / svgH * 100).toFixed(2);
+    div.style.cssText = `position:absolute;left:${leftPct}%;top:${topPct}%;width:${wPct}%;height:${hPct}%;cursor:pointer;pointer-events:all`;
+    div.addEventListener("click", (e) => { e.stopPropagation(); callback(); });
+    return div;
+  }
+
+  // Scanner click targets (left column)
+  for (let si = 0; si < scannerNodes.length; si++) {
+    const sn = scannerNodes[si];
+    if (_scannerClicks[si]) {
+      clickOverlay.appendChild(_makeClickTarget(sn.x - 140, sn.y, 300, 22, _scannerClicks[si]));
     }
   }
-  _walkAndAttach(svgWrap);
+
+  // Device click targets (right column)
+  for (let di = 0; di < deviceNodes.length; di++) {
+    const d = deviceNodes[di];
+    if (_deviceClicks[di]) {
+      clickOverlay.appendChild(_makeClickTarget(d.x + 140, d.y, 300, 18, _deviceClicks[di]));
+    }
+  }
+
+  svgWrap.appendChild(clickOverlay);
 
   return el("div", { class: "card" }, [
     el("div", { class: "h2" }, "Visualization"),

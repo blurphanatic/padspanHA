@@ -41,14 +41,32 @@ let HATCH_WORST = -85;
 let HATCH_BEST  = -55;
 let HATCH_RANGE = HATCH_BEST - HATCH_WORST;
 
-/** Call before generating hatch defs/cells to set the data-adaptive range. */
-export function setHatchRange(worst, best) {
-  // Add 5% padding so extremes aren't right at the edge
+/**
+ * Set the data-adaptive range for heatmap colors.
+ * @param {number} worst - weakest RSSI in data
+ * @param {number} best - strongest RSSI in data
+ * @param {number} gain - user gain offset in dBm (shifts entire scale, default 0)
+ * @param {number} contrast - user contrast offset (widens range when negative, narrows when positive, default 0)
+ */
+export function setHatchRange(worst, best, gain, contrast) {
+  const g = gain || 0;
+  const c = contrast || 0;
+  // Gain: shifts both endpoints (positive = more green, negative = more red)
+  // Contrast: positive = narrower range (more extreme colors), negative = wider range (more muted)
   const pad = Math.max(2, (best - worst) * 0.05);
-  HATCH_WORST = worst - pad;
-  HATCH_BEST = best + pad;
+  HATCH_WORST = worst - pad + g - c;
+  HATCH_BEST = best + pad + g + c;
   HATCH_RANGE = HATCH_BEST - HATCH_WORST;
-  if (HATCH_RANGE < 5) { HATCH_WORST = best - 20; HATCH_RANGE = HATCH_BEST - HATCH_WORST; }
+  if (HATCH_RANGE < 5) { HATCH_WORST = HATCH_BEST - 20; HATCH_RANGE = HATCH_BEST - HATCH_WORST; }
+}
+
+// User gain/contrast stored module-level so all renderers pick them up
+let _userGain = 0;
+let _userContrast = 0;
+/** Set user gain/contrast before rendering. Called from overview.js. */
+export function setUserGainContrast(gain, contrast) {
+  _userGain = gain || 0;
+  _userContrast = contrast || 0;
 }
 
 // Compute opaque RGB for a bucket index (0 = worst, HATCH_BUCKETS-1 = best)
@@ -288,7 +306,7 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
   const allRssi = dataPoints.map(p => p.rssi);
   const minR = Math.min(...allRssi);
   const maxR = Math.max(...allRssi);
-  setHatchRange(minR, maxR);
+  setHatchRange(minR, maxR, _userGain, _userContrast);
   const mapBarriers = (barriers || []);
 
   // Build interpolation grid with barrier-aware IDW + 45° crosshatch patterns
@@ -592,7 +610,7 @@ export function computeHeatmapGrid(calPoints, mapId, scannerSource, barriers) {
   const allRssi = dataPoints.map(p => p.rssi);
   const minR = Math.min(...allRssi);
   const maxR = Math.max(...allRssi);
-  setHatchRange(minR, maxR);
+  setHatchRange(minR, maxR, _userGain, _userContrast);
   const res = ISO_GRID;
   const cellW = 1.0 / res;
   const grid = new Float32Array(res * res);
@@ -717,7 +735,7 @@ export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) 
 
   // Data-adaptive color range
   const _wpRssis = worldPoints.map(p => p.rssi);
-  setHatchRange(Math.min(..._wpRssis), Math.max(..._wpRssis));
+  setHatchRange(Math.min(..._wpRssis), Math.max(..._wpRssis), _userGain, _userContrast);
 
   // 2. Collect barriers from all maps → world coords
   const worldBarriers = [];
@@ -848,7 +866,7 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
 
   // Data-adaptive color range
   const _lvlRssis = worldPoints.map(p => p.rssi);
-  setHatchRange(Math.min(..._lvlRssis), Math.max(..._lvlRssis));
+  setHatchRange(Math.min(..._lvlRssis), Math.max(..._lvlRssis), _userGain, _userContrast);
 
   // ── 2. Collect all barriers from all floor maps, transform to world coords ──
   const worldBarriers = [];

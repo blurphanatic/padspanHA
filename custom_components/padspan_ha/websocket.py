@@ -2581,6 +2581,8 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("distortion_map_enabled"): bool,
         vol.Optional("compass_ring_enabled"): bool,
         vol.Optional("replay_timeline_enabled"): bool,
+        vol.Optional("heatmap_gain"): vol.Coerce(int),
+        vol.Optional("heatmap_contrast"): vol.Coerce(int),
     }
 )
 @websocket_api.async_response
@@ -2656,6 +2658,10 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["lights_hidden"] = [str(x) for x in ids if isinstance(x, str)] if isinstance(ids, list) else []
         if "ble_max_age_s" in msg:
             payload["ble_max_age_s"] = max(30, min(14400, int(msg["ble_max_age_s"])))
+        if "heatmap_gain" in msg:
+            payload["heatmap_gain"] = max(-20, min(20, int(msg["heatmap_gain"])))
+        if "heatmap_contrast" in msg:
+            payload["heatmap_contrast"] = max(-15, min(15, int(msg["heatmap_contrast"])))
         if "scanner_offsets" in msg:
             raw = msg["scanner_offsets"]
             if isinstance(raw, dict):

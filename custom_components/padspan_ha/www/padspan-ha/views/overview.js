@@ -761,10 +761,11 @@ export function render(ctx){
       }
 
       // ── Radio Map heatmap layer ─────────────────────────────────────────
-      // Always use world-space floor heatmap — even single-map floors benefit
-      // from the unified interpolation (consistent coordinate system, barrier
-      // merging, and data from all maps on the floor contributes).
       if (F.radioMap && _radioMapMod && _calPoints && _calPoints.length && _radioMapMod.floorHeatmapSVG) {
+        // Apply user gain/contrast before rendering
+        if (_radioMapMod.setUserGainContrast) {
+          _radioMapMod.setUserGainContrast(ctx.state._heatGain || ctx.state.settings?.heatmap_gain || 0, ctx.state._heatContrast || ctx.state.settings?.heatmap_contrast || 0);
+        }
         const floorSvg = _radioMapMod.floorHeatmapSVG(_calPoints, renderMaps, _mapPts, w2v, wBB, _radioMapScanner, visible);
         if (floorSvg) s += floorSvg;
       }
@@ -995,6 +996,82 @@ export function render(ctx){
       _updateScannerBar();
     }
     outer.appendChild(scannerBar);
+
+    // ── Heatmap Gain & Contrast sliders ──────────────────────────────────
+    const heatCtrlBar = document.createElement("div");
+    heatCtrlBar.style.cssText = "display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;padding:6px 10px;background:#0a1a12;border:1px solid #1a4228;border-radius:8px";
+    if (_radioMapOn) {
+      // Initialize from settings or defaults
+      const _hGain = ctx.state.settings?.heatmap_gain ?? 0;
+      const _hContrast = ctx.state.settings?.heatmap_contrast ?? 0;
+
+      const gainSlider = document.createElement("input");
+      gainSlider.type = "range"; gainSlider.min = "-20"; gainSlider.max = "20"; gainSlider.step = "1";
+      gainSlider.value = String(_hGain);
+      gainSlider.style.cssText = "width:100px;accent-color:#e879f9";
+      const gainLbl = document.createElement("span");
+      gainLbl.style.cssText = "font-size:10px;color:#d8b4fe;min-width:55px";
+      gainLbl.textContent = `Gain: ${_hGain > 0 ? "+" : ""}${_hGain} dB`;
+
+      const contrastSlider = document.createElement("input");
+      contrastSlider.type = "range"; contrastSlider.min = "-15"; contrastSlider.max = "15"; contrastSlider.step = "1";
+      contrastSlider.value = String(_hContrast);
+      contrastSlider.style.cssText = "width:100px;accent-color:#e879f9";
+      const contrastLbl = document.createElement("span");
+      contrastLbl.style.cssText = "font-size:10px;color:#d8b4fe;min-width:75px";
+      contrastLbl.textContent = `Contrast: ${_hContrast > 0 ? "+" : ""}${_hContrast}`;
+
+      const saveBtn = document.createElement("button");
+      saveBtn.className = "btn inline";
+      saveBtn.style.cssText = "font-size:10px;padding:2px 8px;color:#52b788;border-color:#2d6a4f";
+      saveBtn.textContent = "Save";
+      saveBtn.addEventListener("click", async () => {
+        try {
+          await ctx.actions.settingsSet({
+            heatmap_gain: parseInt(gainSlider.value, 10),
+            heatmap_contrast: parseInt(contrastSlider.value, 10),
+          });
+          ctx.toast("Heatmap settings saved");
+        } catch(e) { ctx.toast("Failed to save", true); }
+      });
+
+      const _updateHeat = () => {
+        const g = parseInt(gainSlider.value, 10);
+        const c = parseInt(contrastSlider.value, 10);
+        gainLbl.textContent = `Gain: ${g > 0 ? "+" : ""}${g} dB`;
+        contrastLbl.textContent = `Contrast: ${c > 0 ? "+" : ""}${c}`;
+        // Apply gain/contrast to the heatmap module
+        if (_radioMapMod && _radioMapMod.setHatchRange) {
+          // Store in state for buildSVG to use
+          ctx.state._heatGain = g;
+          ctx.state._heatContrast = c;
+          svgDiv.innerHTML = buildSVG();
+        }
+      };
+      gainSlider.addEventListener("input", _updateHeat);
+      contrastSlider.addEventListener("input", _updateHeat);
+
+      heatCtrlBar.appendChild(document.createTextNode(""));
+      heatCtrlBar.append(
+        gainLbl, gainSlider,
+        contrastLbl, contrastSlider,
+        saveBtn,
+      );
+
+      // Show/hide with radio map toggle
+      const origUpdateScanner = _updateScannerBar;
+      if (origUpdateScanner) {
+        const wrappedUpdate = () => {
+          origUpdateScanner();
+          heatCtrlBar.style.display = F.radioMap ? "flex" : "none";
+        };
+        _updateScannerBar = wrappedUpdate;
+        wrappedUpdate();
+      } else {
+        heatCtrlBar.style.display = F.radioMap ? "flex" : "none";
+      }
+    }
+    outer.appendChild(heatCtrlBar);
 
     // Floor / Map selector (only if multiple visible maps)
     if(multiFloor){
@@ -1594,8 +1671,10 @@ export function render(ctx){
         if(lidx !== 1){ s += `<polygon points="${pts([TL,TR,BR,BL])}" fill="url(#flrpat_${lidx})" stroke="none"/>`; }
 
         // ── Radio Map heatmap layer (3D isometric, behind room polygons) ──
-        // Unified world-space heatmap per z-level — merges all maps, no stacking
         if (_isoRadioMapOn && _isoRadioMapMod && calPoints.length && ctx.state._overviewShowHeatmap) {
+          if (_isoRadioMapMod.setUserGainContrast) {
+            _isoRadioMapMod.setUserGainContrast(ctx.state._heatGain || ctx.state.settings?.heatmap_gain || 0, ctx.state._heatContrast || ctx.state.settings?.heatmap_contrast || 0);
+          }
           if (_isoRadioMapMod.isoLevelHeatmapSVG) {
             s += _isoRadioMapMod.isoLevelHeatmapSVG(calPoints, group, mapTransforms, iso, z);
           }
