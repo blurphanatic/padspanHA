@@ -1691,8 +1691,14 @@ export function render(ctx){
         }
 
         // ── Distortion Map (3D isometric, behind room polygons) ──
-        const _isoDistortionOn = !!(ctx.state.settings && ctx.state.settings.distortion_map_enabled);
-        if (_isoDistortionOn && _isoRadioMapMod && calPoints.length && ctx.state._overviewShowDistortion) {
+        const _isoDistortionOn2 = !!(ctx.state.settings && ctx.state.settings.distortion_map_enabled);
+        if (_isoDistortionOn2 && _isoRadioMapMod && calPoints.length && ctx.state._overviewShowDistortion) {
+          if (_isoRadioMapMod.setUserGainContrast) {
+            _isoRadioMapMod.setUserGainContrast(ctx.state._heatGain || ctx.state.settings?.heatmap_gain || 0, ctx.state._heatContrast || ctx.state.settings?.heatmap_contrast || 0);
+          }
+          if (_isoRadioMapMod.setDistortionIntensity) {
+            _isoRadioMapMod.setDistortionIntensity(ctx.state._distIntensity ?? ctx.state.settings?.distortion_intensity ?? 50);
+          }
           if (_isoRadioMapMod.isoDistortionSVG) {
             s += _isoRadioMapMod.isoDistortionSVG(calPoints, group, mapTransforms, iso, z);
           }
@@ -2339,29 +2345,28 @@ export function render(ctx){
 
     outer.appendChild(ctrlRow);
 
-    // ── 3D Heatmap Gain & Contrast sliders ───────────────────────────────
-    if (_isoRadioMapOn) {
-      const isoHeatCtrl = document.createElement("div");
-      isoHeatCtrl.style.cssText = "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;padding:6px 10px;background:#0a1a12;border:1px solid #1a4228;border-radius:8px";
+    // ── Overlay controls: Gain, Contrast, Distortion Intensity, Save ──────
+    // Shared bar for both heatmap and distortion — visible when either is active
+    if (_isoRadioMapOn || _isoDistortionOn) {
+      const isoOverlayCtrl = document.createElement("div");
+      isoOverlayCtrl.style.cssText = (ctx.state._overviewShowHeatmap || ctx.state._overviewShowDistortion)
+        ? "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;padding:6px 10px;background:#0a1a12;border:1px solid #1a4228;border-radius:8px"
+        : "display:none";
 
-      const _isoG = ctx.state.settings?.heatmap_gain ?? 0;
-      const _isoC = ctx.state.settings?.heatmap_contrast ?? 0;
+      const _mkSlider = (label, min, max, value, color, width) => {
+        const lbl = document.createElement("span");
+        lbl.style.cssText = `font-size:10px;color:${color};min-width:${width}px`;
+        lbl.textContent = label;
+        const sl = document.createElement("input");
+        sl.type = "range"; sl.min = String(min); sl.max = String(max); sl.step = "1";
+        sl.value = String(value);
+        sl.style.cssText = `width:80px;accent-color:${color}`;
+        return { lbl, sl };
+      };
 
-      const iGainSlider = document.createElement("input");
-      iGainSlider.type = "range"; iGainSlider.min = "-20"; iGainSlider.max = "20"; iGainSlider.step = "1";
-      iGainSlider.value = String(ctx.state._heatGain ?? _isoG);
-      iGainSlider.style.cssText = "width:90px;accent-color:#a855f7";
-      const iGainLbl = document.createElement("span");
-      iGainLbl.style.cssText = "font-size:10px;color:#d8b4fe;min-width:50px";
-      iGainLbl.textContent = `Gain: ${iGainSlider.value > 0 ? "+" : ""}${iGainSlider.value}`;
-
-      const iContSlider = document.createElement("input");
-      iContSlider.type = "range"; iContSlider.min = "-15"; iContSlider.max = "15"; iContSlider.step = "1";
-      iContSlider.value = String(ctx.state._heatContrast ?? _isoC);
-      iContSlider.style.cssText = "width:90px;accent-color:#a855f7";
-      const iContLbl = document.createElement("span");
-      iContLbl.style.cssText = "font-size:10px;color:#d8b4fe;min-width:65px";
-      iContLbl.textContent = `Contrast: ${iContSlider.value > 0 ? "+" : ""}${iContSlider.value}`;
+      const g = _mkSlider(`Gain: ${ctx.state._heatGain ?? ctx.state.settings?.heatmap_gain ?? 0}`, -20, 20, ctx.state._heatGain ?? ctx.state.settings?.heatmap_gain ?? 0, "#d8b4fe", 50);
+      const c = _mkSlider(`Contrast: ${ctx.state._heatContrast ?? ctx.state.settings?.heatmap_contrast ?? 0}`, -15, 15, ctx.state._heatContrast ?? ctx.state.settings?.heatmap_contrast ?? 0, "#d8b4fe", 65);
+      const d = _mkSlider(`Warp: ${ctx.state._distIntensity ?? ctx.state.settings?.distortion_intensity ?? 50}%`, 0, 100, ctx.state._distIntensity ?? ctx.state.settings?.distortion_intensity ?? 50, "#fdba74", 55);
 
       const iSaveBtn = document.createElement("button");
       iSaveBtn.className = "btn inline";
@@ -2369,27 +2374,36 @@ export function render(ctx){
       iSaveBtn.textContent = "Save";
       iSaveBtn.addEventListener("click", async () => {
         try {
-          await ctx.actions.settingsSet({ heatmap_gain: parseInt(iGainSlider.value, 10), heatmap_contrast: parseInt(iContSlider.value, 10) });
-          ctx.toast("Heatmap settings saved");
+          await ctx.actions.settingsSet({
+            heatmap_gain: parseInt(g.sl.value, 10),
+            heatmap_contrast: parseInt(c.sl.value, 10),
+            distortion_intensity: parseInt(d.sl.value, 10),
+          });
+          ctx.toast("Overlay settings saved");
         } catch(e) { ctx.toast("Failed to save", true); }
       });
 
-      const _isoHeatUpdate = () => {
-        const g = parseInt(iGainSlider.value, 10), c = parseInt(iContSlider.value, 10);
-        iGainLbl.textContent = `Gain: ${g > 0 ? "+" : ""}${g}`;
-        iContLbl.textContent = `Contrast: ${c > 0 ? "+" : ""}${c}`;
-        ctx.state._heatGain = g;
-        ctx.state._heatContrast = c;
+      const _isoOverlayUpdate = () => {
+        const gv = parseInt(g.sl.value, 10), cv = parseInt(c.sl.value, 10), dv = parseInt(d.sl.value, 10);
+        g.lbl.textContent = `Gain: ${gv > 0 ? "+" : ""}${gv}`;
+        c.lbl.textContent = `Contrast: ${cv > 0 ? "+" : ""}${cv}`;
+        d.lbl.textContent = `Warp: ${dv}%`;
+        ctx.state._heatGain = gv;
+        ctx.state._heatContrast = cv;
+        ctx.state._distIntensity = dv;
+        // Apply to radio_map module
+        if (_isoRadioMapMod) {
+          if (_isoRadioMapMod.setUserGainContrast) _isoRadioMapMod.setUserGainContrast(gv, cv);
+          if (_isoRadioMapMod.setDistortionIntensity) _isoRadioMapMod.setDistortionIntensity(dv);
+        }
         isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
       };
-      iGainSlider.addEventListener("input", _isoHeatUpdate);
-      iContSlider.addEventListener("input", _isoHeatUpdate);
+      g.sl.addEventListener("input", _isoOverlayUpdate);
+      c.sl.addEventListener("input", _isoOverlayUpdate);
+      d.sl.addEventListener("input", _isoOverlayUpdate);
 
-      isoHeatCtrl.append(iGainLbl, iGainSlider, iContLbl, iContSlider, iSaveBtn);
-      outer.appendChild(isoHeatCtrl);
-
-      // Show/hide when heatmap toggle changes — use state check on re-render
-      // (the heatmap button triggers a full SVG rebuild which re-renders this view)
+      isoOverlayCtrl.append(g.lbl, g.sl, c.lbl, c.sl, d.lbl, d.sl, iSaveBtn);
+      outer.appendChild(isoOverlayCtrl);
     }
 
     outer.appendChild(isoWrap);

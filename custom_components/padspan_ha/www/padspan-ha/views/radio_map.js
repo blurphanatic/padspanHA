@@ -976,7 +976,11 @@ export function getFloorScanners(calPoints, floorMapIds) {
 // same heatmap colors as the radio map. Distorted cells show where the system
 // confuses physical space.
 
-const DISTORTION_GRID = 20; // 20x20 grid — regular square cells, no deformation
+const DISTORTION_GRID = 20; // 20x20 deformation grid
+
+// Distortion intensity: 0 = no warp (regular grid), 100 = full warp. User-adjustable.
+let _distortionIntensity = 50; // default 50%
+export function setDistortionIntensity(v) { _distortionIntensity = Math.max(0, Math.min(100, v || 50)); }
 
 /**
  * At a world-space query point, build a synthetic RSSI fingerprint by IDW from
@@ -1022,7 +1026,20 @@ function _predictPosition(qwx, qwy, calWorldPts) {
     pwx += w * p.wx; pwy += w * p.wy; wT += w;
   }
   if (wT < 1e-10) return [qwx, qwy];
-  return [pwx / wT, pwy / wT];
+  let predX = pwx / wT, predY = pwy / wT;
+  // Clamp displacement to prevent wild extrapolation at grid edges.
+  // Max displacement = 20% of the distance to the nearest calibration point.
+  const dists = calWorldPts.map(p => Math.sqrt((qwx - p.wx)**2 + (qwy - p.wy)**2));
+  const nearestDist = Math.min(...dists);
+  const maxDisp = Math.max(nearestDist * 0.3, 0.01);
+  const dx = predX - qwx, dy = predY - qwy;
+  const disp = Math.sqrt(dx * dx + dy * dy);
+  if (disp > maxDisp) {
+    const scale = maxDisp / disp;
+    predX = qwx + dx * scale;
+    predY = qwy + dy * scale;
+  }
+  return [predX, predY];
 }
 
 /**
@@ -1086,7 +1103,7 @@ export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
   }
 
   // Blend: 0.6 = moderate warp (readable but distortion visible)
-  const blend = 0.6;
+  const blend = _distortionIntensity / 100;
   let s = "";
 
   // Horizontal grid lines
@@ -1159,7 +1176,7 @@ export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, all
   const cellW = wW / res, cellH = wH / res;
   const idwPts = calWorldPts.map(p => ({ x_frac: p.wx, y_frac: p.wy, rssi: p.rssi }));
   const fv = v => v.toFixed(5);
-  const blend = 0.6;
+  const blend = _distortionIntensity / 100;
 
   // Build grid with warped positions
   const grid = [];

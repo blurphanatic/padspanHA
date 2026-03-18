@@ -2583,6 +2583,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("replay_timeline_enabled"): bool,
         vol.Optional("heatmap_gain"): vol.Coerce(int),
         vol.Optional("heatmap_contrast"): vol.Coerce(int),
+        vol.Optional("distortion_intensity"): vol.Coerce(int),
     }
 )
 @websocket_api.async_response
@@ -2662,6 +2663,8 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["heatmap_gain"] = max(-20, min(20, int(msg["heatmap_gain"])))
         if "heatmap_contrast" in msg:
             payload["heatmap_contrast"] = max(-15, min(15, int(msg["heatmap_contrast"])))
+        if "distortion_intensity" in msg:
+            payload["distortion_intensity"] = max(0, min(100, int(msg["distortion_intensity"])))
         if "scanner_offsets" in msg:
             raw = msg["scanner_offsets"]
             if isinstance(raw, dict):
