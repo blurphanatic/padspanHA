@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.15.10";
-const BUILD_ID = "20260318T215833Z";
+const APP_VERSION = "0.15.11";
+const BUILD_ID = "20260318T215948Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -2248,6 +2248,9 @@ class PadSpanHaApp extends HTMLElement {
     if(this.state._traceback?.active && this.state.view === "traceback") return;
     // Maps upload/stack/edit tabs have fragile state (file inputs, drag handles)
     if(fromPoll && this.state.view === "maps" && (this.state.mapsTab === "upload" || this.state.mapsTab === "stack" || this.state.mapsTab === "edit")) return;
+    // Overview with heatmap/distortion overlays: skip poll re-renders to prevent flicker.
+    // The overlay is expensive to rebuild and doesn't change between polls.
+    if(fromPoll && this.state.view === "overview" && (this.state._overviewShowHeatmap || this.state._overviewShowDistortion)) return;
     // Skip poll re-renders when the user is actively interacting
     if(fromPoll){
       try {
