@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.15.13";
-const BUILD_ID = "20260318T220427Z";
+const APP_VERSION = "0.15.14";
+const BUILD_ID = "20260318T221215Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -2274,6 +2274,9 @@ class PadSpanHaApp extends HTMLElement {
     // don't make the UI "jump" while the user is reading.
     const selectors = [".rooms",".tags",".list-scroll",".bt-adv-list",".bt-list"];
     const scrollState = [];
+    // Save the main content scroll position
+    let _mainScrollTop = 0;
+    try { _mainScrollTop = this.$content.scrollTop || 0; } catch(e){}
     try {
       for(const sel of selectors){
         const nodes = this.$content.querySelectorAll(sel);
@@ -2375,6 +2378,8 @@ class PadSpanHaApp extends HTMLElement {
       // Restore scroll after DOM paint
       requestAnimationFrame(()=> {
         try {
+          // Restore main content scroll
+          if (_mainScrollTop > 0 && fromPoll) this.$content.scrollTop = _mainScrollTop;
           for(const s of scrollState){
             const nodes = this.$content.querySelectorAll(s.sel);
             const n = nodes && nodes[s.i];
