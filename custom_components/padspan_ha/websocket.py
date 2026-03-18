@@ -156,6 +156,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_notify_services_list)
     websocket_api.async_register_command(hass, ws_notify_test)
     websocket_api.async_register_command(hass, ws_adaptive_status_get)
+    websocket_api.async_register_command(hass, ws_adaptive_fingerprints_get)
     websocket_api.async_register_command(hass, ws_adaptive_reset)
     websocket_api.async_register_command(hass, ws_propagation_health)
     websocket_api.async_register_command(hass, ws_system_critics)
@@ -2584,6 +2585,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("heatmap_gain"): vol.Coerce(int),
         vol.Optional("heatmap_contrast"): vol.Coerce(int),
         vol.Optional("distortion_intensity"): vol.Coerce(int),
+        vol.Optional("heatmap_source"): vol.Coerce(int),
         vol.Optional("auto_offset_mode"): str,
     }
 )
@@ -2666,6 +2668,8 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["heatmap_contrast"] = max(-15, min(15, int(msg["heatmap_contrast"])))
         if "distortion_intensity" in msg:
             payload["distortion_intensity"] = max(0, min(100, int(msg["distortion_intensity"])))
+        if "heatmap_source" in msg:
+            payload["heatmap_source"] = max(0, min(100, int(msg["heatmap_source"])))
         if "auto_offset_mode" in msg:
             mode = str(msg["auto_offset_mode"]).strip().lower()
             payload["auto_offset_mode"] = mode if mode in ("off", "partial", "full") else "partial"
@@ -4833,6 +4837,40 @@ async def ws_adaptive_status_get(hass: HomeAssistant, connection, msg) -> None:
         connection.send_result(msg["id"], {"adaptive": ad.summary()})
     else:
         connection.send_result(msg["id"], {"adaptive": {}})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/adaptive_fingerprints_get"})
+@websocket_api.async_response
+async def ws_adaptive_fingerprints_get(hass: HomeAssistant, connection, msg) -> None:
+    """Return raw adaptive learning fingerprints for heatmap visualization.
+
+    Returns per-room, per-scanner mean RSSI from confirmed observations.
+    Format: { room_name: { scanner_source: { mean, var, n } } }
+    """
+    ad = hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
+    if ad and ad.data:
+        fps = ad.data.get("room_fingerprints", {})
+        # Convert to a simpler format for the frontend:
+        # { room_name: { scanner_source: mean_rssi } }
+        simple = {}
+        for room, scanners in fps.items():
+            simple[room] = {}
+            for src, stats in scanners.items():
+                if isinstance(stats, dict) and stats.get("n", 0) >= 5:
+                    simple[room][src] = round(stats.get("mean", -100), 1)
+        # Also include per-scanner best (max across all rooms)
+        scanner_best = {}
+        for room, scanners in simple.items():
+            for src, mean in scanners.items():
+                if src not in scanner_best or mean > scanner_best[src]:
+                    scanner_best[src] = mean
+        connection.send_result(msg["id"], {
+            "fingerprints": simple,
+            "scanner_best": scanner_best,
+            "total_observations": (ad.data.get("stats") or {}).get("total_observations", 0),
+        })
+    else:
+        connection.send_result(msg["id"], {"fingerprints": {}, "scanner_best": {}, "total_observations": 0})
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/adaptive_reset"})

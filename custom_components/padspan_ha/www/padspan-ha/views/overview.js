@@ -1692,6 +1692,9 @@ export function render(ctx){
           if (_isoRadioMapMod.setUserGainContrast) {
             _isoRadioMapMod.setUserGainContrast(ctx.state._heatGain || ctx.state.settings?.heatmap_gain || 0, ctx.state._heatContrast || ctx.state.settings?.heatmap_contrast || 0);
           }
+          // Set source blend + adaptive data before rendering
+          if (_isoRadioMapMod.setSourceBlend) _isoRadioMapMod.setSourceBlend(ctx.state._heatSource ?? ctx.state.settings?.heatmap_source ?? 0);
+          if (_isoRadioMapMod.setAdaptiveData) _isoRadioMapMod.setAdaptiveData(ctx.state._adaptiveFps || null);
           // Prefer model-based heatmap
           if (_isoRadioMapMod.modelIsoHeatmapSVG) {
             s += _isoRadioMapMod.modelIsoHeatmapSVG(group, mapTransforms, iso, z, ctx.state.settings, sorted, liveSnap);
@@ -2377,6 +2380,7 @@ export function render(ctx){
       const g = _mkSlider(`Gain: ${ctx.state._heatGain ?? ctx.state.settings?.heatmap_gain ?? 0}`, -20, 20, ctx.state._heatGain ?? ctx.state.settings?.heatmap_gain ?? 0, "#d8b4fe", 50);
       const c = _mkSlider(`Contrast: ${ctx.state._heatContrast ?? ctx.state.settings?.heatmap_contrast ?? 0}`, -15, 15, ctx.state._heatContrast ?? ctx.state.settings?.heatmap_contrast ?? 0, "#d8b4fe", 65);
       const d = _mkSlider(`Warp: ${ctx.state._distIntensity ?? ctx.state.settings?.distortion_intensity ?? 50}%`, 0, 100, ctx.state._distIntensity ?? ctx.state.settings?.distortion_intensity ?? 50, "#fdba74", 55);
+      const src = _mkSlider(`Source: ${ctx.state._heatSource ?? ctx.state.settings?.heatmap_source ?? 0}%`, 0, 100, ctx.state._heatSource ?? ctx.state.settings?.heatmap_source ?? 0, "#5eead4", 60);
 
       const iSaveBtn = document.createElement("button");
       iSaveBtn.className = "btn inline";
@@ -2388,31 +2392,47 @@ export function render(ctx){
             heatmap_gain: parseInt(g.sl.value, 10),
             heatmap_contrast: parseInt(c.sl.value, 10),
             distortion_intensity: parseInt(d.sl.value, 10),
+            heatmap_source: parseInt(src.sl.value, 10),
           });
           ctx.toast("Overlay settings saved");
         } catch(e) { ctx.toast("Failed to save", true); }
       });
 
+      // Fetch adaptive fingerprints once for the source blend
+      if (!ctx.state._adaptiveFpLoaded) {
+        ctx.state._adaptiveFpLoaded = true;
+        ctx.actions.callWS({ type: "padspan_ha/adaptive_fingerprints_get" }).then(res => {
+          if (res?.fingerprints) {
+            ctx.state._adaptiveFps = res.fingerprints;
+            ctx.state._adaptiveObs = res.total_observations || 0;
+          }
+        }).catch(() => {});
+      }
+
       const _isoOverlayUpdate = () => {
-        const gv = parseInt(g.sl.value, 10), cv = parseInt(c.sl.value, 10), dv = parseInt(d.sl.value, 10);
+        const gv = parseInt(g.sl.value, 10), cv = parseInt(c.sl.value, 10), dv = parseInt(d.sl.value, 10), sv = parseInt(src.sl.value, 10);
         g.lbl.textContent = `Gain: ${gv > 0 ? "+" : ""}${gv}`;
         c.lbl.textContent = `Contrast: ${cv > 0 ? "+" : ""}${cv}`;
         d.lbl.textContent = `Warp: ${dv}%`;
+        src.lbl.textContent = sv === 0 ? "Source: Model" : sv >= 100 ? "Source: Historical" : `Source: ${sv}% hist`;
         ctx.state._heatGain = gv;
         ctx.state._heatContrast = cv;
         ctx.state._distIntensity = dv;
-        // Apply to radio_map module
+        ctx.state._heatSource = sv;
         if (_isoRadioMapMod) {
           if (_isoRadioMapMod.setUserGainContrast) _isoRadioMapMod.setUserGainContrast(gv, cv);
           if (_isoRadioMapMod.setDistortionIntensity) _isoRadioMapMod.setDistortionIntensity(dv);
+          if (_isoRadioMapMod.setSourceBlend) _isoRadioMapMod.setSourceBlend(sv);
+          if (_isoRadioMapMod.setAdaptiveData) _isoRadioMapMod.setAdaptiveData(ctx.state._adaptiveFps || null);
         }
         isoDiv.innerHTML = buildIsoSVG(_getFocusZ(ctx.state._overviewIsoFocusIdx));
       };
       g.sl.addEventListener("input", _isoOverlayUpdate);
       c.sl.addEventListener("input", _isoOverlayUpdate);
       d.sl.addEventListener("input", _isoOverlayUpdate);
+      src.sl.addEventListener("input", _isoOverlayUpdate);
 
-      isoOverlayCtrl.append(g.lbl, g.sl, c.lbl, c.sl, d.lbl, d.sl, iSaveBtn);
+      isoOverlayCtrl.append(g.lbl, g.sl, c.lbl, c.sl, d.lbl, d.sl, src.lbl, src.sl, iSaveBtn);
       outer.appendChild(isoOverlayCtrl);
     }
 

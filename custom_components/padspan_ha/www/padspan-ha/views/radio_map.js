@@ -1067,10 +1067,23 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
     }
   }
 
+  // Build room boundary polygons in world coords (for adaptive data lookup)
+  const roomBoundsWorld = [];
+  if (_sourceBlend > 0 && _adaptiveFingerprints) {
+    for (const m of floorMaps) {
+      const mpt = mapPtFns[m.id]; if (!mpt) continue;
+      for (const [room, b] of Object.entries(m.room_bounds || {})) {
+        if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
+        const polyW = b.points.map(p => mpt(Number(p[0]), Number(p[1])));
+        roomBoundsWorld.push({ room, polyW });
+      }
+    }
+  }
+
   const wW = wBB.maxX - wBB.minX, wH = wBB.maxY - wBB.minY;
   if (wW < 1e-6 || wH < 1e-6) return "";
 
-  // Compute the model RSSI range for data-adaptive color scaling
+  const blend = _sourceBlend / 100; // 0 = model only, 1 = adaptive only
   let minR = 0, maxR = -120;
   const res = FLOOR_GRID;
   const cellW = wW / res, cellH = wH / res;
@@ -1099,9 +1112,15 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
         }
         if (rssi > best) best = rssi;
       }
-      gridRssi[gy * res + gx] = best;
-      if (best > maxR) maxR = best;
-      if (best < minR) minR = best;
+      // Blend model + adaptive data
+      let finalRssi = best;
+      if (blend > 0 && roomBoundsWorld.length) {
+        const adaptRssi = _adaptiveRSSI(qwx, qwy, roomBoundsWorld);
+        if (adaptRssi != null) finalRssi = best * (1 - blend) + adaptRssi * blend;
+      }
+      gridRssi[gy * res + gx] = finalRssi;
+      if (finalRssi > maxR) maxR = finalRssi;
+      if (finalRssi < minR) minR = finalRssi;
     }
   }
 
@@ -1317,6 +1336,38 @@ const DISTORTION_GRID = 20; // 20x20 deformation grid
 // Distortion intensity: 0 = no warp (regular grid), 100 = full warp. User-adjustable.
 let _distortionIntensity = 50; // default 50%
 export function setDistortionIntensity(v) { _distortionIntensity = Math.max(0, Math.min(100, v || 50)); }
+
+// Source blend: 0 = pure model (physics), 100 = pure historical (adaptive data)
+let _sourceBlend = 0; // default: model only
+let _adaptiveFingerprints = null; // { room: { scanner: mean_rssi } }
+export function setSourceBlend(v) { _sourceBlend = Math.max(0, Math.min(100, v ?? 0)); }
+export function setAdaptiveData(fps) { _adaptiveFingerprints = fps; }
+
+/**
+ * Get adaptive RSSI at a world point by finding which room it falls in
+ * and returning the best scanner's mean RSSI for that room.
+ * Returns null if no data available.
+ */
+function _adaptiveRSSI(wx, wy, roomBoundsWorld) {
+  if (!_adaptiveFingerprints || !roomBoundsWorld) return null;
+  // Find which room this point is in
+  for (const { room, polyW } of roomBoundsWorld) {
+    // Ray-casting point-in-polygon test (world coords)
+    let inside = false;
+    for (let i = 0, j = polyW.length - 1; i < polyW.length; j = i++) {
+      const [xi, yi] = polyW[i], [xj, yj] = polyW[j];
+      if (((yi > wy) !== (yj > wy)) && (wx < (xj - xi) * (wy - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    if (!inside) continue;
+    // Found the room — get best scanner RSSI from adaptive data
+    const roomFp = _adaptiveFingerprints[room];
+    if (!roomFp) return null;
+    const vals = Object.values(roomFp);
+    if (!vals.length) return null;
+    return Math.max(...vals); // best scanner in this room
+  }
+  return null;
+}
 
 /**
  * At a world-space query point, build a synthetic RSSI fingerprint by IDW from
