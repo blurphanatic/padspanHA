@@ -21,8 +21,8 @@
  * Gated behind: settings.radio_map_enabled / settings.distortion_map_enabled
  */
 
-const GRID_RES = 36;       // 36x36 interpolation grid (1296 cells) for 2D
-const IDW_POWER = 2.0;     // IDW exponent (higher = more local)
+const GRID_RES = 42;       // 42x42 interpolation grid (1764 cells) for 2D
+const IDW_POWER = 2.5;     // IDW exponent (higher = more local, sharper near barriers)
 const KNN_K = 3;           // k for LOO cross-validation
 const BARRIER_PENALTY_DB_TO_DIST = 0.01; // each dB of barrier attenuation adds this much "virtual distance"
 
@@ -34,16 +34,26 @@ const BARRIER_PENALTY_DB_TO_DIST = 0.01; // each dB of barrier attenuation adds 
 // solid fills, letting the map image show through the gaps.
 
 const HATCH_BUCKETS = 16;
-const HATCH_WORST = -90;
-const HATCH_BEST  = -50;
-const HATCH_RANGE = HATCH_BEST - HATCH_WORST;
+// Data-adaptive scale: computed from actual calibration data at render time.
+// These defaults are overridden by setHatchRange() before rendering.
+let HATCH_WORST = -85;
+let HATCH_BEST  = -55;
+let HATCH_RANGE = HATCH_BEST - HATCH_WORST;
+
+/** Call before generating hatch defs/cells to set the data-adaptive range. */
+export function setHatchRange(worst, best) {
+  // Add 5% padding so extremes aren't right at the edge
+  const pad = Math.max(2, (best - worst) * 0.05);
+  HATCH_WORST = worst - pad;
+  HATCH_BEST = best + pad;
+  HATCH_RANGE = HATCH_BEST - HATCH_WORST;
+  if (HATCH_RANGE < 5) { HATCH_WORST = best - 20; HATCH_RANGE = HATCH_BEST - HATCH_WORST; }
+}
 
 // Compute opaque RGB for a bucket index (0 = worst, HATCH_BUCKETS-1 = best)
-// Compressed scale: -90 (worst) to -50 (best) for realistic indoor coverage.
-// With 15 radios, mean RSSI at a point is typically -60 to -75 dBm.
-// This scale ensures ~30% green coverage in a well-equipped building.
+// Color gradient is pure visual — independent of dBm thresholds.
 function _bucketRGB(idx) {
-  const t = idx / (HATCH_BUCKETS - 1); // 0=weak(-90), 1=strong(-50) — LINEAR
+  const t = idx / (HATCH_BUCKETS - 1); // 0=worst, 1=best — LINEAR
   let r, g, b;
   if (t < 0.15) {
     // very dark maroon → dark red (-90 to -84 dBm)
@@ -106,10 +116,10 @@ export function hatchDefs(prefix, spacing, lineW) {
     // Line width grows with bucket index: weakest = base, strongest = 1.6× base
     const scale = 1.0 + (i / (HATCH_BUCKETS - 1)) * 0.6;
     const lw = (lineW * scale).toFixed(5);
-    // Rotate from 45° (red/worst) to 165° (green/best) — 120° sweep
-    const angle = 45 + (i / (HATCH_BUCKETS - 1)) * 120;
+    // Rotate from 45° (red/worst) to 185° (green/best) — 140° sweep
+    const angle = 45 + (i / (HATCH_BUCKETS - 1)) * 140;
     // Gap is wider for red (more sparse/airy) and tighter for green (more solid/confident)
-    const gapScale = 6.0 - (i / (HATCH_BUCKETS - 1)) * 2.5; // 6.0 (red) → 3.5 (green)
+    const gapScale = 8.0 - (i / (HATCH_BUCKETS - 1)) * 4.5; // 8.0 (red, very sparse) → 3.5 (green, denser)
     const dotS = (lineW * scale * 1.2).toFixed(5);
     const gapS = (lineW * scale * gapScale).toFixed(5);
     s += `<pattern id="${prefix}_${i}" x="0" y="0" width="${sp}" height="${sp}" patternUnits="userSpaceOnUse" patternTransform="rotate(${angle.toFixed(1)})">`;
@@ -273,10 +283,11 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
 
   if (!dataPoints.length) return "";
 
-  // Compute RSSI range for color scaling
+  // Compute RSSI range for data-adaptive color scaling
   const allRssi = dataPoints.map(p => p.rssi);
   const minR = Math.min(...allRssi);
   const maxR = Math.max(...allRssi);
+  setHatchRange(minR, maxR);
   const mapBarriers = (barriers || []);
 
   // Build interpolation grid with barrier-aware IDW + 45° crosshatch patterns
@@ -328,8 +339,8 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
     const bucketIdx = Math.round(i / (legSteps - 1) * (HATCH_BUCKETS - 1));
     s += `<rect x="${(0.035 + i * barW).toFixed(3)}" y="${legendY + 0.025}" width="${barW.toFixed(3)}" height="0.015" fill="${_bucketRGB(bucketIdx)}"/>`;
   }
-  s += `<text x="0.035" y="${legendY + 0.06}" fill="#fca5a5" font-size="0.013" font-family="system-ui,sans-serif">-90 dBm (weak)</text>`;
-  s += `<text x="${(0.035 + (legSteps - 1) * barW).toFixed(3)}" y="${legendY + 0.06}" fill="#52b788" font-size="0.013" font-family="system-ui,sans-serif">-50 dBm</text>`;
+  s += `<text x="0.035" y="${legendY + 0.06}" fill="#fca5a5" font-size="0.013" font-family="system-ui,sans-serif">${Math.round(minR)} dBm (weak)</text>`;
+  s += `<text x="${(0.035 + (legSteps - 1) * barW).toFixed(3)}" y="${legendY + 0.06}" fill="#52b788" font-size="0.013" font-family="system-ui,sans-serif">${Math.round(maxR)} dBm</text>`;
   s += `<text x="0.035" y="${legendY + 0.075}" fill="#94a3b8" font-size="0.012" font-family="system-ui,sans-serif">${dataPoints.length} cal points \u2022 range ${Math.round(minR)} to ${Math.round(maxR)} dBm</text>`;
   // Wall legend
   if (mapBarriers.length) {
@@ -548,7 +559,7 @@ export function distortionMapSVG(calPoints, mapId, barriers, receivers) {
 // For 3D isometric views: generates heatmap polygons projected through the
 // caller's mapPt + iso transform chain.
 
-const ISO_GRID = 32; // 32x32 interpolation grid for 3D (1024 cells per map)
+const ISO_GRID = 36; // 36x36 interpolation grid for 3D (1296 cells per map)
 
 /**
  * Compute heatmap grid data for a map (not yet projected).
@@ -580,6 +591,7 @@ export function computeHeatmapGrid(calPoints, mapId, scannerSource, barriers) {
   const allRssi = dataPoints.map(p => p.rssi);
   const minR = Math.min(...allRssi);
   const maxR = Math.max(...allRssi);
+  setHatchRange(minR, maxR);
   const res = ISO_GRID;
   const cellW = 1.0 / res;
   const grid = new Float32Array(res * res);
@@ -693,6 +705,10 @@ export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) 
   }
   if (!worldPoints.length) return "";
 
+  // Data-adaptive color range
+  const _wpRssis = worldPoints.map(p => p.rssi);
+  setHatchRange(Math.min(..._wpRssis), Math.max(..._wpRssis));
+
   // 2. Collect barriers from all maps → world coords
   const worldBarriers = [];
   for (const m of groupMaps) {
@@ -765,7 +781,7 @@ export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) 
 // point on Map A contributes to the heatmap in Map B's territory if they
 // share the same floor. Barriers from all maps are also combined.
 
-const FLOOR_GRID = 36; // 36x36 grid in world space
+const FLOOR_GRID = 42; // 42x42 grid in world space
 
 /**
  * Generate a unified floor heatmap in view-normalized coordinates.
@@ -809,6 +825,10 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
   }
 
   if (!worldPoints.length) return "";
+
+  // Data-adaptive color range
+  const _lvlRssis = worldPoints.map(p => p.rssi);
+  setHatchRange(Math.min(..._lvlRssis), Math.max(..._lvlRssis));
 
   // ── 2. Collect all barriers from all floor maps, transform to world coords ──
   const worldBarriers = [];
@@ -886,8 +906,8 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
     const bucketIdx = Math.round(i / (flLegSteps - 1) * (HATCH_BUCKETS - 1));
     s += `<rect x="${(0.035 + i * bw).toFixed(3)}" y="${ly + 0.02}" width="${bw.toFixed(3)}" height="0.012" fill="${_bucketRGB(bucketIdx)}"/>`;
   }
-  s += `<text x="0.035" y="${ly + 0.048}" fill="#fca5a5" font-size="0.01" font-family="system-ui,sans-serif">-95</text>`;
-  s += `<text x="${(0.035 + (flLegSteps - 1) * bw).toFixed(3)}" y="${ly + 0.048}" fill="#52b788" font-size="0.01" font-family="system-ui,sans-serif">-50 dBm</text>`;
+  s += `<text x="0.035" y="${ly + 0.048}" fill="#fca5a5" font-size="0.01" font-family="system-ui,sans-serif">${Math.round(Math.min(..._wpRssis))}</text>`;
+  s += `<text x="${(0.035 + (flLegSteps - 1) * bw).toFixed(3)}" y="${ly + 0.048}" fill="#52b788" font-size="0.01" font-family="system-ui,sans-serif">${Math.round(Math.max(..._wpRssis))} dBm</text>`;
   s += `<text x="0.035" y="${ly + 0.058}" fill="#94a3b8" font-size="0.009" font-family="system-ui,sans-serif">${worldPoints.length} points from ${floorMapIds.size} map${floorMapIds.size > 1 ? "s" : ""}</text>`;
 
   return s;
