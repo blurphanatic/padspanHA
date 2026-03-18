@@ -770,8 +770,17 @@ export function render(ctx){
         if (floorSvg) s += floorSvg;
       }
 
-      // ── Distortion Map layer ────────────────────────────────────────────
-      if (F.distortion && _radioMapMod && _calPoints && _calPoints.length) {
+      // ── Distortion Map layer (deformation grid with heatmap colors) ─────
+      // Replaces the heatmap when active — same colors, grid geometry shows distortion
+      if (F.distortion && !F.radioMap && _radioMapMod && _calPoints && _calPoints.length) {
+        if (_radioMapMod.setUserGainContrast) {
+          _radioMapMod.setUserGainContrast(ctx.state._heatGain || ctx.state.settings?.heatmap_gain || 0, ctx.state._heatContrast || ctx.state.settings?.heatmap_contrast || 0);
+        }
+        if (_radioMapMod.floorDistortionSVG) {
+          const dmSvg = _radioMapMod.floorDistortionSVG(_calPoints, renderMaps, _mapPts, w2v, wBB, visible);
+          if (dmSvg) s += dmSvg;
+        } else {
+        // Legacy fallback: per-map distortion
         for (const m of renderMaps) {
           const dmSvg = _radioMapMod.distortionMapSVG(_calPoints, m.id, m.rf_barriers || [], m.receivers || []);
           if (dmSvg) {
@@ -789,6 +798,7 @@ export function render(ctx){
             }
           }
         }
+        } // end legacy fallback
       }
 
       // ── Room boundaries ─────────────────────────────────────────────────

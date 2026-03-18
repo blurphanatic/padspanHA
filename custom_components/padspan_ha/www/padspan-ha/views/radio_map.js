@@ -970,18 +970,71 @@ export function getFloorScanners(calPoints, floorMapIds) {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 3D Isometric Distortion Map
+// Deformation Grid — Distortion visualization
 // ═══════════════════════════════════════════════════════════════════════════════
+// Draws a regular grid where each intersection is warped to where the k-NN
+// positioning system predicts it should be. Grid cells are colored with the
+// same heatmap colors as the radio map. Distorted cells show where the system
+// confuses physical space.
+
+const DISTORTION_GRID = 16; // 16x16 grid
 
 /**
- * Render LOO k-NN distortion vectors on the 3D isometric map for one z-level.
- * Merges calibration data from all maps on the level (same as heatmap).
+ * At a world-space query point, build a synthetic RSSI fingerprint by IDW from
+ * nearby calibration points, then run k-NN to predict where the system thinks
+ * this point is. Returns the predicted world position.
+ */
+function _predictPosition(qwx, qwy, calWorldPts) {
+  if (calWorldPts.length < KNN_K) return [qwx, qwy];
+
+  // Build synthetic fingerprint at (qwx,qwy) by IDW from nearby cal points
+  const allSources = new Set();
+  for (const p of calWorldPts) for (const src of Object.keys(p.query)) allSources.add(src);
+  const synthFp = {};
+  for (const src of allSources) {
+    // IDW interpolation of this source's RSSI at the query point
+    let wSum = 0, vSum = 0;
+    for (const p of calWorldPts) {
+      if (p.query[src] == null) continue;
+      const dx = qwx - p.wx, dy = qwy - p.wy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 0.001) { wSum = 1; vSum = p.query[src]; break; }
+      const w = 1.0 / Math.pow(dist, 2.0);
+      wSum += w; vSum += w * p.query[src];
+    }
+    if (wSum > 0) synthFp[src] = vSum / wSum;
+  }
+
+  // k-NN: find closest calibration points by RSSI distance
+  const scored = [];
+  for (const p of calWorldPts) {
+    const shared = Object.keys(synthFp).filter(s => p.query[s] != null);
+    if (!shared.length) continue;
+    let distSq = 0;
+    for (const s of shared) distSq += (synthFp[s] - p.query[s]) ** 2;
+    scored.push({ distSq, p });
+  }
+  if (scored.length < KNN_K) return [qwx, qwy];
+  scored.sort((a, b) => a.distSq - b.distSq);
+  const topK = scored.slice(0, KNN_K);
+  let wT = 0, pwx = 0, pwy = 0;
+  for (const { distSq, p } of topK) {
+    const w = 1.0 / (Math.sqrt(distSq) + 0.001);
+    pwx += w * p.wx; pwy += w * p.wy; wT += w;
+  }
+  if (wT < 1e-10) return [qwx, qwy];
+  return [pwx / wT, pwy / wT];
+}
+
+/**
+ * 3D Iso deformation grid for one z-level.
  */
 export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
   if (!calPoints || !groupMaps.length) return "";
-
   const groupIds = new Set(groupMaps.map(m => m.id));
-  const pts = [];
+
+  // Collect cal points with world positions + RSSI queries
+  const calWorldPts = [];
   for (const pt of calPoints) {
     if (!groupIds.has(pt.map_id)) continue;
     const tf = mapTransforms[pt.map_id];
@@ -992,52 +1045,178 @@ export function isoDistortionSVG(calPoints, groupMaps, mapTransforms, iso, z) {
     }
     if (!Object.keys(query).length) continue;
     const [wx, wy] = tf.mapPt(pt.x_frac, pt.y_frac);
-    pts.push({ wx, wy, query });
+    // Also compute top-3 RSSI for heatmap coloring
+    const rssis = Object.values(query).sort((a,b) => b - a);
+    const topMean = rssis.slice(0, Math.min(3, rssis.length)).reduce((a,b) => a+b, 0) / Math.min(3, rssis.length);
+    calWorldPts.push({ wx, wy, query, rssi: topMean });
   }
-  if (pts.length < KNN_K + 1) return "";
+  if (calWorldPts.length < KNN_K + 1) return "";
+
+  // Set heatmap color range from data
+  const _rssis = calWorldPts.map(p => p.rssi);
+  setHatchRange(Math.min(..._rssis), Math.max(..._rssis), _userGain, _userContrast);
+
+  // World bounding box
+  let bb = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const m of groupMaps) {
+    const tf = mapTransforms[m.id]; if (!tf || !tf.mapPt) continue;
+    for (const [cx, cy] of [[0,0],[1,0],[1,1],[0,1]]) {
+      const [wx, wy] = tf.mapPt(cx, cy);
+      bb.minX = Math.min(bb.minX, wx); bb.minY = Math.min(bb.minY, wy);
+      bb.maxX = Math.max(bb.maxX, wx); bb.maxY = Math.max(bb.maxY, wy);
+    }
+  }
+  if (!isFinite(bb.minX)) return "";
+  const wW = bb.maxX - bb.minX, wH = bb.maxY - bb.minY;
+  if (wW < 1e-6 || wH < 1e-6) return "";
+
+  const res = DISTORTION_GRID;
+  const cellW = wW / res, cellH = wH / res;
+  const f = v => v.toFixed(1);
+
+  // IDW data points for RSSI interpolation
+  const idwPts = calWorldPts.map(p => ({ x_frac: p.wx, y_frac: p.wy, rssi: p.rssi }));
+
+  // Build grid: compute warped position + RSSI at each intersection
+  const grid = []; // [gy][gx] = { wx, wy, pwx, pwy, rssi }
+  for (let gy = 0; gy <= res; gy++) {
+    grid[gy] = [];
+    for (let gx = 0; gx <= res; gx++) {
+      const wx = bb.minX + gx * cellW;
+      const wy = bb.minY + gy * cellH;
+      const [pwx, pwy] = _predictPosition(wx, wy, calWorldPts);
+      const rssi = _idw(wx, wy, idwPts, []);
+      grid[gy][gx] = { wx, wy, pwx, pwy, rssi };
+    }
+  }
+
+  // Blend factor: how much warping to show (0=regular grid, 1=fully warped)
+  const blend = 0.5; // 50% warp — enough to see distortion without making the grid unreadable
 
   let s = "";
-  for (let i = 0; i < pts.length; i++) {
-    const pt = pts[i];
-    const scored = [];
-    for (let j = 0; j < pts.length; j++) {
-      if (j === i) continue;
-      const p2 = pts[j];
-      const shared = Object.keys(pt.query).filter(k => p2.query[k] != null);
-      if (!shared.length) continue;
-      let distSq = 0;
-      for (const k of shared) distSq += (pt.query[k] - p2.query[k]) ** 2;
-      const penalty = 1.0 + 0.3 * Math.max(0, Object.keys(pt.query).length - shared.length);
-      scored.push({ distSq: distSq * penalty, p: p2 });
+  // Draw grid lines (horizontal then vertical)
+  for (let gy = 0; gy <= res; gy++) {
+    for (let gx = 0; gx < res; gx++) {
+      const a = grid[gy][gx], b = grid[gy][gx + 1];
+      const ax = a.wx + (a.pwx - a.wx) * blend, ay = a.wy + (a.pwy - a.wy) * blend;
+      const bx = b.wx + (b.pwx - b.wx) * blend, by = b.wy + (b.pwy - b.wy) * blend;
+      const rssi = (a.rssi != null && b.rssi != null) ? (a.rssi + b.rssi) / 2 : a.rssi || b.rssi;
+      const bucket = _rssiBucket(rssi);
+      const color = bucket >= 0 ? _bucketRGB(bucket) : "#333";
+      const [sx1, sy1] = iso(ax, ay, z);
+      const [sx2, sy2] = iso(bx, by, z);
+      s += `<line x1="${f(sx1)}" y1="${f(sy1)}" x2="${f(sx2)}" y2="${f(sy2)}" stroke="${color}" stroke-width="1.5" opacity="0.7"/>`;
     }
-    if (scored.length < KNN_K) continue;
-    scored.sort((a, b) => a.distSq - b.distSq);
-    const topK = scored.slice(0, KNN_K);
-    let wT = 0, pwx = 0, pwy = 0;
-    for (const { distSq, p } of topK) {
-      const w = 1.0 / (Math.sqrt(distSq) + 0.001);
-      pwx += w * p.wx; pwy += w * p.wy; wT += w;
-    }
-    if (wT < 1e-10) continue;
-    pwx /= wT; pwy /= wT;
-
-    const errW = Math.sqrt((pwx - pt.wx) ** 2 + (pwy - pt.wy) ** 2);
-    if (errW < 0.003) continue;
-
-    const color = _errorColor(errW * 5);
-    const [ax, ay] = iso(pt.wx, pt.wy, z);
-    const [px, py] = iso(pwx, pwy, z);
-
-    s += `<line x1="${ax.toFixed(1)}" y1="${ay.toFixed(1)}" x2="${px.toFixed(1)}" y2="${py.toFixed(1)}" stroke="${color}" stroke-width="2" opacity="0.7"/>`;
-    const dx = px - ax, dy = py - ay;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    if (len > 5) {
-      const ux = dx / len, uy = dy / len;
-      const hl = Math.min(8, len * 0.4), hw = hl * 0.6;
-      const bx = px - ux * hl, by = py - uy * hl;
-      s += `<polygon points="${px.toFixed(1)},${py.toFixed(1)} ${(bx-uy*hw).toFixed(1)},${(by+ux*hw).toFixed(1)} ${(bx+uy*hw).toFixed(1)},${(by-ux*hw).toFixed(1)}" fill="${color}" opacity="0.7"/>`;
-    }
-    s += `<circle cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="3.5" fill="${color}" stroke="#071008" stroke-width="0.8" opacity="0.85"/>`;
   }
+  for (let gx = 0; gx <= res; gx++) {
+    for (let gy = 0; gy < res; gy++) {
+      const a = grid[gy][gx], b = grid[gy + 1][gx];
+      const ax = a.wx + (a.pwx - a.wx) * blend, ay = a.wy + (a.pwy - a.wy) * blend;
+      const bx = b.wx + (b.pwx - b.wx) * blend, by = b.wy + (b.pwy - b.wy) * blend;
+      const rssi = (a.rssi != null && b.rssi != null) ? (a.rssi + b.rssi) / 2 : a.rssi || b.rssi;
+      const bucket = _rssiBucket(rssi);
+      const color = bucket >= 0 ? _bucketRGB(bucket) : "#333";
+      const [sx1, sy1] = iso(ax, ay, z);
+      const [sx2, sy2] = iso(bx, by, z);
+      s += `<line x1="${f(sx1)}" y1="${f(sy1)}" x2="${f(sx2)}" y2="${f(sy2)}" stroke="${color}" stroke-width="1.5" opacity="0.7"/>`;
+    }
+  }
+
+  // Calibration point markers
+  for (const p of calWorldPts) {
+    const [sx, sy] = iso(p.wx, p.wy, z);
+    s += `<circle cx="${f(sx)}" cy="${f(sy)}" r="3" fill="#e2e8f0" stroke="#071008" stroke-width="0.8" opacity="0.6"/>`;
+  }
+
+  return s;
+}
+
+/**
+ * 2D floor deformation grid (for stitched 2D view).
+ */
+export function floorDistortionSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, allMaps) {
+  if (!calPoints || !floorMaps.length) return "";
+  const floorMapIds = new Set(floorMaps.map(m => m.id));
+  const _floorZ = (floorMaps[0].stack?.z_level) ?? 0;
+  const _allMapZ = {};
+  for (const m of (allMaps || floorMaps)) { _allMapZ[m.id] = (m.stack?.z_level) ?? 0; }
+
+  const calWorldPts = [];
+  for (const pt of calPoints) {
+    const mpt = mapPtFns[pt.map_id]; if (!mpt) continue;
+    const ptZ = _allMapZ[pt.map_id]; if (ptZ == null) continue;
+    if (Math.abs(ptZ - _floorZ) > 1) continue;
+    const query = {};
+    for (const r of (pt.scanner_readings || [])) {
+      if (r.source && r.mean_rssi != null) query[r.source] = r.mean_rssi;
+    }
+    if (!Object.keys(query).length) continue;
+    const [wx, wy] = mpt(pt.x_frac, pt.y_frac);
+    const rssis = Object.values(query).sort((a,b) => b - a);
+    const topMean = rssis.slice(0, Math.min(3, rssis.length)).reduce((a,b) => a+b, 0) / Math.min(3, rssis.length);
+    let rssi = topMean;
+    const floorDist = Math.abs(ptZ - _floorZ);
+    if (floorDist > 0) rssi -= floorDist * FLOOR_ATTEN_DB;
+    calWorldPts.push({ wx, wy, query, rssi });
+  }
+  if (calWorldPts.length < KNN_K + 1) return "";
+
+  const _rssis = calWorldPts.map(p => p.rssi);
+  setHatchRange(Math.min(..._rssis), Math.max(..._rssis), _userGain, _userContrast);
+
+  const wW = wBB.maxX - wBB.minX, wH = wBB.maxY - wBB.minY;
+  if (wW < 1e-6 || wH < 1e-6) return "";
+
+  const res = DISTORTION_GRID;
+  const cellW = wW / res, cellH = wH / res;
+  const idwPts = calWorldPts.map(p => ({ x_frac: p.wx, y_frac: p.wy, rssi: p.rssi }));
+  const fv = v => v.toFixed(5);
+  const blend = 0.5;
+
+  const grid = [];
+  for (let gy = 0; gy <= res; gy++) {
+    grid[gy] = [];
+    for (let gx = 0; gx <= res; gx++) {
+      const wx = wBB.minX + gx * cellW, wy = wBB.minY + gy * cellH;
+      const [pwx, pwy] = _predictPosition(wx, wy, calWorldPts);
+      const rssi = _idw(wx, wy, idwPts, []);
+      grid[gy][gx] = { wx, wy, pwx, pwy, rssi };
+    }
+  }
+
+  let s = "";
+  // Horizontal grid lines
+  for (let gy = 0; gy <= res; gy++) {
+    for (let gx = 0; gx < res; gx++) {
+      const a = grid[gy][gx], b = grid[gy][gx + 1];
+      const ax = a.wx + (a.pwx - a.wx) * blend, ay = a.wy + (a.pwy - a.wy) * blend;
+      const bx = b.wx + (b.pwx - b.wx) * blend, by = b.wy + (b.pwy - b.wy) * blend;
+      const rssi = (a.rssi != null && b.rssi != null) ? (a.rssi + b.rssi) / 2 : a.rssi || b.rssi;
+      const bucket = _rssiBucket(rssi);
+      const color = bucket >= 0 ? _bucketRGB(bucket) : "#333";
+      const [vx1, vy1] = w2v(ax, ay), [vx2, vy2] = w2v(bx, by);
+      s += `<line x1="${fv(vx1)}" y1="${fv(vy1)}" x2="${fv(vx2)}" y2="${fv(vy2)}" stroke="${color}" stroke-width="0.003" opacity="0.7"/>`;
+    }
+  }
+  // Vertical grid lines
+  for (let gx = 0; gx <= res; gx++) {
+    for (let gy = 0; gy < res; gy++) {
+      const a = grid[gy][gx], b = grid[gy + 1][gx];
+      const ax = a.wx + (a.pwx - a.wx) * blend, ay = a.wy + (a.pwy - a.wy) * blend;
+      const bx = b.wx + (b.pwx - b.wx) * blend, by = b.wy + (b.pwy - b.wy) * blend;
+      const rssi = (a.rssi != null && b.rssi != null) ? (a.rssi + b.rssi) / 2 : a.rssi || b.rssi;
+      const bucket = _rssiBucket(rssi);
+      const color = bucket >= 0 ? _bucketRGB(bucket) : "#333";
+      const [vx1, vy1] = w2v(ax, ay), [vx2, vy2] = w2v(bx, by);
+      s += `<line x1="${fv(vx1)}" y1="${fv(vy1)}" x2="${fv(vx2)}" y2="${fv(vy2)}" stroke="${color}" stroke-width="0.003" opacity="0.7"/>`;
+    }
+  }
+
+  // Cal point markers
+  for (const p of calWorldPts) {
+    const [vx, vy] = w2v(p.wx, p.wy);
+    s += `<circle cx="${fv(vx)}" cy="${fv(vy)}" r="0.005" fill="#e2e8f0" stroke="#071008" stroke-width="0.001" opacity="0.6"/>`;
+  }
+
   return s;
 }
