@@ -671,7 +671,7 @@ export function render(ctx){
           _calPoints = ctx.state._2dCalPoints;
           // Also compute available scanners for the scanner selector
           if (_radioMapMod) {
-            ctx.state._2dCalScanners = _radioMapMod.getMapScanners(_calPoints, activeMap.id);
+            ctx.state._2dCalScanners = (isStitched && _radioMapMod.getFloorScanners) ? _radioMapMod.getFloorScanners(_calPoints, renderMaps.map(m=>m.id)) : _radioMapMod.getMapScanners(_calPoints, activeMap.id);
           }
           // Trigger re-render of the SVG
           if (svgDiv) svgDiv.innerHTML = buildSVG();
@@ -760,23 +760,14 @@ export function render(ctx){
 
       // ── Radio Map heatmap layer ─────────────────────────────────────────
       if (F.radioMap && _radioMapMod && _calPoints && _calPoints.length) {
-        for (const m of renderMaps) {
-          const rmSvg = _radioMapMod.radioMapSVG(_calPoints, m.id, _radioMapScanner, m.receivers || [], m.rf_barriers || []);
-          if (rmSvg) {
-            if (isStitched) {
-              // Wrap in a transform group for this map's coordinate space
-              const [vTL_x, vTL_y] = _pt(m, 0, 0);
-              const [vTR_x, vTR_y] = _pt(m, 1, 0);
-              const [vBL_x, vBL_y] = _pt(m, 0, 1);
-              const dx = vTR_x - vTL_x, dy = vTR_y - vTL_y;
-              const ex = vBL_x - vTL_x, ey = vBL_y - vTL_y;
-              s += `<g transform="matrix(${_f(dx)},${_f(dy)},${_f(ex)},${_f(ey)},${_f(vTL_x)},${_f(vTL_y)})">`;
-              s += `<svg viewBox="0 0 1 1" width="1" height="1" preserveAspectRatio="none">${rmSvg}</svg>`;
-              s += `</g>`;
-            } else {
-              s += rmSvg;
-            }
-          }
+        if (isStitched && _radioMapMod.floorHeatmapSVG) {
+          // World-space unified floor heatmap — merges data from all maps
+          const floorSvg = _radioMapMod.floorHeatmapSVG(_calPoints, renderMaps, _mapPts, w2v, wBB, _radioMapScanner);
+          if (floorSvg) s += floorSvg;
+        } else {
+          // Single-map mode — per-map heatmap in local coords
+          const rmSvg = _radioMapMod.radioMapSVG(_calPoints, activeMap.id, _radioMapScanner, activeMap.receivers || [], activeMap.rf_barriers || []);
+          if (rmSvg) s += rmSvg;
         }
       }
 

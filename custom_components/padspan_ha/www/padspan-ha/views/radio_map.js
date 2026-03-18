@@ -29,34 +29,40 @@ const BARRIER_PENALTY_DB_TO_DIST = 0.01; // each dB of barrier attenuation adds 
 // ── Color Scales ─────────────────────────────────────────────────────────────
 
 // RSSI → color using ABSOLUTE dBm thresholds (not relative to data range).
-// This makes colors consistent across maps and highlights weak areas in red.
-// -30 dBm = excellent (green), -60 = good (yellow-green), -80 = poor (red), -95+ = dead (dark red)
-function _rssiColor(rssi, _minR, _maxR) {
+// This makes colors consistent across maps and highlights weak areas prominently.
+// -30 dBm = excellent (green), -55 = good (yellow-green), -75 = marginal (orange), -85 = poor (red), -95+ = dead (dark red)
+function _rssiColor(rssi) {
   if (rssi == null || isNaN(rssi)) return "rgba(60,60,60,0.15)";
   // Absolute scale: -30 (best) to -95 (worst)
   const BEST = -30, WORST = -95;
   const t = Math.max(0, Math.min(1, (rssi - WORST) / (BEST - WORST))); // 0=dead, 1=excellent
-  // Bias toward red: use power curve so more of the range is yellow→red
-  const tb = Math.pow(t, 0.7); // 0.7 exponent shifts midpoint toward red
+  // Strong red bias: power curve 0.55 makes ~70% of the visual range red→orange
+  const tb = Math.pow(t, 0.55);
   let r, g, b;
-  if (tb < 0.35) {
-    // dark red → red (dead zone → weak)
-    const u = tb / 0.35;
-    r = Math.round(100 + u * 140);  // 100→240
-    g = Math.round(u * 40);         // 0→40
-    b = 20;
-  } else if (tb < 0.65) {
-    // red → yellow (weak → decent)
-    const u = (tb - 0.35) / 0.30;
-    r = Math.round(240 - u * 20);   // 240→220
-    g = Math.round(40 + u * 180);   // 40→220
+  if (tb < 0.25) {
+    // dark red → bright red (dead → very weak)
+    const u = tb / 0.25;
+    r = Math.round(80 + u * 170);   // 80→250
+    g = Math.round(u * 20);         // 0→20
+    b = 15;
+  } else if (tb < 0.50) {
+    // bright red → orange (weak → marginal)
+    const u = (tb - 0.25) / 0.25;
+    r = 250;
+    g = Math.round(20 + u * 130);   // 20→150
+    b = Math.round(15 + u * 10);    // 15→25
+  } else if (tb < 0.75) {
+    // orange → yellow (marginal → decent)
+    const u = (tb - 0.50) / 0.25;
+    r = Math.round(250 - u * 30);   // 250→220
+    g = Math.round(150 + u * 70);   // 150→220
     b = 25;
   } else {
-    // yellow → green (decent → strong)
-    const u = (tb - 0.65) / 0.35;
+    // yellow → green (decent → excellent)
+    const u = (tb - 0.75) / 0.25;
     r = Math.round(220 - u * 180);  // 220→40
     g = Math.round(220 - u * 30);   // 220→190
-    b = Math.round(25 + u * 100);   // 25→125
+    b = Math.round(25 + u * 110);   // 25→135
   }
   return `rgba(${r},${g},${b},0.6)`;
 }
@@ -208,7 +214,7 @@ export function radioMapSVG(calPoints, mapId, scannerSource, receivers, barriers
       const qx = (gx + 0.5) * cellW;
       const qy = (gy + 0.5) * cellH;
       const rssi = _idw(qx, qy, dataPoints, mapBarriers);
-      const color = _rssiColor(rssi, minR, maxR);
+      const color = _rssiColor(rssi);
       s += `<rect x="${(gx * cellW).toFixed(4)}" y="${(gy * cellH).toFixed(4)}" width="${cellW.toFixed(4)}" height="${cellH.toFixed(4)}" fill="${color}" rx="0.005"/>`;
     }
   }
@@ -483,7 +489,7 @@ export function isoHeatmapSVG(heatData, mapPt, iso, z) {
       const rssi = grid[gy * res + gx];
       if (isNaN(rssi)) continue;
 
-      const color = _rssiColor(rssi, minR, maxR);
+      const color = _rssiColor(rssi);
       // Project 4 corners of the grid cell (with slight padding) through the iso transform
       const x0 = gx * cellW - pad, y0 = gy * cellW - pad;
       const x1 = x0 + cellW + pad * 2, y1 = y0 + cellW + pad * 2;
@@ -510,4 +516,155 @@ export function isoHeatmapSVG(heatData, mapPt, iso, z) {
   }
 
   return s;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// World-Space Floor Heatmap
+// ═══════════════════════════════════════════════════════════════════════════════
+// Merges calibration data from ALL maps on a floor into a single unified
+// interpolation in world coordinates. No per-map isolation — a calibration
+// point on Map A contributes to the heatmap in Map B's territory if they
+// share the same floor. Barriers from all maps are also combined.
+
+const FLOOR_GRID = 32; // 32x32 grid in world space
+
+/**
+ * Generate a unified floor heatmap in view-normalized coordinates.
+ *
+ * @param {Array} calPoints - ALL calibration points from calibrationGet()
+ * @param {Array} floorMaps - maps on this floor [{id, rf_barriers, ...}]
+ * @param {Object} mapPtFns - {mapId: (lx,ly)=>[wx,wy]} transform per map
+ * @param {Function} w2v - (wx,wy)=>[vx,vy] world→view transform
+ * @param {Object} wBB - {minX,minY,maxX,maxY} world bounding box
+ * @param {string|null} scannerSource - specific scanner or null for combined
+ * @returns {string} SVG content (rects + markers in view coords)
+ */
+export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scannerSource) {
+  if (!calPoints || !floorMaps.length) return "";
+
+  const floorMapIds = new Set(floorMaps.map(m => m.id));
+
+  // ── 1. Collect all calibration points on this floor, transform to world coords ──
+  const worldPoints = [];
+  for (const pt of calPoints) {
+    if (!floorMapIds.has(pt.map_id)) continue;
+    const mpt = mapPtFns[pt.map_id];
+    if (!mpt) continue;
+
+    const readings = pt.scanner_readings || [];
+    let rssi;
+    if (scannerSource) {
+      const r = readings.find(rd => rd.source === scannerSource);
+      if (!r || r.mean_rssi == null) continue;
+      rssi = r.mean_rssi;
+    } else {
+      const rssis = readings.map(r => r.mean_rssi).filter(v => v != null);
+      if (!rssis.length) continue;
+      rssi = rssis.reduce((a, b) => a + b, 0) / rssis.length;
+    }
+
+    const [wx, wy] = mpt(pt.x_frac, pt.y_frac);
+    worldPoints.push({ wx, wy, rssi });
+  }
+
+  if (!worldPoints.length) return "";
+
+  // ── 2. Collect all barriers from all floor maps, transform to world coords ──
+  const worldBarriers = [];
+  for (const m of floorMaps) {
+    const mpt = mapPtFns[m.id];
+    if (!mpt) continue;
+    for (const bar of (m.rf_barriers || [])) {
+      const pts = bar.points || [];
+      if (pts.length < 2) continue;
+      worldBarriers.push({
+        points: pts.map(p => { const [wx, wy] = mpt(Number(p[0]), Number(p[1])); return [wx, wy]; }),
+        attenuation_dbm: bar.attenuation_dbm || 6,
+        material: bar.material || "custom",
+      });
+    }
+  }
+
+  // ── 3. IDW interpolation in world space ────────────────────────────────────
+  const wW = wBB.maxX - wBB.minX;
+  const wH = wBB.maxY - wBB.minY;
+  if (wW < 1e-6 || wH < 1e-6) return "";
+
+  // Convert world points to IDW-compatible format (use world coords directly)
+  const idwPoints = worldPoints.map(p => ({ x_frac: p.wx, y_frac: p.wy, rssi: p.rssi }));
+
+  const cellW = wW / FLOOR_GRID;
+  const cellH = wH / FLOOR_GRID;
+  const f = v => v.toFixed(5);
+  let s = "";
+
+  for (let gy = 0; gy < FLOOR_GRID; gy++) {
+    for (let gx = 0; gx < FLOOR_GRID; gx++) {
+      const qwx = wBB.minX + (gx + 0.5) * cellW;
+      const qwy = wBB.minY + (gy + 0.5) * cellH;
+      const rssi = _idw(qwx, qwy, idwPoints, worldBarriers);
+      const color = _rssiColor(rssi);
+
+      // Convert cell corners from world → view coords
+      const [v0x, v0y] = w2v(wBB.minX + gx * cellW, wBB.minY + gy * cellH);
+      const [v1x, v1y] = w2v(wBB.minX + (gx+1) * cellW, wBB.minY + gy * cellH);
+      const [v2x, v2y] = w2v(wBB.minX + (gx+1) * cellW, wBB.minY + (gy+1) * cellH);
+      const [v3x, v3y] = w2v(wBB.minX + gx * cellW, wBB.minY + (gy+1) * cellH);
+
+      s += `<polygon points="${f(v0x)},${f(v0y)} ${f(v1x)},${f(v1y)} ${f(v2x)},${f(v2y)} ${f(v3x)},${f(v3y)}" fill="${color}"/>`;
+    }
+  }
+
+  // ── 4. Barrier lines in view coords ────────────────────────────────────────
+  const matColors = { metal: "#f87171", concrete: "#fb923c", brick: "#fbbf24", custom: "#94a3b8" };
+  for (const bar of worldBarriers) {
+    const color = matColors[bar.material] || matColors.custom;
+    const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm || 6) * 0.0006));
+    const d = bar.points.map((p, i) => {
+      const [vx, vy] = w2v(p[0], p[1]);
+      return `${i === 0 ? "M" : "L"}${f(vx)},${f(vy)}`;
+    }).join(" ");
+    s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${f(sw)}" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
+  }
+
+  // ── 5. Calibration point markers in view coords ────────────────────────────
+  for (const wp of worldPoints) {
+    const [vx, vy] = w2v(wp.wx, wp.wy);
+    s += `<circle cx="${f(vx)}" cy="${f(vy)}" r="0.006" fill="#e2e8f0" stroke="#071008" stroke-width="0.002" opacity="0.8"/>`;
+    s += `<text x="${f(vx + 0.01)}" y="${f(vy + 0.003)}" fill="#e2e8f0" font-size="0.012" font-family="system-ui,sans-serif" opacity="0.6">${Math.round(wp.rssi)}</text>`;
+  }
+
+  // ── 6. Legend ──────────────────────────────────────────────────────────────
+  const ly = 0.92;
+  s += `<rect x="0.02" y="${ly - 0.01}" width="0.34" height="0.07" rx="0.006" fill="rgba(7,16,8,0.85)"/>`;
+  s += `<text x="0.035" y="${ly + 0.008}" fill="#e2e8f0" font-size="0.014" font-weight="600" font-family="system-ui,sans-serif">${scannerSource ? "Scanner" : "Floor"} Radio Map</text>`;
+  const legValues = [-95,-80,-65,-50,-35];
+  const bw = 0.045;
+  for (let i = 0; i < legValues.length; i++) {
+    const c = _rssiColor(legValues[i]).replace(",0.6)", ",0.9)");
+    s += `<rect x="${(0.035 + i * bw).toFixed(3)}" y="${ly + 0.02}" width="${bw.toFixed(3)}" height="0.012" fill="${c}"/>`;
+  }
+  s += `<text x="0.035" y="${ly + 0.048}" fill="#fca5a5" font-size="0.01" font-family="system-ui,sans-serif">-95</text>`;
+  s += `<text x="${(0.035 + 4 * bw).toFixed(3)}" y="${ly + 0.048}" fill="#52b788" font-size="0.01" font-family="system-ui,sans-serif">-35 dBm</text>`;
+  s += `<text x="0.035" y="${ly + 0.058}" fill="#94a3b8" font-size="0.009" font-family="system-ui,sans-serif">${worldPoints.length} points from ${floorMapIds.size} map${floorMapIds.size > 1 ? "s" : ""}</text>`;
+
+  return s;
+}
+
+/**
+ * Get unique scanner sources across all maps on a floor.
+ */
+export function getFloorScanners(calPoints, floorMapIds) {
+  const idSet = new Set(floorMapIds);
+  const scannerMap = {};
+  for (const pt of (calPoints || [])) {
+    if (!idSet.has(pt.map_id)) continue;
+    for (const r of (pt.scanner_readings || [])) {
+      if (!r.source) continue;
+      if (!scannerMap[r.source]) scannerMap[r.source] = { source: r.source, name: r.name || r.source, pointCount: 0 };
+      scannerMap[r.source].pointCount++;
+    }
+  }
+  return Object.values(scannerMap).sort((a, b) => b.pointCount - a.pointCount);
 }
