@@ -187,6 +187,13 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_fabric_room_remove)
     websocket_api.async_register_command(hass, ws_fabric_adjacency_set)
     websocket_api.async_register_command(hass, ws_fabric_sync_mode_set)
+    # Phase 2: real-world spatial model commands
+    websocket_api.async_register_command(hass, ws_fabric_scanner_position_set)
+    websocket_api.async_register_command(hass, ws_fabric_room_geometry_set)
+    websocket_api.async_register_command(hass, ws_fabric_rf_barrier_set)
+    websocket_api.async_register_command(hass, ws_fabric_rf_barrier_remove)
+    websocket_api.async_register_command(hass, ws_fabric_map_transform_set)
+    websocket_api.async_register_command(hass, ws_fabric_migrate_from_maps)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -326,15 +333,23 @@ async def ws_model_get(hass: HomeAssistant, connection, msg) -> None:
     mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
     room_meta = mdl.room_meta() if mdl else {}
 
-    # ── Fabric data (Phase 1 decoupling) ────────────────────────────────────
+    # ── Fabric data (Phase 1 + Phase 2 decoupling) ─────────────────────────
     scanners = mdl.data.get("scanners", {}) if mdl else {}
     room_adjacency = mdl.data.get("room_adjacency", {}) if mdl else {}
     fabric_sync_mode = mdl.data.get("fabric_sync_mode", "auto") if mdl else "auto"
+    scanner_positions_m = mdl.data.get("scanner_positions_m", {}) if mdl else {}
+    room_geometry_m = mdl.data.get("room_geometry_m", {}) if mdl else {}
+    rf_barriers_m = mdl.data.get("rf_barriers_m", []) if mdl else []
+    map_transforms = mdl.data.get("map_transforms", {}) if mdl else {}
 
     connection.send_result(msg["id"], {
         "floors": floors, "areas": areas, "room_meta": room_meta,
         "scanners": scanners, "room_adjacency": room_adjacency,
         "fabric_sync_mode": fabric_sync_mode,
+        "scanner_positions_m": scanner_positions_m,
+        "room_geometry_m": room_geometry_m,
+        "rf_barriers_m": rf_barriers_m,
+        "map_transforms": map_transforms,
     })
 
 
@@ -3316,6 +3331,14 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
                     )
         except Exception:
             pass  # best-effort; don't fail the save
+
+    # ── Phase 2: sync spatial data to real-world model when map changes ───
+    try:
+        _mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+        if _mdl and (updated.get("id") or map_id) in (_mdl.data.get("map_transforms") or {}):
+            await _mdl.async_sync_spatial_from_map(map_id, updated)
+    except Exception:
+        pass  # best-effort
 
     connection.send_result(msg["id"], {"map": updated})
 
@@ -7734,3 +7757,153 @@ async def ws_fabric_sync_mode_set(hass: HomeAssistant, connection, msg) -> None:
         except Exception:
             pass
     connection.send_result(msg["id"], {"ok": True, "mode": mode})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 2 — Real-world spatial model WS handlers
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_scanner_position_set",
+        "source": str,
+        "x_m": float,
+        "y_m": float,
+        vol.Optional("z_m"): float,
+        vol.Optional("floor_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_scanner_position_set(hass: HomeAssistant, connection, msg) -> None:
+    """Set a scanner's real-world position in metres."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    source = (msg.get("source") or "").strip()
+    if not source:
+        connection.send_error(msg["id"], "invalid", "source is required")
+        return
+    await mdl.async_set_scanner_position_m(
+        source, float(msg["x_m"]), float(msg["y_m"]),
+        float(msg.get("z_m", 2.4)),
+        (msg.get("floor_id") or "").strip() or DEFAULT_FLOOR_ID,
+        origin="manual",
+    )
+    connection.send_result(msg["id"], {"ok": True, "source": source})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_room_geometry_set",
+        "room": str,
+        "geometry": dict,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_room_geometry_set(hass: HomeAssistant, connection, msg) -> None:
+    """Set a room's real-world geometry (polygon or circle in metres)."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    room = (msg.get("room") or "").strip()
+    geo = msg.get("geometry")
+    if not room or not isinstance(geo, dict):
+        connection.send_error(msg["id"], "invalid", "room and geometry dict are required")
+        return
+    # Ensure origin is set
+    geo.setdefault("origin", "manual")
+    geo.setdefault("floor_id", DEFAULT_FLOOR_ID)
+    await mdl.async_set_room_geometry_m(room, geo)
+    connection.send_result(msg["id"], {"ok": True, "room": room})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_rf_barrier_set",
+        "barrier": dict,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_rf_barrier_set(hass: HomeAssistant, connection, msg) -> None:
+    """Add or update an RF barrier in real-world metres (matched by name)."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    barrier = msg.get("barrier")
+    if not isinstance(barrier, dict) or not barrier.get("name"):
+        connection.send_error(msg["id"], "invalid", "barrier dict with name is required")
+        return
+    barrier.setdefault("origin", "manual")
+    barrier.setdefault("floor_id", DEFAULT_FLOOR_ID)
+    await mdl.async_set_rf_barrier_m(barrier)
+    connection.send_result(msg["id"], {"ok": True, "name": barrier["name"]})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_rf_barrier_remove",
+        "name": str,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_rf_barrier_remove(hass: HomeAssistant, connection, msg) -> None:
+    """Remove an RF barrier by name."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    name = (msg.get("name") or "").strip()
+    if not name:
+        connection.send_error(msg["id"], "invalid", "name is required")
+        return
+    await mdl.async_remove_rf_barrier_m(name)
+    connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_map_transform_set",
+        "map_id": str,
+        "transform": dict,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_map_transform_set(hass: HomeAssistant, connection, msg) -> None:
+    """Set the affine transform for a map (frac ↔ metres)."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    map_id = (msg.get("map_id") or "").strip()
+    transform = msg.get("transform")
+    if not map_id or not isinstance(transform, dict):
+        connection.send_error(msg["id"], "invalid", "map_id and transform dict are required")
+        return
+    transform.setdefault("floor_id", DEFAULT_FLOOR_ID)
+    await mdl.async_set_map_transform(map_id, transform)
+    connection.send_result(msg["id"], {"ok": True, "map_id": map_id})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/fabric_migrate_from_maps"})
+@websocket_api.async_response
+async def ws_fabric_migrate_from_maps(hass: HomeAssistant, connection, msg) -> None:
+    """Trigger one-time migration from map data to real-world model."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    if not ms:
+        connection.send_error(msg["id"], "no_maps", "MapsStore not loaded")
+        return
+    n_transforms = await mdl.async_derive_transforms(ms)
+    stats = await mdl.async_migrate_from_maps(ms)
+    connection.send_result(msg["id"], {
+        "ok": True,
+        "transforms_computed": n_transforms,
+        **stats,
+    })

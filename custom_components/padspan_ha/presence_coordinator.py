@@ -141,6 +141,8 @@ _AWAY_GRACE_POLLS: int = 2
 # intermediate rooms.
 _VG_RAPID_COOLDOWN_S: float = 15.0    # seconds after a room change during which the next change is gated
 _VG_ADJACENT_THRESHOLD: float = 0.30  # normalised centroid distance — rooms within this are "adjacent"
+_VG_ADJACENT_THRESHOLD_M: float = 8.0  # metres — Phase 2 real-world adjacency threshold
+_ADJACENCY_SIGMOID_MID_M: float = 8.0  # metres — Phase 2 adjacency prior sigmoid midpoint
 
 # ── Per-scanner reliability scoring (Phase 3) ────────────────────────────────
 # Each scanner accumulates a rolling "disagreement" count — how often its best
@@ -338,6 +340,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._scanner_positions: dict[str, tuple[float, float, str]] = {}
         # List of barrier dicts: [{points, attenuation_dbm, map_id}, ...]
         self._rf_barriers: list[dict] = []
+        # Phase 2: True when spatial data is in metres (not map fractions)
+        self._use_metres: bool = False
 
         # ── Per-scanner reliability (Phase 3) ─────────────────────────────────
         # {source: deque of bools} — True = scanner agreed with consensus this poll
@@ -527,44 +531,69 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             pass
 
         # ── Velocity gate: compute room centroids once per poll ────────────
+        # ── Phase 2: prefer real-world model (metres) for spatial data ────────
+        # Falls back to map-derived data (0-1 fracs) if no metre model exists.
+        self._use_metres = False
         try:
-            if _maps_store:
-                self._room_centroids = _room_centroids_from_maps(
-                    _maps_store.data.get("maps") or []
-                )
+            if _model and _model.has_spatial_model():
+                # Use real-world metre model
+                self._room_centroids = _model.room_centroids_m()
+                self._scanner_positions = {
+                    src: (pos["x_m"], pos["y_m"], pos.get("floor_id", ""))
+                    for src, pos in _model.scanner_positions_m().items()
+                }
+                _mb = _model.rf_barriers_m()
+                self._rf_barriers = [
+                    {
+                        "points": [(float(p[0]), float(p[1])) for p in (b.get("points_m") or [])],
+                        "attenuation_dbm": float(b.get("attenuation_dbm", 6)),
+                        "material": str(b.get("material", "custom")),
+                        "map_id": b.get("map_id", ""),
+                        "floor_id": str(b.get("floor_id", "")),
+                    }
+                    for b in _mb if len(b.get("points_m") or []) >= 2
+                ]
+                self._use_metres = True
         except Exception:
-            pass  # centroids are best-effort; gate degrades gracefully
+            pass
 
-        # ── RF barriers: precompute scanner positions + barrier list ──────────
-        # Used in Gaussian scoring to apply RSSI attenuation when the
-        # scanner→room centroid line crosses an RF barrier wall.
-        try:
-            if _maps_store:
-                _sc_pos: dict[str, tuple[float, float, str]] = {}
-                _barriers: list[dict] = []
-                for _m in (_maps_store.data.get("maps") or []):
-                    _mid = _m.get("id", "")
-                    for _rx in (_m.get("receivers") or []):
-                        _src = _rx.get("source") or _rx.get("id", "")
-                        if _src and _rx.get("x") is not None:
-                            _sc_pos[str(_src)] = (
-                                float(_rx["x"]), float(_rx["y"]), _mid
-                            )
-                    _m_floor = str(_m.get("floor_id", ""))
-                    for _bar in (_m.get("rf_barriers") or []):
-                        pts = _bar.get("points") or []
-                        if len(pts) >= 2:
-                            _barriers.append({
-                                "points": [(float(p[0]), float(p[1])) for p in pts],
-                                "attenuation_dbm": float(_bar.get("attenuation_dbm", 6)),
-                                "material": str(_bar.get("material", "custom")),
-                                "map_id": _mid,
-                                "floor_id": _m_floor,
-                            })
-                self._scanner_positions = _sc_pos
-                self._rf_barriers = _barriers
-        except Exception:
-            pass  # barrier data is best-effort
+        # Fallback: map-derived spatial data (legacy path)
+        if not self._use_metres:
+            try:
+                if _maps_store:
+                    self._room_centroids = _room_centroids_from_maps(
+                        _maps_store.data.get("maps") or []
+                    )
+            except Exception:
+                pass  # centroids are best-effort; gate degrades gracefully
+
+            try:
+                if _maps_store:
+                    _sc_pos: dict[str, tuple[float, float, str]] = {}
+                    _barriers: list[dict] = []
+                    for _m in (_maps_store.data.get("maps") or []):
+                        _mid = _m.get("id", "")
+                        for _rx in (_m.get("receivers") or []):
+                            _src = _rx.get("source") or _rx.get("id", "")
+                            if _src and _rx.get("x") is not None:
+                                _sc_pos[str(_src)] = (
+                                    float(_rx["x"]), float(_rx["y"]), _mid
+                                )
+                        _m_floor = str(_m.get("floor_id", ""))
+                        for _bar in (_m.get("rf_barriers") or []):
+                            pts = _bar.get("points") or []
+                            if len(pts) >= 2:
+                                _barriers.append({
+                                    "points": [(float(p[0]), float(p[1])) for p in pts],
+                                    "attenuation_dbm": float(_bar.get("attenuation_dbm", 6)),
+                                    "material": str(_bar.get("material", "custom")),
+                                    "map_id": _mid,
+                                    "floor_id": _m_floor,
+                                })
+                    self._scanner_positions = _sc_pos
+                    self._rf_barriers = _barriers
+            except Exception:
+                pass  # barrier data is best-effort
 
         for obj in objects:
             key = obj.get("key", "")
@@ -1032,15 +1061,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             _c_tgt = self._room_centroids.get(_rname)
                             if _c_tgt:
                                 if _c_cur[2] == _c_tgt[2]:
-                                    # Same map: sigmoid on Euclidean distance
+                                    # Same floor/map: sigmoid on Euclidean distance
                                     _adx = _c_cur[0] - _c_tgt[0]
                                     _ady = _c_cur[1] - _c_tgt[1]
                                     _adist = math.sqrt(_adx * _adx + _ady * _ady)
-                                    # Adjacent (dist<0.15) → ~1.0; far (dist>0.40) → ~0.15
-                                    _tp = 1.0 / (1.0 + math.exp(10.0 * (_adist - 0.25)))
+                                    if self._use_metres:
+                                        # Metres: adjacent (<4m) → ~1.0; far (>12m) → ~0.15
+                                        _tp = 1.0 / (1.0 + math.exp(0.5 * (_adist - _ADJACENCY_SIGMOID_MID_M)))
+                                    else:
+                                        # Legacy normalised: adjacent (<0.15) → ~1.0; far (>0.40) → ~0.15
+                                        _tp = 1.0 / (1.0 + math.exp(10.0 * (_adist - 0.25)))
                                     _tp = max(0.15, _tp)
                                 else:
-                                    _tp = 0.20  # different maps → strong penalty
+                                    _tp = 0.20  # different floors/maps → strong penalty
                                 room_scores[_rname] *= _tp
                                 continue
                         # Fallback: fabric adjacency list (no map needed)
@@ -1337,12 +1370,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _c1 = self._room_centroids.get(confirmed)
                         _c2 = self._room_centroids.get(top_room)
                         if _c1 and _c2:
-                            # Centroid-based distance check (map data available)
+                            # Centroid-based distance check
                             if _c1[2] == _c2[2]:
                                 _dx = _c1[0] - _c2[0]
                                 _dy = _c1[1] - _c2[1]
                                 _cdist = math.sqrt(_dx * _dx + _dy * _dy)
-                                _is_distant = _cdist > _VG_ADJACENT_THRESHOLD
+                                _vg_thresh = _VG_ADJACENT_THRESHOLD_M if self._use_metres else _VG_ADJACENT_THRESHOLD
+                                _is_distant = _cdist > _vg_thresh
                             else:
                                 _is_distant = True  # different maps → always "distant"
                         elif _model:

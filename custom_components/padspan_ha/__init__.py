@@ -106,7 +106,8 @@ async def _ensure_stores(hass: HomeAssistant, *, critical_only: bool = False) ->
             except Exception as err:
                 _LOGGER.debug("Fabric HA sync on startup skipped: %s", err)
         _sc = len(mdl.data.get("scanners", {}))
-        return (DATA_MODEL, mdl, f"ModelStore ready ({len(mdl.floors())} floors, {len(mdl.room_meta())} rooms, {_sc} scanners)")
+        _sp = len(mdl.data.get("scanner_positions_m", {}))
+        return (DATA_MODEL, mdl, f"ModelStore ready ({len(mdl.floors())} floors, {len(mdl.room_meta())} rooms, {_sc} scanners, {_sp} positions_m)")
 
     async def _init_objects():
         obj_store = ObjectStore(hass)
@@ -238,6 +239,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             await _ensure_deferred_stores(hass)
         except Exception as err:
             _LOGGER.debug("Deferred store init error: %s", err)
+
+        # Phase 2: auto-derive map transforms + migrate spatial data to metres
+        try:
+            mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+            ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+            if mdl and ms and not mdl.has_spatial_model():
+                n_transforms = await mdl.async_derive_transforms(ms)
+                if n_transforms:
+                    stats = await mdl.async_migrate_from_maps(ms)
+                    _LOGGER.info(
+                        "Phase 2 migration: %d transforms, %d scanner positions, "
+                        "%d room geometries, %d barriers converted to metres",
+                        n_transforms, stats["scanners_migrated"],
+                        stats["rooms_migrated"], stats["barriers_migrated"],
+                    )
+        except Exception as err:
+            _LOGGER.debug("Phase 2 spatial migration skipped: %s", err)
+
         try:
             from .bluetooth_live import async_setup_bluetooth_live
             await async_setup_bluetooth_live(hass)

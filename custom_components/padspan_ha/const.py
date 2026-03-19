@@ -19,7 +19,7 @@ Organisation:
 
 DOMAIN = "padspan_ha"
 NAME = "PadSpan HA"
-VERSION = "0.15.26"
+VERSION = "0.15.27"
 
 # ── Config-flow option keys ───────────────────────────────────────────────────
 CONF_ENABLE_CLOUD = "enable_cloud"
@@ -78,3 +78,7 @@ DEFAULT_FLOOR_ID = "main"
 OUTSIDE_FLOOR_ID = "__outside__"               # synthetic floor for outdoor / unassigned scanners
 DEFAULT_ROOM_RADIUS = 0.12                     # normalised (0–1) fallback radius around a receiver
 MAPS_DIR = "padspan_ha/maps"                   # relative to HA www/ dir → /local/padspan_ha/maps/
+
+# ── Phase 2: real-world coordinate defaults ──────────────────────────────
+DEFAULT_VG_ADJACENT_M = 8.0                    # metres — velocity gate adjacency threshold
+DEFAULT_ADJACENCY_SIGMOID_M = 8.0              # metres — adjacency prior sigmoid midpoint

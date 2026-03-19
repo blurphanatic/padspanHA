@@ -7,17 +7,27 @@ from __future__ import annotations
 """
 PadSpan HA — Model Store
 ==========================
-Global spatial model: floors and per-room metadata (floor assignment + color).
+Global spatial model: floors, per-room metadata, positioning fabric, and
+real-world spatial geometry.
 
 Deliberately separate from MapsStore because:
 - Floors and room_meta are shared across ALL maps (a room exists independently
   of which map it appears on).
 - Maps are per-image resources with their own metadata.
+- The spatial model (scanner positions, room geometry, RF barriers) lives here
+  in real-world metres so it survives map image replacement.
 
 Data layout in .storage/padspan_ha.model:
   {
     "floors": [{"id": "main", "name": "Main Floor"}, ...],
-    "room_meta": {"Kitchen": {"floor_id": "main", "color": "#7a9b5c"}, ...}
+    "room_meta": {"Kitchen": {"floor_id": "main", "color": "#7a9b5c"}, ...},
+    "scanners": {...},               # Phase 1: source→room fabric
+    "room_adjacency": {...},         # Phase 1: room→[neighbors]
+    "fabric_sync_mode": "auto",      # Phase 1: "auto" | "manual"
+    "scanner_positions_m": {...},     # Phase 2: source→{x_m, y_m, z_m, floor_id}
+    "room_geometry_m": {...},         # Phase 2: room→{type, points_m/cx_m/..., floor_id}
+    "rf_barriers_m": [...],           # Phase 2: [{points_m, attenuation_dbm, floor_id}]
+    "map_transforms": {...},          # Phase 2: map_id→affine (frac↔metres)
   }
 
 Room colours are deterministically generated from the room name (SHA-256 hash →
@@ -26,6 +36,7 @@ pastel RGB) so they're stable across sessions without needing explicit assignmen
 
 import asyncio
 import hashlib
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -69,6 +80,19 @@ DEFAULT_DATA: dict[str, Any] = {
         # room_name: [neighbor_room_name, ...]
     },
     "fabric_sync_mode": "auto",  # "auto" = sync from HA, "manual" = standalone
+    # ── Phase 2: Real-world spatial model (metres) ───────────────────────────
+    "scanner_positions_m": {
+        # source_name: { x_m, y_m, z_m, floor_id, origin, map_id }
+    },
+    "room_geometry_m": {
+        # room_name: { type, floor_id, origin, points_m | cx_m/cy_m/r_m }
+    },
+    "rf_barriers_m": [
+        # { name, material, attenuation_dbm, floor_id, points_m, origin, map_id }
+    ],
+    "map_transforms": {
+        # map_id: { origin_x_m, origin_y_m, scale_x_m, scale_y_m, rotation_rad, floor_id }
+    },
 }
 
 
@@ -97,6 +121,15 @@ class ModelStore:
                 self.data["room_adjacency"] = {}
             if "fabric_sync_mode" not in self.data or self.data.get("fabric_sync_mode") not in ("auto", "manual"):
                 self.data["fabric_sync_mode"] = "auto"
+            # ── Migration: Phase 2 spatial model keys ────────────────────────
+            if "scanner_positions_m" not in self.data or not isinstance(self.data.get("scanner_positions_m"), dict):
+                self.data["scanner_positions_m"] = {}
+            if "room_geometry_m" not in self.data or not isinstance(self.data.get("room_geometry_m"), dict):
+                self.data["room_geometry_m"] = {}
+            if "rf_barriers_m" not in self.data or not isinstance(self.data.get("rf_barriers_m"), list):
+                self.data["rf_barriers_m"] = []
+            if "map_transforms" not in self.data or not isinstance(self.data.get("map_transforms"), dict):
+                self.data["map_transforms"] = {}
         else:
             self.data = {k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v) for k, v in DEFAULT_DATA.items()}
 
@@ -135,6 +168,10 @@ class ModelStore:
             "scanners": dict(self.data.get("scanners", {})),
             "room_adjacency": dict(self.data.get("room_adjacency", {})),
             "fabric_sync_mode": self.data.get("fabric_sync_mode", "auto"),
+            "scanner_positions_m": dict(self.data.get("scanner_positions_m", {})),
+            "room_geometry_m": dict(self.data.get("room_geometry_m", {})),
+            "rf_barriers_m": list(self.data.get("rf_barriers_m", [])),
+            "map_transforms": dict(self.data.get("map_transforms", {})),
         }
 
     def floors(self) -> list[dict[str, Any]]:
@@ -299,6 +336,455 @@ class ModelStore:
 
         if changed:
             await self.store.async_save(self.data)
+
+    # ── Phase 2: Real-world spatial model ────────────────────────────────────
+
+    def scanner_positions_m(self) -> dict[str, dict[str, Any]]:
+        """Return {source: {x_m, y_m, z_m, floor_id}} for all scanners."""
+        return dict(self.data.get("scanner_positions_m") or {})
+
+    def room_centroids_m(self) -> dict[str, tuple[float, float, str]]:
+        """Compute room centroids in metres from room_geometry_m.
+
+        Returns {room_name: (cx_m, cy_m, floor_id)}.
+        """
+        centroids: dict[str, tuple[float, float, str]] = {}
+        for room, geo in (self.data.get("room_geometry_m") or {}).items():
+            if not isinstance(geo, dict):
+                continue
+            fl = str(geo.get("floor_id", DEFAULT_FLOOR_ID))
+            gtype = geo.get("type", "")
+            if gtype == "circle":
+                cx = float(geo.get("cx_m", 0))
+                cy = float(geo.get("cy_m", 0))
+                centroids[room] = (cx, cy, fl)
+            elif gtype == "poly":
+                pts = geo.get("points_m") or []
+                if len(pts) >= 3:
+                    cx = sum(float(p[0]) for p in pts) / len(pts)
+                    cy = sum(float(p[1]) for p in pts) / len(pts)
+                    centroids[room] = (cx, cy, fl)
+        return centroids
+
+    def rf_barriers_m(self) -> list[dict]:
+        """Return RF barriers in real-world metres."""
+        return list(self.data.get("rf_barriers_m") or [])
+
+    def map_transform(self, map_id: str) -> dict | None:
+        """Return the affine transform for a specific map, or None."""
+        return (self.data.get("map_transforms") or {}).get(map_id)
+
+    def has_spatial_model(self) -> bool:
+        """Return True if real-world spatial data has been populated."""
+        return bool(self.data.get("scanner_positions_m") or self.data.get("room_geometry_m"))
+
+    # ── Coordinate conversion ─────────────────────────────────────────────
+
+    def map_frac_to_metres(self, x_frac: float, y_frac: float, map_id: str) -> tuple[float, float] | None:
+        """Convert map 0-1 fractions to real-world metres using stored transform."""
+        t = (self.data.get("map_transforms") or {}).get(map_id)
+        if not t:
+            return None
+        ox = float(t.get("origin_x_m", 0))
+        oy = float(t.get("origin_y_m", 0))
+        sx = float(t.get("scale_x_m", 1))
+        sy = float(t.get("scale_y_m", 1))
+        rot = float(t.get("rotation_rad", 0))
+        # Apply: translate frac to centered, scale, rotate, offset
+        dx = x_frac * sx
+        dy = y_frac * sy
+        if abs(rot) > 1e-9:
+            cos_r = math.cos(rot)
+            sin_r = math.sin(rot)
+            rx = dx * cos_r - dy * sin_r
+            ry = dx * sin_r + dy * cos_r
+        else:
+            rx, ry = dx, dy
+        return (ox + rx, oy + ry)
+
+    def metres_to_map_frac(self, x_m: float, y_m: float, map_id: str) -> tuple[float, float] | None:
+        """Inverse: real-world metres to map 0-1 fractions."""
+        t = (self.data.get("map_transforms") or {}).get(map_id)
+        if not t:
+            return None
+        ox = float(t.get("origin_x_m", 0))
+        oy = float(t.get("origin_y_m", 0))
+        sx = float(t.get("scale_x_m", 1))
+        sy = float(t.get("scale_y_m", 1))
+        rot = float(t.get("rotation_rad", 0))
+        # Reverse: remove offset, inverse rotate, inverse scale
+        rx = x_m - ox
+        ry = y_m - oy
+        if abs(rot) > 1e-9:
+            cos_r = math.cos(-rot)
+            sin_r = math.sin(-rot)
+            dx = rx * cos_r - ry * sin_r
+            dy = rx * sin_r + ry * cos_r
+        else:
+            dx, dy = rx, ry
+        if abs(sx) < 1e-9 or abs(sy) < 1e-9:
+            return None
+        return (dx / sx, dy / sy)
+
+    # ── Spatial mutators ──────────────────────────────────────────────────
+
+    async def async_set_scanner_position_m(
+        self, source: str, x_m: float, y_m: float, z_m: float,
+        floor_id: str, origin: str = "manual", map_id: str | None = None,
+    ) -> None:
+        """Set a scanner's real-world position."""
+        positions = self.data.setdefault("scanner_positions_m", {})
+        positions[str(source)] = {
+            "x_m": float(x_m), "y_m": float(y_m), "z_m": float(z_m),
+            "floor_id": str(floor_id or DEFAULT_FLOOR_ID),
+            "origin": str(origin),
+            "map_id": map_id,
+        }
+        await self.store.async_save(self.data)
+
+    async def async_set_room_geometry_m(self, room: str, geometry: dict) -> None:
+        """Set a room's real-world geometry (polygon or circle in metres)."""
+        geo = self.data.setdefault("room_geometry_m", {})
+        geo[str(room)] = dict(geometry)
+        await self.store.async_save(self.data)
+
+    async def async_set_rf_barrier_m(self, barrier: dict) -> None:
+        """Add or replace an RF barrier in real-world metres (matched by name)."""
+        barriers = self.data.setdefault("rf_barriers_m", [])
+        name = barrier.get("name", "")
+        # Replace existing barrier with same name
+        self.data["rf_barriers_m"] = [b for b in barriers if b.get("name") != name]
+        self.data["rf_barriers_m"].append(dict(barrier))
+        await self.store.async_save(self.data)
+
+    async def async_remove_rf_barrier_m(self, name: str) -> None:
+        """Remove an RF barrier by name."""
+        barriers = self.data.get("rf_barriers_m") or []
+        self.data["rf_barriers_m"] = [b for b in barriers if b.get("name") != name]
+        await self.store.async_save(self.data)
+
+    async def async_set_map_transform(self, map_id: str, transform: dict) -> None:
+        """Set the affine transform for a map (frac ↔ metres)."""
+        transforms = self.data.setdefault("map_transforms", {})
+        transforms[str(map_id)] = dict(transform)
+        await self.store.async_save(self.data)
+
+    # ── Migration: derive transforms + convert map data to metres ─────────
+
+    async def async_derive_transforms(self, maps_store: Any) -> int:
+        """Compute map_transforms from existing map calibration + stack data.
+
+        Master map on each floor gets origin (0,0). Other maps on the same floor
+        get their origin offset via the stack alignment.
+        Returns number of transforms computed.
+        """
+        transforms = self.data.setdefault("map_transforms", {})
+        count = 0
+
+        # Find master map per floor
+        maps_list = maps_store.data.get("maps") or []
+        master_per_floor: dict[str, dict] = {}  # floor_id → map dict
+        for m in maps_list:
+            fl = str(m.get("floor_id", DEFAULT_FLOOR_ID))
+            if (m.get("stack") or {}).get("is_master"):
+                master_per_floor[fl] = m
+
+        for m in maps_list:
+            mid = m.get("id", "")
+            if not mid:
+                continue
+            cal = m.get("calibration") or {}
+            ppm = cal.get("px_per_meter")
+            if not ppm or float(ppm) <= 0:
+                continue
+            ppm = float(ppm)
+            img = m.get("image") or {}
+            img_w = int(img.get("width") or 0)
+            img_h = int(img.get("height") or 0)
+            if img_w <= 0 or img_h <= 0:
+                continue
+
+            # Scale: metres per 1.0 fraction
+            scale_x_m = img_w / ppm
+            scale_y_m = img_h / ppm
+
+            stk = m.get("stack") or {}
+            fl = str(m.get("floor_id", DEFAULT_FLOOR_ID))
+            rot_deg = float(stk.get("rotation", 0))
+            rot_rad = math.radians(rot_deg)
+
+            # Origin: master map = (0,0), others offset via stack
+            is_master = stk.get("is_master", False)
+            if is_master or mid == master_per_floor.get(fl, {}).get("id"):
+                origin_x = 0.0
+                origin_y = 0.0
+            else:
+                # Use stack x_offset, y_offset (normalised) scaled to master's metres
+                master = master_per_floor.get(fl)
+                if master:
+                    m_cal = (master.get("calibration") or {})
+                    m_ppm = float(m_cal.get("px_per_meter") or 0) or ppm
+                    m_img = master.get("image") or {}
+                    m_w = int(m_img.get("width") or img_w)
+                    m_h = int(m_img.get("height") or img_h)
+                    origin_x = float(stk.get("x_offset", 0)) * (m_w / m_ppm)
+                    origin_y = float(stk.get("y_offset", 0)) * (m_h / m_ppm)
+                else:
+                    origin_x = float(stk.get("x_offset", 0)) * scale_x_m
+                    origin_y = float(stk.get("y_offset", 0)) * scale_y_m
+
+            transforms[mid] = {
+                "origin_x_m": round(origin_x, 4),
+                "origin_y_m": round(origin_y, 4),
+                "scale_x_m": round(scale_x_m, 4),
+                "scale_y_m": round(scale_y_m, 4),
+                "rotation_rad": round(rot_rad, 6),
+                "floor_id": fl,
+            }
+            count += 1
+
+        if count:
+            await self.store.async_save(self.data)
+        return count
+
+    async def async_migrate_from_maps(self, maps_store: Any) -> dict[str, int]:
+        """One-time migration: convert map spatial data to real-world metres.
+
+        Reads receivers → scanner_positions_m, room_bounds → room_geometry_m,
+        rf_barriers → rf_barriers_m. Only writes if the target key is empty
+        (won't overwrite existing manual edits).
+
+        Returns {scanners_migrated, rooms_migrated, barriers_migrated}.
+        """
+        stats = {"scanners_migrated": 0, "rooms_migrated": 0, "barriers_migrated": 0}
+        transforms = self.data.get("map_transforms") or {}
+        if not transforms:
+            return stats
+
+        positions = self.data.setdefault("scanner_positions_m", {})
+        geometry = self.data.setdefault("room_geometry_m", {})
+        barriers = self.data.setdefault("rf_barriers_m", [])
+
+        # Track which rooms came from a master map (prefer master)
+        master_rooms: set[str] = set()
+        maps_list = maps_store.data.get("maps") or []
+
+        # Sort maps so master maps are processed last (overwrite non-master)
+        sorted_maps = sorted(maps_list, key=lambda m: 1 if (m.get("stack") or {}).get("is_master") else 0)
+
+        changed = False
+        for m in sorted_maps:
+            mid = m.get("id", "")
+            t = transforms.get(mid)
+            if not t:
+                continue
+
+            fl = str(m.get("floor_id", DEFAULT_FLOOR_ID))
+            stk = m.get("stack") or {}
+            is_master = stk.get("is_master", False)
+            ceiling_h = float(stk.get("ceiling_height_m", 2.4))
+
+            # ── Scanners (receivers) ──────────────────────────────────────
+            for rx in (m.get("receivers") or []):
+                src = rx.get("source") or rx.get("id", "")
+                if not src:
+                    continue
+                # Don't overwrite existing entries (manual or already migrated)
+                if src in positions:
+                    continue
+                x_frac = float(rx.get("x", 0))
+                y_frac = float(rx.get("y", 0))
+                coords = self.map_frac_to_metres(x_frac, y_frac, mid)
+                if coords:
+                    positions[src] = {
+                        "x_m": round(coords[0], 3),
+                        "y_m": round(coords[1], 3),
+                        "z_m": round(ceiling_h, 2),
+                        "floor_id": fl,
+                        "origin": "map",
+                        "map_id": mid,
+                    }
+                    stats["scanners_migrated"] += 1
+                    changed = True
+
+            # ── Room bounds → geometry ────────────────────────────────────
+            for rname, b in (m.get("room_bounds") or {}).items():
+                if not isinstance(b, dict):
+                    continue
+                # Master map overrides non-master
+                if rname in geometry and rname in master_rooms and not is_master:
+                    continue
+                btype = b.get("type", "poly")
+                if btype == "poly":
+                    pts = b.get("points") or []
+                    if len(pts) < 3:
+                        continue
+                    pts_m = []
+                    for p in pts:
+                        c = self.map_frac_to_metres(float(p[0]), float(p[1]), mid)
+                        if c:
+                            pts_m.append([round(c[0], 3), round(c[1], 3)])
+                    if len(pts_m) >= 3:
+                        geometry[rname] = {
+                            "type": "poly",
+                            "floor_id": fl,
+                            "origin": "map",
+                            "points_m": pts_m,
+                        }
+                        if is_master:
+                            master_rooms.add(rname)
+                        stats["rooms_migrated"] += 1
+                        changed = True
+                elif btype == "circle":
+                    c_center = self.map_frac_to_metres(
+                        float(b.get("cx", 0.5)), float(b.get("cy", 0.5)), mid
+                    )
+                    if c_center:
+                        # Approximate radius: use avg of x/y scale
+                        avg_scale = (float(t["scale_x_m"]) + float(t["scale_y_m"])) / 2
+                        r_m = float(b.get("r", 0.12)) * avg_scale
+                        geometry[rname] = {
+                            "type": "circle",
+                            "floor_id": fl,
+                            "origin": "map",
+                            "cx_m": round(c_center[0], 3),
+                            "cy_m": round(c_center[1], 3),
+                            "r_m": round(r_m, 3),
+                        }
+                        if is_master:
+                            master_rooms.add(rname)
+                        stats["rooms_migrated"] += 1
+                        changed = True
+
+            # ── RF barriers ───────────────────────────────────────────────
+            for idx, bar in enumerate(m.get("rf_barriers") or []):
+                pts = bar.get("points") or []
+                if len(pts) < 2:
+                    continue
+                pts_m = []
+                for p in pts:
+                    c = self.map_frac_to_metres(float(p[0]), float(p[1]), mid)
+                    if c:
+                        pts_m.append([round(c[0], 3), round(c[1], 3)])
+                if len(pts_m) >= 2:
+                    barriers.append({
+                        "name": str(bar.get("name", f"Barrier {mid}_{idx+1}"))[:80],
+                        "material": str(bar.get("material", "custom"))[:20],
+                        "attenuation_dbm": float(bar.get("attenuation_dbm", 6)),
+                        "floor_id": fl,
+                        "points_m": pts_m,
+                        "origin": "map",
+                        "map_id": mid,
+                    })
+                    stats["barriers_migrated"] += 1
+                    changed = True
+
+        if changed:
+            await self.store.async_save(self.data)
+        return stats
+
+    async def async_sync_spatial_from_map(self, map_id: str, map_dict: dict) -> int:
+        """Re-derive metre-space data for a single map after it's edited.
+
+        Updates scanner positions, room geometry, and RF barriers that originated
+        from this map. Returns number of items updated.
+        """
+        t = (self.data.get("map_transforms") or {}).get(map_id)
+        if not t:
+            return 0
+
+        fl = str(map_dict.get("floor_id", DEFAULT_FLOOR_ID))
+        stk = map_dict.get("stack") or {}
+        ceiling_h = float(stk.get("ceiling_height_m", 2.4))
+        count = 0
+
+        # ── Sync scanner positions ────────────────────────────────────────
+        positions = self.data.setdefault("scanner_positions_m", {})
+        for rx in (map_dict.get("receivers") or []):
+            src = rx.get("source") or rx.get("id", "")
+            if not src:
+                continue
+            existing = positions.get(src)
+            # Only update map-origin entries from this map (or new entries)
+            if existing and existing.get("origin") == "manual":
+                continue
+            coords = self.map_frac_to_metres(float(rx.get("x", 0)), float(rx.get("y", 0)), map_id)
+            if coords:
+                positions[src] = {
+                    "x_m": round(coords[0], 3),
+                    "y_m": round(coords[1], 3),
+                    "z_m": round(ceiling_h, 2),
+                    "floor_id": fl,
+                    "origin": "map",
+                    "map_id": map_id,
+                }
+                count += 1
+
+        # ── Sync room geometry ────────────────────────────────────────────
+        geometry = self.data.setdefault("room_geometry_m", {})
+        for rname, b in (map_dict.get("room_bounds") or {}).items():
+            if not isinstance(b, dict):
+                continue
+            existing = geometry.get(rname)
+            if existing and existing.get("origin") == "manual":
+                continue
+            btype = b.get("type", "poly")
+            if btype == "poly":
+                pts = b.get("points") or []
+                pts_m = []
+                for p in pts:
+                    c = self.map_frac_to_metres(float(p[0]), float(p[1]), map_id)
+                    if c:
+                        pts_m.append([round(c[0], 3), round(c[1], 3)])
+                if len(pts_m) >= 3:
+                    geometry[rname] = {
+                        "type": "poly", "floor_id": fl, "origin": "map",
+                        "points_m": pts_m,
+                    }
+                    count += 1
+            elif btype == "circle":
+                c_center = self.map_frac_to_metres(
+                    float(b.get("cx", 0.5)), float(b.get("cy", 0.5)), map_id
+                )
+                if c_center:
+                    avg_scale = (float(t["scale_x_m"]) + float(t["scale_y_m"])) / 2
+                    geometry[rname] = {
+                        "type": "circle", "floor_id": fl, "origin": "map",
+                        "cx_m": round(c_center[0], 3),
+                        "cy_m": round(c_center[1], 3),
+                        "r_m": round(float(b.get("r", 0.12)) * avg_scale, 3),
+                    }
+                    count += 1
+
+        # ── Sync RF barriers ─────────────────────────────────────────────
+        barriers = self.data.setdefault("rf_barriers_m", [])
+        # Remove old map-origin barriers from this map
+        self.data["rf_barriers_m"] = [
+            b for b in barriers
+            if not (b.get("origin") == "map" and b.get("map_id") == map_id)
+        ]
+        for idx, bar in enumerate(map_dict.get("rf_barriers") or []):
+            pts = bar.get("points") or []
+            pts_m = []
+            for p in pts:
+                c = self.map_frac_to_metres(float(p[0]), float(p[1]), map_id)
+                if c:
+                    pts_m.append([round(c[0], 3), round(c[1], 3)])
+            if len(pts_m) >= 2:
+                self.data["rf_barriers_m"].append({
+                    "name": str(bar.get("name", f"Barrier {map_id}_{idx+1}"))[:80],
+                    "material": str(bar.get("material", "custom"))[:20],
+                    "attenuation_dbm": float(bar.get("attenuation_dbm", 6)),
+                    "floor_id": fl,
+                    "points_m": pts_m,
+                    "origin": "map",
+                    "map_id": map_id,
+                })
+                count += 1
+
+        if count:
+            await self.store.async_save(self.data)
+        return count
 
     def has_floor(self, floor_id: str) -> bool:
         fid = str(floor_id or "")
