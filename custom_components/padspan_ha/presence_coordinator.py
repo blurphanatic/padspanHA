@@ -929,6 +929,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Side-effects: updates self._room_confidence, _rssi_margin_confidence,
         _knn_position, _confirmed_room, and _room_votes for this key.
         """
+        # Phase 1/2: resolve ModelStore for fabric adjacency + metre thresholds
+        _model = self.hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+
         live_srcs = addr_src_rssi.get(addr, {})
 
         # ── Stage 1: Kalman-filtered RSSI per source ─────────────────────────
