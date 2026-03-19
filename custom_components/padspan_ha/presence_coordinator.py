@@ -98,6 +98,7 @@ from .const import (
     DOMAIN, DATA_SETTINGS, DATA_CALIBRATION, DATA_ADAPTIVE, DATA_MAPS, DATA_MODEL,
     DEFAULT_KALMAN_Q, DEFAULT_KALMAN_R,
     DEFAULT_REF_POWER, DEFAULT_PATH_LOSS_EXP, DEFAULT_ROOM_SIGMA_M,
+    OUTSIDE_FLOOR_ID,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -143,6 +144,11 @@ _VG_RAPID_COOLDOWN_S: float = 15.0    # seconds after a room change during which
 _VG_ADJACENT_THRESHOLD: float = 0.30  # normalised centroid distance — rooms within this are "adjacent"
 _VG_ADJACENT_THRESHOLD_M: float = 8.0  # metres — Phase 2 real-world adjacency threshold
 _ADJACENCY_SIGMOID_MID_M: float = 8.0  # metres — Phase 2 adjacency prior sigmoid midpoint
+
+# ── Outdoor / isolated scanner penalties ─────────────────────────────────
+_OUTDOOR_SCORE_DAMPING: float = 0.30  # multiply outdoor room scores by this when device is indoors
+_ISOLATED_SCANNER_DAMPING: float = 0.50  # damping for scanners that are the only one on their floor
+_ISOLATED_SCANNER_STRONG_DBM: float = -65.0  # RSSI above this = strong enough to override isolation damping
 
 # ── Per-scanner reliability scoring (Phase 3) ────────────────────────────────
 # Each scanner accumulates a rolling "disagreement" count — how often its best
@@ -939,6 +945,21 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Phase 1/2: resolve ModelStore for fabric adjacency + metre thresholds
         _model = self.hass.data.get(DOMAIN, {}).get(DATA_MODEL)
 
+        # Build room→floor lookup for outdoor/floor logic
+        _room_to_floor: dict[str, str] = {}
+        if source_to_floor:
+            for _src2, _area2 in source_to_area.items():
+                _fl2 = source_to_floor.get(_src2)
+                if _fl2 and _area2 not in _room_to_floor:
+                    _room_to_floor[_area2] = _fl2
+
+        # Count scanners per floor (for isolated scanner detection)
+        _scanners_per_floor: dict[str, int] = {}
+        for _src2 in source_to_area:
+            _fl2 = source_to_floor.get(_src2, "")
+            if _fl2:
+                _scanners_per_floor[_fl2] = _scanners_per_floor.get(_fl2, 0) + 1
+
         live_srcs = addr_src_rssi.get(addr, {})
 
         # ── Stage 1: Kalman-filtered RSSI per source ─────────────────────────
@@ -1060,7 +1081,37 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _score *= _rel
                 if _room not in room_scores or _score > room_scores[_room]:
                     room_scores[_room] = _score
+
             if room_scores:
+                # ── Outdoor room damping ──────────────────────────────────
+                # If the device is currently indoors, heavily penalize outdoor
+                # room scores. Outdoor scanners pick up BLE at long range but
+                # should almost never claim indoor devices.
+                _cur_room_od = self._confirmed_room.get(key)
+                _cur_floor_od = _room_to_floor.get(_cur_room_od, "") if _cur_room_od else ""
+                _cur_is_indoor = _cur_floor_od and _cur_floor_od != OUTSIDE_FLOOR_ID
+                if _cur_is_indoor:
+                    for _rname in list(room_scores):
+                        _rf = _room_to_floor.get(_rname, "")
+                        if _rf == OUTSIDE_FLOOR_ID:
+                            room_scores[_rname] *= _OUTDOOR_SCORE_DAMPING
+
+                # ── Isolated scanner damping ──────────────────────────────
+                # Scanners that are the only one on their floor get damped
+                # unless they have a decisively strong signal. Prevents
+                # isolated outdoor/basement scanners from dominating.
+                for _rname in list(room_scores):
+                    _rf = _room_to_floor.get(_rname, "")
+                    if _rf and _scanners_per_floor.get(_rf, 0) <= 1:
+                        # Check if any scanner for this room has strong RSSI
+                        _has_strong = False
+                        for _src3, _rssi3 in ema.items():
+                            if source_to_area.get(_src3) == _rname and _rssi3 > _ISOLATED_SCANNER_STRONG_DBM:
+                                _has_strong = True
+                                break
+                        if not _has_strong:
+                            room_scores[_rname] *= _ISOLATED_SCANNER_DAMPING
+
                 # ── Room adjacency prior (Phase 2) ──────────────────────
                 # Multiply each room's score by a transition probability
                 # based on centroid distance from the current room.
@@ -1157,9 +1208,15 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         and b.get("floor_id") in _involved_floors
                         for b in (self._rf_barriers or [])
                     )
-                    # Open/loft between these floors: normal hysteresis only.
-                    # Fully walled floors: require double hysteresis margin.
-                    _floor_margin = _floor_hyst if _has_open else _floor_hyst * 2.0
+                    # Open/loft: normal hysteresis. Indoor floors: 2× margin.
+                    # Indoor↔outdoor: 4× margin — outdoor requires overwhelming evidence.
+                    _involves_outside = OUTSIDE_FLOOR_ID in _involved_floors
+                    if _has_open:
+                        _floor_margin = _floor_hyst
+                    elif _involves_outside:
+                        _floor_margin = _floor_hyst * 4.0
+                    else:
+                        _floor_margin = _floor_hyst * 2.0
                     if room_scores.get(candidate, 0) - room_scores.get(_cur_room_fs, 0) < _floor_margin:
                         candidate = _cur_room_fs  # stay on current floor
 
@@ -1369,12 +1426,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if top_count >= vote_threshold:
                 if top_room != confirmed:
                     # ── Velocity gate ────────────────────────────────────
-                    # Two checks prevent teleportation:
+                    # Three checks prevent teleportation:
                     #  1. Rapid-fire: if device changed rooms very recently,
                     #     require UNANIMOUS vote (all votes agree).
                     #  2. Distance: if rooms are far apart (non-adjacent),
                     #     also require unanimous vote.
-                    # Both checks are soft: they raise the bar for evidence,
+                    #  3. Indoor↔outdoor: crossing the outdoor boundary
+                    #     always requires unanimous vote.
+                    # All checks are soft: they raise the bar for evidence,
                     # not block transitions entirely.
                     _vg_block = False
                     if confirmed is not None:
@@ -1403,7 +1462,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             if _vg_adj and confirmed in _vg_adj:
                                 _is_distant = top_room not in _vg_adj[confirmed]
                             # else: no adjacency data → _is_distant stays False (no gate)
-                        if (_is_rapid or _is_distant) and top_count < len(votes):
+                        # Check 3: indoor↔outdoor transition
+                        _is_outdoor_cross = False
+                        _conf_fl = _room_to_floor.get(confirmed, "")
+                        _top_fl = _room_to_floor.get(top_room, "")
+                        if _conf_fl and _top_fl:
+                            _conf_outside = _conf_fl == OUTSIDE_FLOOR_ID
+                            _top_outside = _top_fl == OUTSIDE_FLOOR_ID
+                            if _conf_outside != _top_outside:
+                                _is_outdoor_cross = True
+
+                        if (_is_rapid or _is_distant or _is_outdoor_cross) and top_count < len(votes):
                             # Not unanimous — hold current room
                             _vg_block = True
                             _LOGGER.debug(
