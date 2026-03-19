@@ -194,6 +194,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_fabric_rf_barrier_remove)
     websocket_api.async_register_command(hass, ws_fabric_map_transform_set)
     websocket_api.async_register_command(hass, ws_fabric_migrate_from_maps)
+    websocket_api.async_register_command(hass, ws_fabric_health)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -7946,4 +7947,197 @@ async def ws_fabric_migrate_from_maps(hass: HomeAssistant, connection, msg) -> N
         "transforms_computed": n_transforms,
         "cal_points_backfilled": cal_backfilled,
         **stats,
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Fabric Health — diagnostic checks for Phase 1-3 decoupling
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/fabric_health"})
+@websocket_api.async_response
+async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
+    """Run diagnostic checks on the positioning fabric (Phase 1-3)."""
+    checks: list[dict[str, Any]] = []
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+    ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+    pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+
+    # ── Phase 1: Fabric sync ────────────────────────────────────────────────
+    if mdl:
+        scanners = mdl.data.get("scanners", {})
+        sync_mode = mdl.sync_mode()
+        ha_sync_count = sum(1 for s in scanners.values() if isinstance(s, dict) and s.get("source_type") == "ha_sync")
+        manual_count = sum(1 for s in scanners.values() if isinstance(s, dict) and s.get("source_type") == "manual")
+        adj = mdl.adjacency()
+        adj_room_count = len(adj)
+        adj_edge_count = sum(len(v) for v in adj.values()) // 2
+
+        checks.append({
+            "group": "fabric_sync", "name": "Sync Mode",
+            "ok": True, "value": sync_mode,
+            "detail": f"Mode: {sync_mode}",
+        })
+        checks.append({
+            "group": "fabric_sync", "name": "Scanners in Fabric",
+            "ok": len(scanners) > 0, "value": len(scanners),
+            "detail": f"{len(scanners)} total ({ha_sync_count} ha_sync, {manual_count} manual)",
+        })
+        # List scanner→room mappings
+        scanner_list = []
+        for src, info in sorted(scanners.items()):
+            if isinstance(info, dict):
+                scanner_list.append({
+                    "source": src, "room": info.get("room", "?"),
+                    "floor_id": info.get("floor_id", "?"),
+                    "source_type": info.get("source_type", "?"),
+                })
+        checks.append({
+            "group": "fabric_sync", "name": "Adjacency",
+            "ok": adj_room_count > 0 or len(scanners) <= 1,
+            "value": f"{adj_room_count} rooms, {adj_edge_count} edges",
+            "detail": f"{adj_room_count} rooms with neighbors, {adj_edge_count} bidirectional edges",
+        })
+    else:
+        checks.append({
+            "group": "fabric_sync", "name": "ModelStore",
+            "ok": False, "value": "not loaded",
+            "detail": "ModelStore is not initialized — fabric is offline",
+        })
+        scanner_list = []
+
+    # ── Phase 2: Spatial model ───────────────────────────────────────────────
+    if mdl:
+        positions = mdl.data.get("scanner_positions_m", {})
+        geometry = mdl.data.get("room_geometry_m", {})
+        barriers = mdl.data.get("rf_barriers_m", [])
+        transforms = mdl.data.get("map_transforms", {})
+
+        checks.append({
+            "group": "spatial", "name": "Scanner Positions (metres)",
+            "ok": len(positions) > 0, "value": len(positions),
+            "detail": f"{len(positions)} scanners have real-world metre positions",
+        })
+        checks.append({
+            "group": "spatial", "name": "Room Geometry (metres)",
+            "ok": len(geometry) > 0, "value": len(geometry),
+            "detail": f"{len(geometry)} rooms have real-world geometry (poly/circle)",
+        })
+        checks.append({
+            "group": "spatial", "name": "RF Barriers (metres)",
+            "ok": True, "value": len(barriers),
+            "detail": f"{len(barriers)} barriers in real-world metre space",
+        })
+        checks.append({
+            "group": "spatial", "name": "Map Transforms",
+            "ok": len(transforms) > 0 or (ms and not ms.list_maps()),
+            "value": len(transforms),
+            "detail": f"{len(transforms)} maps have frac↔metre transforms",
+        })
+
+        # Check if coordinator is using metre model
+        use_metres = getattr(pc, "_use_metres", False) if pc else False
+        checks.append({
+            "group": "spatial", "name": "Coordinator Mode",
+            "ok": True, "value": "metres" if use_metres else "map fractions",
+            "detail": "Presence coordinator is using " + ("real-world metre model" if use_metres else "legacy map-fraction model"),
+        })
+
+        # Scanner positions detail list
+        position_list = []
+        for src, pos in sorted(positions.items()):
+            if isinstance(pos, dict):
+                position_list.append({
+                    "source": src,
+                    "x_m": pos.get("x_m"), "y_m": pos.get("y_m"), "z_m": pos.get("z_m"),
+                    "floor_id": pos.get("floor_id", "?"),
+                    "origin": pos.get("origin", "?"),
+                })
+
+        # Room geometry detail list
+        geometry_list = []
+        centroids = mdl.room_centroids_m()
+        for room, geo in sorted(geometry.items()):
+            if isinstance(geo, dict):
+                c = centroids.get(room)
+                geometry_list.append({
+                    "room": room, "type": geo.get("type", "?"),
+                    "floor_id": geo.get("floor_id", "?"),
+                    "origin": geo.get("origin", "?"),
+                    "centroid_m": [round(c[0], 2), round(c[1], 2)] if c else None,
+                })
+    else:
+        position_list = []
+        geometry_list = []
+
+    # ── Phase 3: Calibration metres ──────────────────────────────────────────
+    if cal:
+        pts = cal.data.get("points", [])
+        total_pts = len(pts)
+        pts_with_m = sum(1 for p in pts if p.get("x_m") is not None)
+        pts_without_m = total_pts - pts_with_m
+
+        checks.append({
+            "group": "calibration", "name": "Calibration Points",
+            "ok": total_pts > 0, "value": total_pts,
+            "detail": f"{total_pts} total calibration fingerprint points",
+        })
+        checks.append({
+            "group": "calibration", "name": "Points with Metres",
+            "ok": pts_without_m == 0 or total_pts == 0,
+            "value": f"{pts_with_m}/{total_pts}",
+            "detail": f"{pts_with_m} of {total_pts} points have x_m/y_m coordinates" +
+                      (f" ({pts_without_m} missing — run fabric_migrate_from_maps)" if pts_without_m > 0 else " — all anchored"),
+        })
+
+        # ModelStore wired?
+        has_model_ref = cal._model is not None
+        checks.append({
+            "group": "calibration", "name": "ModelStore Wired",
+            "ok": has_model_ref, "value": "yes" if has_model_ref else "no",
+            "detail": "CalibrationStore " + ("has" if has_model_ref else "MISSING") + " reference to ModelStore for metre conversions",
+        })
+
+        # RF trained in metres?
+        rf_trained = cal.rf_trained
+        rf_metres = getattr(cal._rf, "_use_metres", False) if rf_trained else False
+        checks.append({
+            "group": "calibration", "name": "RF Model",
+            "ok": rf_trained, "value": ("metres" if rf_metres else "fractions") if rf_trained else "not trained",
+            "detail": ("Random Forest trained in " + ("metre" if rf_metres else "fraction") + " space") if rf_trained else "RF not trained (need ≥4 points)",
+        })
+
+        # LOO accuracy
+        loo = cal.loo_accuracy()
+        if loo:
+            has_real_m = "mean_error_m" in loo
+            err_str = f"{loo['mean_error_m']}m" if has_real_m else f"~{loo.get('mean_error_m_est', '?')}m (estimated)"
+            checks.append({
+                "group": "calibration", "name": "LOO Accuracy",
+                "ok": True, "value": err_str,
+                "detail": f"Mean error: {err_str}, median: " +
+                          (f"{loo.get('median_error_m', '?')}m" if has_real_m else f"{loo.get('median_error_frac', '?')} frac") +
+                          f" ({loo['point_count']} points)",
+            })
+    else:
+        checks.append({
+            "group": "calibration", "name": "CalibrationStore",
+            "ok": False, "value": "not loaded",
+            "detail": "CalibrationStore is not initialized",
+        })
+
+    # ── Summary ──────────────────────────────────────────────────────────────
+    total = len(checks)
+    passed = sum(1 for c in checks if c["ok"])
+    failed = total - passed
+
+    connection.send_result(msg["id"], {
+        "summary": {"total": total, "passed": passed, "failed": failed, "healthy": failed == 0},
+        "checks": checks,
+        "scanners": scanner_list,
+        "scanner_positions_m": position_list if mdl else [],
+        "room_geometry_m": geometry_list if mdl else [],
+        "adjacency": mdl.adjacency() if mdl else {},
     })

@@ -85,6 +85,14 @@ export function render(ctx){
     root.appendChild(shCard);
   }
 
+  // ── Fabric Health (Phase 1-3 decoupling) ────────────────────────────────
+  root.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-top:16px"},[
+    el("div",{style:"font-weight:700;font-size:14px;color:#52b788"},"Positioning Fabric"),
+  ]));
+  const fabricContainer = el("div",{id:"health-fabric",style:"margin-top:8px"});
+  root.appendChild(fabricContainer);
+  _fetchAndRenderFabric(ctx, fabricContainer);
+
   // ── Phase 4: System Critics ─────────────────────────────────────────────
   root.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-top:16px"},[
     el("div",{style:"font-weight:700;font-size:14px;color:#52b788"},"System Critics"),
@@ -97,6 +105,161 @@ export function render(ctx){
   _fetchAndRenderCritics(ctx, criticsContainer);
 
   return root;
+}
+
+
+// ── Fabric Health fetch & render ──────────────────────────────────────────
+
+let _fabricCache = null;
+let _fabricFetchTs = 0;
+const _FABRIC_TTL_MS = 15000;
+
+async function _fetchAndRenderFabric(ctx, container) {
+  const { el } = ctx.helpers;
+  const now = Date.now();
+  if (_fabricCache && (now - _fabricFetchTs) < _FABRIC_TTL_MS) {
+    _renderFabric(ctx, container, _fabricCache);
+    return;
+  }
+  container.innerHTML = "";
+  container.appendChild(el("div",{class:"card",style:"text-align:center;color:#94a3b8;padding:16px"},"Loading fabric diagnostics\u2026"));
+  try {
+    const res = await ctx.actions.callWS({ type: "padspan_ha/fabric_health" });
+    _fabricCache = res;
+    _fabricFetchTs = Date.now();
+    _renderFabric(ctx, container, res);
+  } catch (err) {
+    container.innerHTML = "";
+    container.appendChild(el("div",{class:"card",style:"color:#fca5a5"},`Failed: ${err.message || err}`));
+  }
+}
+
+function _renderFabric(ctx, container, data) {
+  const { el } = ctx.helpers;
+  container.innerHTML = "";
+  const { summary, checks, scanners, scanner_positions_m, room_geometry_m, adjacency } = data;
+
+  // ── Summary banner ─────────────────────────────────────────────────────
+  const color = summary.healthy ? "#52b788" : summary.failed > 2 ? "#f87171" : "#f59e0b";
+  const bg = summary.healthy ? "rgba(82,183,136,.08)" : "rgba(248,113,113,.08)";
+  container.appendChild(el("div",{class:"card",style:`border:1px solid ${color}33;background:${bg};margin-bottom:12px`},[
+    el("div",{style:`display:flex;align-items:center;gap:8px`},[
+      el("div",{style:`font-weight:800;font-size:14px;color:${color}`},"Fabric Status"),
+      el("div",{class:"pill",style:`background:${color}22;color:${color};font-size:10px;padding:2px 8px`},
+        summary.healthy ? "ALL PASS" : `${summary.failed} ISSUE${summary.failed!==1?"S":""}`),
+    ]),
+    el("div",{style:`font-size:11px;color:#94a3b8;margin-top:4px`},
+      `${summary.passed}/${summary.total} checks passed`),
+  ]));
+
+  // ── Check results by group ─────────────────────────────────────────────
+  const groups = [
+    { key: "fabric_sync", label: "Phase 1 \u2014 Scanner Fabric" },
+    { key: "spatial", label: "Phase 2 \u2014 Spatial Model (metres)" },
+    { key: "calibration", label: "Phase 3 \u2014 Calibration" },
+  ];
+  for (const g of groups) {
+    const gc = checks.filter(c => c.group === g.key);
+    if (!gc.length) continue;
+    const card = el("div",{class:"card",style:"margin-bottom:8px;padding:12px"});
+    card.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px"},g.label));
+    const tbl = el("div",{style:"display:grid;grid-template-columns:18px 1fr auto;gap:4px 8px;font-size:11px;align-items:center"});
+    for (const c of gc) {
+      const dot = c.ok ? "\u2705" : "\u274c";
+      tbl.appendChild(el("div",{style:"font-size:13px;line-height:1"},dot));
+      tbl.appendChild(el("div",{},[
+        el("span",{style:"font-weight:600;color:#e2e8f0"},c.name),
+        el("span",{style:"color:#64748b;margin-left:6px"},c.detail),
+      ]));
+      tbl.appendChild(el("div",{class:"mono",style:`color:${c.ok?"#52b788":"#fca5a5"};font-weight:600;white-space:nowrap`},String(c.value)));
+    }
+    card.appendChild(tbl);
+    container.appendChild(card);
+  }
+
+  // ── Scanner mappings table ─────────────────────────────────────────────
+  if (scanners && scanners.length) {
+    const card = el("div",{class:"card",style:"margin-bottom:8px;padding:12px"});
+    card.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px"},
+      `Scanner \u2192 Room Mappings (${scanners.length})`));
+    const tbl = el("div",{style:"display:grid;grid-template-columns:1fr 1fr auto auto;gap:3px 8px;font-size:10px;align-items:center"});
+    for (const h of ["Source","Room","Floor","Type"]) {
+      tbl.appendChild(el("div",{style:"font-weight:600;color:#64748b;text-transform:uppercase"},h));
+    }
+    for (const s of scanners) {
+      const typeColor = s.source_type === "manual" ? "#f59e0b" : "#52b788";
+      tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2e8f0"},s.source));
+      tbl.appendChild(el("div",{style:"color:#94a3b8"},s.room));
+      tbl.appendChild(el("div",{class:"mono",style:"color:#64748b"},s.floor_id));
+      tbl.appendChild(el("div",{style:`color:${typeColor};font-weight:600`},s.source_type));
+    }
+    card.appendChild(tbl);
+    container.appendChild(card);
+  }
+
+  // ── Scanner positions (metres) ─────────────────────────────────────────
+  if (scanner_positions_m && scanner_positions_m.length) {
+    const card = el("div",{class:"card",style:"margin-bottom:8px;padding:12px"});
+    card.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px"},
+      `Scanner Positions in Metres (${scanner_positions_m.length})`));
+    const tbl = el("div",{style:"display:grid;grid-template-columns:1fr auto auto auto auto auto;gap:3px 8px;font-size:10px;align-items:center"});
+    for (const h of ["Source","X","Y","Z","Floor","Origin"]) {
+      tbl.appendChild(el("div",{style:"font-weight:600;color:#64748b;text-transform:uppercase"},h));
+    }
+    for (const p of scanner_positions_m) {
+      tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2e8f0"},p.source));
+      tbl.appendChild(el("div",{class:"mono",style:"text-align:right"},p.x_m != null ? p.x_m.toFixed(2) : "\u2014"));
+      tbl.appendChild(el("div",{class:"mono",style:"text-align:right"},p.y_m != null ? p.y_m.toFixed(2) : "\u2014"));
+      tbl.appendChild(el("div",{class:"mono",style:"text-align:right"},p.z_m != null ? p.z_m.toFixed(1) : "\u2014"));
+      tbl.appendChild(el("div",{class:"mono",style:"color:#64748b"},p.floor_id));
+      tbl.appendChild(el("div",{style:`color:${p.origin==="manual"?"#f59e0b":"#52b788"}`},p.origin));
+    }
+    card.appendChild(tbl);
+    container.appendChild(card);
+  }
+
+  // ── Room geometry (metres) ─────────────────────────────────────────────
+  if (room_geometry_m && room_geometry_m.length) {
+    const card = el("div",{class:"card",style:"margin-bottom:8px;padding:12px"});
+    card.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px"},
+      `Room Geometry in Metres (${room_geometry_m.length})`));
+    const tbl = el("div",{style:"display:grid;grid-template-columns:1fr auto auto auto auto;gap:3px 8px;font-size:10px;align-items:center"});
+    for (const h of ["Room","Type","Centroid","Floor","Origin"]) {
+      tbl.appendChild(el("div",{style:"font-weight:600;color:#64748b;text-transform:uppercase"},h));
+    }
+    for (const g of room_geometry_m) {
+      const cStr = g.centroid_m ? `(${g.centroid_m[0]}, ${g.centroid_m[1]})` : "\u2014";
+      tbl.appendChild(el("div",{style:"color:#e2e8f0;font-weight:600"},g.room));
+      tbl.appendChild(el("div",{class:"mono"},g.type));
+      tbl.appendChild(el("div",{class:"mono",style:"color:#94a3b8"},cStr));
+      tbl.appendChild(el("div",{class:"mono",style:"color:#64748b"},g.floor_id));
+      tbl.appendChild(el("div",{style:`color:${g.origin==="manual"?"#f59e0b":"#52b788"}`},g.origin));
+    }
+    card.appendChild(tbl);
+    container.appendChild(card);
+  }
+
+  // ── Adjacency map ──────────────────────────────────────────────────────
+  if (adjacency && Object.keys(adjacency).length) {
+    const card = el("div",{class:"card",style:"margin-bottom:8px;padding:12px"});
+    card.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px"},
+      `Room Adjacency (${Object.keys(adjacency).length} rooms)`));
+    const list = el("div",{style:"font-size:11px;line-height:1.8"});
+    for (const [room, neighbors] of Object.entries(adjacency).sort()) {
+      list.appendChild(el("div",{},[
+        el("span",{style:"font-weight:600;color:#e2e8f0"},room),
+        el("span",{style:"color:#64748b"}," \u2192 "),
+        el("span",{style:"color:#94a3b8"},neighbors.length ? neighbors.join(", ") : "(none)"),
+      ]));
+    }
+    card.appendChild(list);
+    container.appendChild(card);
+  }
+
+  // ── Refresh button ─────────────────────────────────────────────────────
+  const btn = el("button",{class:"btn",style:"margin-top:8px;width:auto;padding:6px 16px"},"Refresh Fabric");
+  btn.addEventListener("click", () => { _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container); });
+  container.appendChild(btn);
 }
 
 

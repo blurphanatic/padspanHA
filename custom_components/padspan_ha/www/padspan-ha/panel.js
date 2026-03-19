@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.15.29";
-const BUILD_ID = "20260319T183205Z";
+const APP_VERSION = "0.15.30";
+const BUILD_ID = "20260319T184534Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -125,6 +125,7 @@ const MENU = [
   ["training","Training","mdi:school-outline"],
   ["calibration","Calibration","mdi:crosshairs"],
   ["traceback","Traceback","mdi:history"],
+  ["health","Health","mdi:heart-pulse"],
   ["qa","QA","mdi:clipboard-check-outline"],
   ["sandbox","Sandbox","mdi:flask-outline"],
 ];
@@ -135,7 +136,7 @@ const MENU = [
 //   Advanced  — default set plus user-chosen extras from Settings -> UI Structure
 //   Dev       — everything visible (includes QA, Sandbox, raw Debug, etc.)
 const BASIC_TABS = new Set(["follow", "overview", "maps", "settings", "training"]);
-const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration","traceback"]);
+const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration","traceback","health"]);
 const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox"];
 
 // Accent color per tab — used for the sidebar dot, mobile nav, and active highlights
