@@ -8141,6 +8141,27 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
     passed = sum(1 for c in checks if c["ok"])
     failed = total - passed
 
+    # ── Maps diagnostic info ───────────────────────────────────────────────
+    maps_diag: list[dict[str, Any]] = []
+    if ms:
+        for m in ms.list_maps():
+            img = m.get("image") or {}
+            cal = m.get("calibration") or {}
+            stk = m.get("stack") or {}
+            maps_diag.append({
+                "id": m.get("id", "?"),
+                "name": m.get("name", "?"),
+                "floor_id": m.get("floor_id", "?"),
+                "width": img.get("width", 0),
+                "height": img.get("height", 0),
+                "px_per_meter": cal.get("px_per_meter"),
+                "cal_mode": cal.get("mode", "none"),
+                "is_master": stk.get("is_master", False),
+                "has_receivers": len(m.get("receivers") or []),
+                "has_room_bounds": len(m.get("room_bounds") or {}),
+                "has_rf_barriers": len(m.get("rf_barriers") or []),
+            })
+
     connection.send_result(msg["id"], {
         "summary": {"total": total, "passed": passed, "failed": failed, "healthy": failed == 0},
         "checks": checks,
@@ -8148,4 +8169,5 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
         "scanner_positions_m": position_list if mdl else [],
         "room_geometry_m": geometry_list if mdl else [],
         "adjacency": mdl.adjacency() if mdl else {},
+        "maps": maps_diag,
     })

@@ -256,6 +256,31 @@ function _renderFabric(ctx, container, data) {
     container.appendChild(card);
   }
 
+  // ── Maps diagnostic table ───────────────────────────────────────────────
+  const maps = data.maps || [];
+  if (maps.length) {
+    const card = el("div",{class:"card",style:"margin-bottom:8px;padding:12px"});
+    card.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px"},
+      `Maps (${maps.length})`));
+    const tbl = el("div",{style:"display:grid;grid-template-columns:1fr auto auto auto auto auto auto;gap:3px 8px;font-size:10px;align-items:center"});
+    for (const h of ["Name","Size","px/m","Receivers","Rooms","Barriers","Floor"]) {
+      tbl.appendChild(el("div",{style:"font-weight:600;color:#64748b;text-transform:uppercase"},h));
+    }
+    for (const m of maps) {
+      const ppm = m.px_per_meter;
+      const ppmColor = ppm ? "#52b788" : "#f87171";
+      tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2e8f0"},m.name));
+      tbl.appendChild(el("div",{class:"mono",style:"white-space:nowrap"},`${m.width}\u00d7${m.height}`));
+      tbl.appendChild(el("div",{class:"mono",style:`color:${ppmColor}`},ppm ? String(Math.round(ppm)) : "none"));
+      tbl.appendChild(el("div",{class:"mono",style:"text-align:center"},String(m.has_receivers)));
+      tbl.appendChild(el("div",{class:"mono",style:"text-align:center"},String(m.has_room_bounds)));
+      tbl.appendChild(el("div",{class:"mono",style:"text-align:center"},String(m.has_rf_barriers)));
+      tbl.appendChild(el("div",{class:"mono",style:"color:#64748b"},m.floor_id));
+    }
+    card.appendChild(tbl);
+    container.appendChild(card);
+  }
+
   // ── Migrate button (when transforms missing) ───────────────────────────
   const hasTransforms = checks.some(c => c.name === "Map Transforms" && c.value > 0);
   if (!hasTransforms) {
