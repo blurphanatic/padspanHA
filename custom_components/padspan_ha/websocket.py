@@ -8269,34 +8269,30 @@ async def ws_fabric_reset_spatial(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
         return
 
-    # Clear spatial data
+    # Clear spatial data only — user must explicitly migrate after
     mdl.data["scanner_positions_m"] = {}
     mdl.data["room_geometry_m"] = {}
     mdl.data["rf_barriers_m"] = []
     mdl.data["map_transforms"] = {}
     await mdl.store.async_save(mdl.data)
 
-    # Re-derive from maps if available
-    result = {"cleared": True, "transforms": 0, "scanners": 0, "rooms": 0, "barriers": 0, "cal_backfilled": 0}
-    if ms:
-        # Use scale from existing transforms or default
-        n_t = await mdl.async_derive_transforms(ms)
-        result["transforms"] = n_t
-        if n_t:
-            stats = await mdl.async_migrate_from_maps(ms)
-            result["scanners"] = stats["scanners_migrated"]
-            result["rooms"] = stats["rooms_migrated"]
-            result["barriers"] = stats["barriers_migrated"]
-
-    # Re-backfill calibration
+    # Clear metre coords from calibration points (they'll be re-backfilled on migrate)
     cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+    cal_cleared = 0
     if cal:
         try:
-            if not cal._model:
-                cal.set_model_store(mdl)
-            result["cal_backfilled"] = await cal.async_backfill_metres()
-            await cal._async_train_rf()
+            for p in cal.data.get("points", []):
+                if p.get("x_m") is not None:
+                    p.pop("x_m", None)
+                    p.pop("y_m", None)
+                    cal_cleared += 1
+            if cal_cleared:
+                await cal.store.async_save(cal.data)
         except Exception:
             pass
 
-    connection.send_result(msg["id"], {"ok": True, **result})
+    connection.send_result(msg["id"], {
+        "ok": True, "cleared": True,
+        "cal_points_cleared": cal_cleared,
+        "next_step": "Click 'Migrate to Metres' with your floor width to rebuild.",
+    })
