@@ -3369,24 +3369,37 @@ async def ws_maps_replace_image(hass: HomeAssistant, connection, msg) -> None:
     if not ms:
         connection.send_error(msg["id"], "no_maps_store", "Maps store not initialized")
         return
+
+    _map_id = msg.get("map_id") or ""
+    _mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    # Phase 4: skip crop-based renorm when metre model is authoritative
+    _has_model = bool(_mdl and _mdl.map_transform(_map_id))
+
     try:
         updated = await ms.async_replace_image(
-            msg.get("map_id") or "",
+            _map_id,
             msg.get("png_base64") or "",
             msg.get("width") or 0,
             msg.get("height") or 0,
             msg.get("crop"),
+            skip_frac_renorm=_has_model,
         )
     except KeyError:
         connection.send_error(msg["id"], "not_found", "Map not found")
         return
 
-    # Phase 3: remap calibration points from metres after image replacement
+    # Phase 4: recompute transform + re-derive all map fracs from metres
     try:
-        _cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
-        _map_id = msg.get("map_id") or ""
-        if _cal and _map_id:
-            await _cal.async_remap_from_metres(_map_id)
+        if _mdl and _map_id:
+            _recomputed = await _mdl.async_recompute_transform_for_map(_map_id, updated, ms)
+            if _recomputed:
+                _n = await _mdl.async_rederive_map_fracs(_map_id, updated)
+                if _n:
+                    await ms.store.async_save(ms.data)
+            # Phase 3: remap calibration points (with updated transform)
+            _cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+            if _cal:
+                await _cal.async_remap_from_metres(_map_id)
     except Exception:
         pass
 

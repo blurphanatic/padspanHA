@@ -796,6 +796,144 @@ class ModelStore:
             await self.store.async_save(self.data)
         return count
 
+    # ── Phase 4: map image replacement — recompute + re-derive ─────────────
+
+    async def async_recompute_transform_for_map(
+        self, map_id: str, map_dict: dict, maps_store: Any,
+    ) -> bool:
+        """Recompute a single map's frac↔metre transform after image replacement.
+
+        Uses the map's calibration px_per_meter (or existing default_floor_width
+        from the current transform) with the NEW image dimensions.
+        Returns True if transform was updated.
+        """
+        cal = map_dict.get("calibration") or {}
+        img = map_dict.get("image") or {}
+        img_w = int(img.get("width") or 0)
+        img_h = int(img.get("height") or 0)
+        if img_w <= 0 or img_h <= 0:
+            return False
+
+        ppm = cal.get("px_per_meter")
+        if ppm and float(ppm) > 0:
+            ppm = float(ppm)
+        else:
+            # Try to recover scale from existing transform
+            old_t = (self.data.get("map_transforms") or {}).get(map_id)
+            if old_t and old_t.get("scale_x_m"):
+                # Back-derive: old_scale_x_m was old_img_w / old_ppm
+                # We want the same real-world width, so ppm = img_w / scale_x_m
+                ppm = img_w / float(old_t["scale_x_m"])
+            else:
+                return False
+
+        stk = map_dict.get("stack") or {}
+        fl = str(map_dict.get("floor_id", DEFAULT_FLOOR_ID))
+        rot_rad = math.radians(float(stk.get("rotation", 0)))
+        scale_x_m = img_w / ppm
+        scale_y_m = img_h / ppm
+
+        # Origin: master = (0,0), others from stack offset
+        is_master = stk.get("is_master", False)
+        if is_master:
+            origin_x, origin_y = 0.0, 0.0
+        else:
+            # Use stack offsets scaled by master's metres
+            origin_x = float(stk.get("x_offset", 0)) * scale_x_m
+            origin_y = float(stk.get("y_offset", 0)) * scale_y_m
+
+        transforms = self.data.setdefault("map_transforms", {})
+        transforms[map_id] = {
+            "origin_x_m": round(origin_x, 4),
+            "origin_y_m": round(origin_y, 4),
+            "scale_x_m": round(scale_x_m, 4),
+            "scale_y_m": round(scale_y_m, 4),
+            "rotation_rad": round(rot_rad, 6),
+            "floor_id": fl,
+        }
+        await self.store.async_save(self.data)
+        return True
+
+    async def async_rederive_map_fracs(self, map_id: str, map_dict: dict) -> int:
+        """Re-derive map-fraction coordinates from metres for a single map.
+
+        Inverse of async_sync_spatial_from_map: reads metre-space data and
+        writes back to the map dict's receivers, room_bounds, rf_barriers.
+        Returns count of items updated. Mutates map_dict in place.
+        """
+        count = 0
+        positions = self.data.get("scanner_positions_m") or {}
+        geometry = self.data.get("room_geometry_m") or {}
+        barriers_m = self.data.get("rf_barriers_m") or []
+
+        # ── Receivers ─────────────────────────────────────────────────────
+        for rx in (map_dict.get("receivers") or []):
+            src = rx.get("source") or rx.get("id", "")
+            if not src or src not in positions:
+                continue
+            pos = positions[src]
+            if pos.get("origin") == "manual" and pos.get("map_id") != map_id:
+                continue  # don't override manual positions from other maps
+            fracs = self.metres_to_map_frac(float(pos["x_m"]), float(pos["y_m"]), map_id)
+            if fracs:
+                rx["x"] = round(max(0.0, min(1.0, fracs[0])), 4)
+                rx["y"] = round(max(0.0, min(1.0, fracs[1])), 4)
+                count += 1
+
+        # ── Room bounds ───────────────────────────────────────────────────
+        for rname, b in (map_dict.get("room_bounds") or {}).items():
+            if not isinstance(b, dict) or rname not in geometry:
+                continue
+            geo = geometry[rname]
+            if geo.get("type") == "poly" and b.get("type") == "poly":
+                pts_m = geo.get("points_m") or []
+                new_pts = []
+                for pm in pts_m:
+                    fracs = self.metres_to_map_frac(float(pm[0]), float(pm[1]), map_id)
+                    if fracs:
+                        new_pts.append([
+                            round(max(0.0, min(1.0, fracs[0])), 4),
+                            round(max(0.0, min(1.0, fracs[1])), 4),
+                        ])
+                if len(new_pts) >= 3:
+                    b["points"] = new_pts
+                    count += 1
+            elif geo.get("type") == "circle" and b.get("type") == "circle":
+                fracs = self.metres_to_map_frac(
+                    float(geo.get("cx_m", 0)), float(geo.get("cy_m", 0)), map_id
+                )
+                if fracs:
+                    b["cx"] = round(max(0.0, min(1.0, fracs[0])), 4)
+                    b["cy"] = round(max(0.0, min(1.0, fracs[1])), 4)
+                    t = (self.data.get("map_transforms") or {}).get(map_id, {})
+                    avg_scale = (float(t.get("scale_x_m", 1)) + float(t.get("scale_y_m", 1))) / 2
+                    if avg_scale > 0:
+                        b["r"] = round(max(0.01, min(0.5, float(geo.get("r_m", 1)) / avg_scale)), 4)
+                    count += 1
+
+        # ── RF barriers ──────────────────────────────────────────────────
+        map_barriers_m = [bm for bm in barriers_m if bm.get("map_id") == map_id]
+        existing_barriers = map_dict.get("rf_barriers") or []
+        if map_barriers_m and existing_barriers:
+            # Match by index/name and re-derive points
+            for i, bar in enumerate(existing_barriers):
+                if i >= len(map_barriers_m):
+                    break
+                bm = map_barriers_m[i]
+                new_pts = []
+                for pm in (bm.get("points_m") or []):
+                    fracs = self.metres_to_map_frac(float(pm[0]), float(pm[1]), map_id)
+                    if fracs:
+                        new_pts.append([
+                            round(max(0.0, min(1.0, fracs[0])), 4),
+                            round(max(0.0, min(1.0, fracs[1])), 4),
+                        ])
+                if len(new_pts) >= 2:
+                    bar["points"] = new_pts
+                    count += 1
+
+        return count
+
     def has_floor(self, floor_id: str) -> bool:
         fid = str(floor_id or "")
         return any(f.get("id") == fid for f in self.data.get("floors", []))

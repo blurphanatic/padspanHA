@@ -366,6 +366,7 @@ class MapsStore:
         width: int,
         height: int,
         crop: dict | None = None,
+        skip_frac_renorm: bool = False,
     ) -> dict[str, Any]:
         """Replace the PNG for an existing map and renormalize stored coordinates.
 
@@ -373,6 +374,9 @@ class MapsStore:
         kept: {fx0, fy0, fx1, fy1} as 0-1 fractions.  All receiver positions
         and room-bound polygon points are remapped so they remain correct in the
         new (cropped) image coordinate space.
+
+        skip_frac_renorm: when True, skip crop-based renormalization — the caller
+        will re-derive fractions from metre-space data (Phase 4).
         """
         m = self.get_map(map_id)
         if not m:
@@ -392,7 +396,8 @@ class MapsStore:
         m["image"]["sha256"]     = _sha256(raw)
 
         # Renormalize stored coordinates if a crop rectangle was supplied
-        if crop:
+        # Phase 4: skip when metre-space data is authoritative (caller re-derives)
+        if crop and not skip_frac_renorm:
             fx0 = float(crop.get("fx0", 0))
             fy0 = float(crop.get("fy0", 0))
             fx1 = float(crop.get("fx1", 1))
