@@ -256,6 +256,43 @@ function _renderFabric(ctx, container, data) {
     container.appendChild(card);
   }
 
+  // ── Migrate button (when transforms missing) ───────────────────────────
+  const hasTransforms = checks.some(c => c.name === "Map Transforms" && c.value > 0);
+  if (!hasTransforms) {
+    const migrateCard = el("div",{class:"card",style:"margin-bottom:8px;padding:12px;border:1px solid #f59e0b33;background:rgba(245,158,11,.06)"});
+    migrateCard.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#fbbf24;margin-bottom:8px"},
+      "No map transforms \u2014 set floor width to bootstrap the spatial model"));
+    const row = el("div",{style:"display:flex;align-items:center;gap:8px"});
+    const input = el("input",{type:"number",value:"40",min:"5",max:"200",step:"1",
+      style:"width:80px;padding:4px 8px;border:1px solid #334155;border-radius:4px;background:#1e293b;color:#e2e8f0;font-size:12px"});
+    row.appendChild(el("span",{style:"font-size:11px;color:#94a3b8"},"Floor width:"));
+    row.appendChild(input);
+    row.appendChild(el("span",{style:"font-size:11px;color:#94a3b8"},"metres"));
+    const migrateBtn = el("button",{class:"btn",style:"width:auto;padding:4px 14px;font-size:11px;margin-left:8px"},"Migrate to Metres");
+    migrateBtn.addEventListener("click", async () => {
+      const w = parseFloat(input.value);
+      if (!w || w < 1) { ctx.actions.toast("Enter a valid floor width"); return; }
+      migrateBtn.disabled = true;
+      migrateBtn.textContent = "Migrating\u2026";
+      try {
+        const res = await ctx.actions.callWS({
+          type: "padspan_ha/fabric_migrate_from_maps",
+          default_floor_width_m: w,
+        });
+        ctx.actions.toast(`Migrated: ${res.transforms_computed} transforms, ${res.scanners_migrated} scanners, ${res.rooms_migrated} rooms, ${res.cal_points_backfilled || 0} cal points`);
+        _fabricCache = null; _fabricFetchTs = 0;
+        _fetchAndRenderFabric(ctx, container);
+      } catch (err) {
+        ctx.actions.toast(`Migration failed: ${err.message || err}`);
+        migrateBtn.disabled = false;
+        migrateBtn.textContent = "Migrate to Metres";
+      }
+    });
+    row.appendChild(migrateBtn);
+    migrateCard.appendChild(row);
+    container.appendChild(migrateCard);
+  }
+
   // ── Refresh button ─────────────────────────────────────────────────────
   const btn = el("button",{class:"btn",style:"margin-top:8px;width:auto;padding:6px 16px"},"Refresh Fabric");
   btn.addEventListener("click", () => { _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container); });

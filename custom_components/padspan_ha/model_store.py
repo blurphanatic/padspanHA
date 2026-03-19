@@ -471,11 +471,16 @@ class ModelStore:
 
     # ── Migration: derive transforms + convert map data to metres ─────────
 
-    async def async_derive_transforms(self, maps_store: Any) -> int:
+    async def async_derive_transforms(self, maps_store: Any, default_floor_width_m: float = 0.0) -> int:
         """Compute map_transforms from existing map calibration + stack data.
 
         Master map on each floor gets origin (0,0). Other maps on the same floor
         get their origin offset via the stack alignment.
+
+        default_floor_width_m: if > 0, maps without px_per_meter calibration
+        use this as the x-axis real-world width (derives px_per_meter from
+        image width / floor_width_m).
+
         Returns number of transforms computed.
         """
         transforms = self.data.setdefault("map_transforms", {})
@@ -495,13 +500,18 @@ class ModelStore:
                 continue
             cal = m.get("calibration") or {}
             ppm = cal.get("px_per_meter")
-            if not ppm or float(ppm) <= 0:
-                continue
-            ppm = float(ppm)
             img = m.get("image") or {}
             img_w = int(img.get("width") or 0)
             img_h = int(img.get("height") or 0)
             if img_w <= 0 or img_h <= 0:
+                continue
+
+            if ppm and float(ppm) > 0:
+                ppm = float(ppm)
+            elif default_floor_width_m > 0:
+                # Estimate: floor_width_m covers the full image width
+                ppm = img_w / default_floor_width_m
+            else:
                 continue
 
             # Scale: metres per 1.0 fraction

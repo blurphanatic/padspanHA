@@ -7918,10 +7918,17 @@ async def ws_fabric_map_transform_set(hass: HomeAssistant, connection, msg) -> N
     connection.send_result(msg["id"], {"ok": True, "map_id": map_id})
 
 
-@websocket_api.websocket_command({"type": "padspan_ha/fabric_migrate_from_maps"})
+@websocket_api.websocket_command({
+    "type": "padspan_ha/fabric_migrate_from_maps",
+    vol.Optional("default_floor_width_m"): float,
+})
 @websocket_api.async_response
 async def ws_fabric_migrate_from_maps(hass: HomeAssistant, connection, msg) -> None:
-    """Trigger one-time migration from map data to real-world model."""
+    """Trigger migration from map data to real-world model.
+
+    Optional default_floor_width_m: if maps lack px_per_meter calibration,
+    use this as the x-axis width in metres to derive transforms.
+    """
     mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
     ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
     if not mdl:
@@ -7930,7 +7937,8 @@ async def ws_fabric_migrate_from_maps(hass: HomeAssistant, connection, msg) -> N
     if not ms:
         connection.send_error(msg["id"], "no_maps", "MapsStore not loaded")
         return
-    n_transforms = await mdl.async_derive_transforms(ms)
+    _default_w = float(msg.get("default_floor_width_m") or 0)
+    n_transforms = await mdl.async_derive_transforms(ms, default_floor_width_m=_default_w)
     stats = await mdl.async_migrate_from_maps(ms)
     # Phase 3: backfill calibration points with metres after transforms are computed
     cal_backfilled = 0
