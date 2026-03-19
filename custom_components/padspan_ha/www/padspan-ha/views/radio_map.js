@@ -1179,13 +1179,18 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
     }
   }
 
-  // Barrier lines
+  // Barrier lines — open/loft barriers render thin + dotted (no wall);
+  // solid walls render thicker in proportion to their dB attenuation.
   const matColors = { metal: "#f87171", concrete: "#fb923c", brick: "#fbbf24", custom: "#94a3b8", open: "#38bdf8" };
   for (const bar of worldBarriers) {
     const color = matColors[bar.material] || matColors.custom;
-    const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm || 6) * 0.0006));
     const d = bar.points.map((p, i) => { const [vx, vy] = w2v(p[0], p[1]); return `${i === 0 ? "M" : "L"}${f(vx)},${f(vy)}`; }).join(" ");
-    s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${f(sw)}" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
+    if (bar.material === "open") {
+      s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="0.002" stroke-dasharray="0.004,0.008" opacity="0.5"/>`;
+    } else {
+      const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm || 6) * 0.0006));
+      s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${f(sw)}" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
+    }
   }
 
   // Scanner position markers
@@ -1304,15 +1309,20 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
   }
 
   // ── 4. Barrier lines in view coords ────────────────────────────────────────
+  // Open/loft: thin dotted (no wall). Solid walls: thickness ∝ attenuation dB.
   const matColors = { metal: "#f87171", concrete: "#fb923c", brick: "#fbbf24", custom: "#94a3b8", open: "#38bdf8" };
   for (const bar of worldBarriers) {
     const color = matColors[bar.material] || matColors.custom;
-    const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm || 6) * 0.0006));
     const d = bar.points.map((p, i) => {
       const [vx, vy] = w2v(p[0], p[1]);
       return `${i === 0 ? "M" : "L"}${f(vx)},${f(vy)}`;
     }).join(" ");
-    s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${f(sw)}" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
+    if (bar.material === "open") {
+      s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="0.002" stroke-dasharray="0.004,0.008" opacity="0.5"/>`;
+    } else {
+      const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm || 6) * 0.0006));
+      s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${f(sw)}" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
+    }
   }
 
   // ── 5. Calibration point markers — colored + labeled for data verification ──

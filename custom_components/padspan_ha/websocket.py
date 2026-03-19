@@ -2582,11 +2582,12 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("distortion_map_enabled"): bool,
         vol.Optional("compass_ring_enabled"): bool,
         vol.Optional("replay_timeline_enabled"): bool,
-        vol.Optional("heatmap_gain"): vol.Coerce(int),
-        vol.Optional("heatmap_contrast"): vol.Coerce(int),
-        vol.Optional("distortion_intensity"): vol.Coerce(int),
-        vol.Optional("heatmap_source"): vol.Coerce(int),
-        vol.Optional("auto_offset_mode"): str,
+        # Radio map visualization parameters (clamped in handler below)
+        vol.Optional("heatmap_gain"): vol.Coerce(int),        # -20 to +20 dB
+        vol.Optional("heatmap_contrast"): vol.Coerce(int),    # -15 to +15
+        vol.Optional("distortion_intensity"): vol.Coerce(int),  # 0-100 %
+        vol.Optional("heatmap_source"): vol.Coerce(int),      # 0-100 % (calibration vs adaptive blend)
+        vol.Optional("auto_offset_mode"): str,                # "off"|"partial"|"full"
     }
 )
 @websocket_api.async_response
@@ -2662,6 +2663,7 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["lights_hidden"] = [str(x) for x in ids if isinstance(x, str)] if isinstance(ids, list) else []
         if "ble_max_age_s" in msg:
             payload["ble_max_age_s"] = max(30, min(14400, int(msg["ble_max_age_s"])))
+        # ── Radio map / heatmap visualization controls (v0.15.x) ──────────
         if "heatmap_gain" in msg:
             payload["heatmap_gain"] = max(-20, min(20, int(msg["heatmap_gain"])))
         if "heatmap_contrast" in msg:
@@ -2671,6 +2673,8 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         if "heatmap_source" in msg:
             payload["heatmap_source"] = max(0, min(100, int(msg["heatmap_source"])))
         if "auto_offset_mode" in msg:
+            # "off" = manual offsets only, "partial" = auto-adjust weak scanners,
+            # "full" = auto-adjust all scanners to minimize prediction error
             mode = str(msg["auto_offset_mode"]).strip().lower()
             payload["auto_offset_mode"] = mode if mode in ("off", "partial", "full") else "partial"
         if "scanner_offsets" in msg:
@@ -4847,19 +4851,25 @@ async def ws_adaptive_fingerprints_get(hass: HomeAssistant, connection, msg) -> 
     Returns per-room, per-scanner mean RSSI from confirmed observations.
     Format: { room_name: { scanner_source: { mean, var, n } } }
     """
+    _empty = {"fingerprints": {}, "scanner_best": {}, "total_observations": 0}
     ad = hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
-    if ad and ad.data:
+    if not (ad and ad.data):
+        connection.send_result(msg["id"], _empty)
+        return
+    try:
         fps = ad.data.get("room_fingerprints", {})
-        # Convert to a simpler format for the frontend:
-        # { room_name: { scanner_source: mean_rssi } }
-        simple = {}
+        # Flatten to { room: { scanner: mean_rssi } } — only include
+        # scanners with ≥5 observations for statistical confidence.
+        simple: dict[str, dict[str, float]] = {}
         for room, scanners in fps.items():
+            if not isinstance(scanners, dict):
+                continue  # guard against corrupted persistent data
             simple[room] = {}
             for src, stats in scanners.items():
                 if isinstance(stats, dict) and stats.get("n", 0) >= 5:
                     simple[room][src] = round(stats.get("mean", -100), 1)
-        # Also include per-scanner best (max across all rooms)
-        scanner_best = {}
+        # Per-scanner best = strongest mean across all rooms (for heatmap scaling)
+        scanner_best: dict[str, float] = {}
         for room, scanners in simple.items():
             for src, mean in scanners.items():
                 if src not in scanner_best or mean > scanner_best[src]:
@@ -4869,8 +4879,8 @@ async def ws_adaptive_fingerprints_get(hass: HomeAssistant, connection, msg) -> 
             "scanner_best": scanner_best,
             "total_observations": (ad.data.get("stats") or {}).get("total_observations", 0),
         })
-    else:
-        connection.send_result(msg["id"], {"fingerprints": {}, "scanner_best": {}, "total_observations": 0})
+    except Exception:
+        connection.send_result(msg["id"], _empty)
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/adaptive_reset"})

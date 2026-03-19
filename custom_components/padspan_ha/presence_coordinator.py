@@ -529,6 +529,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             _sc_pos[str(_src)] = (
                                 float(_rx["x"]), float(_rx["y"]), _mid
                             )
+                    _m_floor = str(_m.get("floor_id", ""))
                     for _bar in (_m.get("rf_barriers") or []):
                         pts = _bar.get("points") or []
                         if len(pts) >= 2:
@@ -537,6 +538,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 "attenuation_dbm": float(_bar.get("attenuation_dbm", 6)),
                                 "material": str(_bar.get("material", "custom")),
                                 "map_id": _mid,
+                                "floor_id": _m_floor,
                             })
                 self._scanner_positions = _sc_pos
                 self._rf_barriers = _barriers
@@ -1023,15 +1025,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _cand_fl = _room_to_fl.get(candidate)
                 _cur_fl = _room_to_fl.get(_cur_room_fs)
                 if _cand_fl and _cur_fl and _cand_fl != _cur_fl:
-                    # Check if any "open" (loft) barriers exist — these mark
-                    # areas where floors are vertically connected, so signal
-                    # flows freely and floor stickiness should be reduced.
+                    # Check if an "open" (loft) barrier exists on either the
+                    # candidate or current floor.  Open barriers mark areas
+                    # where floors are vertically connected (e.g. a loft,
+                    # mezzanine, or open stairwell), so signal flows freely
+                    # and cross-floor stickiness should be reduced.
+                    _involved_floors = {_cand_fl, _cur_fl}
                     _has_open = any(
                         b.get("material") == "open"
+                        and b.get("floor_id") in _involved_floors
                         for b in (self._rf_barriers or [])
                     )
-                    # Open/loft areas: use normal hysteresis (no penalty)
-                    # Walled floors: require double hysteresis margin
+                    # Open/loft between these floors: normal hysteresis only.
+                    # Fully walled floors: require double hysteresis margin.
                     _floor_margin = _floor_hyst if _has_open else _floor_hyst * 2.0
                     if room_scores.get(candidate, 0) - room_scores.get(_cur_room_fs, 0) < _floor_margin:
                         candidate = _cur_room_fs  # stay on current floor

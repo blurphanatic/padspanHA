@@ -270,6 +270,9 @@ class MapsStore:
             # rf_barriers: [{name, material, attenuation_dbm, points:[[x,y],...]}]
             # Each barrier is a polyline representing a wall/obstruction with
             # known RF attenuation (metal, dense concrete, etc.).
+            # "open" (0 dB) = loft/mezzanine: no wall, signal passes freely.
+            # Used to mark areas open to the floor above/below so the presence
+            # coordinator reduces cross-floor stickiness at that boundary.
             _MATERIALS = {"metal": 12, "concrete": 8, "brick": 4, "custom": 6, "open": 0}
             clean_barriers: list[dict[str, Any]] = []
             for idx, b in enumerate(rf_barriers[:50]):  # max 50 barriers
@@ -289,7 +292,7 @@ class MapsStore:
                     continue
                 mat = str(b.get("material") or "metal")[:20]
                 atten = float(b.get("attenuation_dbm", _MATERIALS.get(mat, 6)))
-                atten = max(0.0, min(30.0, atten))
+                atten = max(0.0, min(30.0, atten))  # 0.0 valid for "open" barriers
                 clean_barriers.append({
                     "name": str(b.get("name") or f"Barrier {idx+1}")[:80],
                     "material": mat,

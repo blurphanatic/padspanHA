@@ -263,7 +263,16 @@ export function render(ctx){
     objTbody,
   ]);
 
-  // ── WTI score pre-computation (dev/advanced mode) ───────────────────────
+  // ── Walk-to-Identify: pre-compute scores for dev/advanced mode ──────────
+  // Scores are calculated once here and shared by both the table-row badges
+  // and the WTI bar UI below.  Algorithm: for each unidentified BLE address,
+  // compare mean RSSI heard by in-room scanners vs out-of-room scanners.
+  // Higher score = device is more likely physically present in the target room.
+  // Score formula: inRoomMean - outRoomMean*0.5 + inRoomScannerCount*3
+  //   - The 0.5 weight penalises strong out-of-room signal (device is elsewhere)
+  //   - The +3 per in-room scanner rewards devices seen by multiple room scanners
+  //   - Only ads < 30s old are considered (recent signal only)
+  //   - Default out-of-room RSSI of -95 dBm when device is only heard in-room
   const _wtiEnabledAdv = !!(ctx.state.settings && ctx.state.settings.walk_to_identify_enabled);
   const _wtiRoomAdv = (_wtiEnabledAdv && isLive) ? (ctx.state._wtiRoom || null) : null;
   let _wtiScoresAdv = null;
@@ -271,15 +280,28 @@ export function render(ctx){
   if (_wtiRoomAdv) {
     const _ads = (liveSnap && liveSnap.ble && liveSnap.ble.advertisements) || [];
     const _radios = (liveSnap && liveSnap.ble && liveSnap.ble.radios) || [];
+    // Partition scanners: in-room (assigned to target room via HA area) vs all
     const _inSrcs = new Set(), _allSrcs = new Set();
-    for (const r of _radios) { if (r.source) _allSrcs.add(r.source); if (r.source && (r.area_name || r.area || "") === _wtiRoomAdv) _inSrcs.add(r.source); }
+    for (const r of _radios) {
+      if (r.source) _allSrcs.add(r.source);
+      if (r.source && (r.area_name || r.area || "") === _wtiRoomAdv) _inSrcs.add(r.source);
+    }
     if (_inSrcs.size) {
+      // Build per-address best RSSI from each scanner (only recent ads)
       const _arMap = {};
-      for (const ad of _ads) { if (!ad.address || !ad.source || ad.rssi == null || (ad.age_s || 0) > 30) continue; const k = ad.address.toUpperCase(); if (!_arMap[k]) _arMap[k] = {}; if (!_arMap[k][ad.source] || ad.rssi > _arMap[k][ad.source]) _arMap[k][ad.source] = ad.rssi; }
+      for (const ad of _ads) {
+        if (!ad.address || !ad.source || ad.rssi == null || (ad.age_s || 0) > 30) continue;
+        const k = ad.address.toUpperCase();
+        if (!_arMap[k]) _arMap[k] = {};
+        if (!_arMap[k][ad.source] || ad.rssi > _arMap[k][ad.source]) _arMap[k][ad.source] = ad.rssi;
+      }
       _wtiScoresAdv = {};
       for (const [addr, srcMap] of Object.entries(_arMap)) {
         let inS = 0, inC = 0, outS = 0, outC = 0;
-        for (const [src, rssi] of Object.entries(srcMap)) { if (_inSrcs.has(src)) { inS += rssi; inC++; } else if (_allSrcs.has(src)) { outS += rssi; outC++; } }
+        for (const [src, rssi] of Object.entries(srcMap)) {
+          if (_inSrcs.has(src)) { inS += rssi; inC++; }
+          else if (_allSrcs.has(src)) { outS += rssi; outC++; }
+        }
         if (!inC) continue;
         _wtiScoresAdv[addr] = (inS / inC) - (outC ? outS / outC : -95) * 0.5 + inC * 3;
       }
@@ -448,7 +470,8 @@ export function render(ctx){
       let ok = true;
       // Entity objects always pass the age filter (they're real-time from HA)
       if(kind !== "entity" && age > maxAge) ok = false;
-      // Kind filter
+      // Kind filter — "ble" (all) includes ble + private_ble + ibeacon;
+      // sub-filters (ble_only, ibeacon, private_ble) match exact kind only.
       if(k === "ble" && kind !== "ble" && kind !== "private_ble" && kind !== "ibeacon") ok = false;
       else if(k === "ble_only" && kind !== "ble") ok = false;
       else if(k === "ibeacon" && kind !== "ibeacon") ok = false;
@@ -698,17 +721,20 @@ export function render(ctx){
           return (a.age_s || 0) - (b.age_s || 0);
         });
       }
-      const _wtiThreshold = _wtiScores ? Math.max(...Object.values(_wtiScores)) * 0.4 : 0;
+      // WTI threshold: devices scoring above 40% of the top score are "likely in room"
+      const _wtiMaxScore = _wtiScores ? Math.max(0, ...Object.values(_wtiScores)) : 0;
+      const _wtiThreshold = _wtiMaxScore * 0.4;
       _sortedUnident.slice(0, 50).forEach(o => {
         const card = mkCard(o);
-        // Add "Likely in [Room]" badge if WTI score is high
-        if (_wtiRoom && _wtiScores) {
+        // WTI badge: show "Likely in [Room]" with match % for top candidates
+        if (_wtiRoom && _wtiScores && _wtiMaxScore > 0) {
           const score = _wtiScores[(o.address || "").toUpperCase()] || 0;
-          if (score > _wtiThreshold && score > 0) {
-            const scorePct = Math.min(100, Math.round(score / Math.max(...Object.values(_wtiScores)) * 100));
-            const badge = el("div",{style:"display:flex;align-items:center;gap:4px;margin-top:4px"});
-            badge.innerHTML = `<span style="font-size:9px;padding:1px 6px;border-radius:3px;background:rgba(168,85,247,.2);color:#d8b4fe;font-weight:700">Likely in ${_wtiRoom}</span><span style="font-size:10px;color:#94a3b8">${scorePct}% match</span>`;
-            card.appendChild(badge);
+          if (score > _wtiThreshold) {
+            const scorePct = Math.min(100, Math.round(score / _wtiMaxScore * 100));
+            card.appendChild(el("div",{style:"display:flex;align-items:center;gap:4px;margin-top:4px"}, [
+              el("span",{style:"font-size:9px;padding:1px 6px;border-radius:3px;background:rgba(168,85,247,.2);color:#d8b4fe;font-weight:700"}, `Likely in ${_wtiRoom}`),
+              el("span",{style:"font-size:10px;color:#94a3b8"}, `${scorePct}% match`),
+            ]));
           }
         }
         unCard.appendChild(card);

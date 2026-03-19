@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.15.23";
-const BUILD_ID = "20260319T152516Z";
+const APP_VERSION = "0.15.24";
+const BUILD_ID = "20260319T153511Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -860,11 +860,14 @@ class PadSpanHaApp extends HTMLElement {
 
       // Re-render views that show live data.
       const liveViews = new Set(["overview","follow","objects","devices","bluetooth","presence","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage","calibration","maps"]);
-      // Render with poll guard. Overview always uses poll mode (never forced)
-      // because full rebuilds cause flicker + scroll reset.
+      // Render with poll guard.  _renderCurrentView(fromPoll=true) skips
+      // re-render when the user is dragging/confirming; fromPoll=false forces
+      // a full rebuild.  Overview ALWAYS uses poll mode because it has its own
+      // lightweight _isoUpdateObjects() path — a full rebuild would cause
+      // flicker + scroll reset on the isometric SVG.
       const stale = this._lastGoodRender && (performance.now() - this._lastGoodRender > 10_000);
-      const forceRender = stale && this.state.view !== "overview";
-      if(liveViews.has(this.state.view)) this._renderCurrentView(forceRender ? false : true);
+      const usePollMode = !stale || this.state.view === "overview";
+      if(liveViews.has(this.state.view)) this._renderCurrentView(usePollMode);
     } catch(e){
       // Non-fatal — snapshot is preserved from last good fetch.
       // Only re-render if screen might be stale (> 10s since last good render).
@@ -2250,12 +2253,17 @@ class PadSpanHaApp extends HTMLElement {
     // Maps upload/stack/edit tabs have fragile state (file inputs, drag handles)
     if(fromPoll && this.state.view === "maps" && (this.state.mapsTab === "upload" || this.state.mapsTab === "stack" || this.state.mapsTab === "edit")) return;
     // Overview: on polls, only update object dots (cheap) — don't rebuild the
-    // entire SVG which causes flicker + scroll reset. Static layers stay untouched.
+    // entire isometric SVG which causes flicker + scroll reset.  The overview
+    // view registers state._isoUpdateObjects() during its initial render;
+    // calling it here replaces only the object dot layer while leaving the
+    // static room geometry, floor plan image, and scanner markers untouched.
+    // Resetting _lastGoodRender prevents the stale-check (10s) from triggering
+    // a forced full rebuild on the next poll cycle.
     if(fromPoll && this.state.view === "overview") {
       if (typeof this.state._isoUpdateObjects === "function") {
         try { this.state._isoUpdateObjects(); } catch(e) {}
       }
-      this._lastGoodRender = performance.now(); // prevent stale-check forced rebuild
+      this._lastGoodRender = performance.now();
       return;
     }
     // Skip poll re-renders when the user is actively interacting
@@ -2277,11 +2285,14 @@ class PadSpanHaApp extends HTMLElement {
     const v = this.state.view;
     const mod = VIEWS[v];
 
-    // Preserve scroll positions for common scroll containers so periodic live refreshes
-    // don't make the UI "jump" while the user is reading.
+    // Preserve scroll positions for common scroll containers so periodic 5s
+    // live refreshes don't reset the user's reading position.  We capture both
+    // the main content scroll and inner scrollable lists (rooms, tags, etc.),
+    // then restore them in a rAF after the DOM swap completes.
+    // Uses index-based matching (selector + nth occurrence) which is stable
+    // because the DOM structure is rebuilt identically each render cycle.
     const selectors = [".rooms",".tags",".list-scroll",".bt-adv-list",".bt-list"];
     const scrollState = [];
-    // Save the main content scroll position
     let _mainScrollTop = 0;
     try { _mainScrollTop = this.$content.scrollTop || 0; } catch(e){}
     try {
