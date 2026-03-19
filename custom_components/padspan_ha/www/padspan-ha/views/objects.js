@@ -263,6 +263,30 @@ export function render(ctx){
     objTbody,
   ]);
 
+  // ── WTI score pre-computation (dev/advanced mode) ───────────────────────
+  const _wtiEnabledAdv = !!(ctx.state.settings && ctx.state.settings.walk_to_identify_enabled);
+  const _wtiRoomAdv = (_wtiEnabledAdv && isLive) ? (ctx.state._wtiRoom || null) : null;
+  let _wtiScoresAdv = null;
+  let _wtiMaxScoreAdv = 0;
+  if (_wtiRoomAdv) {
+    const _ads = (liveSnap && liveSnap.ble && liveSnap.ble.advertisements) || [];
+    const _radios = (liveSnap && liveSnap.ble && liveSnap.ble.radios) || [];
+    const _inSrcs = new Set(), _allSrcs = new Set();
+    for (const r of _radios) { if (r.source) _allSrcs.add(r.source); if (r.source && (r.area_name || r.area || "") === _wtiRoomAdv) _inSrcs.add(r.source); }
+    if (_inSrcs.size) {
+      const _arMap = {};
+      for (const ad of _ads) { if (!ad.address || !ad.source || ad.rssi == null || (ad.age_s || 0) > 30) continue; const k = ad.address.toUpperCase(); if (!_arMap[k]) _arMap[k] = {}; if (!_arMap[k][ad.source] || ad.rssi > _arMap[k][ad.source]) _arMap[k][ad.source] = ad.rssi; }
+      _wtiScoresAdv = {};
+      for (const [addr, srcMap] of Object.entries(_arMap)) {
+        let inS = 0, inC = 0, outS = 0, outC = 0;
+        for (const [src, rssi] of Object.entries(srcMap)) { if (_inSrcs.has(src)) { inS += rssi; inC++; } else if (_allSrcs.has(src)) { outS += rssi; outC++; } }
+        if (!inC) continue;
+        _wtiScoresAdv[addr] = (inS / inC) - (outC ? outS / outC : -95) * 0.5 + inC * 3;
+      }
+      _wtiMaxScoreAdv = Math.max(0, ...Object.values(_wtiScoresAdv));
+    }
+  }
+
   const objRowEls = allObjects.map(o=>{
     // Skip entity rows that duplicate a BLE/iBeacon/private_ble row for the same device
     if(_isDuplicateEntity(o)) return null;
@@ -357,6 +381,19 @@ export function render(ctx){
         (Array.isArray(o.all_addresses) && o.all_addresses.length > 1
           ? el("div",{class:"muted",style:"font-size:10px;color:#a78bfa"}, `${o.all_addresses.length} MACs merged`)
           : null),
+        // WTI score badge (dev mode)
+        (_wtiRoomAdv && _wtiScoresAdv && !identified && (() => {
+          const sc = _wtiScoresAdv[(addr || "").toUpperCase()] || 0;
+          const thr = _wtiMaxScoreAdv * 0.4;
+          if (sc > thr && sc > 0) {
+            const pct = Math.min(100, Math.round(sc / _wtiMaxScoreAdv * 100));
+            return el("div",{style:"display:flex;align-items:center;gap:4px;margin-top:2px"}, [
+              el("span",{style:"font-size:9px;padding:1px 6px;border-radius:3px;background:rgba(168,85,247,.2);color:#d8b4fe;font-weight:700"}, `Likely in ${_wtiRoomAdv}`),
+              el("span",{style:"font-size:10px;color:#94a3b8"}, `${pct}% match`),
+            ]);
+          }
+          return null;
+        })()),
         // Enrichment: company + device type + services
         ((o.company_name || o.device_type || (o.service_names && o.service_names.length))
           ? el("div",{style:"display:flex;flex-wrap:wrap;gap:4px;margin-top:2px"}, [
@@ -741,78 +778,34 @@ export function render(ctx){
       : el("div",{class:"muted"}, isLive ? "Waiting for scanner data…" : "Switch to Live mode to see real BLE detections."),
   ]);
 
-  // ── Walk-to-Identify (advanced/dev mode) ────────────────────────────────
-  const _wtiEnabledAdv = !!(ctx.state.settings && ctx.state.settings.walk_to_identify_enabled);
+  // ── Walk-to-Identify bar (advanced/dev mode) ─────────────────────────────
   if (_wtiEnabledAdv && isLive) {
-    let _wtiRoom = ctx.state._wtiRoom || null;
-    let _wtiScores = null;
-
-    function _computeWtiScoresAdv(targetRoom) {
-      const ads = (liveSnap && liveSnap.ble && liveSnap.ble.advertisements) || [];
-      const radios = (liveSnap && liveSnap.ble && liveSnap.ble.radios) || [];
-      const inRoomSrcs = new Set();
-      const allSrcs = new Set();
-      for (const r of radios) {
-        if (r.source) allSrcs.add(r.source);
-        if (r.source && (r.area_name || r.area || "") === targetRoom) inRoomSrcs.add(r.source);
-      }
-      if (!inRoomSrcs.size) return {};
-      const addrRssi = {};
-      for (const ad of ads) {
-        if (!ad.address || !ad.source || ad.rssi == null) continue;
-        if ((ad.age_s || 0) > 30) continue;
-        const key = ad.address.toUpperCase();
-        if (!addrRssi[key]) addrRssi[key] = {};
-        if (!addrRssi[key][ad.source] || ad.rssi > addrRssi[key][ad.source]) {
-          addrRssi[key][ad.source] = ad.rssi;
-        }
-      }
-      const scores = {};
-      for (const [addr, srcMap] of Object.entries(addrRssi)) {
-        let inRoomSum = 0, inRoomCount = 0;
-        let outRoomSum = 0, outRoomCount = 0;
-        for (const [src, rssi] of Object.entries(srcMap)) {
-          if (inRoomSrcs.has(src)) { inRoomSum += rssi; inRoomCount++; }
-          else if (allSrcs.has(src)) { outRoomSum += rssi; outRoomCount++; }
-        }
-        if (!inRoomCount) continue;
-        const inRoomMean = inRoomSum / inRoomCount;
-        const outRoomMean = outRoomCount ? outRoomSum / outRoomCount : -95;
-        scores[addr] = inRoomMean - outRoomMean * 0.5 + inRoomCount * 3;
-      }
-      return scores;
-    }
-
-    const rooms = (liveSnap && liveSnap.rooms_discovered) || Object.keys(ctx.state.roomTagMap || {});
+    const _wtiRooms = (liveSnap && liveSnap.rooms_discovered) || Object.keys(ctx.state.roomTagMap || {});
     const roomSel = el("select", {style:"font-size:11px;padding:2px 6px;background:#0a1a12;color:#e2e8f0;border:1px solid #2d6a4f;border-radius:6px"});
     roomSel.appendChild(el("option",{value:""}, "— select room —"));
-    for (const r of rooms) roomSel.appendChild(el("option",{value:r}, r));
-    if (_wtiRoom) roomSel.value = _wtiRoom;
+    for (const r of _wtiRooms) roomSel.appendChild(el("option",{value:r}, r));
+    if (_wtiRoomAdv) roomSel.value = _wtiRoomAdv;
 
     const wtiBtn = el("button",{class:"btn inline",style:"font-size:11px;padding:2px 8px;background:#1a0a2e;border-color:#a855f7;color:#d8b4fe;font-weight:600"}, "Who's here?");
     wtiBtn.addEventListener("click", () => {
       const room = roomSel.value;
       if (!room) { ctx.toast("Select a room first", true); return; }
       ctx.state._wtiRoom = room;
-      _wtiScores = _computeWtiScoresAdv(room);
-      // Apply filter to show unidentified + sort by score
       ctx.state.objStatus = "unidentified";
       ctx.actions.renderRooms();
     });
-    const wtiClear = _wtiRoom ? el("button",{class:"btn inline",style:"font-size:10px;color:#94a3b8"}, "Clear") : null;
+    const wtiClear = _wtiRoomAdv ? el("button",{class:"btn inline",style:"font-size:10px;color:#94a3b8"}, "Clear") : null;
     if (wtiClear) wtiClear.addEventListener("click", () => {
       ctx.state._wtiRoom = null;
       ctx.actions.renderRooms();
     });
 
-    // If active, compute scores and show results summary
     let wtiResults = null;
-    if (_wtiRoom) {
-      _wtiScores = _computeWtiScoresAdv(_wtiRoom);
-      const threshold = _wtiScores ? Math.max(...Object.values(_wtiScores)) * 0.4 : 0;
-      const topCount = Object.values(_wtiScores).filter(s => s >= threshold).length;
+    if (_wtiRoomAdv && _wtiScoresAdv) {
+      const threshold = _wtiMaxScoreAdv * 0.4;
+      const topCount = Object.values(_wtiScoresAdv).filter(s => s >= threshold).length;
       wtiResults = el("span",{style:"font-size:11px;color:#d8b4fe;font-weight:600"},
-        `${topCount} candidate${topCount !== 1 ? "s" : ""} likely in ${_wtiRoom}`);
+        `${topCount} candidate${topCount !== 1 ? "s" : ""} likely in ${_wtiRoomAdv}`);
     }
 
     const wtiBar = el("div",{style:"display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px;padding:8px 12px;background:#0f0a1e;border:1px solid rgba(168,85,247,.3);border-radius:8px"},[
