@@ -99,7 +99,14 @@ async def _ensure_stores(hass: HomeAssistant, *, critical_only: bool = False) ->
     async def _init_model():
         mdl = ModelStore(hass)
         await mdl.async_setup()
-        return (DATA_MODEL, mdl, f"ModelStore ready ({len(mdl.floors())} floors, {len(mdl.room_meta())} rooms)")
+        # Phase 1: auto-sync fabric from HA registries on startup
+        if mdl.sync_mode() == "auto":
+            try:
+                await mdl.async_sync_from_ha()
+            except Exception as err:
+                _LOGGER.debug("Fabric HA sync on startup skipped: %s", err)
+        _sc = len(mdl.data.get("scanners", {}))
+        return (DATA_MODEL, mdl, f"ModelStore ready ({len(mdl.floors())} floors, {len(mdl.room_meta())} rooms, {_sc} scanners)")
 
     async def _init_objects():
         obj_store = ObjectStore(hass)

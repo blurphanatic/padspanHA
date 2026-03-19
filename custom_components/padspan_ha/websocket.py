@@ -180,6 +180,13 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_companion_unfollow)
     websocket_api.async_register_command(hass, ws_tags_status)
     websocket_api.async_register_command(hass, ws_factory_reset)
+    # Phase 1: positioning fabric commands
+    websocket_api.async_register_command(hass, ws_fabric_scanner_set)
+    websocket_api.async_register_command(hass, ws_fabric_scanner_remove)
+    websocket_api.async_register_command(hass, ws_fabric_room_add)
+    websocket_api.async_register_command(hass, ws_fabric_room_remove)
+    websocket_api.async_register_command(hass, ws_fabric_adjacency_set)
+    websocket_api.async_register_command(hass, ws_fabric_sync_mode_set)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -319,7 +326,16 @@ async def ws_model_get(hass: HomeAssistant, connection, msg) -> None:
     mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
     room_meta = mdl.room_meta() if mdl else {}
 
-    connection.send_result(msg["id"], {"floors": floors, "areas": areas, "room_meta": room_meta})
+    # ── Fabric data (Phase 1 decoupling) ────────────────────────────────────
+    scanners = mdl.data.get("scanners", {}) if mdl else {}
+    room_adjacency = mdl.data.get("room_adjacency", {}) if mdl else {}
+    fabric_sync_mode = mdl.data.get("fabric_sync_mode", "auto") if mdl else "auto"
+
+    connection.send_result(msg["id"], {
+        "floors": floors, "areas": areas, "room_meta": room_meta,
+        "scanners": scanners, "room_adjacency": room_adjacency,
+        "fabric_sync_mode": fabric_sync_mode,
+    })
 
 
 @websocket_api.websocket_command(
@@ -7553,3 +7569,168 @@ async def ws_factory_reset(hass: HomeAssistant, connection, msg) -> None:
         "total": 11,
         "errors": errors,
     })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 1 — Positioning Fabric WS handlers
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_scanner_set",
+        "source": str,
+        "room": str,
+        vol.Optional("floor_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_scanner_set(hass: HomeAssistant, connection, msg) -> None:
+    """Assign a scanner to a room in the positioning fabric."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    source = (msg.get("source") or "").strip()
+    room = (msg.get("room") or "").strip()
+    if not source or not room:
+        connection.send_error(msg["id"], "invalid", "source and room are required")
+        return
+    floor_id = (msg.get("floor_id") or "").strip() or DEFAULT_FLOOR_ID
+    await mdl.async_set_scanner(source, room, floor_id, source_type="manual")
+    connection.send_result(msg["id"], {"ok": True, "source": source, "room": room, "floor_id": floor_id})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_scanner_remove",
+        "source": str,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_scanner_remove(hass: HomeAssistant, connection, msg) -> None:
+    """Remove a scanner from the positioning fabric."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    source = (msg.get("source") or "").strip()
+    if not source:
+        connection.send_error(msg["id"], "invalid", "source is required")
+        return
+    await mdl.async_remove_scanner(source)
+    connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_room_add",
+        "room": str,
+        vol.Optional("floor_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_room_add(hass: HomeAssistant, connection, msg) -> None:
+    """Add a PadSpan-native room (no HA area needed)."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    room = (msg.get("room") or "").strip()
+    if not room:
+        connection.send_error(msg["id"], "invalid", "room is required")
+        return
+    floor_id = (msg.get("floor_id") or "").strip() or DEFAULT_FLOOR_ID
+    await mdl.async_ensure_rooms([room])
+    # Update floor_id if provided
+    rm = mdl.data.get("room_meta", {})
+    if room in rm:
+        rm[room]["floor_id"] = floor_id
+        await mdl.store.async_save(mdl.data)
+    # Also init adjacency entry if not present
+    adj = mdl.data.setdefault("room_adjacency", {})
+    if room not in adj:
+        adj[room] = []
+        await mdl.store.async_save(mdl.data)
+    connection.send_result(msg["id"], {"ok": True, "room": room, "floor_id": floor_id})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_room_remove",
+        "room": str,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_room_remove(hass: HomeAssistant, connection, msg) -> None:
+    """Remove a room from the fabric (room_meta + adjacency + scanner assignments)."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    room = (msg.get("room") or "").strip()
+    if not room:
+        connection.send_error(msg["id"], "invalid", "room is required")
+        return
+    # Remove from room_meta
+    rm = mdl.data.get("room_meta", {})
+    rm.pop(room, None)
+    # Remove from adjacency
+    await mdl.async_remove_adjacency(room)
+    # Remove scanners assigned to this room
+    scanners = mdl.data.get("scanners", {})
+    to_remove = [s for s, info in scanners.items() if info.get("room") == room]
+    for s in to_remove:
+        scanners.pop(s, None)
+    await mdl.store.async_save(mdl.data)
+    connection.send_result(msg["id"], {"ok": True, "removed": room})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_adjacency_set",
+        "room": str,
+        "neighbors": [str],
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_adjacency_set(hass: HomeAssistant, connection, msg) -> None:
+    """Set room neighbors in the positioning fabric."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    room = (msg.get("room") or "").strip()
+    neighbors = msg.get("neighbors") or []
+    if not room:
+        connection.send_error(msg["id"], "invalid", "room is required")
+        return
+    await mdl.async_set_adjacency(room, [str(n).strip() for n in neighbors if str(n).strip()])
+    connection.send_result(msg["id"], {"ok": True, "room": room, "neighbors": mdl.adjacency().get(room, [])})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_sync_mode_set",
+        "mode": str,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_sync_mode_set(hass: HomeAssistant, connection, msg) -> None:
+    """Switch fabric sync mode: 'auto' (sync from HA) or 'manual' (standalone)."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    mode = (msg.get("mode") or "").strip().lower()
+    if mode not in ("auto", "manual"):
+        connection.send_error(msg["id"], "invalid", "mode must be 'auto' or 'manual'")
+        return
+    await mdl.async_set_sync_mode(mode)
+    # If switching to auto, trigger immediate HA sync
+    if mode == "auto":
+        try:
+            await mdl.async_sync_from_ha()
+        except Exception:
+            pass
+    connection.send_result(msg["id"], {"ok": True, "mode": mode})

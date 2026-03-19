@@ -19,7 +19,7 @@ Organisation:
 
 DOMAIN = "padspan_ha"
 NAME = "PadSpan HA"
-VERSION = "0.15.25"
+VERSION = "0.15.26"
 
 # ── Config-flow option keys ───────────────────────────────────────────────────
 CONF_ENABLE_CLOUD = "enable_cloud"
@@ -57,6 +57,7 @@ DATA_ADAPTIVE = "adaptive"
 DATA_OBJECT_HISTORY = "object_history"
 DATA_TRACEBACK = "traceback"
 DATA_TAG_INTEGRATION = "tag_integration"
+DATA_FABRIC = "fabric"                       # positioning fabric (Phase 1 decoupling)
 
 # ── HA Storage file keys (.storage/<key>) ─────────────────────────────────────
 SETTINGS_STORE_KEY = "padspan_ha.settings"

@@ -95,7 +95,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
-    DOMAIN, DATA_SETTINGS, DATA_CALIBRATION, DATA_ADAPTIVE, DATA_MAPS,
+    DOMAIN, DATA_SETTINGS, DATA_CALIBRATION, DATA_ADAPTIVE, DATA_MAPS, DATA_MODEL,
     DEFAULT_KALMAN_Q, DEFAULT_KALMAN_R,
     DEFAULT_REF_POWER, DEFAULT_PATH_LOSS_EXP, DEFAULT_ROOM_SIGMA_M,
 )
@@ -345,6 +345,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # {source: float} — cached reliability weight ∈ [_RELIABILITY_FLOOR, 1.0]
         self._scanner_reliability: dict[str, float] = {}
 
+        # ── Adjacency co-visibility learning (Phase 1) ────────────────────────
+        # Accumulates scanner co-visibility counts between rooms.
+        # Key: frozenset({roomA, roomB}), value: count of polls where both rooms
+        # heard the same device with RSSI > -80.
+        self._co_visible: dict[frozenset, int] = {}
+        # Poll counter for adjacency learning (compute every 50 polls)
+        self._adj_learn_polls: int = 0
+
         # ── Adaptive learning rate-limit ───────────────────────────────────────
         # {key: monotonic_ts} — last adaptive observation time per device
         self._adaptive_last_obs: dict[str, float] = {}
@@ -416,29 +424,42 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 addr_tx_power[addr] = int(tx_pwr)
 
         # ── Build source-to-area and source-to-floor lookups ──────────────
-        # These maps connect each ESPHome scanner (by source name) to its
-        # HA area and floor.  This is the bridge between "scanner X heard
-        # device Y at -65 dBm" and "device Y is in the Kitchen".
+        # Phase 1: read from the positioning fabric (ModelStore) when available.
+        # In auto mode, also write-back any new radios from the snapshot.
         source_to_area: dict[str, str] = {}
         source_to_floor: dict[str, str] = {}
-        # Pre-build area→floor from HA registries so we can derive scanner floors
-        _area_to_floor: dict[str, str] = {}
-        try:
-            from homeassistant.helpers import area_registry as _ar_reg  # noqa: PLC0415
-            for _a in _ar_reg.async_get(self.hass).async_list_areas():
-                _fl = getattr(_a, "floor_id", None)
-                if _a.name and _fl:
-                    _area_to_floor[_a.name] = str(_fl)
-        except Exception:
-            pass
-        for r in (snap.get("ble") or {}).get("radios") or []:
-            src  = r.get("source")
-            area = r.get("area_name") or r.get("area")
-            if src and area:
-                source_to_area[str(src)] = str(area)
-                fl = _area_to_floor.get(str(area))
-                if fl:
-                    source_to_floor[str(src)] = fl
+        _model = self.hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+        if _model:
+            # In auto mode, sync snapshot radios into the fabric
+            _radios = (snap.get("ble") or {}).get("radios") or []
+            if _model.sync_mode() == "auto" and _radios:
+                try:
+                    await _model.async_sync_from_snapshot(_radios)
+                except Exception:
+                    pass
+            # Read scanner mappings from fabric (includes both ha_sync and manual)
+            source_to_area, source_to_floor = _model.get_scanner_mappings()
+
+        # Fallback: if fabric has no scanners yet, build from snapshot directly
+        # (first poll before fabric is populated)
+        if not source_to_area:
+            _area_to_floor: dict[str, str] = {}
+            try:
+                from homeassistant.helpers import area_registry as _ar_reg  # noqa: PLC0415
+                for _a in _ar_reg.async_get(self.hass).async_list_areas():
+                    _fl = getattr(_a, "floor_id", None)
+                    if _a.name and _fl:
+                        _area_to_floor[_a.name] = str(_fl)
+            except Exception:
+                pass
+            for r in (snap.get("ble") or {}).get("radios") or []:
+                src  = r.get("source")
+                area = r.get("area_name") or r.get("area")
+                if src and area:
+                    source_to_area[str(src)] = str(area)
+                    fl = _area_to_floor.get(str(area))
+                    if fl:
+                        source_to_floor[str(src)] = fl
 
         # ── Apply per-scanner RSSI calibration offsets ────────────────────
         # Users can set per-scanner dBm offsets in Settings → Presence to
@@ -707,6 +728,48 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for key in _evict_keys:
             self._evict_object(key)
 
+        # ── Adjacency co-visibility learning (Phase 1) ────────────────────────
+        # In auto mode, when no map-derived adjacency exists, learn room
+        # adjacency from scanner co-visibility patterns.
+        if _model and _model.sync_mode() == "auto" and not self._room_centroids:
+            _CO_VIS_RSSI_THRESHOLD = -80.0
+            for _addr, _src_rssi in addr_src_rssi.items():
+                # Collect rooms that heard this device strongly
+                _heard_rooms: set[str] = set()
+                for _src, _rssi in _src_rssi.items():
+                    if _rssi > _CO_VIS_RSSI_THRESHOLD:
+                        _rm = source_to_area.get(_src)
+                        if _rm:
+                            _heard_rooms.add(_rm)
+                # Every pair of rooms that heard the same device = co-visible
+                _rl = sorted(_heard_rooms)
+                for _i in range(len(_rl)):
+                    for _j in range(_i + 1, len(_rl)):
+                        _pair = frozenset({_rl[_i], _rl[_j]})
+                        self._co_visible[_pair] = self._co_visible.get(_pair, 0) + 1
+
+            self._adj_learn_polls += 1
+            if self._adj_learn_polls >= 50:
+                self._adj_learn_polls = 0
+                # Compute adjacency from co-visibility counts above median
+                if self._co_visible:
+                    _counts = sorted(self._co_visible.values())
+                    _median = _counts[len(_counts) // 2] if _counts else 0
+                    _learned_adj: dict[str, list[str]] = {}
+                    for _pair, _cnt in self._co_visible.items():
+                        if _cnt >= max(_median, 2):  # at least 2 observations
+                            _rooms = list(_pair)
+                            _learned_adj.setdefault(_rooms[0], []).append(_rooms[1])
+                            _learned_adj.setdefault(_rooms[1], []).append(_rooms[0])
+                    # Write to ModelStore (only if we learned something)
+                    if _learned_adj:
+                        for _rm_name, _neighbors in _learned_adj.items():
+                            try:
+                                await _model.async_set_adjacency(_rm_name, sorted(set(_neighbors)))
+                            except Exception:
+                                pass
+                    self._co_visible.clear()
+
         # ── Fire follow-alerts for room changes ────────────────────────────────
         if self._pending_room_changes:
             await self._process_room_alerts(now, result)
@@ -958,26 +1021,33 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # penalized via a sigmoid, making it much harder for RF
                 # noise to teleport a device across the building.
                 _cur_adj = self._confirmed_room.get(key)
-                if _cur_adj and self._room_centroids:
+                if _cur_adj:
+                    # Try centroid-based adjacency first (map data available)
+                    _fabric_adj = _model.adjacency() if _model else {}
                     _c_cur = self._room_centroids.get(_cur_adj)
-                    if _c_cur:
-                        for _rname in list(room_scores):
-                            if _rname == _cur_adj:
-                                continue  # current room keeps full score
+                    for _rname in list(room_scores):
+                        if _rname == _cur_adj:
+                            continue  # current room keeps full score
+                        if _c_cur:
                             _c_tgt = self._room_centroids.get(_rname)
-                            if not _c_tgt:
+                            if _c_tgt:
+                                if _c_cur[2] == _c_tgt[2]:
+                                    # Same map: sigmoid on Euclidean distance
+                                    _adx = _c_cur[0] - _c_tgt[0]
+                                    _ady = _c_cur[1] - _c_tgt[1]
+                                    _adist = math.sqrt(_adx * _adx + _ady * _ady)
+                                    # Adjacent (dist<0.15) → ~1.0; far (dist>0.40) → ~0.15
+                                    _tp = 1.0 / (1.0 + math.exp(10.0 * (_adist - 0.25)))
+                                    _tp = max(0.15, _tp)
+                                else:
+                                    _tp = 0.20  # different maps → strong penalty
+                                room_scores[_rname] *= _tp
                                 continue
-                            if _c_cur[2] == _c_tgt[2]:
-                                # Same map: sigmoid on Euclidean distance
-                                _adx = _c_cur[0] - _c_tgt[0]
-                                _ady = _c_cur[1] - _c_tgt[1]
-                                _adist = math.sqrt(_adx * _adx + _ady * _ady)
-                                # Adjacent (dist<0.15) → ~1.0; far (dist>0.40) → ~0.15
-                                _tp = 1.0 / (1.0 + math.exp(10.0 * (_adist - 0.25)))
-                                _tp = max(0.15, _tp)
-                            else:
-                                _tp = 0.20  # different maps → strong penalty
+                        # Fallback: fabric adjacency list (no map needed)
+                        if _fabric_adj and _cur_adj in _fabric_adj:
+                            _tp = 1.0 if _rname in _fabric_adj[_cur_adj] else 0.20
                             room_scores[_rname] *= _tp
+                        # else: no data → no penalty (degrade gracefully)
 
                 _best_room = max(room_scores, key=lambda r: room_scores[r])
                 _cur_room = self._confirmed_room.get(key)
@@ -1267,7 +1337,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _c1 = self._room_centroids.get(confirmed)
                         _c2 = self._room_centroids.get(top_room)
                         if _c1 and _c2:
-                            # Only compute distance if on same map
+                            # Centroid-based distance check (map data available)
                             if _c1[2] == _c2[2]:
                                 _dx = _c1[0] - _c2[0]
                                 _dy = _c1[1] - _c2[1]
@@ -1275,6 +1345,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 _is_distant = _cdist > _VG_ADJACENT_THRESHOLD
                             else:
                                 _is_distant = True  # different maps → always "distant"
+                        elif _model:
+                            # Fallback: fabric adjacency list (no map needed)
+                            _vg_adj = _model.adjacency()
+                            if _vg_adj and confirmed in _vg_adj:
+                                _is_distant = top_room not in _vg_adj[confirmed]
+                            # else: no adjacency data → _is_distant stays False (no gate)
                         if (_is_rapid or _is_distant) and top_count < len(votes):
                             # Not unanimous — hold current room
                             _vg_block = True
