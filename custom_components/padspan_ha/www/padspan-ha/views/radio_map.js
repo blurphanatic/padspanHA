@@ -303,16 +303,21 @@ function _idw(qx, qy, points, barriers) {
 function _barriersSVG(barriers) {
   if (!barriers || !barriers.length) return "";
   let s = "";
-  const matColors = { metal: "#f87171", concrete: "#fb923c", brick: "#fbbf24", custom: "#94a3b8" };
+  const matColors = { metal: "#f87171", concrete: "#fb923c", brick: "#fbbf24", custom: "#94a3b8", open: "#38bdf8" };
   for (const bar of barriers) {
     const pts = bar.points || [];
     if (pts.length < 2) continue;
     const color = matColors[bar.material] || matColors.custom;
-    const atten = bar.attenuation_dbm || 6;
-    // Thicker line for higher attenuation
-    const sw = Math.max(0.003, Math.min(0.008, atten * 0.0006));
+    const atten = bar.attenuation_dbm || 0;
     const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(4)},${p[1].toFixed(4)}`).join(" ");
-    s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${sw.toFixed(4)}" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
+    if (bar.material === "open") {
+      // Open/loft: thin dotted line to show boundary without implying a wall
+      s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="0.002" stroke-dasharray="0.004,0.008" opacity="0.5"/>`;
+    } else {
+      // Solid wall: thicker line for higher attenuation
+      const sw = Math.max(0.003, Math.min(0.008, atten * 0.0006));
+      s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${sw.toFixed(4)}" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
+    }
   }
   return s;
 }
@@ -1175,7 +1180,7 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
   }
 
   // Barrier lines
-  const matColors = { metal: "#f87171", concrete: "#fb923c", brick: "#fbbf24", custom: "#94a3b8" };
+  const matColors = { metal: "#f87171", concrete: "#fb923c", brick: "#fbbf24", custom: "#94a3b8", open: "#38bdf8" };
   for (const bar of worldBarriers) {
     const color = matColors[bar.material] || matColors.custom;
     const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm || 6) * 0.0006));
@@ -1299,7 +1304,7 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
   }
 
   // ── 4. Barrier lines in view coords ────────────────────────────────────────
-  const matColors = { metal: "#f87171", concrete: "#fb923c", brick: "#fbbf24", custom: "#94a3b8" };
+  const matColors = { metal: "#f87171", concrete: "#fb923c", brick: "#fbbf24", custom: "#94a3b8", open: "#38bdf8" };
   for (const bar of worldBarriers) {
     const color = matColors[bar.material] || matColors.custom;
     const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm || 6) * 0.0006));

@@ -270,7 +270,7 @@ class MapsStore:
             # rf_barriers: [{name, material, attenuation_dbm, points:[[x,y],...]}]
             # Each barrier is a polyline representing a wall/obstruction with
             # known RF attenuation (metal, dense concrete, etc.).
-            _MATERIALS = {"metal": 12, "concrete": 8, "brick": 4, "custom": 6}
+            _MATERIALS = {"metal": 12, "concrete": 8, "brick": 4, "custom": 6, "open": 0}
             clean_barriers: list[dict[str, Any]] = []
             for idx, b in enumerate(rf_barriers[:50]):  # max 50 barriers
                 if not isinstance(b, dict):
@@ -289,7 +289,7 @@ class MapsStore:
                     continue
                 mat = str(b.get("material") or "metal")[:20]
                 atten = float(b.get("attenuation_dbm", _MATERIALS.get(mat, 6)))
-                atten = max(1.0, min(30.0, atten))
+                atten = max(0.0, min(30.0, atten))
                 clean_barriers.append({
                     "name": str(b.get("name") or f"Barrier {idx+1}")[:80],
                     "material": mat,

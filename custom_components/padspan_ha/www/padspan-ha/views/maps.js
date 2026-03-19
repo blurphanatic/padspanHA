@@ -1287,7 +1287,7 @@ function _edit(ctx, map){
 
     // RF Barriers — dashed red/orange polylines
     const barriers = ctx.state.maps._draftBarriers || [];
-    const _matColors = {metal:"#ef4444",concrete:"#f97316",brick:"#eab308",custom:"#a855f7"};
+    const _matColors = {metal:"#ef4444",concrete:"#f97316",brick:"#eab308",custom:"#a855f7",open:"#38bdf8"};
     for(let bi = 0; bi < barriers.length; bi++){
       const bar = barriers[bi];
       if(!bar.points || bar.points.length < 2) continue;
@@ -1296,9 +1296,11 @@ function _edit(ctx, map){
       bLine.setAttribute("points", bar.points.map(p=>`${clamp01(p[0])},${clamp01(p[1])}`).join(" "));
       bLine.setAttribute("fill","none");
       bLine.setAttribute("stroke", bc);
-      bLine.setAttribute("stroke-width", ctx.state.maps._selectedBarrierIdx === bi ? "0.010" : "0.006");
-      bLine.setAttribute("stroke-dasharray","0.006 0.018");
+      const _isOpen = bar.material === "open";
+      bLine.setAttribute("stroke-width", ctx.state.maps._selectedBarrierIdx === bi ? "0.010" : (_isOpen ? "0.003" : "0.006"));
+      bLine.setAttribute("stroke-dasharray", _isOpen ? "0.004 0.008" : "0.006 0.018");
       bLine.setAttribute("stroke-linecap","round");
+      if (_isOpen) bLine.setAttribute("opacity", "0.6");
       if(ctx.state.maps._mode === "barriers"){
         bLine.style.cursor = "pointer";
         bLine.addEventListener("click", (ev)=>{ ev.stopPropagation(); ctx.state.maps._selectedBarrierIdx = bi; renderAll(); renderTools(); });
@@ -1313,7 +1315,7 @@ function _edit(ctx, map){
         blab.setAttribute("font-size","0.025");
         blab.setAttribute("text-anchor","middle");
         blab.setAttribute("fill", bc);
-        blab.textContent = (bar.material||"metal") + " (" + (bar.attenuation_dbm||12) + "dB)";
+        blab.textContent = bar.material === "open" ? "Open (Loft)" : (bar.material||"metal") + " (" + (bar.attenuation_dbm||12) + "dB)";
         svg.appendChild(blab);
       }
     }
@@ -1532,9 +1534,9 @@ function _edit(ctx, map){
       // Material selector
       const matSel = document.createElement("select");
       matSel.className = "select";
-      for(const [mat, atten] of [["metal",12],["concrete",8],["brick",4],["custom",6]]){
+      for(const [mat, atten, label] of [["open",0,"Open (Loft) — no wall"],["brick",4,null],["concrete",8,null],["metal",12,null],["custom",6,null]]){
         const o = document.createElement("option");
-        o.value = mat; o.textContent = `${mat.charAt(0).toUpperCase()+mat.slice(1)} (${atten} dB)`;
+        o.value = mat; o.textContent = label || `${mat.charAt(0).toUpperCase()+mat.slice(1)} (${atten} dB)`;
         matSel.appendChild(o);
       }
       matSel.value = ctx.state.maps._barrierMaterial || "metal";
@@ -1556,7 +1558,7 @@ function _edit(ctx, map){
         const d = ctx.state.maps._drawing;
         if(!d || d.points.length < 2){ ctx.toast("Need at least 2 points for a barrier.", true); return; }
         const mat = ctx.state.maps._barrierMaterial || "metal";
-        const _matAtten = {metal:12,concrete:8,brick:4,custom:6};
+        const _matAtten = {metal:12,concrete:8,brick:4,custom:6,open:0};
         ctx.state.maps._draftBarriers.push({
           name: "Barrier " + (ctx.state.maps._draftBarriers.length + 1),
           material: mat,
@@ -1583,7 +1585,7 @@ function _edit(ctx, map){
       if(bList.length){
         const layersDiv = el("div",{style:"margin-top:14px"});
         layersDiv.appendChild(el("div",{class:"muted",style:"font-size:12px;font-weight:600;margin-bottom:6px"},`Barriers (${bList.length})`));
-        const _matColors2 = {metal:"#ef4444",concrete:"#f97316",brick:"#eab308",custom:"#a855f7"};
+        const _matColors2 = {metal:"#ef4444",concrete:"#f97316",brick:"#eab308",custom:"#a855f7",open:"#38bdf8"};
         for(let bi = 0; bi < bList.length; bi++){
           const bar = bList[bi];
           const bc = _matColors2[bar.material] || "#ef4444";
@@ -1599,7 +1601,7 @@ function _edit(ctx, map){
           row.appendChild(el("span",{style:`width:10px;height:3px;background:${bc};flex-shrink:0;border-radius:1px`}));
           row.appendChild(el("div",{style:"flex:1"},[
             el("div",{style:"font-size:12px;font-weight:600"}, bar.name || `Barrier ${bi+1}`),
-            el("div",{class:"muted",style:"font-size:10px"}, `${bar.material} · ${bar.attenuation_dbm}dB · ${(bar.points||[]).length} pts`),
+            el("div",{class:"muted",style:"font-size:10px"}, bar.material === "open" ? `Open (Loft) · ${(bar.points||[]).length} pts` : `${bar.material} · ${bar.attenuation_dbm}dB · ${(bar.points||[]).length} pts`),
           ]));
           row.appendChild(delBtn);
           layersDiv.appendChild(row);
@@ -1777,7 +1779,7 @@ function _edit(ctx, map){
       const d = ctx.state.maps._drawing;
       if(d.points.length >= 2){
         const mat = ctx.state.maps._barrierMaterial || "metal";
-        const _matAtten = {metal:12,concrete:8,brick:4,custom:6};
+        const _matAtten = {metal:12,concrete:8,brick:4,custom:6,open:0};
         ctx.state.maps._draftBarriers.push({
           name: "Barrier " + (ctx.state.maps._draftBarriers.length + 1),
           material: mat,

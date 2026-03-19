@@ -459,7 +459,7 @@ export const HELP = {
       "The map editor has three modes, selectable with the buttons at the top:",
       "RECEIVERS — Place Bluetooth scanner markers on the map. Double-click the map to add a scanner, then drag to position. Click a placed scanner to select it (shows delete button). Each scanner should be positioned where the physical device is mounted.",
       "ROOMS — Draw room boundary polygons. Click the map to add polygon points, double-click to finish the shape. Each polygon becomes a named room. Room names should match your Home Assistant Area names exactly.",
-      "RF BARRIERS — Draw wall/barrier lines that block Bluetooth signal. Click to start, click to add points, double-click to finish. Choose material type (metal=12dB, concrete=8dB, brick=4dB) which controls how much the wall attenuates signal. Walls improve positioning accuracy near room boundaries.",
+      "RF BARRIERS — Draw wall/barrier lines that block Bluetooth signal. Click to start, click to add points, double-click to finish. Choose material type: Open (Loft) for areas open to the floor above/below (0dB, no wall — only height-based attenuation applies), Brick (4dB), Concrete (8dB), or Metal (12dB). Open/Loft markers tell PadSpan that signal flows freely between floors at that boundary, reducing cross-floor stickiness.",
       "SAVE LAYOUT — Saves all changes (receivers, rooms, barriers) to the server. Changes are not saved automatically.",
       "REVERT — Discards unsaved changes and reloads the last saved state.",
       "Important: Room names must match HA Area names for positioning to work. If a room boundary has a different name than the HA Area, objects won't be correctly positioned in that room.",
