@@ -7920,7 +7920,7 @@ async def ws_fabric_map_transform_set(hass: HomeAssistant, connection, msg) -> N
 
 @websocket_api.websocket_command({
     "type": "padspan_ha/fabric_migrate_from_maps",
-    vol.Optional("default_floor_width_m"): float,
+    vol.Optional("default_floor_width_m"): vol.Coerce(float),
 })
 @websocket_api.async_response
 async def ws_fabric_migrate_from_maps(hass: HomeAssistant, connection, msg) -> None:
