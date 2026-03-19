@@ -147,6 +147,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_calibration_clear_map)
     websocket_api.async_register_command(hass, ws_object_evict)
     websocket_api.async_register_command(hass, ws_calibration_compute_model)
+    websocket_api.async_register_command(hass, ws_calibration_retrain_rf)
     websocket_api.async_register_command(hass, ws_calibration_swap_radio)
     websocket_api.async_register_command(hass, ws_calibration_beacon_profiles)
     websocket_api.async_register_command(hass, ws_calibration_health_check)
@@ -4537,6 +4538,25 @@ async def ws_calibration_compute_model(hass: HomeAssistant, connection, msg) -> 
     except Exception as e:
         _LOGGER.error("PadSpan HA calibration_compute_model failed: %s", e)
         connection.send_error(msg["id"], "compute_failed", str(e))
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/calibration_retrain_rf"})
+@websocket_api.async_response
+async def ws_calibration_retrain_rf(hass: HomeAssistant, connection, msg) -> None:
+    """Force retrain the Random Forest model (picks up metre-space data)."""
+    cal = await _get_cal_store(hass)
+    try:
+        await cal._async_train_rf()
+        rf_trained = cal.rf_trained
+        rf_metres = getattr(cal._rf, "_use_metres", False) if rf_trained else False
+        connection.send_result(msg["id"], {
+            "ok": True,
+            "rf_trained": rf_trained,
+            "use_metres": rf_metres,
+            "point_count": len(cal.data.get("points", [])),
+        })
+    except Exception as e:
+        connection.send_error(msg["id"], "retrain_failed", str(e))
 
 
 @websocket_api.websocket_command(

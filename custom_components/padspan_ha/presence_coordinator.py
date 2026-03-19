@@ -439,6 +439,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if _model.sync_mode() == "auto" and _radios:
                 try:
                     await _model.async_sync_from_snapshot(_radios)
+                    # One-time prune: remove ha_sync entries that aren't actual radios
+                    if not getattr(self, "_fabric_pruned", False):
+                        _radio_srcs = {str(r.get("source")) for r in _radios if r.get("source")}
+                        _pruned = await _model.async_prune_non_radio_scanners(_radio_srcs)
+                        self._fabric_pruned = True
+                        if _pruned:
+                            _LOGGER.info("Fabric: pruned %d non-radio scanner entries", _pruned)
                 except Exception:
                     pass
             # Read scanner mappings from fabric (includes both ha_sync and manual)

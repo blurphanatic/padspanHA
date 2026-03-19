@@ -256,6 +256,30 @@ function _renderFabric(ctx, container, data) {
     container.appendChild(card);
   }
 
+  // ── Quick actions ───────────────────────────────────────────────────────
+  {
+    const actCard = el("div",{style:"display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap"});
+    const rfCheck = checks.find(c => c.name === "RF Model");
+    if (rfCheck) {
+      const rfBtn = el("button",{class:"btn",style:"width:auto;padding:4px 14px;font-size:11px"},
+        `Retrain RF (currently: ${rfCheck.value})`);
+      rfBtn.addEventListener("click", async () => {
+        rfBtn.disabled = true; rfBtn.textContent = "Retraining\u2026";
+        try {
+          const r = await ctx.actions.callWS({type:"padspan_ha/calibration_retrain_rf"});
+          ctx.actions.toast(`RF retrained: ${r.use_metres ? "metres" : "fractions"} mode, ${r.point_count} points`);
+          _fabricCache = null; _fabricFetchTs = 0;
+          _fetchAndRenderFabric(ctx, container);
+        } catch(e) {
+          ctx.actions.toast(`Retrain failed: ${e.message||e}`);
+          rfBtn.disabled = false; rfBtn.textContent = "Retrain RF";
+        }
+      });
+      actCard.appendChild(rfBtn);
+    }
+    container.appendChild(actCard);
+  }
+
   // ── Maps diagnostic table ───────────────────────────────────────────────
   const maps = data.maps || [];
   if (maps.length) {
@@ -304,7 +328,9 @@ function _renderFabric(ctx, container, data) {
           type: "padspan_ha/fabric_migrate_from_maps",
           default_floor_width_m: w,
         });
-        ctx.actions.toast(`Migrated: ${res.transforms_computed} transforms, ${res.scanners_migrated} scanners, ${res.rooms_migrated} rooms, ${res.cal_points_backfilled || 0} cal points`);
+        // Also retrain RF to pick up metre-space data
+        try { await ctx.actions.callWS({type:"padspan_ha/calibration_retrain_rf"}); } catch(e){}
+        ctx.actions.toast(`Migrated: ${res.transforms_computed} transforms, ${res.scanners_migrated} scanners, ${res.rooms_migrated} rooms, ${res.cal_points_backfilled || 0} cal points. RF retrained.`);
         _fabricCache = null; _fabricFetchTs = 0;
         _fetchAndRenderFabric(ctx, container);
       } catch (err) {

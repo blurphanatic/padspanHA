@@ -244,6 +244,25 @@ class ModelStore:
         self.data["fabric_sync_mode"] = mode
         await self.store.async_save(self.data)
 
+    async def async_prune_non_radio_scanners(self, radio_sources: set[str]) -> int:
+        """Remove ha_sync scanners that aren't in the set of actual BLE radio sources.
+
+        Only prunes ha_sync entries; manual entries are preserved.
+        Returns count of removed entries.
+        """
+        scanners = self.data.get("scanners") or {}
+        to_remove = [
+            src for src, info in scanners.items()
+            if isinstance(info, dict)
+            and info.get("source_type") == "ha_sync"
+            and src not in radio_sources
+        ]
+        if to_remove:
+            for src in to_remove:
+                scanners.pop(src, None)
+            await self.store.async_save(self.data)
+        return len(to_remove)
+
     async def async_sync_from_snapshot(self, radios: list[dict]) -> None:
         """Compare BLE snapshot radios with stored scanners; update ha_sync entries.
 
@@ -280,14 +299,13 @@ class ModelStore:
     async def async_sync_from_ha(self) -> None:
         """Sync scanners from HA Area/Floor registries (startup path).
 
-        Reads HA device registry to find BLE proxy devices with area assignments,
-        then populates the scanners dict. Preserves manual entries.
+        Only syncs devices that are likely BLE proxies (ESPHome integrations
+        with bluetooth capability). Preserves manual entries.
         """
         try:
             from homeassistant.helpers import (
                 area_registry as ar_mod,
                 device_registry as dr_mod,
-                floor_registry as fr_mod,
             )
         except ImportError:
             return
@@ -304,20 +322,39 @@ class ModelStore:
             if fl:
                 area_id_to_floor[a.id] = str(fl)
 
+        # Build set of known BLE radio sources from existing snapshot-synced
+        # scanners (the snapshot sync only adds actual radio sources)
+        _known_radio_sources: set[str] = set()
+        for src, info in (self.data.get("scanners") or {}).items():
+            if isinstance(info, dict):
+                _known_radio_sources.add(src)
+
         scanners = self.data.setdefault("scanners", {})
         changed = False
 
-        # Find ESPHome BLE proxy devices with area assignments
+        # Only sync devices whose identifiers are ESPHome BLE proxies.
+        # Filter: device must have an esphome or bluetooth-related integration.
+        _BLE_DOMAINS = {"esphome", "bluetooth", "bluetooth_le_tracker"}
         for dev in dr.devices.values():
             if not dev.area_id:
                 continue
-            area_name = area_id_to_name.get(dev.area_id)
-            if not area_name:
-                continue
+            # Check if this device is from a BLE-relevant integration
+            _dev_domains = {c[0] for c in (dev.identifiers or set())}
+            _config_domains = {c for c in (dev.config_entries or set())}
+            # Also check connections for MAC-based matching
+            _has_ble_domain = bool(_dev_domains & _BLE_DOMAINS)
 
-            # Use device name as source identifier (matches snapshot radios)
+            # Fallback: if the device name/id matches a known radio source, include it
             src = dev.name_by_user or dev.name
             if not src:
+                continue
+            _is_known_radio = src in _known_radio_sources
+
+            if not _has_ble_domain and not _is_known_radio:
+                continue  # skip non-BLE devices
+
+            area_name = area_id_to_name.get(dev.area_id)
+            if not area_name:
                 continue
 
             existing = scanners.get(src)
