@@ -110,25 +110,28 @@ class ModelStore:
     async def async_setup(self) -> None:
         loaded = await self.store.async_load()
         if isinstance(loaded, dict):
-            # Merge with defaults
-            floors = loaded.get("floors") if isinstance(loaded.get("floors"), list) else DEFAULT_DATA["floors"]
-            room_meta = loaded.get("room_meta") if isinstance(loaded.get("room_meta"), dict) else {}
-            self.data = {"floors": floors, "room_meta": room_meta}
+            # Start from loaded data, then ensure required keys exist
+            self.data = dict(loaded)
+            # Ensure core keys
+            if not isinstance(self.data.get("floors"), list):
+                self.data["floors"] = list(DEFAULT_DATA["floors"])
+            if not isinstance(self.data.get("room_meta"), dict):
+                self.data["room_meta"] = {}
             # ── Migration: add fabric keys if absent (pre-Phase-1 stores) ────
-            if "scanners" not in self.data or not isinstance(self.data.get("scanners"), dict):
+            if not isinstance(self.data.get("scanners"), dict):
                 self.data["scanners"] = {}
-            if "room_adjacency" not in self.data or not isinstance(self.data.get("room_adjacency"), dict):
+            if not isinstance(self.data.get("room_adjacency"), dict):
                 self.data["room_adjacency"] = {}
-            if "fabric_sync_mode" not in self.data or self.data.get("fabric_sync_mode") not in ("auto", "manual"):
+            if self.data.get("fabric_sync_mode") not in ("auto", "manual"):
                 self.data["fabric_sync_mode"] = "auto"
             # ── Migration: Phase 2 spatial model keys ────────────────────────
-            if "scanner_positions_m" not in self.data or not isinstance(self.data.get("scanner_positions_m"), dict):
+            if not isinstance(self.data.get("scanner_positions_m"), dict):
                 self.data["scanner_positions_m"] = {}
-            if "room_geometry_m" not in self.data or not isinstance(self.data.get("room_geometry_m"), dict):
+            if not isinstance(self.data.get("room_geometry_m"), dict):
                 self.data["room_geometry_m"] = {}
-            if "rf_barriers_m" not in self.data or not isinstance(self.data.get("rf_barriers_m"), list):
+            if not isinstance(self.data.get("rf_barriers_m"), list):
                 self.data["rf_barriers_m"] = []
-            if "map_transforms" not in self.data or not isinstance(self.data.get("map_transforms"), dict):
+            if not isinstance(self.data.get("map_transforms"), dict):
                 self.data["map_transforms"] = {}
         else:
             self.data = {k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v) for k, v in DEFAULT_DATA.items()}
