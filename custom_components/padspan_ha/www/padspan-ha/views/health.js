@@ -177,26 +177,6 @@ function _renderFabric(ctx, container, data) {
     container.appendChild(card);
   }
 
-  // ── Scanner mappings table ─────────────────────────────────────────────
-  if (scanners && scanners.length) {
-    const card = el("div",{class:"card",style:"margin-bottom:8px;padding:12px"});
-    card.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px"},
-      `Scanner \u2192 Room Mappings (${scanners.length})`));
-    const tbl = el("div",{style:"display:grid;grid-template-columns:1fr 1fr auto auto;gap:3px 8px;font-size:10px;align-items:center"});
-    for (const h of ["Source","Room","Floor","Type"]) {
-      tbl.appendChild(el("div",{style:"font-weight:600;color:#64748b;text-transform:uppercase"},h));
-    }
-    for (const s of scanners) {
-      const typeColor = s.source_type === "manual" ? "#f59e0b" : "#52b788";
-      tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2e8f0"},s.source));
-      tbl.appendChild(el("div",{style:"color:#94a3b8"},s.room));
-      tbl.appendChild(el("div",{class:"mono",style:"color:#64748b"},s.floor_id));
-      tbl.appendChild(el("div",{style:`color:${typeColor};font-weight:600`},s.source_type));
-    }
-    card.appendChild(tbl);
-    container.appendChild(card);
-  }
-
   // ── Scanner positions (metres) ─────────────────────────────────────────
   if (scanner_positions_m && scanner_positions_m.length) {
     const card = el("div",{class:"card",style:"margin-bottom:8px;padding:12px"});
@@ -253,6 +233,26 @@ function _renderFabric(ctx, container, data) {
       ]));
     }
     card.appendChild(list);
+    container.appendChild(card);
+  }
+
+  // ── Scanner mappings table ─────────────────────────────────────────────
+  if (scanners && scanners.length) {
+    const card = el("div",{class:"card",style:"margin-bottom:8px;padding:12px"});
+    card.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px"},
+      `Scanner \u2192 Room Mappings (${scanners.length})`));
+    const tbl = el("div",{style:"display:grid;grid-template-columns:1fr 1fr auto auto;gap:3px 8px;font-size:10px;align-items:center"});
+    for (const h of ["Source","Room","Floor","Type"]) {
+      tbl.appendChild(el("div",{style:"font-weight:600;color:#64748b;text-transform:uppercase"},h));
+    }
+    for (const s of scanners) {
+      const typeColor = s.source_type === "manual" ? "#f59e0b" : "#52b788";
+      tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2e8f0"},s.source));
+      tbl.appendChild(el("div",{style:"color:#94a3b8"},s.room));
+      tbl.appendChild(el("div",{class:"mono",style:"color:#64748b"},s.floor_id));
+      tbl.appendChild(el("div",{style:`color:${typeColor};font-weight:600`},s.source_type));
+    }
+    card.appendChild(tbl);
     container.appendChild(card);
   }
 
