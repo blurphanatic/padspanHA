@@ -496,8 +496,14 @@ export function distortionMapSVG(calPoints, mapId, barriers, receivers) {
       if (!shared.length) continue;
       let distSq = 0;
       for (const s of shared) distSq += (query[s] - fp[s]) ** 2;
-      const penalty = 1.0 + 0.3 * Math.max(0, Object.keys(query).length - shared.length);
-      scored.push({ distSq: distSq * penalty, p: p2 });
+      // Penalty 1: missing scanners — query sees scanners that the candidate doesn't
+      const missingPenalty = 1.0 + 0.3 * Math.max(0, Object.keys(query).length - shared.length);
+      // Penalty 2: low scanner diversity — with only 1-2 shared scanners the RSSI
+      // distance is unreliable (one scanner can't distinguish spatial positions).
+      // Scale distSq DOWN (make candidates look more similar = larger error vectors)
+      // so sparse areas don't appear artificially well-covered.
+      const diversityPenalty = shared.length >= 3 ? 1.0 : shared.length === 2 ? 0.5 : 0.15;
+      scored.push({ distSq: distSq * missingPenalty * diversityPenalty, p: p2, sharedCount: shared.length });
     }
 
     if (scored.length < KNN_K) continue;
@@ -521,6 +527,11 @@ export function distortionMapSVG(calPoints, mapId, barriers, receivers) {
     // Check if the error vector crosses any barrier
     const wallsCrossed = _barrierAttenuation(pt.x_frac, pt.y_frac, predX, predY, barriers || []);
 
+    // Track scanner diversity: how many unique scanners the top-K neighbors shared
+    const avgShared = topK.reduce((a, t) => a + (t.sharedCount || 0), 0) / topK.length;
+    const scannerCount = Object.keys(query).length;
+    const lowConfidence = scannerCount < 2 || avgShared < 2;
+
     vectors.push({
       actualX: pt.x_frac, actualY: pt.y_frac,
       predX, predY,
@@ -528,6 +539,8 @@ export function distortionMapSVG(calPoints, mapId, barriers, receivers) {
       room: pt.room || "",
       wallsCrossed: wallsCrossed > 0,
       wallDb: wallsCrossed,
+      lowConfidence,
+      scannerCount,
     });
   }
 
@@ -604,34 +617,56 @@ export function distortionMapSVG(calPoints, mapId, barriers, receivers) {
     const dotStroke = v.wallsCrossed ? "#ff4444" : "#071008";
     const dotSW = v.wallsCrossed ? "0.003" : "0.002";
     s += `<circle cx="${v.actualX.toFixed(4)}" cy="${v.actualY.toFixed(4)}" r="0.007" fill="${color}" stroke="${dotStroke}" stroke-width="${dotSW}" opacity="0.9"/>`;
+
+    // Low-confidence marker: dashed ring around points with < 2 scanners.
+    // These points have unreliable k-NN predictions because a single scanner
+    // can't distinguish spatial positions — the error looks low but is meaningless.
+    if (v.lowConfidence) {
+      s += `<circle cx="${v.actualX.toFixed(4)}" cy="${v.actualY.toFixed(4)}" r="0.014" fill="none" stroke="#f59e0b" stroke-width="0.002" stroke-dasharray="0.004,0.004" opacity="0.8"/>`;
+    }
   }
 
   // ── Layer 4: Summary stats & legend ─────────────────────────────────────
-  const meanErr = vectors.reduce((a, v) => a + v.errFrac, 0) / vectors.length;
+  const lowConfCount = vectors.filter(v => v.lowConfidence).length;
+  // Only include high-confidence points in error stats so sparse areas
+  // don't drag the average down with misleadingly low "error" values.
+  const hcVectors = vectors.filter(v => !v.lowConfidence);
+  const meanErr = hcVectors.length ? hcVectors.reduce((a, v) => a + v.errFrac, 0) / hcVectors.length : 0;
   const meanErrM = (meanErr * 15).toFixed(1);
   const maxErrM = (maxErr * 15).toFixed(1);
 
   const ly = 0.84;
-  s += `<rect x="0.58" y="${ly - 0.01}" width="0.40" height="0.15" rx="0.008" fill="rgba(7,16,8,0.9)"/>`;
+  const boxH = lowConfCount ? 0.17 : 0.15;
+  s += `<rect x="0.58" y="${ly - 0.01}" width="0.40" height="${boxH}" rx="0.008" fill="rgba(7,16,8,0.9)"/>`;
   s += `<text x="0.60" y="${ly + 0.012}" fill="#e2e8f0" font-size="0.018" font-weight="700" font-family="system-ui,sans-serif">Distortion Map</text>`;
   s += `<text x="0.60" y="${ly + 0.032}" fill="#94a3b8" font-size="0.014" font-family="system-ui,sans-serif">Mean: ${meanErrM}m (${(meanErr * 100).toFixed(1)}%) \u2022 Max: ${maxErrM}m</text>`;
   s += `<text x="0.60" y="${ly + 0.050}" fill="#94a3b8" font-size="0.013" font-family="system-ui,sans-serif">${vectors.length} points \u2022 ${wallCrossCount} cross wall${wallCrossCount !== 1 ? "s" : ""}</text>`;
-  // Error color scale
+  if (lowConfCount) {
+    s += `<text x="0.60" y="${ly + 0.066}" fill="#f59e0b" font-size="0.012" font-family="system-ui,sans-serif">\u26A0 ${lowConfCount} point${lowConfCount !== 1 ? "s" : ""} low confidence (&lt;2 scanners)</text>`;
+  }
+  // Error color scale — shift down when low-confidence warning is shown
+  const _lOff = lowConfCount ? 0.016 : 0;
   const scaleSteps = 5;
   const scaleW = 0.03;
   for (let i = 0; i < scaleSteps; i++) {
     const t = i / (scaleSteps - 1);
-    s += `<rect x="${(0.60 + i * scaleW).toFixed(3)}" y="${ly + 0.060}" width="${scaleW.toFixed(3)}" height="0.010" fill="${_errorColor(t * 0.25)}"/>`;
+    s += `<rect x="${(0.60 + i * scaleW).toFixed(3)}" y="${(ly + 0.060 + _lOff).toFixed(4)}" width="${scaleW.toFixed(3)}" height="0.010" fill="${_errorColor(t * 0.25)}"/>`;
   }
-  s += `<text x="0.60" y="${ly + 0.085}" fill="#52b788" font-size="0.011" font-family="system-ui,sans-serif">0m</text>`;
-  s += `<text x="${(0.60 + (scaleSteps-1) * scaleW).toFixed(3)}" y="${ly + 0.085}" fill="#f87171" font-size="0.011" font-family="system-ui,sans-serif">\u22653.8m</text>`;
+  s += `<text x="0.60" y="${(ly + 0.085 + _lOff).toFixed(4)}" fill="#52b788" font-size="0.011" font-family="system-ui,sans-serif">0m</text>`;
+  s += `<text x="${(0.60 + (scaleSteps-1) * scaleW).toFixed(3)}" y="${(ly + 0.085 + _lOff).toFixed(4)}" fill="#f87171" font-size="0.011" font-family="system-ui,sans-serif">\u22653.8m</text>`;
   // Wall legend
   if (mapBarriers.length) {
-    s += `<line x1="0.60" y1="${ly + 0.098}" x2="0.64" y2="${ly + 0.098}" stroke="#ff4444" stroke-width="0.004" opacity="0.9"/>`;
-    s += `<text x="0.65" y="${ly + 0.101}" fill="#ff6666" font-size="0.011" font-family="system-ui,sans-serif">Wall (error source)</text>`;
-    s += `<text x="0.60" y="${ly + 0.118}" fill="#ff4444" font-size="0.010" font-family="system-ui,sans-serif">\u2716 = prediction crosses wall</text>`;
-    s += `<line x1="0.60" y1="${ly + 0.128}" x2="0.64" y2="${ly + 0.128}" stroke="#fb923c" stroke-width="0.003" stroke-dasharray="0.008,0.004"/>`;
-    s += `<text x="0.65" y="${ly + 0.131}" fill="#94a3b8" font-size="0.010" font-family="system-ui,sans-serif">Dashed = wall-crossing vector</text>`;
+    s += `<line x1="0.60" y1="${(ly + 0.098 + _lOff).toFixed(4)}" x2="0.64" y2="${(ly + 0.098 + _lOff).toFixed(4)}" stroke="#ff4444" stroke-width="0.004" opacity="0.9"/>`;
+    s += `<text x="0.65" y="${(ly + 0.101 + _lOff).toFixed(4)}" fill="#ff6666" font-size="0.011" font-family="system-ui,sans-serif">Wall (error source)</text>`;
+    s += `<text x="0.60" y="${(ly + 0.118 + _lOff).toFixed(4)}" fill="#ff4444" font-size="0.010" font-family="system-ui,sans-serif">\u2716 = prediction crosses wall</text>`;
+    s += `<line x1="0.60" y1="${(ly + 0.128 + _lOff).toFixed(4)}" x2="0.64" y2="${(ly + 0.128 + _lOff).toFixed(4)}" stroke="#fb923c" stroke-width="0.003" stroke-dasharray="0.008,0.004"/>`;
+    s += `<text x="0.65" y="${(ly + 0.131 + _lOff).toFixed(4)}" fill="#94a3b8" font-size="0.010" font-family="system-ui,sans-serif">Dashed = wall-crossing vector</text>`;
+  }
+  // Low-confidence legend
+  if (lowConfCount) {
+    const lcY = ly + 0.098 + _lOff + (mapBarriers.length ? 0.042 : 0);
+    s += `<circle cx="0.62" cy="${lcY.toFixed(4)}" r="0.006" fill="none" stroke="#f59e0b" stroke-width="0.002" stroke-dasharray="0.004,0.004"/>`;
+    s += `<text x="0.65" y="${(lcY + 0.003).toFixed(4)}" fill="#f59e0b" font-size="0.010" font-family="system-ui,sans-serif">Low confidence (&lt;2 scanners)</text>`;
   }
 
   return s;

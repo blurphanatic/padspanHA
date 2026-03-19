@@ -2405,6 +2405,7 @@ export function render(ctx){
     const _heatStyle = (on) => on ? "background:#2d1b4e;border-color:#a855f7;color:#d8b4fe;font-weight:700" : "color:#94a3b8";
     const _distStyle = (on) => on ? "background:#431407;border-color:#f97316;color:#fdba74;font-weight:700" : "color:#94a3b8";
     let _ovHeatBtn = null, _ovDistBtn = null;
+    let _isoOverlayCtrl = null; // slider bar — toggled by _syncOverlayBtns
 
     const _syncOverlayBtns = () => {
       if (_ovHeatBtn) {
@@ -2414,6 +2415,11 @@ export function render(ctx){
       if (_ovDistBtn) {
         _ovDistBtn.style.cssText = _distStyle(ctx.state._overviewShowDistortion);
         _ovDistBtn.textContent = ctx.state._overviewShowDistortion ? "\u2192 Distortion ON" : "\u2192 Distortion";
+      }
+      // Show/hide the slider control bar based on active overlay
+      if (_isoOverlayCtrl) {
+        const show = ctx.state._overviewShowHeatmap || ctx.state._overviewShowDistortion;
+        _isoOverlayCtrl.style.display = show ? "flex" : "none";
       }
       _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx));
     };
@@ -2451,7 +2457,8 @@ export function render(ctx){
     // ── Overlay controls: Gain, Contrast, Distortion Intensity, Save ──────
     // Shared bar for both heatmap and distortion — visible when either is active
     if (_isoRadioMapOn || _isoDistortionOn) {
-      const isoOverlayCtrl = document.createElement("div");
+      _isoOverlayCtrl = document.createElement("div");
+      const isoOverlayCtrl = _isoOverlayCtrl;
       isoOverlayCtrl.style.cssText = (ctx.state._overviewShowHeatmap || ctx.state._overviewShowDistortion)
         ? "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;padding:6px 10px;background:#0a1a12;border:1px solid #1a4228;border-radius:8px"
         : "display:none";
