@@ -8002,11 +8002,14 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
                     "floor_id": info.get("floor_id", "?"),
                     "source_type": info.get("source_type", "?"),
                 })
+        # Adjacency: pass if we have adjacency data OR centroid-based adjacency is active
+        _has_centroids = bool(mdl.room_centroids_m()) or bool(mdl.data.get("room_geometry_m"))
         checks.append({
             "group": "fabric_sync", "name": "Adjacency",
-            "ok": adj_room_count > 0 or len(scanners) <= 1,
-            "value": f"{adj_room_count} rooms, {adj_edge_count} edges",
-            "detail": f"{adj_room_count} rooms with neighbors, {adj_edge_count} bidirectional edges",
+            "ok": adj_room_count > 0 or _has_centroids or len(scanners) <= 1,
+            "value": f"{adj_room_count} rooms, {adj_edge_count} edges" + (" (centroids active)" if _has_centroids and adj_room_count == 0 else ""),
+            "detail": f"{adj_room_count} rooms with neighbors, {adj_edge_count} bidirectional edges" +
+                      (". Centroid-based adjacency prior active from room geometry." if _has_centroids and adj_room_count == 0 else ""),
         })
     else:
         checks.append({
