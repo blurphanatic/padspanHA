@@ -133,6 +133,10 @@ async def _ensure_stores(hass: HomeAssistant, *, critical_only: bool = False) ->
     async def _init_calibration():
         from .calibration_store import CalibrationStore
         cal_store = CalibrationStore(hass)
+        # Phase 3: wire ModelStore for metre conversions
+        _mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+        if _mdl:
+            cal_store.set_model_store(_mdl)
         # Load data but defer RF training to background
         await cal_store.async_setup_fast()
         _pt_count = len(cal_store.data.get("points", []))
@@ -256,6 +260,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     )
         except Exception as err:
             _LOGGER.debug("Phase 2 spatial migration skipped: %s", err)
+
+        # Phase 3: backfill metre coords on existing calibration points
+        try:
+            cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+            mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+            if cal and mdl:
+                if not cal._model:
+                    cal.set_model_store(mdl)
+                n_backfilled = await cal.async_backfill_metres()
+                if n_backfilled:
+                    _LOGGER.info("Phase 3: backfilled %d calibration points with metre coords", n_backfilled)
+        except Exception as err:
+            _LOGGER.debug("Phase 3 calibration backfill skipped: %s", err)
 
         try:
             from .bluetooth_live import async_setup_bluetooth_live

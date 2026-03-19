@@ -189,23 +189,34 @@ class RandomForestLocator:
         self._sources: list[str] = []     # ordered scanner source names
         self._points: list[dict] = []     # training points (for room lookup)
         self._trained = False
+        self._use_metres = False          # Phase 3: True when trained on x_m/y_m
 
     @property
     def is_trained(self) -> bool:
         return self._trained
 
-    def train(self, points: list[dict[str, Any]]) -> None:
+    def train(self, points: list[dict[str, Any]], use_metres: bool = False) -> None:
         """
         Build forest from calibration points.
         Each point: {x_frac, y_frac, room, map_id, scanner_readings: [{source, mean_rssi}]}
+        Phase 3: when use_metres=True, trains on x_m/y_m instead.
         """
+        self._use_metres = use_metres
         # Filter points with RSSI data and valid coordinates
-        valid = [
-            p for p in points
-            if p.get("scanner_readings")
-            and p.get("x_frac") is not None
-            and p.get("y_frac") is not None
-        ]
+        if use_metres:
+            valid = [
+                p for p in points
+                if p.get("scanner_readings")
+                and p.get("x_m") is not None
+                and p.get("y_m") is not None
+            ]
+        else:
+            valid = [
+                p for p in points
+                if p.get("scanner_readings")
+                and p.get("x_frac") is not None
+                and p.get("y_frac") is not None
+            ]
         if len(valid) < 4:
             self._trained = False
             return
@@ -242,8 +253,12 @@ class RandomForestLocator:
                 if s in src_idx:
                     row[src_idx[s]] = float(r.get("mean_rssi", MISSING_RSSI))
             X.append(row)
-            y_x.append(float(p["x_frac"]))
-            y_y.append(float(p["y_frac"]))
+            if use_metres:
+                y_x.append(float(p["x_m"]))
+                y_y.append(float(p["y_m"]))
+            else:
+                y_x.append(float(p["x_frac"]))
+                y_y.append(float(p["y_frac"]))
 
         # Train forests for x and y
         rng = random.Random(self._seed)
@@ -328,12 +343,20 @@ class RandomForestLocator:
         _conf_coverage = min(shared, 4) / 4.0
         confidence = round(_conf_agreement * _conf_coverage, 3)
 
-        return {
-            "x_frac": round(x_mean, 4),
-            "y_frac": round(y_mean, 4),
+        result = {
             "confidence": confidence,
             "nearest_room": best_room,
             "map_id": best_map,
             "k_used": self.n_trees,
             "shared_scanners": shared,
         }
+        if self._use_metres:
+            result["x_m"] = round(x_mean, 3)
+            result["y_m"] = round(y_mean, 3)
+            # Derive fracs for UI (caller should provide inverse transform)
+            result["x_frac"] = round(x_mean, 4)  # placeholder — caller remaps
+            result["y_frac"] = round(y_mean, 4)  # placeholder — caller remaps
+        else:
+            result["x_frac"] = round(x_mean, 4)
+            result["y_frac"] = round(y_mean, 4)
+        return result

@@ -3340,6 +3340,14 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
     except Exception:
         pass  # best-effort
 
+    # ── Phase 3: remap calibration points from metres when map changes ───
+    try:
+        _cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+        if _cal:
+            await _cal.async_remap_from_metres(map_id)
+    except Exception:
+        pass  # best-effort
+
     connection.send_result(msg["id"], {"map": updated})
 
 
@@ -3371,6 +3379,16 @@ async def ws_maps_replace_image(hass: HomeAssistant, connection, msg) -> None:
     except KeyError:
         connection.send_error(msg["id"], "not_found", "Map not found")
         return
+
+    # Phase 3: remap calibration points from metres after image replacement
+    try:
+        _cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+        _map_id = msg.get("map_id") or ""
+        if _cal and _map_id:
+            await _cal.async_remap_from_metres(_map_id)
+    except Exception:
+        pass
+
     connection.send_result(msg["id"], {"map": updated})
 
 
@@ -4363,6 +4381,10 @@ async def _get_cal_store(hass: HomeAssistant) -> CalibrationStore:
     domain_data = hass.data.setdefault(DOMAIN, {})
     if DATA_CALIBRATION not in domain_data:
         store = CalibrationStore(hass)
+        # Phase 3: wire ModelStore for metre conversions
+        _mdl = domain_data.get(DATA_MODEL)
+        if _mdl:
+            store.set_model_store(_mdl)
         await store.async_setup()
         domain_data[DATA_CALIBRATION] = store
     return domain_data[DATA_CALIBRATION]
@@ -7885,6 +7907,13 @@ async def ws_fabric_map_transform_set(hass: HomeAssistant, connection, msg) -> N
         return
     transform.setdefault("floor_id", DEFAULT_FLOOR_ID)
     await mdl.async_set_map_transform(map_id, transform)
+    # Phase 3: remap calibration points using the new transform
+    try:
+        _cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+        if _cal:
+            await _cal.async_remap_from_metres(map_id)
+    except Exception:
+        pass
     connection.send_result(msg["id"], {"ok": True, "map_id": map_id})
 
 
@@ -7902,8 +7931,19 @@ async def ws_fabric_migrate_from_maps(hass: HomeAssistant, connection, msg) -> N
         return
     n_transforms = await mdl.async_derive_transforms(ms)
     stats = await mdl.async_migrate_from_maps(ms)
+    # Phase 3: backfill calibration points with metres after transforms are computed
+    cal_backfilled = 0
+    try:
+        _cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+        if _cal:
+            if not _cal._model:
+                _cal.set_model_store(mdl)
+            cal_backfilled = await _cal.async_backfill_metres()
+    except Exception:
+        pass
     connection.send_result(msg["id"], {
         "ok": True,
         "transforms_computed": n_transforms,
+        "cal_points_backfilled": cal_backfilled,
         **stats,
     })

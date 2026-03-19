@@ -68,6 +68,11 @@ class CalibrationStore:
         self.store = Store(hass, 1, CALIBRATION_STORE_KEY)
         self.data = {"points": [], "model": {}}
         self._rf: RandomForestLocator = RandomForestLocator()
+        self._model: Any = None  # ModelStore reference (Phase 3, set via set_model_store)
+
+    def set_model_store(self, model: Any) -> None:
+        """Wire in ModelStore for metre-space conversions (Phase 3)."""
+        self._model = model
 
     async def async_setup(self) -> None:
         loaded = await self.store.async_load()
@@ -143,6 +148,17 @@ class CalibrationStore:
             "weight": max(0.1, min(10.0, float(point.get("weight") or 1.0))),
             "scanner_readings": clean_readings,
         }
+        # Phase 3: compute real-world metre coordinates
+        if point.get("x_m") is not None and point.get("y_m") is not None:
+            # Caller provided explicit metres (standalone/mapless calibration)
+            clean["x_m"] = round(float(point["x_m"]), 3)
+            clean["y_m"] = round(float(point["y_m"]), 3)
+        elif self._model and clean["map_id"]:
+            coords = self._model.map_frac_to_metres(clean["x_frac"], clean["y_frac"], clean["map_id"])
+            if coords:
+                clean["x_m"] = round(coords[0], 3)
+                clean["y_m"] = round(coords[1], 3)
+
         self.data.setdefault("points", []).append(clean)
         await self.store.async_save(self.data)
         await self._async_train_rf()
@@ -167,12 +183,24 @@ class CalibrationStore:
         return count
 
     async def async_clear_map(self, map_id: str) -> int:
-        """Remove all calibration points collected on a specific map."""
+        """Remove calibration points for a map. Points with metre coordinates
+        are preserved (detached from map) — they survive map deletion.
+        Points without metres are deleted (map-only, unusable without the map).
+        """
         points = self.data.get("points", [])
         before = len(points)
-        self.data["points"] = [p for p in points if p.get("map_id") != map_id]
-        removed = before - len(self.data["points"])
-        if removed:
+        surviving: list[dict[str, Any]] = []
+        for p in points:
+            if p.get("map_id") != map_id:
+                surviving.append(p)
+            elif p.get("x_m") is not None:
+                # Phase 3: detach from map but keep (spatially anchored)
+                p["map_id"] = ""
+                surviving.append(p)
+            # else: map-only point without metres → deleted
+        self.data["points"] = surviving
+        removed = before - len(surviving)
+        if removed or before != len(points):
             # Invalidate coverage cache for this map
             cov = (self.data.get("model") or {}).get("coverage_by_map")
             if isinstance(cov, dict):
@@ -242,6 +270,61 @@ class CalibrationStore:
             "points_pruned": points_pruned,
             "model_keys_removed": model_keys_removed,
         }
+
+    # ── Phase 3: metre-space migration + remapping ──────────────────────────
+
+    async def async_backfill_metres(self) -> int:
+        """Backfill x_m/y_m for existing points that have map_id but no metres."""
+        if not self._model:
+            return 0
+        count = 0
+        for p in self.data.get("points", []):
+            if p.get("x_m") is not None:
+                continue  # already has metres
+            mid = p.get("map_id", "")
+            if not mid:
+                continue  # no map to derive from
+            coords = self._model.map_frac_to_metres(
+                float(p.get("x_frac", 0.5)), float(p.get("y_frac", 0.5)), mid
+            )
+            if coords:
+                p["x_m"] = round(coords[0], 3)
+                p["y_m"] = round(coords[1], 3)
+                count += 1
+        if count:
+            await self.store.async_save(self.data)
+        return count
+
+    async def async_remap_from_metres(self, map_id: str) -> int:
+        """Re-derive x_frac/y_frac from metre coords for points on this map.
+
+        Also re-adopts orphaned points (map_id='') whose metres fall within
+        this map's coordinate range (0-1 fracs).
+        """
+        if not self._model:
+            return 0
+        count = 0
+        for p in self.data.get("points", []):
+            if p.get("x_m") is None:
+                continue
+            x_m = float(p["x_m"])
+            y_m = float(p["y_m"])
+            pid = p.get("map_id", "")
+            if pid == map_id or pid == "":
+                fracs = self._model.metres_to_map_frac(x_m, y_m, map_id)
+                if fracs:
+                    fx, fy = fracs
+                    # Only re-adopt orphans if fracs are within valid map range
+                    if pid == "" and (fx < -0.05 or fx > 1.05 or fy < -0.05 or fy > 1.05):
+                        continue  # outside this map's coverage
+                    p["x_frac"] = round(max(0.0, min(1.0, fx)), 4)
+                    p["y_frac"] = round(max(0.0, min(1.0, fy)), 4)
+                    if pid == "":
+                        p["map_id"] = map_id  # re-adopt orphan
+                    count += 1
+        if count:
+            await self.store.async_save(self.data)
+        return count
 
     # ── Coverage grid ──────────────────────────────────────────────────────────
 
@@ -370,15 +453,28 @@ class CalibrationStore:
         query_rssi: {source: mean_rssi} for the device being located.
         Returns weighted centroid of top-k nearest calibration points.
         Euclidean distance in RSSI-space (only shared scanners counted).
+
+        Phase 3: when enough points have x_m/y_m, operates in metre space
+        (no map_id filtering needed — metres are map-independent).
         """
         pts = self.data.get("points", [])
-        if map_id:
-            pts = [p for p in pts if p.get("map_id") == map_id]
-        if not pts or not query_rssi:
+
+        # Phase 3: check if we can use metre-space path
+        metre_pts = [p for p in pts if p.get("x_m") is not None]
+        use_metres = len(metre_pts) >= k and self._model is not None
+
+        if use_metres:
+            work_pts = metre_pts  # all metre points, cross-map
+        elif map_id:
+            work_pts = [p for p in pts if p.get("map_id") == map_id]
+        else:
+            work_pts = pts
+
+        if not work_pts or not query_rssi:
             return None
 
         scored: list[tuple[float, int, dict[str, Any]]] = []
-        for pt in pts:
+        for pt in work_pts:
             fp: dict[str, float] = {
                 r["source"]: r["mean_rssi"] for r in pt.get("scanner_readings", [])
             }
@@ -396,43 +492,89 @@ class CalibrationStore:
         scored.sort(key=lambda t: t[0])
         top_k = scored[: k]
 
-        # Determine dominant map_id among top-k points (highest total weight)
-        map_weights: dict[str, float] = {}
-        for dist_sq, _n_shared, pt in top_k:
-            pw = float(pt.get("weight") or 1.0)
-            w = pw / (math.sqrt(dist_sq) + 1e-3)
-            mid = pt.get("map_id", "")
-            if mid:
-                map_weights[mid] = map_weights.get(mid, 0.0) + w
-        best_map = max(map_weights, key=lambda m: map_weights[m]) if map_weights else ""
+        if use_metres:
+            # ── Metre-space centroid (Phase 3) ────────────────────────────
+            # No map_id filtering needed — all points share one coordinate space.
+            # Group by floor_id instead.
+            floor_weights: dict[str, float] = {}
+            for dist_sq, _n_shared, pt in top_k:
+                pw = float(pt.get("weight") or 1.0)
+                w = pw / (math.sqrt(dist_sq) + 1e-3)
+                fl = pt.get("floor_id", "")
+                if fl:
+                    floor_weights[fl] = floor_weights.get(fl, 0.0) + w
+            best_floor = max(floor_weights, key=lambda f: floor_weights[f]) if floor_weights else ""
 
-        # Weighted centroid — ONLY from points on the dominant map.
-        # Mixing coordinates from different maps produces nonsensical positions
-        # because each map has its own coordinate space (0-1 normalized) and
-        # its own stack transforms (offset, scale, rotation).
-        total_w = 0.0
-        wx, wy = 0.0, 0.0
-        for dist_sq, _n_shared, pt in top_k:
-            if best_map and pt.get("map_id", "") != best_map:
-                continue
-            pw = float(pt.get("weight") or 1.0)
-            w = pw / (math.sqrt(dist_sq) + 1e-3)
-            wx += w * pt["x_frac"]
-            wy += w * pt["y_frac"]
-            total_w += w
+            total_w = 0.0
+            wx_m, wy_m = 0.0, 0.0
+            for dist_sq, _n_shared, pt in top_k:
+                if best_floor and pt.get("floor_id", "") != best_floor:
+                    continue
+                pw = float(pt.get("weight") or 1.0)
+                w = pw / (math.sqrt(dist_sq) + 1e-3)
+                wx_m += w * float(pt["x_m"])
+                wy_m += w * float(pt["y_m"])
+                total_w += w
 
-        if total_w < 1e-10:
-            return None
+            if total_w < 1e-10:
+                return None
 
-        # Confidence: two components multiplied together:
-        #   1. RSSI accuracy — how close the fingerprint matches.
-        #      conf_rssi = 1 / (1 + mean_sq / REF_VARIANCE)
-        #   2. Scanner coverage — how many query scanners overlap with any
-        #      top-k calibration point.  Using only the best match's shared
-        #      count is too pessimistic: the query might be heard by 5 scanners
-        #      but the best-matching point only had 1 of those 5.
+            rx_m = wx_m / total_w
+            ry_m = wy_m / total_w
+
+            # Derive map fracs for UI rendering — find the best map on this floor
+            x_frac, y_frac = 0.5, 0.5
+            best_map = ""
+            transforms = (self._model.data.get("map_transforms") or {}) if self._model else {}
+            for mid, t in transforms.items():
+                if t.get("floor_id") == best_floor:
+                    fracs = self._model.metres_to_map_frac(rx_m, ry_m, mid)
+                    if fracs and 0.0 <= fracs[0] <= 1.0 and 0.0 <= fracs[1] <= 1.0:
+                        x_frac, y_frac = fracs
+                        best_map = mid
+                        break
+
+            # Also try dominant map_id from top-k for backward compat
+            if not best_map:
+                map_weights: dict[str, float] = {}
+                for dist_sq, _n_shared, pt in top_k:
+                    pw = float(pt.get("weight") or 1.0)
+                    w = pw / (math.sqrt(dist_sq) + 1e-3)
+                    mid = pt.get("map_id", "")
+                    if mid:
+                        map_weights[mid] = map_weights.get(mid, 0.0) + w
+                best_map = max(map_weights, key=lambda m: map_weights[m]) if map_weights else ""
+        else:
+            # ── Legacy map-fraction centroid ──────────────────────────────
+            map_weights: dict[str, float] = {}
+            for dist_sq, _n_shared, pt in top_k:
+                pw = float(pt.get("weight") or 1.0)
+                w = pw / (math.sqrt(dist_sq) + 1e-3)
+                mid = pt.get("map_id", "")
+                if mid:
+                    map_weights[mid] = map_weights.get(mid, 0.0) + w
+            best_map = max(map_weights, key=lambda m: map_weights[m]) if map_weights else ""
+
+            total_w = 0.0
+            wx, wy = 0.0, 0.0
+            for dist_sq, _n_shared, pt in top_k:
+                if best_map and pt.get("map_id", "") != best_map:
+                    continue
+                pw = float(pt.get("weight") or 1.0)
+                w = pw / (math.sqrt(dist_sq) + 1e-3)
+                wx += w * pt["x_frac"]
+                wy += w * pt["y_frac"]
+                total_w += w
+
+            if total_w < 1e-10:
+                return None
+            x_frac = wx / total_w
+            y_frac = wy / total_w
+            rx_m, ry_m = None, None  # type: ignore[assignment]
+            best_floor = ""
+
+        # Confidence (shared between both paths — computed from RSSI space)
         _best_dist_sq = scored[0][0]
-        # Count unique query scanners that appear in ANY top-k point
         _topk_sources: set[str] = set()
         for _d, _ns, _pt in top_k:
             for _r in _pt.get("scanner_readings", []):
@@ -440,20 +582,25 @@ class CalibrationStore:
         _shared_total = len(set(query_rssi.keys()) & _topk_sources)
         _shared_total = max(_shared_total, 1)
         _mean_sq = _best_dist_sq / _shared_total
-        _REF_VARIANCE = 25.0  # 5 dBm per scanner → 50% rssi confidence
+        _REF_VARIANCE = 25.0
         _conf_rssi = 1.0 / (1.0 + _mean_sq / _REF_VARIANCE)
         _conf_coverage = min(_shared_total, 4) / 4.0
         confidence = round(_conf_rssi * _conf_coverage, 3)
 
-        return {
-            "x_frac": round(wx / total_w, 4),
-            "y_frac": round(wy / total_w, 4),
+        result: dict[str, Any] = {
+            "x_frac": round(x_frac, 4),
+            "y_frac": round(y_frac, 4),
             "confidence": confidence,
             "nearest_room": scored[0][2].get("room", ""),
             "map_id": best_map,
             "k_used": len(top_k),
             "shared_scanners": _shared_total,
         }
+        if use_metres and rx_m is not None:
+            result["x_m"] = round(rx_m, 3)
+            result["y_m"] = round(ry_m, 3)
+            result["floor_id"] = best_floor
+        return result
 
     # ── Random Forest positioning ─────────────────────────────────────────────
 
@@ -465,7 +612,16 @@ class CalibrationStore:
         """Random Forest positioning — same return shape as knn_locate()."""
         if not self._rf.is_trained:
             return None
-        return self._rf.predict(query_rssi, map_id=map_id)
+        result = self._rf.predict(query_rssi, map_id=map_id)
+        # Phase 3: if RF trained in metres, derive map fracs for UI
+        if result and self._rf._use_metres and self._model and result.get("x_m") is not None:
+            best_map = result.get("map_id", "")
+            if best_map:
+                fracs = self._model.metres_to_map_frac(float(result["x_m"]), float(result["y_m"]), best_map)
+                if fracs:
+                    result["x_frac"] = round(fracs[0], 4)
+                    result["y_frac"] = round(fracs[1], 4)
+        return result
 
     async def _async_train_rf(self) -> None:
         """Retrain RF from current calibration points (runs in executor)."""
@@ -473,8 +629,12 @@ class CalibrationStore:
         if len(pts) < 4:
             self._rf = RandomForestLocator()
             return
+        # Phase 3: train in metres if enough points have them
+        metre_pts = [p for p in pts if p.get("x_m") is not None]
+        use_metres = len(metre_pts) >= 4
         rf = RandomForestLocator()
-        await self.hass.async_add_executor_job(rf.train, pts)
+        train_pts = metre_pts if use_metres else pts
+        await self.hass.async_add_executor_job(rf.train, train_pts, use_metres)
         self._rf = rf
 
     @property
@@ -485,9 +645,8 @@ class CalibrationStore:
 
     def loo_accuracy(self, map_id: str | None = None) -> dict[str, Any] | None:
         """
-        Leave-one-out cross-validation accuracy in map-fraction units.
-        For each point, remove it, run k-NN on remaining, compute error.
-        Returns mean/median/max error in map fractions.
+        Leave-one-out cross-validation accuracy.
+        Phase 3: computes in metres when points have x_m/y_m, otherwise map fractions.
         """
         pts = self.data.get("points", [])
         if map_id:
@@ -495,9 +654,13 @@ class CalibrationStore:
         if len(pts) < KNN_K + 1:
             return None
 
+        # Phase 3: use metres if all points have them
+        metre_pts = [p for p in pts if p.get("x_m") is not None]
+        use_metres = len(metre_pts) == len(pts) and len(pts) > 0
+
         errors: list[float] = []
+        errors_m: list[float] = []
         for i, pt in enumerate(pts):
-            # Build leave-one-out store (without modifying self.data)
             loo_pts = [p for j, p in enumerate(pts) if j != i]
             query: dict[str, float] = {
                 r["source"]: r["mean_rssi"] for r in pt.get("scanner_readings", [])
@@ -505,7 +668,6 @@ class CalibrationStore:
             if not query:
                 continue
 
-            # Inline k-NN without modifying state
             scored: list[tuple[float, dict[str, Any]]] = []
             for p2 in loo_pts:
                 fp = {r["source"]: r["mean_rssi"] for r in p2.get("scanner_readings", [])}
@@ -521,11 +683,16 @@ class CalibrationStore:
             scored.sort(key=lambda t: t[0])
             top_k = scored[: KNN_K]
             total_w, wx, wy = 0.0, 0.0, 0.0
+            total_w_m, wx_m, wy_m = 0.0, 0.0, 0.0
             for dist_sq, p2 in top_k:
                 w = 1.0 / (math.sqrt(dist_sq) + 1e-3)
                 wx += w * p2["x_frac"]
                 wy += w * p2["y_frac"]
                 total_w += w
+                if use_metres:
+                    wx_m += w * float(p2["x_m"])
+                    wy_m += w * float(p2["y_m"])
+                    total_w_m += w
 
             if total_w < 1e-10:
                 continue
@@ -533,20 +700,33 @@ class CalibrationStore:
             err = math.sqrt((pred_x - pt["x_frac"]) ** 2 + (pred_y - pt["y_frac"]) ** 2)
             errors.append(err)
 
+            if use_metres and total_w_m > 1e-10:
+                pred_xm = wx_m / total_w_m
+                pred_ym = wy_m / total_w_m
+                err_m = math.sqrt((pred_xm - float(pt["x_m"])) ** 2 + (pred_ym - float(pt["y_m"])) ** 2)
+                errors_m.append(err_m)
+
         if not errors:
             return None
 
         errors.sort()
         mean_err = _mean(errors)
         median_err = errors[len(errors) // 2]
-        return {
+        result: dict[str, Any] = {
             "mean_error_frac": round(mean_err, 4),
             "median_error_frac": round(median_err, 4),
             "max_error_frac": round(errors[-1], 4),
             "point_count": len(errors),
-            # Rough metre estimate assuming map width ≈ 15m (typical home)
-            "mean_error_m_est": round(mean_err * 15, 2),
         }
+        if errors_m:
+            errors_m.sort()
+            result["mean_error_m"] = round(_mean(errors_m), 3)
+            result["median_error_m"] = round(errors_m[len(errors_m) // 2], 3)
+            result["max_error_m"] = round(errors_m[-1], 3)
+        else:
+            # Rough estimate assuming map width ≈ 15m (typical home)
+            result["mean_error_m_est"] = round(mean_err * 15, 2)
+        return result
 
     # ── Full model computation ────────────────────────────────────────────────
 

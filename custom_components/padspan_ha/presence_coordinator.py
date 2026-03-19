@@ -652,6 +652,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     obj["knn_confidence"] = _knn.get("confidence")
                     if _knn.get("map_id"):
                         obj["knn_map_id"] = _knn["map_id"]
+                    # Phase 3: propagate metre coordinates
+                    if _knn.get("x_m") is not None:
+                        obj["x_m"] = _knn["x_m"]
+                        obj["y_m"] = _knn["y_m"]
                 # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(smooth_addr, {}))
                 # Propagate TX power if seen in advertisements
@@ -690,6 +694,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     obj["knn_confidence"] = _knn_ib.get("confidence")
                     if _knn_ib.get("map_id"):
                         obj["knn_map_id"] = _knn_ib["map_id"]
+                    # Phase 3: propagate metre coordinates
+                    if _knn_ib.get("x_m") is not None:
+                        obj["x_m"] = _knn_ib["x_m"]
+                        obj["y_m"] = _knn_ib["y_m"]
                 # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(key, {}))
                 self._known_objs[key] = dict(obj)  # refresh with smoothed data
