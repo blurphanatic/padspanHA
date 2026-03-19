@@ -197,6 +197,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_fabric_migrate_from_maps)
     websocket_api.async_register_command(hass, ws_fabric_health)
     websocket_api.async_register_command(hass, ws_fabric_resync)
+    websocket_api.async_register_command(hass, ws_radio_audit)
     websocket_api.async_register_command(hass, ws_fabric_reset_spatial)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
@@ -8208,6 +8209,179 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
         "room_geometry_m": geometry_list if mdl else [],
         "adjacency": mdl.adjacency() if mdl else {},
         "maps": maps_diag,
+    })
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/radio_audit"})
+@websocket_api.async_response
+async def ws_radio_audit(hass: HomeAssistant, connection, msg) -> None:
+    """Cross-reference BLE radios with ESPHome devices and fabric scanners.
+
+    For each active BLE radio, returns:
+    - BLE source info (source, name, connectable, scanning, last_heard)
+    - HA device info (name, manufacturer, model, sw_version, hw_version, MACs)
+    - ESPHome identification (config entry, identifiers)
+    - Area/floor assignment from HA vs fabric
+    - Mismatch flags when HA and fabric disagree
+    """
+    from .bluetooth_live import get_bluetooth_live
+
+    dr = device_registry.async_get(hass)
+    ar = area_registry.async_get(hass)
+
+    # Area lookups
+    area_id_to_name: dict[str, str] = {}
+    area_id_to_floor: dict[str, str] = {}
+    for a in ar.async_list_areas():
+        area_id_to_name[a.id] = a.name
+        fl = getattr(a, "floor_id", None)
+        if fl:
+            area_id_to_floor[a.id] = str(fl)
+
+    # Get live BLE snapshot
+    bl = get_bluetooth_live(hass)
+    ble_snap = bl.get_snapshot(max_ads=0, max_age_s=300) if bl else {"radios": []}
+    radios = ble_snap.get("radios") or []
+
+    # Fabric scanner mappings
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    fabric_scanners = (mdl.data.get("scanners") or {}) if mdl else {}
+    fabric_positions = (mdl.data.get("scanner_positions_m") or {}) if mdl else {}
+
+    # Build name→device lookup
+    name_to_dev: dict[str, Any] = {}
+    for dev in dr.devices.values():
+        for cand in [dev.name_by_user, dev.name]:
+            if cand:
+                name_to_dev[cand.lower()] = dev
+
+    # ESPHome config entry IDs
+    esphome_entry_ids: set[str] = set()
+    for ent in hass.config_entries.async_entries():
+        if ent.domain == "esphome":
+            esphome_entry_ids.add(ent.entry_id)
+
+    results: list[dict[str, Any]] = []
+    for radio in radios:
+        src = radio.get("source", "")
+        rname = radio.get("name", "")
+
+        entry: dict[str, Any] = {
+            "source": src,
+            "radio_name": rname,
+            "connectable": radio.get("connectable"),
+            "scanning": radio.get("scanning"),
+            "last_heard_s": radio.get("last_heard_s"),
+        }
+
+        # ── Match to HA device ──────────────────────────────────────────
+        dev = None
+        dev_id = radio.get("device_id")
+        if dev_id:
+            dev = dr.async_get(dev_id)
+        if not dev:
+            # Fuzzy match by name
+            src_l = src.lower()
+            rname_l = rname.lower()
+            for key, d in name_to_dev.items():
+                if key and (key in src_l or src_l in key or key in rname_l or rname_l in key):
+                    dev = d
+                    break
+
+        if dev:
+            # Extract MACs from connections
+            macs: list[dict[str, str]] = []
+            for ctype, cid in (dev.connections or set()):
+                macs.append({"type": str(ctype), "address": str(cid).upper()})
+
+            # Extract identifiers
+            idents: list[dict[str, str]] = []
+            is_esphome = False
+            for domain, ident in (dev.identifiers or set()):
+                idents.append({"domain": str(domain), "id": str(ident)})
+                if domain == "esphome":
+                    is_esphome = True
+
+            # ESPHome config entry info
+            esphome_entries: list[str] = []
+            for ce_id in (dev.config_entries or set()):
+                if ce_id in esphome_entry_ids:
+                    ce = hass.config_entries.async_get_entry(ce_id)
+                    if ce:
+                        esphome_entries.append(ce.title)
+
+            # HA area assignment
+            ha_area = area_id_to_name.get(dev.area_id, "") if dev.area_id else ""
+            ha_floor = area_id_to_floor.get(dev.area_id, "") if dev.area_id else ""
+
+            entry["device"] = {
+                "id": dev.id,
+                "name": dev.name,
+                "name_by_user": dev.name_by_user,
+                "manufacturer": dev.manufacturer,
+                "model": dev.model,
+                "sw_version": dev.sw_version,
+                "hw_version": dev.hw_version,
+                "is_esphome": is_esphome,
+                "esphome_names": esphome_entries,
+                "identifiers": idents,
+                "macs": macs,
+                "ha_area": ha_area,
+                "ha_floor": ha_floor,
+            }
+        else:
+            entry["device"] = None
+
+        # ── Fabric scanner info ─────────────────────────────────────────
+        fabric = fabric_scanners.get(src)
+        if fabric and isinstance(fabric, dict):
+            entry["fabric"] = {
+                "room": fabric.get("room"),
+                "floor_id": fabric.get("floor_id"),
+                "source_type": fabric.get("source_type"),
+            }
+        else:
+            entry["fabric"] = None
+
+        # Fabric metre position
+        pos = fabric_positions.get(src)
+        if pos and isinstance(pos, dict):
+            entry["position_m"] = {
+                "x_m": pos.get("x_m"),
+                "y_m": pos.get("y_m"),
+                "z_m": pos.get("z_m"),
+                "floor_id": pos.get("floor_id"),
+            }
+        else:
+            entry["position_m"] = None
+
+        # ── Mismatch detection ──────────────────────────────────────────
+        mismatches: list[str] = []
+        if entry["device"] and entry["fabric"]:
+            ha_area = entry["device"]["ha_area"]
+            fabric_room = entry["fabric"]["room"]
+            if ha_area and fabric_room and ha_area != fabric_room:
+                mismatches.append(f"Room: HA={ha_area} vs fabric={fabric_room}")
+            ha_fl = entry["device"]["ha_floor"]
+            fab_fl = entry["fabric"]["floor_id"]
+            if ha_fl and fab_fl and ha_fl != fab_fl:
+                mismatches.append(f"Floor: HA={ha_fl} vs fabric={fab_fl}")
+        if not entry["device"]:
+            mismatches.append("No matching HA device found")
+        if not entry["fabric"]:
+            mismatches.append("Not in fabric scanner list")
+        entry["mismatches"] = mismatches
+        entry["ok"] = len(mismatches) == 0
+
+        results.append(entry)
+
+    # Sort: mismatches first, then by source
+    results.sort(key=lambda r: (r["ok"], r["source"]))
+
+    connection.send_result(msg["id"], {
+        "total_radios": len(radios),
+        "total_mismatches": sum(1 for r in results if not r["ok"]),
+        "radios": results,
     })
 
 

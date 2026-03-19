@@ -370,10 +370,129 @@ function _renderFabric(ctx, container, data) {
     container.appendChild(migrateCard);
   }
 
+  // ── Radio Audit ─────────────────────────────────────────────────────────
+  const auditContainer = el("div",{id:"health-radio-audit"});
+  container.appendChild(auditContainer);
+  const auditBtn = el("button",{class:"btn",style:"margin-top:8px;width:auto;padding:6px 16px"},"Run Radio Audit");
+  auditBtn.addEventListener("click", async () => {
+    auditBtn.disabled = true; auditBtn.textContent = "Auditing\u2026";
+    try {
+      const res = await ctx.actions.callWS({type:"padspan_ha/radio_audit"});
+      _renderRadioAudit(ctx, auditContainer, res);
+      auditBtn.textContent = "Run Radio Audit";
+      auditBtn.disabled = false;
+    } catch(e) {
+      auditContainer.innerHTML = "";
+      auditContainer.appendChild(el("div",{class:"card",style:"color:#fca5a5"},`Audit failed: ${e.message||e}`));
+      auditBtn.textContent = "Run Radio Audit"; auditBtn.disabled = false;
+    }
+  });
+  container.appendChild(auditBtn);
+
   // ── Refresh button ─────────────────────────────────────────────────────
-  const btn = el("button",{class:"btn",style:"margin-top:8px;width:auto;padding:6px 16px"},"Refresh Fabric");
+  const btn = el("button",{class:"btn",style:"margin-top:8px;margin-left:8px;width:auto;padding:6px 16px"},"Refresh Fabric");
   btn.addEventListener("click", () => { _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container); });
   container.appendChild(btn);
+}
+
+
+// ── Radio Audit render ───────────────────────────────────────────────────
+
+function _renderRadioAudit(ctx, container, data) {
+  const { el } = ctx.helpers;
+  container.innerHTML = "";
+  const { total_radios, total_mismatches, radios } = data;
+
+  // Summary
+  const color = total_mismatches === 0 ? "#52b788" : "#f87171";
+  const card = el("div",{class:"card",style:`margin-top:12px;border:1px solid ${color}33;padding:12px`});
+  card.appendChild(el("div",{style:`display:flex;align-items:center;gap:8px;margin-bottom:8px`},[
+    el("div",{style:`font-weight:800;font-size:14px;color:${color}`},"Radio Audit"),
+    el("div",{class:"pill",style:`background:${color}22;color:${color};font-size:10px;padding:2px 8px`},
+      total_mismatches === 0 ? `${total_radios} RADIOS OK` : `${total_mismatches} MISMATCH${total_mismatches!==1?"ES":""}`),
+  ]));
+
+  // Per-radio detail
+  for (const r of radios) {
+    const rCard = el("div",{style:`padding:10px;margin-bottom:6px;border-radius:6px;border:1px solid ${r.ok?"#33415533":"#f8717133"};background:${r.ok?"transparent":"rgba(248,113,113,.04)"}`});
+
+    // Header: source + status
+    const hdr = el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:6px"});
+    hdr.appendChild(el("span",{style:"font-size:13px"},r.ok ? "\u2705" : "\u274c"));
+    hdr.appendChild(el("span",{style:"font-weight:700;color:#e2e8f0;font-size:12px"},r.source));
+    if (r.radio_name && r.radio_name !== r.source) {
+      hdr.appendChild(el("span",{style:"color:#64748b;font-size:11px"},r.radio_name));
+    }
+    const age = r.last_heard_s;
+    if (age != null) {
+      const ageColor = age < 30 ? "#52b788" : age < 120 ? "#f59e0b" : "#f87171";
+      hdr.appendChild(el("span",{style:`color:${ageColor};font-size:10px;margin-left:auto`},`${Math.round(age)}s ago`));
+    }
+    rCard.appendChild(hdr);
+
+    // Device info
+    const d = r.device;
+    if (d) {
+      const grid = el("div",{style:"display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:10px;margin-bottom:4px"});
+      const _row = (label, val, color) => {
+        grid.appendChild(el("div",{style:"color:#64748b;font-weight:600;text-transform:uppercase"},label));
+        grid.appendChild(el("div",{style:`color:${color||"#94a3b8"}`},String(val || "\u2014")));
+      };
+      _row("HA Name", d.name_by_user || d.name);
+      _row("Manufacturer", d.manufacturer);
+      _row("Model", d.model);
+      _row("SW Version", d.sw_version);
+      if (d.hw_version) _row("HW Version", d.hw_version);
+      _row("ESPHome", d.is_esphome ? `Yes (${(d.esphome_names||[]).join(", ")||"?"})` : "No",
+        d.is_esphome ? "#52b788" : "#64748b");
+      _row("HA Area", d.ha_area || "(none)", d.ha_area ? "#e2e8f0" : "#f87171");
+      _row("HA Floor", d.ha_floor || "(none)", d.ha_floor ? "#e2e8f0" : "#f87171");
+
+      // MACs
+      if (d.macs && d.macs.length) {
+        for (const m of d.macs) {
+          _row(`MAC (${m.type})`, m.address, "#5eead4");
+        }
+      }
+
+      // Identifiers
+      if (d.identifiers && d.identifiers.length) {
+        for (const i of d.identifiers) {
+          _row(`ID (${i.domain})`, i.id, "#94a3b8");
+        }
+      }
+      rCard.appendChild(grid);
+    } else {
+      rCard.appendChild(el("div",{style:"font-size:10px;color:#f87171;margin-bottom:4px"},
+        "No matching HA device found for this radio source"));
+    }
+
+    // Fabric info
+    const f = r.fabric;
+    if (f) {
+      rCard.appendChild(el("div",{style:"font-size:10px;color:#64748b;margin-top:2px"},
+        `Fabric: ${f.room} (${f.floor_id}) [${f.source_type}]`));
+    }
+
+    // Position
+    const p = r.position_m;
+    if (p) {
+      rCard.appendChild(el("div",{style:"font-size:10px;color:#64748b"},
+        `Position: (${p.x_m?.toFixed(1)}, ${p.y_m?.toFixed(1)}, z=${p.z_m?.toFixed(1)}) [${p.floor_id}]`));
+    }
+
+    // Mismatches
+    if (r.mismatches && r.mismatches.length) {
+      for (const m of r.mismatches) {
+        rCard.appendChild(el("div",{style:"font-size:10px;color:#fca5a5;font-weight:600;margin-top:2px"},
+          `\u26a0 ${m}`));
+      }
+    }
+
+    card.appendChild(rCard);
+  }
+
+  container.appendChild(card);
 }
 
 
