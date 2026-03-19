@@ -196,6 +196,8 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_fabric_map_transform_set)
     websocket_api.async_register_command(hass, ws_fabric_migrate_from_maps)
     websocket_api.async_register_command(hass, ws_fabric_health)
+    websocket_api.async_register_command(hass, ws_fabric_resync)
+    websocket_api.async_register_command(hass, ws_fabric_reset_spatial)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -8207,3 +8209,94 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
         "adjacency": mdl.adjacency() if mdl else {},
         "maps": maps_diag,
     })
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/fabric_resync"})
+@websocket_api.async_response
+async def ws_fabric_resync(hass: HomeAssistant, connection, msg) -> None:
+    """Wipe all ha_sync scanner entries and rebuild clean from HA + snapshot.
+
+    Fixes stale room/floor assignments. Preserves manual entries.
+    Also prunes to actual BLE radios only.
+    """
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    stats = await mdl.async_resync_clean()
+    # Prune to radios only (using presence coordinator's last known radios)
+    pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+    pruned = 0
+    if pc:
+        try:
+            from .websocket import _live_snapshot
+            snap = await _live_snapshot(hass)
+            _radios = (snap.get("ble") or {}).get("radios") or []
+            _radio_srcs = {str(r.get("source")) for r in _radios if r.get("source")}
+            if _radio_srcs:
+                pruned = await mdl.async_prune_non_radio_scanners(_radio_srcs)
+        except Exception:
+            pass
+    # Force snapshot sync to pick up floor_ids
+    try:
+        snap = await _live_snapshot(hass)
+        _radios = (snap.get("ble") or {}).get("radios") or []
+        if _radios:
+            await mdl.async_sync_from_snapshot(_radios)
+    except Exception:
+        pass
+    final_count = len(mdl.data.get("scanners", {}))
+    connection.send_result(msg["id"], {
+        "ok": True,
+        **stats,
+        "pruned": pruned,
+        "final_count": final_count,
+    })
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/fabric_reset_spatial"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_fabric_reset_spatial(hass: HomeAssistant, connection, msg) -> None:
+    """Reset the spatial model (Phase 2+3) and rebuild from maps.
+
+    Clears scanner_positions_m, room_geometry_m, rf_barriers_m, map_transforms.
+    Then re-derives from current maps. Use when spatial data is stale or corrupt.
+    """
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+
+    # Clear spatial data
+    mdl.data["scanner_positions_m"] = {}
+    mdl.data["room_geometry_m"] = {}
+    mdl.data["rf_barriers_m"] = []
+    mdl.data["map_transforms"] = {}
+    await mdl.store.async_save(mdl.data)
+
+    # Re-derive from maps if available
+    result = {"cleared": True, "transforms": 0, "scanners": 0, "rooms": 0, "barriers": 0, "cal_backfilled": 0}
+    if ms:
+        # Use scale from existing transforms or default
+        n_t = await mdl.async_derive_transforms(ms)
+        result["transforms"] = n_t
+        if n_t:
+            stats = await mdl.async_migrate_from_maps(ms)
+            result["scanners"] = stats["scanners_migrated"]
+            result["rooms"] = stats["rooms_migrated"]
+            result["barriers"] = stats["barriers_migrated"]
+
+    # Re-backfill calibration
+    cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+    if cal:
+        try:
+            if not cal._model:
+                cal.set_model_store(mdl)
+            result["cal_backfilled"] = await cal.async_backfill_metres()
+            await cal._async_train_rf()
+        except Exception:
+            pass
+
+    connection.send_result(msg["id"], {"ok": True, **result})

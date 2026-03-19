@@ -270,13 +270,22 @@ class ModelStore:
         """Compare BLE snapshot radios with stored scanners; update ha_sync entries.
 
         Only modifies entries with source_type='ha_sync'. Manual entries are preserved.
-        Debounced internally — call freely from the poll loop.
+        Resolves floor_id from HA area registry (not just defaulting to "main").
         """
+        # Build area_name→floor_id from HA registries
+        _area_to_floor: dict[str, str] = {}
+        try:
+            from homeassistant.helpers import area_registry as _ar_mod
+            for _a in _ar_mod.async_get(self.hass).async_list_areas():
+                _fl = getattr(_a, "floor_id", None)
+                if _a.name and _fl:
+                    _area_to_floor[_a.name] = str(_fl)
+        except Exception:
+            pass
+
         scanners = self.data.setdefault("scanners", {})
         changed = False
 
-        # Build set of sources seen in this snapshot
-        seen_sources: set[str] = set()
         for r in (radios or []):
             src = r.get("source")
             area = r.get("area_name") or r.get("area")
@@ -284,20 +293,40 @@ class ModelStore:
                 continue
             src = str(src)
             area = str(area)
-            seen_sources.add(src)
             existing = scanners.get(src)
             if existing and existing.get("source_type") == "manual":
                 continue  # never overwrite manual entries
-            if not existing or existing.get("room") != area:
-                scanners[src] = {
-                    "room": area,
-                    "floor_id": existing.get("floor_id", DEFAULT_FLOOR_ID) if existing else DEFAULT_FLOOR_ID,
-                    "source_type": "ha_sync",
-                }
+            floor_id = _area_to_floor.get(area, DEFAULT_FLOOR_ID)
+            new_entry = {
+                "room": area,
+                "floor_id": floor_id,
+                "source_type": "ha_sync",
+            }
+            if not existing or existing.get("room") != area or existing.get("floor_id") != floor_id:
+                scanners[src] = new_entry
                 changed = True
 
         if changed:
             await self.store.async_save(self.data)
+
+    async def async_resync_clean(self) -> dict[str, int]:
+        """Wipe all ha_sync scanner entries and rebuild from HA registries + snapshot.
+
+        Preserves manual entries. Returns {removed, added}.
+        Use this to fix stale/junk data in the fabric.
+        """
+        scanners = self.data.setdefault("scanners", {})
+        # Remove all ha_sync entries
+        removed = 0
+        for src in list(scanners):
+            if isinstance(scanners[src], dict) and scanners[src].get("source_type") == "ha_sync":
+                scanners.pop(src)
+                removed += 1
+        # Re-sync from HA
+        await self.async_sync_from_ha()
+        added = sum(1 for s in scanners.values() if isinstance(s, dict) and s.get("source_type") == "ha_sync")
+        await self.store.async_save(self.data)
+        return {"removed": removed, "added": added}
 
     async def async_sync_from_ha(self) -> None:
         """Sync scanners from HA Area/Floor registries (startup path).

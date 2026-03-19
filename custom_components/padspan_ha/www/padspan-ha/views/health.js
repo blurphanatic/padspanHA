@@ -259,24 +259,50 @@ function _renderFabric(ctx, container, data) {
   // ── Quick actions ───────────────────────────────────────────────────────
   {
     const actCard = el("div",{style:"display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap"});
+
+    // Retrain RF
     const rfCheck = checks.find(c => c.name === "RF Model");
     if (rfCheck) {
       const rfBtn = el("button",{class:"btn",style:"width:auto;padding:4px 14px;font-size:11px"},
-        `Retrain RF (currently: ${rfCheck.value})`);
+        `Retrain RF (${rfCheck.value})`);
       rfBtn.addEventListener("click", async () => {
         rfBtn.disabled = true; rfBtn.textContent = "Retraining\u2026";
         try {
           const r = await ctx.actions.callWS({type:"padspan_ha/calibration_retrain_rf"});
-          ctx.actions.toast(`RF retrained: ${r.use_metres ? "metres" : "fractions"} mode, ${r.point_count} points`);
-          _fabricCache = null; _fabricFetchTs = 0;
-          _fetchAndRenderFabric(ctx, container);
-        } catch(e) {
-          ctx.actions.toast(`Retrain failed: ${e.message||e}`);
-          rfBtn.disabled = false; rfBtn.textContent = "Retrain RF";
-        }
+          ctx.actions.toast(`RF retrained: ${r.use_metres ? "metres" : "fractions"}, ${r.point_count} pts`);
+          _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container);
+        } catch(e) { ctx.actions.toast(`Failed: ${e.message||e}`); rfBtn.disabled = false; rfBtn.textContent = "Retrain RF"; }
       });
       actCard.appendChild(rfBtn);
     }
+
+    // Resync scanners (fix room/floor assignments)
+    const resyncBtn = el("button",{class:"btn",style:"width:auto;padding:4px 14px;font-size:11px"},
+      "Resync Scanners");
+    resyncBtn.addEventListener("click", async () => {
+      resyncBtn.disabled = true; resyncBtn.textContent = "Resyncing\u2026";
+      try {
+        const r = await ctx.actions.callWS({type:"padspan_ha/fabric_resync"});
+        ctx.actions.toast(`Resync: removed ${r.removed}, added ${r.added}, pruned ${r.pruned} \u2192 ${r.final_count} scanners`);
+        _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container);
+      } catch(e) { ctx.actions.toast(`Failed: ${e.message||e}`); resyncBtn.disabled = false; resyncBtn.textContent = "Resync Scanners"; }
+    });
+    actCard.appendChild(resyncBtn);
+
+    // Reset spatial model (nuclear option)
+    const resetBtn = el("button",{class:"btn",style:"width:auto;padding:4px 14px;font-size:11px;border-color:#f8717144;color:#fca5a5"},
+      "Reset Spatial Model");
+    resetBtn.addEventListener("click", async () => {
+      if (!confirm("Clear all metre-space data and rebuild from maps? Scanner mappings and calibration points are preserved.")) return;
+      resetBtn.disabled = true; resetBtn.textContent = "Resetting\u2026";
+      try {
+        const r = await ctx.actions.callWS({type:"padspan_ha/fabric_reset_spatial"});
+        ctx.actions.toast(`Reset: ${r.transforms} transforms, ${r.scanners} positions, ${r.rooms} rooms, ${r.cal_backfilled} cal pts rebuilt`);
+        _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container);
+      } catch(e) { ctx.actions.toast(`Failed: ${e.message||e}`); resetBtn.disabled = false; resetBtn.textContent = "Reset Spatial Model"; }
+    });
+    actCard.appendChild(resetBtn);
+
     container.appendChild(actCard);
   }
 
