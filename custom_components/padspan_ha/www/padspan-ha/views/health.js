@@ -338,7 +338,7 @@ function _renderFabric(ctx, container, data) {
     migrateCard.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#fbbf24;margin-bottom:8px"},
       "No map transforms \u2014 set floor width to bootstrap the spatial model"));
     const row = el("div",{style:"display:flex;align-items:center;gap:8px"});
-    const input = el("input",{type:"number",value:"40",min:"5",max:"200",step:"1",
+    const input = el("input",{type:"number",value:"20",min:"5",max:"200",step:"1",
       style:"width:80px;padding:4px 8px;border:1px solid #334155;border-radius:4px;background:#1e293b;color:#e2e8f0;font-size:12px"});
     row.appendChild(el("span",{style:"font-size:11px;color:#94a3b8"},"Floor width:"));
     row.appendChild(input);
