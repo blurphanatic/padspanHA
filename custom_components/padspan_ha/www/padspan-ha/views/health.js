@@ -22,7 +22,15 @@ export function render(ctx){
   const root = el("section",{id:"health"});
   root.className = ctx.state.view==="health" ? "" : "hidden";
 
-  const snap = ctx.state.live.snapshot;
+  try { return _renderInner(ctx, el, root); } catch(e) {
+    root.appendChild(el("div",{class:"card",style:"color:#f87171;white-space:pre-wrap"},
+      "Health render error:\n" + String(e?.stack || e?.message || e)));
+    return root;
+  }
+}
+
+function _renderInner(ctx, el, root) {
+  const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const rooms = snap?.rooms?.length ?? Object.keys(ctx.state.roomTagMap||{}).length;
   const tags = snap?.tags?.length ?? Object.values(ctx.state.roomTagMap||{}).reduce((a,b)=>a+(b?.length||0),0);
   const radios = snap?.radios?.length ?? 0;
