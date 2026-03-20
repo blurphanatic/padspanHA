@@ -510,64 +510,44 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         objects: list[dict[str, Any]] = (snap.get("objects") or {}).get("list") or []
         result: dict[str, Any] = {}
 
-        # ── Load pinned beacon positions + master map room bounds ────────────
-        # Pinned beacons have known (x, y) positions on a map, so their room
-        # is determined geometrically rather than by RSSI scoring.
-        # The master map's room_bounds take precedence for k-NN boundary checks.
-        _pinned: dict[str, dict[str, Any]] = {}  # key → {map_id, x, y, room, floor_id}
-        _master_bounds: dict[str, Any] = {}  # room_bounds from the master map
-        _master_map_id: str = ""              # master map ID (k-NN coordinate space)
-        _master_rooms: set[str] = set()       # rooms with boundaries on the master map
+        # ── Load pinned beacon positions (floor-based from fabric) ─────────
+        # Pinned beacons have known positions; their room is determined by
+        # fabric room_geometry_m (point-in-polygon in metres).
+        _pinned: dict[str, dict[str, Any]] = {}  # key → {room, floor_id, x_m, y_m}
         _maps_store = None
         try:
             _maps_store = self.hass.data.get(DOMAIN, {}).get(DATA_MAPS)
-            if _maps_store:
-                for _m in (_maps_store.data.get("maps") or []):
-                    _rb = _m.get("room_bounds") or {}
-                    if (_m.get("stack") or {}).get("is_master"):
-                        _master_bounds = _rb
-                        _master_map_id = _m.get("id", "")
-                        _master_rooms = set(_rb.keys())
 
-            # Prefer fabric beacon positions (metre-space, map-independent)
+            # Fabric beacon positions (primary — floor-based, metre-space)
             if _model and _model.data.get("beacon_positions_m"):
                 for _bk_key, _bk_pos in _model.beacon_positions_m().items():
                     if not isinstance(_bk_pos, dict):
                         continue
                     _pinned[_bk_key] = {
-                        "map_id": _bk_pos.get("map_id", _master_map_id),
-                        "x": 0.5,  # placeholder — UI rendering uses map fracs
-                        "y": 0.5,
                         "room": _bk_pos.get("room", ""),
                         "floor_id": _bk_pos.get("floor_id", ""),
+                        "x_m": _bk_pos.get("x_m"),
+                        "y_m": _bk_pos.get("y_m"),
                     }
-                    # Derive map fracs for UI if transform available
-                    if _model and _bk_pos.get("x_m") is not None:
-                        _mid = _bk_pos.get("map_id", _master_map_id)
-                        _fracs = _model.metres_to_map_frac(
-                            float(_bk_pos["x_m"]), float(_bk_pos["y_m"]), _mid
-                        )
-                        if _fracs:
-                            _pinned[_bk_key]["x"] = _fracs[0]
-                            _pinned[_bk_key]["y"] = _fracs[1]
-            else:
-                # Fallback: read beacons from maps
-                if _maps_store:
-                    for _m in (_maps_store.data.get("maps") or []):
-                        _rb = _m.get("room_bounds") or {}
-                        for _bk in (_m.get("beacons") or []):
-                            _bk_key = _bk.get("key")
-                            if _bk_key and _bk.get("x") is not None:
-                                _room = _room_from_bounds(_rb, float(_bk.get("x", 0)), float(_bk.get("y", 0)))
-                                _pinned[_bk_key] = {
-                                    "map_id": _m.get("id", ""),
-                                    "x": float(_bk.get("x", 0)),
-                                    "y": float(_bk.get("y", 0)),
-                                    "room": _room,
-                                    "floor_id": _m.get("floor_id", ""),
-                                }
+            elif _maps_store:
+                # Fallback: read beacons from maps (legacy)
+                for _m in (_maps_store.data.get("maps") or []):
+                    _rb = _m.get("room_bounds") or {}
+                    for _bk in (_m.get("beacons") or []):
+                        _bk_key = _bk.get("key")
+                        if _bk_key and _bk.get("x") is not None:
+                            _room = _room_from_bounds(_rb, float(_bk.get("x", 0)), float(_bk.get("y", 0)))
+                            _pinned[_bk_key] = {
+                                "room": _room,
+                                "floor_id": _m.get("floor_id", ""),
+                            }
         except Exception:
             pass
+
+        # Floor-based room set (from fabric geometry, replaces master_map rooms)
+        _fabric_rooms: set[str] = set()
+        if _model:
+            _fabric_rooms = set(_model.data.get("room_geometry_m", {}).keys())
 
         # ── Velocity gate: compute room centroids once per poll ────────────
         # ── Phase 2: prefer real-world model (metres) for spatial data ────────
@@ -677,24 +657,26 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 smoothed_room = self._smooth_room(
                     key, smooth_addr, addr_src_rssi, source_to_area,
                     _dyn_vote_window, _dyn_vote_threshold, source_to_floor,
-                    _master_rooms, _master_map_id, _master_bounds, _maps_store)
+                    _fabric_rooms)
                 if smoothed_room:
                     obj["room"] = smoothed_room
                 obj["_smoothed"] = True
                 obj["room_confidence"] = self._room_confidence.get(key, 0.0)
                 obj["rssi_margin_confidence"] = self._rssi_margin_confidence.get(key, 0.0)
-                # Propagate k-NN sub-room position when calibration data is available
+                # Propagate k-NN position (metre-space primary, fracs for rendering)
                 _knn = self._knn_position.get(key)
                 if _knn:
-                    obj["x_frac"] = _knn.get("x_frac")
-                    obj["y_frac"] = _knn.get("y_frac")
-                    obj["knn_confidence"] = _knn.get("confidence")
-                    if _knn.get("map_id"):
-                        obj["knn_map_id"] = _knn["map_id"]
-                    # Phase 3: propagate metre coordinates
                     if _knn.get("x_m") is not None:
                         obj["x_m"] = _knn["x_m"]
                         obj["y_m"] = _knn["y_m"]
+                    if _knn.get("x_frac") is not None:
+                        obj["x_frac"] = _knn["x_frac"]
+                        obj["y_frac"] = _knn["y_frac"]
+                    obj["knn_confidence"] = _knn.get("confidence")
+                    if _knn.get("floor_id"):
+                        obj["knn_floor_id"] = _knn["floor_id"]
+                    if _knn.get("map_id"):
+                        obj["knn_map_id"] = _knn["map_id"]
                 # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(smooth_addr, {}))
                 # Propagate TX power if seen in advertisements
@@ -719,24 +701,26 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 smoothed_room = self._smooth_room(
                     key, key, synthetic, source_to_area,
                     _dyn_vote_window, _dyn_vote_threshold, source_to_floor,
-                    None, _master_map_id, _master_bounds, _maps_store)
+                    _fabric_rooms)
                 if smoothed_room:
                     obj["room"] = smoothed_room
                 obj["_smoothed"] = True
                 obj["room_confidence"] = self._room_confidence.get(key, 0.0)
                 obj["rssi_margin_confidence"] = self._rssi_margin_confidence.get(key, 0.0)
-                # Propagate k-NN sub-room position when calibration data is available
+                # Propagate k-NN position (metre-space primary, fracs for rendering)
                 _knn_ib = self._knn_position.get(key)
                 if _knn_ib:
-                    obj["x_frac"] = _knn_ib.get("x_frac")
-                    obj["y_frac"] = _knn_ib.get("y_frac")
-                    obj["knn_confidence"] = _knn_ib.get("confidence")
-                    if _knn_ib.get("map_id"):
-                        obj["knn_map_id"] = _knn_ib["map_id"]
-                    # Phase 3: propagate metre coordinates
                     if _knn_ib.get("x_m") is not None:
                         obj["x_m"] = _knn_ib["x_m"]
                         obj["y_m"] = _knn_ib["y_m"]
+                    if _knn_ib.get("x_frac") is not None:
+                        obj["x_frac"] = _knn_ib["x_frac"]
+                        obj["y_frac"] = _knn_ib["y_frac"]
+                    obj["knn_confidence"] = _knn_ib.get("confidence")
+                    if _knn_ib.get("floor_id"):
+                        obj["knn_floor_id"] = _knn_ib["floor_id"]
+                    if _knn_ib.get("map_id"):
+                        obj["knn_map_id"] = _knn_ib["map_id"]
                 # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(key, {}))
                 self._known_objs[key] = dict(obj)  # refresh with smoothed data
@@ -936,10 +920,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         vote_window: int = _VOTE_WINDOW,
         vote_threshold: int = _VOTE_THRESHOLD,
         source_to_floor: dict[str, str] | None = None,
-        master_rooms: set[str] | None = None,
-        master_map_id: str = "",
-        master_bounds: dict | None = None,
-        maps_store: Any | None = None,
+        fabric_rooms: set[str] | None = None,
     ) -> str | None:
         """Run one poll cycle of the full smoothing pipeline for a single BLE device.
 
@@ -959,10 +940,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             source_to_area: {scanner_source: HA_area_name}
             vote_window / vote_threshold: Dynamic sizing from room_change_delay_s
             source_to_floor: {scanner_source: floor_id} for cross-floor logic
-            master_rooms: Room names defined on the master map (tie-breaking)
-            master_map_id: ID of master map (for k-NN coordinate validation)
-            master_bounds: Room boundary polygons from the master map
-            maps_store: Maps store reference (for non-master map boundary lookup)
+            fabric_rooms: Room names from fabric geometry (tie-breaking)
 
         Returns the confirmed (stable) room name, or None if not yet established.
         Side-effects: updates self._room_confidence, _rssi_margin_confidence,
@@ -1193,9 +1171,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if _cur_room and _cur_room in room_scores and _best_room != _cur_room:
                     if room_scores[_best_room] - room_scores[_cur_room] < _HYSTERESIS_MARGIN:
                         # Score gap too small to be decisive.  Tie-breaker:
-                        # if the best room is on the master map but current
-                        # isn't, prefer master (more authoritative boundaries).
-                        if master_rooms and _cur_room not in master_rooms and _best_room in master_rooms:
+                        # prefer rooms with fabric geometry (more authoritative).
+                        if fabric_rooms and _cur_room not in fabric_rooms and _best_room in fabric_rooms:
                             candidate = _best_room
                         else:
                             candidate = _cur_room  # stay put — not enough evidence
@@ -1366,46 +1343,52 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                 if _knn and _knn.get("confidence", 0.0) >= _KNN_LIVE_THRESHOLD:
                     _knn_room = _knn.get("nearest_room") or ""
-                    # Room boundary check — use bounds from the map that k-NN
-                    # coordinates belong to (they're in that map's coordinate space).
-                    # Only fall back to master map bounds if k-NN is on the master.
-                    if _knn.get("x_frac") is not None:
-                        _knn_mid = _knn.get("map_id", "")
-                        if _knn_mid == master_map_id and master_bounds:
-                            _check_bounds = master_bounds
-                        elif _knn_mid and maps_store:
-                            _knn_map = next((m for m in (maps_store.data.get("maps") or []) if m.get("id") == _knn_mid), None)
-                            _check_bounds = (_knn_map.get("room_bounds") or {}) if _knn_map else (master_bounds or {})
-                        else:
-                            _check_bounds = master_bounds or {}
-                        if _check_bounds:
-                            _geo_room = _room_from_bounds(
-                                _check_bounds,
-                                float(_knn["x_frac"]),
-                                float(_knn["y_frac"]),
-                            )
-                            if _geo_room:
-                                _knn_room = _geo_room
-                    # Smooth x/y position with EMA to prevent map dot jumping.
-                    # Higher confidence → faster tracking (alpha up to 0.5);
-                    # lower confidence → more smoothing (alpha down to 0.15).
-                    # Reset when the result switches maps (different coordinate space).
-                    _raw_x = float(_knn.get("x_frac", 0.0))
-                    _raw_y = float(_knn.get("y_frac", 0.0))
+                    # Floor-based room boundary check using fabric geometry
+                    if _knn.get("x_m") is not None and _model:
+                        _knn_fl = _knn.get("floor_id", "")
+                        _geo_room = _model.beacon_room_from_geometry(
+                            float(_knn["x_m"]), float(_knn["y_m"]), _knn_fl
+                        )
+                        if _geo_room:
+                            _knn_room = _geo_room
+                    # EMA smooth in metre space (floor-based, no map switching)
+                    _has_metres = _knn.get("x_m") is not None
+                    if _has_metres:
+                        _raw_x = float(_knn["x_m"])
+                        _raw_y = float(_knn["y_m"])
+                    else:
+                        _raw_x = float(_knn.get("x_frac", 0.0))
+                        _raw_y = float(_knn.get("y_frac", 0.0))
                     _prev = self._smooth_xy.get(key)
-                    _prev_map = (self._knn_position.get(key) or {}).get("map_id", "")
-                    _new_map = _knn.get("map_id", "")
+                    _prev_fl = (self._knn_position.get(key) or {}).get("floor_id", "")
+                    _new_fl = _knn.get("floor_id", "")
                     _conf = float(_knn.get("confidence", 0.0))
                     _alpha = 0.15 + 0.35 * min(_conf, 1.0)  # 0.15–0.50
-                    if _prev is not None and _prev_map == _new_map:
+                    # Reset smoothing on floor change (different coordinate space)
+                    if _prev is not None and _prev_fl == _new_fl:
                         _sx = _prev[0] + _alpha * (_raw_x - _prev[0])
                         _sy = _prev[1] + _alpha * (_raw_y - _prev[1])
                     else:
-                        _sx, _sy = _raw_x, _raw_y  # new map or first time — no smoothing
+                        _sx, _sy = _raw_x, _raw_y
                     self._smooth_xy[key] = (_sx, _sy)
                     _knn_smoothed = dict(_knn)
-                    _knn_smoothed["x_frac"] = round(_sx, 4)
-                    _knn_smoothed["y_frac"] = round(_sy, 4)
+                    if _has_metres:
+                        _knn_smoothed["x_m"] = round(_sx, 3)
+                        _knn_smoothed["y_m"] = round(_sy, 3)
+                        # Derive fracs for UI rendering
+                        if _model:
+                            _transforms = _model.data.get("map_transforms") or {}
+                            for _mid, _t in _transforms.items():
+                                if _t.get("floor_id") == _new_fl:
+                                    _fracs = _model.metres_to_map_frac(_sx, _sy, _mid)
+                                    if _fracs and 0.0 <= _fracs[0] <= 1.0 and 0.0 <= _fracs[1] <= 1.0:
+                                        _knn_smoothed["x_frac"] = round(_fracs[0], 4)
+                                        _knn_smoothed["y_frac"] = round(_fracs[1], 4)
+                                        _knn_smoothed["map_id"] = _mid
+                                        break
+                    else:
+                        _knn_smoothed["x_frac"] = round(_sx, 4)
+                        _knn_smoothed["y_frac"] = round(_sy, 4)
                     self._knn_position[key] = _knn_smoothed
                     if _knn_room:
                         candidate = _knn_room
@@ -1659,12 +1642,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 continue
             self._beacon_autocal_last[key] = now
             try:
-                await cal_store.async_add_point({
-                    "map_id": pin["map_id"],
-                    "x_frac": pin["x"],
-                    "y_frac": pin["y"],
-                    "floor_id": pin["floor_id"],
-                    "room": pin["room"],
+                _pt: dict[str, Any] = {
+                    "floor_id": pin.get("floor_id", ""),
+                    "room": pin.get("room", ""),
                     "label": f"[auto] {obj.get('user_label') or key}",
                     "device_id": key,
                     "duration_s": 10,
@@ -1672,7 +1652,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         {"source": src, "rssi_samples": [rssi]}
                         for src, rssi in smoothed_rssi.items()
                     ],
-                })
+                }
+                # Floor-based: use metre coords directly if available
+                if pin.get("x_m") is not None:
+                    _pt["x_m"] = pin["x_m"]
+                    _pt["y_m"] = pin["y_m"]
+                    _pt["x_frac"] = 0.5  # placeholder
+                    _pt["y_frac"] = 0.5
+                    _pt["map_id"] = ""
+                else:
+                    _pt["map_id"] = pin.get("map_id", "")
+                    _pt["x_frac"] = pin.get("x", 0.5)
+                    _pt["y_frac"] = pin.get("y", 0.5)
+                await cal_store.async_add_point(_pt)
                 await cal_store.async_prune_auto_points(max_per_beacon=50)
             except Exception:
                 _LOGGER.debug("Beacon auto-cal injection failed for %s", key)

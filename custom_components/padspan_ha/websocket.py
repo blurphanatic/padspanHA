@@ -8033,7 +8033,7 @@ async def ws_fabric_migrate_from_maps(hass: HomeAssistant, connection, msg) -> N
 @websocket_api.websocket_command(
     {
         "type": "padspan_ha/fabric_spatial_batch_save",
-        "map_id": str,
+        vol.Optional("map_id"): str,
         vol.Optional("floor_id"): str,
         vol.Optional("scanners"): list,
         vol.Optional("rooms"): dict,

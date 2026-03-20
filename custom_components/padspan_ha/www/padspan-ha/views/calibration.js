@@ -773,7 +773,23 @@ function _buildSavePanel(ctx, el, cs, calData, mapData) {
           name: rd.name || source,
           rssi_samples: rd.samples,
         }));
-        await ctx.actions.calibrationSavePoint({
+        // Compute metre coords from map fracs using fabric transform
+        const _transforms = ctx.state.model?.map_transforms || {};
+        const _t = _transforms[cs.mapId];
+        let _x_m = null, _y_m = null;
+        if (_t && _t.scale_x_m && _t.scale_y_m) {
+          const dx = cs.pinX * _t.scale_x_m;
+          const dy = cs.pinY * _t.scale_y_m;
+          const rot = _t.rotation_rad || 0;
+          if (Math.abs(rot) > 1e-9) {
+            _x_m = (_t.origin_x_m||0) + dx*Math.cos(rot) - dy*Math.sin(rot);
+            _y_m = (_t.origin_y_m||0) + dx*Math.sin(rot) + dy*Math.cos(rot);
+          } else {
+            _x_m = (_t.origin_x_m||0) + dx;
+            _y_m = (_t.origin_y_m||0) + dy;
+          }
+        }
+        const _pt = {
           map_id:    cs.mapId,
           x_frac:    cs.pinX,
           y_frac:    cs.pinY,
@@ -783,7 +799,9 @@ function _buildSavePanel(ctx, el, cs, calData, mapData) {
           device_id: cs.deviceId || "",
           duration_s: cs.duration,
           scanner_readings: scannerReadings,
-        });
+        };
+        if (_x_m !== null) { _pt.x_m = Math.round(_x_m * 1000) / 1000; _pt.y_m = Math.round(_y_m * 1000) / 1000; }
+        await ctx.actions.calibrationSavePoint(_pt);
         // Refresh local DB
         const fresh = await ctx.actions.calibrationGet();
         ctx.state.calibration = fresh;

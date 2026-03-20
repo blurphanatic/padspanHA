@@ -328,12 +328,18 @@ class CalibrationStore:
 
     # ── Coverage grid ──────────────────────────────────────────────────────────
 
-    def compute_coverage(self, map_id: str) -> dict[str, Any]:
+    def compute_coverage(self, map_id: str = "", floor_id: str = "") -> dict[str, Any]:
         """
-        Gaussian-weighted coverage grid for one floor map.
+        Gaussian-weighted coverage grid for one floor or map.
         Returns flattened GRID_N×GRID_N scores (row-major), next_target, and stats.
         """
-        pts = [p for p in self.data.get("points", []) if p.get("map_id") == map_id]
+        pts = self.data.get("points", [])
+        if floor_id:
+            pts = [p for p in pts if p.get("floor_id") == floor_id]
+        elif map_id:
+            pts = [p for p in pts if p.get("map_id") == map_id]
+        else:
+            pts = []
         grid = [0.0] * (GRID_N * GRID_N)
 
         for pt in pts:
@@ -445,6 +451,7 @@ class CalibrationStore:
         self,
         query_rssi: dict[str, float],
         map_id: str | None = None,
+        floor_id: str | None = None,
         k: int = KNN_K,
     ) -> dict[str, Any] | None:
         """
@@ -454,17 +461,19 @@ class CalibrationStore:
         Returns weighted centroid of top-k nearest calibration points.
         Euclidean distance in RSSI-space (only shared scanners counted).
 
-        Phase 3: when enough points have x_m/y_m, operates in metre space
-        (no map_id filtering needed — metres are map-independent).
+        Floor-based: when enough points have x_m/y_m, operates in metre space
+        grouped by floor_id (no map_id filtering needed).
         """
         pts = self.data.get("points", [])
 
-        # Phase 3: check if we can use metre-space path
+        # Prefer metre-space path (floor-based, map-independent)
         metre_pts = [p for p in pts if p.get("x_m") is not None]
+        if floor_id:
+            metre_pts = [p for p in metre_pts if p.get("floor_id") == floor_id]
         use_metres = len(metre_pts) >= k and self._model is not None
 
         if use_metres:
-            work_pts = metre_pts  # all metre points, cross-map
+            work_pts = metre_pts
         elif map_id:
             work_pts = [p for p in pts if p.get("map_id") == map_id]
         else:
@@ -608,6 +617,7 @@ class CalibrationStore:
         self,
         query_rssi: dict[str, float],
         map_id: str | None = None,
+        floor_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Random Forest positioning — same return shape as knn_locate()."""
         if not self._rf.is_trained:
@@ -643,13 +653,16 @@ class CalibrationStore:
 
     # ── Leave-one-out accuracy estimate ───────────────────────────────────────
 
-    def loo_accuracy(self, map_id: str | None = None) -> dict[str, Any] | None:
+    def loo_accuracy(self, map_id: str | None = None, floor_id: str | None = None) -> dict[str, Any] | None:
         """
         Leave-one-out cross-validation accuracy.
-        Phase 3: computes in metres when points have x_m/y_m, otherwise map fractions.
+        Computes in metres when points have x_m/y_m, otherwise map fractions.
+        Can filter by floor_id (preferred) or map_id (legacy).
         """
         pts = self.data.get("points", [])
-        if map_id:
+        if floor_id:
+            pts = [p for p in pts if p.get("floor_id") == floor_id]
+        elif map_id:
             pts = [p for p in pts if p.get("map_id") == map_id]
         if len(pts) < KNN_K + 1:
             return None
@@ -742,13 +755,24 @@ class CalibrationStore:
         """
         pts = self.data.get("points", [])
         map_ids = list({p["map_id"] for p in pts if p.get("map_id")})
+        floor_ids = list({p["floor_id"] for p in pts if p.get("floor_id")})
 
-        # Per-map coverage
+        # Per-map coverage (legacy rendering)
         coverage_by_map: dict[str, Any] = {}
         for mid in map_ids:
-            cov = self.compute_coverage(mid)
-            loo = self.loo_accuracy(mid)
+            cov = self.compute_coverage(map_id=mid)
+            loo = self.loo_accuracy(map_id=mid)
             coverage_by_map[mid] = {**cov, "loo_accuracy": loo}
+
+        # Per-floor coverage (fabric-based)
+        coverage_by_floor: dict[str, Any] = {}
+        for fid in floor_ids:
+            loo = self.loo_accuracy(floor_id=fid)
+            coverage_by_floor[fid] = {
+                "floor_id": fid,
+                "point_count": sum(1 for p in pts if p.get("floor_id") == fid),
+                "loo_accuracy": loo,
+            }
 
         # Aggregate scanner stats
         scanner_stats: dict[str, dict[str, Any]] = {}
@@ -797,7 +821,9 @@ class CalibrationStore:
             "point_count": len(pts),
             "scanner_count": len(scanner_stats),
             "map_count": len(map_ids),
+            "floor_count": len(floor_ids),
             "coverage_by_map": coverage_by_map,
+            "coverage_by_floor": coverage_by_floor,
             "scanner_stats": scanner_stats,
             "path_loss": path_loss,
             "loo_accuracy": global_loo,
