@@ -198,6 +198,9 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_fabric_health)
     websocket_api.async_register_command(hass, ws_fabric_resync)
     websocket_api.async_register_command(hass, ws_radio_audit)
+    websocket_api.async_register_command(hass, ws_fabric_spatial_batch_save)
+    websocket_api.async_register_command(hass, ws_fabric_beacon_position_set)
+    websocket_api.async_register_command(hass, ws_fabric_beacon_position_remove)
     websocket_api.async_register_command(hass, ws_fabric_reset_spatial)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
@@ -3234,9 +3237,9 @@ async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
     {
         "type": "padspan_ha/maps_update",
         "map_id": str,
-        "receivers": list,
-        "calibration": dict,
-        "notes": str,
+        vol.Optional("receivers"): list,
+        vol.Optional("calibration"): dict,
+        vol.Optional("notes"): str,
         vol.Optional("floor_id"): str,
         vol.Optional("room_bounds"): dict,
         vol.Optional("stack"): dict,
@@ -8020,6 +8023,181 @@ async def ws_fabric_migrate_from_maps(hass: HomeAssistant, connection, msg) -> N
         "cal_points_backfilled": cal_backfilled,
         **stats,
     })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Fabric Authority — batch save + beacon position commands
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_spatial_batch_save",
+        "map_id": str,
+        vol.Optional("floor_id"): str,
+        vol.Optional("scanners"): list,
+        vol.Optional("rooms"): dict,
+        vol.Optional("rf_barriers"): list,
+        vol.Optional("beacons"): list,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_spatial_batch_save(hass: HomeAssistant, connection, msg) -> None:
+    """Save spatial data directly to the fabric (metre-space authority).
+
+    Accepts map-fraction coordinates, converts to metres via map transform,
+    and writes to ModelStore in one atomic save. This is the primary save
+    path for the map editor — fabric is the source of truth.
+    """
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+
+    map_id = (msg.get("map_id") or "").strip()
+    if not map_id:
+        connection.send_error(msg["id"], "invalid", "map_id is required")
+        return
+
+    floor_id = (msg.get("floor_id") or "").strip()
+    if not floor_id:
+        # Derive from map metadata
+        ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+        if ms:
+            m = ms.get_map(map_id)
+            if m:
+                floor_id = m.get("floor_id", DEFAULT_FLOOR_ID)
+        if not floor_id:
+            floor_id = DEFAULT_FLOOR_ID
+
+    # ── Beacon removal detection (before save) ───────────────────────────
+    _old_beacon_keys: set[str] = set()
+    new_beacons = msg.get("beacons")
+    if new_beacons is not None:
+        for bk_key, bk_info in (mdl.data.get("beacon_positions_m") or {}).items():
+            if isinstance(bk_info, dict) and bk_info.get("map_id") == map_id:
+                _old_beacon_keys.add(bk_key)
+
+    stats = await mdl.async_batch_save_spatial(
+        map_id, floor_id,
+        scanners=msg.get("scanners"),
+        rooms=msg.get("rooms"),
+        rf_barriers=msg.get("rf_barriers"),
+        beacons=new_beacons,
+    )
+
+    # ── Beacon calibration injection (same as ws_maps_update) ────────────
+    if new_beacons:
+        try:
+            _coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
+            ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+            if _coord and ms:
+                _m = ms.get_map(map_id)
+                if _m:
+                    _rb = _m.get("room_bounds") or {}
+                    _injected = await _coord.inject_immediate_calibration(
+                        new_beacons, map_id, floor_id, _rb
+                    )
+        except Exception:
+            pass
+
+    # ── Clear coordinator state for removed beacons ──────────────────────
+    if new_beacons is not None and _old_beacon_keys:
+        _new_keys = {bk.get("key", "") for bk in new_beacons}
+        _removed = _old_beacon_keys - _new_keys
+        if _removed:
+            try:
+                _coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
+                if _coord:
+                    for _rk in _removed:
+                        _coord.clear_object_state(_rk)
+                        # Also remove from fabric
+                        (mdl.data.get("beacon_positions_m") or {}).pop(_rk, None)
+                    await mdl.store.async_save(mdl.data)
+            except Exception:
+                pass
+
+    # ── Calibration remap ────────────────────────────────────────────────
+    try:
+        _cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+        if _cal:
+            await _cal.async_remap_from_metres(map_id)
+    except Exception:
+        pass
+
+    # ── Also update map-fraction projections for rendering ───────────────
+    try:
+        ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+        if ms:
+            _m = ms.get_map(map_id)
+            if _m:
+                await mdl.async_rederive_map_fracs(map_id, _m)
+                await ms.store.async_save(ms.data)
+    except Exception:
+        pass
+
+    connection.send_result(msg["id"], {"ok": True, **stats})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_beacon_position_set",
+        "key": str,
+        "x_m": vol.Coerce(float),
+        "y_m": vol.Coerce(float),
+        vol.Optional("floor_id"): str,
+        vol.Optional("room"): str,
+        vol.Optional("kind"): str,
+        vol.Optional("label"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_beacon_position_set(hass: HomeAssistant, connection, msg) -> None:
+    """Set a beacon's real-world position in metres."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    key = (msg.get("key") or "").strip()
+    if not key:
+        connection.send_error(msg["id"], "invalid", "key is required")
+        return
+    fl = (msg.get("floor_id") or "").strip() or DEFAULT_FLOOR_ID
+    room = msg.get("room") or mdl.beacon_room_from_geometry(float(msg["x_m"]), float(msg["y_m"]), fl)
+    await mdl.async_set_beacon_position_m(
+        key, float(msg["x_m"]), float(msg["y_m"]), fl,
+        room=room, kind=msg.get("kind", ""), label=msg.get("label", ""),
+        origin="manual",
+    )
+    connection.send_result(msg["id"], {"ok": True, "key": key, "room": room})
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_beacon_position_remove",
+        "key": str,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_beacon_position_remove(hass: HomeAssistant, connection, msg) -> None:
+    """Remove a beacon from the fabric."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    key = (msg.get("key") or "").strip()
+    if not key:
+        connection.send_error(msg["id"], "invalid", "key is required")
+        return
+    await mdl.async_remove_beacon_position_m(key)
+    # Clear coordinator state
+    try:
+        _coord = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
+        if _coord:
+            _coord.clear_object_state(key)
+    except Exception:
+        pass
+    connection.send_result(msg["id"], {"ok": True})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
