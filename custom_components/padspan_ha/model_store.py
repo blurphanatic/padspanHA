@@ -93,6 +93,9 @@ DEFAULT_DATA: dict[str, Any] = {
     "map_transforms": {
         # map_id: { origin_x_m, origin_y_m, scale_x_m, scale_y_m, rotation_rad, floor_id }
     },
+    "beacon_positions_m": {
+        # beacon_key: { x_m, y_m, floor_id, room, kind, label, origin, map_id }
+    },
 }
 
 
@@ -133,6 +136,8 @@ class ModelStore:
                 self.data["rf_barriers_m"] = []
             if not isinstance(self.data.get("map_transforms"), dict):
                 self.data["map_transforms"] = {}
+            if not isinstance(self.data.get("beacon_positions_m"), dict):
+                self.data["beacon_positions_m"] = {}
         else:
             self.data = {k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v) for k, v in DEFAULT_DATA.items()}
 
@@ -175,6 +180,7 @@ class ModelStore:
             "room_geometry_m": dict(self.data.get("room_geometry_m", {})),
             "rf_barriers_m": list(self.data.get("rf_barriers_m", [])),
             "map_transforms": dict(self.data.get("map_transforms", {})),
+            "beacon_positions_m": dict(self.data.get("beacon_positions_m", {})),
         }
 
     def floors(self) -> list[dict[str, Any]]:
@@ -445,7 +451,7 @@ class ModelStore:
 
     def has_spatial_model(self) -> bool:
         """Return True if real-world spatial data has been populated."""
-        return bool(self.data.get("scanner_positions_m") or self.data.get("room_geometry_m"))
+        return bool(self.data.get("scanner_positions_m") or self.data.get("room_geometry_m") or self.data.get("beacon_positions_m"))
 
     # ── Coordinate conversion ─────────────────────────────────────────────
 
@@ -537,6 +543,69 @@ class ModelStore:
         transforms = self.data.setdefault("map_transforms", {})
         transforms[str(map_id)] = dict(transform)
         await self.store.async_save(self.data)
+
+    # ── Beacon positions (metre space) ──────────────────────────────────────
+
+    def beacon_positions_m(self) -> dict[str, dict[str, Any]]:
+        """Return {beacon_key: {x_m, y_m, floor_id, room, kind, label}}."""
+        return dict(self.data.get("beacon_positions_m") or {})
+
+    async def async_set_beacon_position_m(
+        self, key: str, x_m: float, y_m: float, floor_id: str,
+        room: str = "", kind: str = "", label: str = "",
+        origin: str = "manual", map_id: str | None = None,
+    ) -> None:
+        """Set a beacon's real-world position."""
+        beacons = self.data.setdefault("beacon_positions_m", {})
+        beacons[str(key)] = {
+            "x_m": round(float(x_m), 3),
+            "y_m": round(float(y_m), 3),
+            "floor_id": str(floor_id or DEFAULT_FLOOR_ID),
+            "room": str(room),
+            "kind": str(kind),
+            "label": str(label),
+            "origin": str(origin),
+            "map_id": map_id,
+        }
+        await self.store.async_save(self.data)
+
+    async def async_remove_beacon_position_m(self, key: str) -> None:
+        """Remove a beacon from metre-space positions."""
+        beacons = self.data.get("beacon_positions_m") or {}
+        beacons.pop(str(key), None)
+        await self.store.async_save(self.data)
+
+    def beacon_room_from_geometry(self, x_m: float, y_m: float, floor_id: str) -> str:
+        """Determine which room a metre-space point falls in, using room_geometry_m."""
+        for room, geo in (self.data.get("room_geometry_m") or {}).items():
+            if not isinstance(geo, dict):
+                continue
+            if geo.get("floor_id") != floor_id:
+                continue
+            gtype = geo.get("type", "")
+            if gtype == "poly":
+                pts = geo.get("points_m") or []
+                if len(pts) < 3:
+                    continue
+                # Ray-casting point-in-polygon
+                inside = False
+                n = len(pts)
+                j = n - 1
+                for i in range(n):
+                    xi, yi = float(pts[i][0]), float(pts[i][1])
+                    xj, yj = float(pts[j][0]), float(pts[j][1])
+                    if ((yi > y_m) != (yj > y_m)) and (x_m < (xj - xi) * (y_m - yi) / (yj - yi) + xi):
+                        inside = not inside
+                    j = i
+                if inside:
+                    return str(room)
+            elif gtype == "circle":
+                cx = float(geo.get("cx_m", 0))
+                cy = float(geo.get("cy_m", 0))
+                r = float(geo.get("r_m", 0))
+                if (x_m - cx) ** 2 + (y_m - cy) ** 2 <= r ** 2:
+                    return str(room)
+        return ""
 
     # ── Migration: derive transforms + convert map data to metres ─────────
 
@@ -635,7 +704,7 @@ class ModelStore:
 
         Returns {scanners_migrated, rooms_migrated, barriers_migrated}.
         """
-        stats = {"scanners_migrated": 0, "rooms_migrated": 0, "barriers_migrated": 0}
+        stats = {"scanners_migrated": 0, "rooms_migrated": 0, "barriers_migrated": 0, "beacons_migrated": 0}
         transforms = self.data.get("map_transforms") or {}
         if not transforms:
             return stats
@@ -758,6 +827,30 @@ class ModelStore:
                     stats["barriers_migrated"] += 1
                     changed = True
 
+            # ── Beacons ───────────────────────────────────────────────
+            beacons_m = self.data.setdefault("beacon_positions_m", {})
+            for bk in (m.get("beacons") or []):
+                bk_key = bk.get("key")
+                if not bk_key or bk_key in beacons_m:
+                    continue
+                bk_x = float(bk.get("x", 0))
+                bk_y = float(bk.get("y", 0))
+                coords = self.map_frac_to_metres(bk_x, bk_y, mid)
+                if coords:
+                    room = self.beacon_room_from_geometry(coords[0], coords[1], fl)
+                    beacons_m[bk_key] = {
+                        "x_m": round(coords[0], 3),
+                        "y_m": round(coords[1], 3),
+                        "floor_id": fl,
+                        "room": room or str(bk.get("label", "")),
+                        "kind": str(bk.get("kind", "")),
+                        "label": str(bk.get("label", "")),
+                        "origin": "map",
+                        "map_id": mid,
+                    }
+                    stats["beacons_migrated"] += 1
+                    changed = True
+
         if changed:
             await self.store.async_save(self.data)
         return stats
@@ -859,6 +952,30 @@ class ModelStore:
                     "origin": "map",
                     "map_id": map_id,
                 })
+                count += 1
+
+        # ── Sync beacons ──────────────────────────────────────────────────
+        beacons_m = self.data.setdefault("beacon_positions_m", {})
+        for bk in (map_dict.get("beacons") or []):
+            bk_key = bk.get("key")
+            if not bk_key:
+                continue
+            existing = beacons_m.get(bk_key)
+            if existing and existing.get("origin") == "manual":
+                continue
+            coords = self.map_frac_to_metres(float(bk.get("x", 0)), float(bk.get("y", 0)), map_id)
+            if coords:
+                room = self.beacon_room_from_geometry(coords[0], coords[1], fl)
+                beacons_m[bk_key] = {
+                    "x_m": round(coords[0], 3),
+                    "y_m": round(coords[1], 3),
+                    "floor_id": fl,
+                    "room": room or str(bk.get("label", "")),
+                    "kind": str(bk.get("kind", "")),
+                    "label": str(bk.get("label", "")),
+                    "origin": "map",
+                    "map_id": map_id,
+                }
                 count += 1
 
         if count:
@@ -1000,6 +1117,21 @@ class ModelStore:
                 if len(new_pts) >= 2:
                     bar["points"] = new_pts
                     count += 1
+
+        # ── Beacons ───────────────────────────────────────────────────────
+        beacons_m = self.data.get("beacon_positions_m") or {}
+        for bk in (map_dict.get("beacons") or []):
+            bk_key = bk.get("key")
+            if not bk_key or bk_key not in beacons_m:
+                continue
+            bm = beacons_m[bk_key]
+            if bm.get("origin") == "manual" and bm.get("map_id") != map_id:
+                continue
+            fracs = self.metres_to_map_frac(float(bm["x_m"]), float(bm["y_m"]), map_id)
+            if fracs:
+                bk["x"] = round(max(0.0, min(1.0, fracs[0])), 4)
+                bk["y"] = round(max(0.0, min(1.0, fracs[1])), 4)
+                count += 1
 
         return count
 

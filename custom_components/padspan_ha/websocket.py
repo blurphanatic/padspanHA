@@ -346,6 +346,7 @@ async def ws_model_get(hass: HomeAssistant, connection, msg) -> None:
     room_geometry_m = mdl.data.get("room_geometry_m", {}) if mdl else {}
     rf_barriers_m = mdl.data.get("rf_barriers_m", []) if mdl else []
     map_transforms = mdl.data.get("map_transforms", {}) if mdl else {}
+    beacon_positions_m = mdl.data.get("beacon_positions_m", {}) if mdl else {}
 
     connection.send_result(msg["id"], {
         "floors": floors, "areas": areas, "room_meta": room_meta,
@@ -355,6 +356,7 @@ async def ws_model_get(hass: HomeAssistant, connection, msg) -> None:
         "room_geometry_m": room_geometry_m,
         "rf_barriers_m": rf_barriers_m,
         "map_transforms": map_transforms,
+        "beacon_positions_m": beacon_positions_m,
     })
 
 
@@ -3426,6 +3428,32 @@ async def ws_maps_delete(hass: HomeAssistant, connection, msg) -> None:
             await cal.async_clear_map(map_id)
     except Exception:
         pass
+
+    # Clean up traceback frames referencing this map
+    try:
+        _tb = hass.data.get(DOMAIN, {}).get(DATA_TRACEBACK)
+        if _tb and hasattr(_tb, "frames"):
+            _before = len(_tb.frames)
+            # Remove map_id references from traceback objects (don't delete frames,
+            # just clear the map_id so they won't try to render on a dead map)
+            for _fr in _tb.frames:
+                for _obj in (_fr.get("objects") or []):
+                    if _obj.get("m") == map_id:
+                        _obj["m"] = ""
+    except Exception:
+        pass
+
+    # Clean up hidden_map_ids in settings
+    try:
+        _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+        if _st and isinstance(_st.data, dict):
+            _hidden = _st.data.get("hidden_map_ids")
+            if isinstance(_hidden, list) and map_id in _hidden:
+                _st.data["hidden_map_ids"] = [x for x in _hidden if x != map_id]
+                await _st.async_save()
+    except Exception:
+        pass
+
     await ms.async_delete_map(map_id)
     connection.send_result(msg["id"], {"ok": True})
 
@@ -8448,6 +8476,7 @@ async def ws_fabric_reset_spatial(hass: HomeAssistant, connection, msg) -> None:
     mdl.data["room_geometry_m"] = {}
     mdl.data["rf_barriers_m"] = []
     mdl.data["map_transforms"] = {}
+    mdl.data["beacon_positions_m"] = {}
     await mdl.store.async_save(mdl.data)
 
     # Clear metre coords from calibration points (they'll be re-backfilled on migrate)

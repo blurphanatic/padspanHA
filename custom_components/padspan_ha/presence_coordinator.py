@@ -524,22 +524,48 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if _maps_store:
                 for _m in (_maps_store.data.get("maps") or []):
                     _rb = _m.get("room_bounds") or {}
-                    # Capture master map's room_bounds for precedence
                     if (_m.get("stack") or {}).get("is_master"):
                         _master_bounds = _rb
                         _master_map_id = _m.get("id", "")
                         _master_rooms = set(_rb.keys())
-                    for _bk in (_m.get("beacons") or []):
-                        _bk_key = _bk.get("key")
-                        if _bk_key and _bk.get("x") is not None:
-                            _room = _room_from_bounds(_rb, float(_bk.get("x", 0)), float(_bk.get("y", 0)))
-                            _pinned[_bk_key] = {
-                                "map_id": _m.get("id", ""),
-                                "x": float(_bk.get("x", 0)),
-                                "y": float(_bk.get("y", 0)),
-                                "room": _room,
-                                "floor_id": _m.get("floor_id", ""),
-                            }
+
+            # Prefer fabric beacon positions (metre-space, map-independent)
+            if _model and _model.data.get("beacon_positions_m"):
+                for _bk_key, _bk_pos in _model.beacon_positions_m().items():
+                    if not isinstance(_bk_pos, dict):
+                        continue
+                    _pinned[_bk_key] = {
+                        "map_id": _bk_pos.get("map_id", _master_map_id),
+                        "x": 0.5,  # placeholder — UI rendering uses map fracs
+                        "y": 0.5,
+                        "room": _bk_pos.get("room", ""),
+                        "floor_id": _bk_pos.get("floor_id", ""),
+                    }
+                    # Derive map fracs for UI if transform available
+                    if _model and _bk_pos.get("x_m") is not None:
+                        _mid = _bk_pos.get("map_id", _master_map_id)
+                        _fracs = _model.metres_to_map_frac(
+                            float(_bk_pos["x_m"]), float(_bk_pos["y_m"]), _mid
+                        )
+                        if _fracs:
+                            _pinned[_bk_key]["x"] = _fracs[0]
+                            _pinned[_bk_key]["y"] = _fracs[1]
+            else:
+                # Fallback: read beacons from maps
+                if _maps_store:
+                    for _m in (_maps_store.data.get("maps") or []):
+                        _rb = _m.get("room_bounds") or {}
+                        for _bk in (_m.get("beacons") or []):
+                            _bk_key = _bk.get("key")
+                            if _bk_key and _bk.get("x") is not None:
+                                _room = _room_from_bounds(_rb, float(_bk.get("x", 0)), float(_bk.get("y", 0)))
+                                _pinned[_bk_key] = {
+                                    "map_id": _m.get("id", ""),
+                                    "x": float(_bk.get("x", 0)),
+                                    "y": float(_bk.get("y", 0)),
+                                    "room": _room,
+                                    "floor_id": _m.get("floor_id", ""),
+                                }
         except Exception:
             pass
 
