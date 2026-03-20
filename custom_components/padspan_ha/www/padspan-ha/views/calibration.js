@@ -1562,31 +1562,233 @@ function _nextTarget(grid, gridN) {
 }
 
 // ── Tune tab — 3D iso map with draggable receiver markers ──────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// Shared fabric floor editor — renders room geometry, scanners, beacons in
+// metre space with drag support. Used by Tune and Beacon Tune tabs.
+// ══════════════════════════════════════════════════════════════════════════════
+
+function _fabricFloorEditor(ctx, el, floorId, opts) {
+  // opts: { items: [{key, x_m, y_m, label, color, draggable}], onDrop(key, x_m, y_m), onDblClick(x_m, y_m), itemType }
+  const geo = ctx.state.model?.room_geometry_m || {};
+  const scanPos = ctx.state.model?.scanner_positions_m || {};
+  const items = opts.items || [];
+
+  // Compute bounding box from room geometry + items
+  let mMinX = Infinity, mMinY = Infinity, mMaxX = -Infinity, mMaxY = -Infinity;
+  for (const g of Object.values(geo)) {
+    if (g.floor_id !== floorId) continue;
+    if (g.type === "poly" && g.points_m) for (const p of g.points_m) { mMinX=Math.min(mMinX,p[0]); mMinY=Math.min(mMinY,p[1]); mMaxX=Math.max(mMaxX,p[0]); mMaxY=Math.max(mMaxY,p[1]); }
+    else if (g.type === "circle") { mMinX=Math.min(mMinX,g.cx_m-g.r_m); mMinY=Math.min(mMinY,g.cy_m-g.r_m); mMaxX=Math.max(mMaxX,g.cx_m+g.r_m); mMaxY=Math.max(mMaxY,g.cy_m+g.r_m); }
+  }
+  for (const sp of Object.values(scanPos)) { if(sp.floor_id===floorId){mMinX=Math.min(mMinX,sp.x_m);mMinY=Math.min(mMinY,sp.y_m);mMaxX=Math.max(mMaxX,sp.x_m);mMaxY=Math.max(mMaxY,sp.y_m);}}
+  for (const it of items) { if(it.x_m!=null){mMinX=Math.min(mMinX,it.x_m);mMinY=Math.min(mMinY,it.y_m);mMaxX=Math.max(mMaxX,it.x_m);mMaxY=Math.max(mMaxY,it.y_m);}}
+  if (!isFinite(mMinX)) { mMinX=0; mMinY=0; mMaxX=20; mMaxY=15; }
+  const mPad = Math.max(1, (mMaxX-mMinX)*0.1);
+  mMinX-=mPad; mMinY-=mPad; mMaxX+=mPad; mMaxY+=mPad;
+  const mW=mMaxX-mMinX||20, mH=mMaxY-mMinY||15;
+  const vbW=100, vbH=(mH/mW)*vbW;
+  const m2x = xm => ((xm-mMinX)/mW)*vbW;
+  const m2y = ym => ((ym-mMinY)/mH)*vbH;
+  const svg2m_x = sx => mMinX + (sx/vbW)*mW;
+  const svg2m_y = sy => mMinY + (sy/vbH)*mH;
+
+  // Grid
+  let gridSvg = "";
+  const gridStep = mW > 40 ? 10 : 5;
+  for (let gx = Math.ceil(mMinX/gridStep)*gridStep; gx < mMaxX; gx += gridStep) {
+    const sx=m2x(gx); gridSvg+=`<line x1="${sx.toFixed(2)}" y1="0" x2="${sx.toFixed(2)}" y2="${vbH.toFixed(2)}" stroke="#1a3a2a" stroke-width="0.15"/>`;
+    gridSvg+=`<text x="${sx.toFixed(2)}" y="2" font-size="1.5" fill="#2d5a3d" fill-opacity="0.5">${gx.toFixed(0)}m</text>`;
+  }
+  for (let gy = Math.ceil(mMinY/gridStep)*gridStep; gy < mMaxY; gy += gridStep) {
+    const sy=m2y(gy); gridSvg+=`<line x1="0" y1="${sy.toFixed(2)}" x2="${vbW}" y2="${sy.toFixed(2)}" stroke="#1a3a2a" stroke-width="0.15"/>`;
+  }
+
+  // Rooms
+  let roomsSvg = "";
+  const roomColorFn = ctx.helpers.roomColor || (() => "#52b788");
+  for (const [rname, g] of Object.entries(geo)) {
+    if (g.floor_id !== floorId) continue;
+    const col = roomColorFn(rname);
+    if (g.type === "poly" && g.points_m?.length >= 3) {
+      roomsSvg += `<polygon points="${g.points_m.map(p=>`${m2x(p[0]).toFixed(2)},${m2y(p[1]).toFixed(2)}`).join(" ")}" fill="${col}" fill-opacity="0.12" stroke="${col}" stroke-width="0.4"/>`;
+      const cx=g.points_m.reduce((s,p)=>s+p[0],0)/g.points_m.length, cy=g.points_m.reduce((s,p)=>s+p[1],0)/g.points_m.length;
+      roomsSvg += `<text x="${m2x(cx).toFixed(2)}" y="${m2y(cy).toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="2.2" fill="${col}" fill-opacity="0.6" font-weight="600">${rname.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</text>`;
+    } else if (g.type === "circle") {
+      roomsSvg += `<circle cx="${m2x(g.cx_m).toFixed(2)}" cy="${m2y(g.cy_m).toFixed(2)}" r="${((g.r_m/mW)*vbW).toFixed(2)}" fill="${col}" fill-opacity="0.12" stroke="${col}" stroke-width="0.4"/>`;
+      roomsSvg += `<text x="${m2x(g.cx_m).toFixed(2)}" y="${m2y(g.cy_m).toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="2.2" fill="${col}" fill-opacity="0.6" font-weight="600">${rname.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</text>`;
+    }
+  }
+
+  // Scanner reference dots (non-draggable, for context)
+  let scanSvg = "";
+  if (opts.itemType !== "scanner") {
+    for (const [src, sp] of Object.entries(scanPos)) {
+      if (sp.floor_id !== floorId) continue;
+      scanSvg += `<circle cx="${m2x(sp.x_m).toFixed(2)}" cy="${m2y(sp.y_m).toFixed(2)}" r="1.5" fill="#4db6ac" fill-opacity="0.5" stroke="white" stroke-width="0.3"/>`;
+    }
+  }
+
+  // Draggable items
+  let itemsSvg = "";
+  for (const it of items) {
+    if (it.x_m == null) continue;
+    const sx = m2x(it.x_m), sy = m2y(it.y_m);
+    const col = it.color || (opts.itemType === "scanner" ? "#4db6ac" : "#f59e0b");
+    const r = it.draggable ? 2.5 : 1.8;
+    itemsSvg += `<circle data-key="${it.key}" cx="${sx.toFixed(2)}" cy="${sy.toFixed(2)}" r="${r}" fill="${col}" stroke="white" stroke-width="0.6" style="cursor:${it.draggable?"grab":"default"}" opacity="0.9"/>`;
+    const lbl = it.label || it.key;
+    const shortLbl = lbl.length > 15 ? lbl.slice(-12) : lbl;
+    itemsSvg += `<text x="${sx.toFixed(2)}" y="${(sy+3.5).toFixed(2)}" text-anchor="middle" font-size="1.6" fill="${col}" fill-opacity="0.7">${shortLbl.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</text>`;
+  }
+
+  const wrap = el("div", { style: "position:relative;border-radius:10px;overflow:hidden;border:2px solid #1b3526;touch-action:none" });
+  wrap.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vbW} ${vbH.toFixed(2)}"
+    preserveAspectRatio="xMidYMid meet" style="width:100%;display:block;cursor:crosshair;background:#0a1a10;min-height:250px">
+    ${gridSvg}${roomsSvg}${scanSvg}${itemsSvg}
+  </svg>`;
+
+  // Drag + double-click handlers
+  const svgEl = wrap.querySelector("svg");
+  if (svgEl) {
+    let _dragging = null; // {key, startX, startY}
+    const _svgCoords = (ev) => {
+      const rect = svgEl.getBoundingClientRect();
+      const touch = (ev.changedTouches && ev.changedTouches[0]) || null;
+      const cx = (touch ? touch.clientX : ev.clientX) - rect.left;
+      const cy = (touch ? touch.clientY : ev.clientY) - rect.top;
+      const svgX = (cx / rect.width) * vbW;
+      const svgY = (cy / rect.height) * vbH;
+      return [svg2m_x(svgX), svg2m_y(svgY)];
+    };
+
+    svgEl.addEventListener("mousedown", (ev) => {
+      const tgt = ev.target.closest("circle[data-key]");
+      if (tgt) { _dragging = { key: tgt.dataset.key, el: tgt }; ev.preventDefault(); }
+    });
+    svgEl.addEventListener("mousemove", (ev) => {
+      if (!_dragging) return;
+      const [xm, ym] = _svgCoords(ev);
+      _dragging.el.setAttribute("cx", m2x(xm).toFixed(2));
+      _dragging.el.setAttribute("cy", m2y(ym).toFixed(2));
+    });
+    const _endDrag = (ev) => {
+      if (!_dragging) return;
+      const [xm, ym] = _svgCoords(ev);
+      if (opts.onDrop) opts.onDrop(_dragging.key, xm, ym);
+      _dragging = null;
+    };
+    svgEl.addEventListener("mouseup", _endDrag);
+    svgEl.addEventListener("mouseleave", _endDrag);
+
+    // Touch drag
+    svgEl.addEventListener("touchstart", (ev) => {
+      const tgt = ev.target.closest("circle[data-key]");
+      if (tgt) { _dragging = { key: tgt.dataset.key, el: tgt }; ev.preventDefault(); }
+    }, { passive: false });
+    svgEl.addEventListener("touchmove", (ev) => {
+      if (!_dragging) return;
+      ev.preventDefault();
+      const [xm, ym] = _svgCoords(ev);
+      _dragging.el.setAttribute("cx", m2x(xm).toFixed(2));
+      _dragging.el.setAttribute("cy", m2y(ym).toFixed(2));
+    }, { passive: false });
+    svgEl.addEventListener("touchend", (ev) => {
+      if (_dragging) { _endDrag(ev); ev.preventDefault(); }
+    });
+
+    // Double-click to place new item
+    if (opts.onDblClick) {
+      svgEl.addEventListener("dblclick", (ev) => {
+        const [xm, ym] = _svgCoords(ev);
+        opts.onDblClick(xm, ym);
+      });
+    }
+  }
+
+  return wrap;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Tune tab — fabric-based scanner position editor
+// ══════════════════════════════════════════════════════════════════════════════
+
 function _tuneTab(ctx, el, cs, calData) {
   const wrap = el("div", { style: "display:flex;flex-direction:column;gap:10px" });
-  const maps_list = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
+  const floorId = cs._floorId || "main";
+  const scanPos = ctx.state.model?.scanner_positions_m || {};
 
-  if (!maps_list.length) {
+  // Check for fabric data
+  const floorScanners = Object.entries(scanPos).filter(([,sp]) => sp.floor_id === floorId);
+  const geo = ctx.state.model?.room_geometry_m || {};
+  const hasFloorData = Object.values(geo).some(g => g.floor_id === floorId);
+
+  if (!hasFloorData && !floorScanners.length) {
     wrap.appendChild(el("div", { class: "card" }, [
-      el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px;color:#52b788" }, "No Maps Uploaded"),
+      el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px;color:#52b788" }, "No Floor Data"),
       el("div", { style: "font-size:12px;color:#94a3b8" },
-        "Upload floor plan images in the Maps tab first, then return here to fine-tune receiver positions."),
+        "Draw room boundaries in the Maps tab first, or migrate existing map data via the Health tab."),
     ]));
     return wrap;
   }
 
   // Explainer card
   wrap.appendChild(el("div", { class: "card", style: "border-color:#52b788" }, [
-    el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px;color:#52b788" }, "Receiver Position Tuning"),
+    el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px;color:#52b788" }, "Scanner Position Tuning"),
     el("div", { style: "font-size:12px;color:#94a3b8;line-height:1.5" },
-      "Drag BLE scanner markers to match their real-world positions. The 3D view matches the Overview map. Click Save when done."),
+      "Drag scanner markers to match their real-world positions on the floor. Double-click to place a new scanner. Changes save automatically to the fabric."),
   ]));
 
-  // ── Constants & state ─────────────────────────────────────────────────────
+  // Live radios for placement
+  const _snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+  const _liveRadios = _snap?.ble?.radios || [];
+
+  // Build items from fabric scanner positions
+  const scanItems = floorScanners.map(([src, sp]) => ({
+    key: src, x_m: sp.x_m, y_m: sp.y_m, label: src, color: "#4db6ac", draggable: true,
+  }));
+
+  // Floor editor canvas
+  const editorWrap = _fabricFloorEditor(ctx, el, floorId, {
+    items: scanItems,
+    itemType: "scanner",
+    onDrop: async (key, xm, ym) => {
+      try {
+        await ctx.actions.callWS({ type: "padspan_ha/fabric_scanner_position_set", source: key, x_m: xm, y_m: ym, floor_id: floorId });
+        ctx.actions.toast(`Scanner ${key.slice(-8)} moved to ${xm.toFixed(1)}m, ${ym.toFixed(1)}m`);
+      } catch(e) { ctx.actions.toast("Save failed: " + (e.message||e)); }
+    },
+    onDblClick: (xm, ym) => {
+      // Show list of unplaced live radios to choose from
+      const placed = new Set(floorScanners.map(([s]) => s));
+      const unplaced = _liveRadios.filter(r => r.source && !placed.has(r.source));
+      if (!unplaced.length) { ctx.actions.toast("All live radios already placed"); return; }
+      const items2 = unplaced.map(r => `${r.source} (${r.name||"?"})`);
+      const choice = prompt("Place which scanner at this location?\\n\\n" + items2.join("\\n") + "\\n\\nEnter source ID:");
+      if (choice) {
+        const src = choice.trim();
+        ctx.actions.callWS({ type: "padspan_ha/fabric_scanner_position_set", source: src, x_m: xm, y_m: ym, floor_id: floorId })
+          .then(() => { ctx.actions.toast(`Placed ${src}`); ctx.actions.renderRooms(); })
+          .catch(e => ctx.actions.toast("Failed: " + (e.message||e)));
+      }
+    },
+  });
+  wrap.appendChild(editorWrap);
+
+  // Legend
+  wrap.appendChild(el("div", { style: "font-size:11px;color:#78909c;text-align:center" },
+    `${floorScanners.length} scanner(s) on this floor \u00b7 drag to reposition \u00b7 double-click to place new`));
+
+  return wrap;
+}
+
+// OLD TUNE TAB CODE REMOVED — replaced by fabric floor editor above.
+// The following block is dead code preserved temporarily for reference.
+// TODO: Remove entirely after confirming fabric editor works.
+if (false) {
   const TILE = 220, CX = 380, CY = 590, W = 760, BASE_H = 940;
   const LAYER_PAL = ["#52b788","#f59e0b","#60a5fa","#e879f9","#fb923c","#34d399","#f87171","#a78bfa"];
   const _esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-  // roomColor may not exist in standalone calibration panel — provide fallback
   const roomColorFn = ctx.helpers.roomColor || (name => {
     let h = 0; const s = String(name || "");
     for (let i = 0; i < s.length; i++) { h = Math.imul(h ^ s.charCodeAt(i), 16777619); }
@@ -2677,18 +2879,96 @@ function _resolveBeaconAddr(bkKey, snap) {
   return bkKey.replace(/^(ble:|entity:|ibeacon:)/, "");
 }
 
-// ── Beacon Tune tab — 3D iso map with draggable beacon markers ───────────────
+} // end if(false) dead code block
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Beacon Tune tab — fabric-based beacon position editor
+// ══════════════════════════════════════════════════════════════════════════════
+
 function _beaconTuneTab(ctx, el, cs, calData) {
   const wrap = el("div", { style: "display:flex;flex-direction:column;gap:10px" });
+  const floorId = cs._floorId || "main";
+  const beaconPos = ctx.state.model?.beacon_positions_m || {};
+  const geo = ctx.state.model?.room_geometry_m || {};
+  const hasFloorData = Object.values(geo).some(g => g.floor_id === floorId);
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
-  const maps_list = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
+
+  // Explainer
+  wrap.appendChild(el("div", { class: "card", style: "border-color:#f59e0b" }, [
+    el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:6px" }, [
+      el("span", { style: "background:#f59e0b;color:#000;font-weight:700;font-size:11px;padding:2px 8px;border-radius:4px" }, "EXPERIMENTAL"),
+      el("span", { style: "font-weight:700;font-size:14px;color:#f59e0b" }, "Beacon Tune"),
+    ]),
+    el("div", { style: "font-size:12px;color:#94a3b8;line-height:1.5" },
+      "Drag beacon markers to their real-world positions on the floor. Double-click to place a new beacon from live BLE objects. Positions save to the fabric in metres."),
+  ]));
+
+  if (!hasFloorData) {
+    wrap.appendChild(el("div", { class: "card" }, [
+      el("div", { class: "muted" }, "No room geometry for this floor. Draw room boundaries in the Maps tab first."),
+    ]));
+    return wrap;
+  }
+
+  // Build items from fabric beacon positions
+  const floorBeacons = Object.entries(beaconPos).filter(([,bp]) => bp.floor_id === floorId);
+  const beaconItems = floorBeacons.map(([key, bp]) => ({
+    key, x_m: bp.x_m, y_m: bp.y_m, label: bp.label || key, color: "#f59e0b", draggable: true,
+  }));
+
+  const editorWrap = _fabricFloorEditor(ctx, el, floorId, {
+    items: beaconItems,
+    itemType: "beacon",
+    onDrop: async (key, xm, ym) => {
+      try {
+        // Determine room from fabric geometry
+        let room = "";
+        for (const [rname, g] of Object.entries(geo)) {
+          if (g.floor_id !== floorId || g.type !== "poly" || !g.points_m?.length) continue;
+          let inside = false;
+          const pts2 = g.points_m;
+          for (let i = 0, j = pts2.length - 1; i < pts2.length; j = i++) {
+            const [xi,yi]=pts2[i],[xj,yj]=pts2[j];
+            if(((yi>ym)!==(yj>ym))&&(xm<(xj-xi)*(ym-yi)/(yj-yi)+xi)) inside=!inside;
+          }
+          if (inside) { room = rname; break; }
+        }
+        await ctx.actions.callWS({ type: "padspan_ha/fabric_beacon_position_set", key, x_m: xm, y_m: ym, floor_id: floorId, room });
+        ctx.actions.toast(`Beacon moved to ${xm.toFixed(1)}m, ${ym.toFixed(1)}m${room ? " (" + room + ")" : ""}`);
+      } catch(e) { ctx.actions.toast("Save failed: " + (e.message||e)); }
+    },
+    onDblClick: (xm, ym) => {
+      // Show live BLE objects to pick from
+      const objects = snap?.objects?.list || [];
+      const beaconLike = objects.filter(o => o.kind === "ibeacon" || o.kind === "ble");
+      if (!beaconLike.length) { ctx.actions.toast("No live BLE objects detected"); return; }
+      const names = beaconLike.slice(0, 20).map(o => `${o.key} (${o.user_label || o.name || "?"})`);
+      const choice = prompt("Place which beacon at this location?\\n\\n" + names.join("\\n") + "\\n\\nEnter key:");
+      if (choice) {
+        const key2 = choice.trim();
+        const obj = beaconLike.find(o => o.key === key2);
+        ctx.actions.callWS({ type: "padspan_ha/fabric_beacon_position_set", key: key2, x_m: xm, y_m: ym, floor_id: floorId, label: obj?.user_label || obj?.name || key2 })
+          .then(() => { ctx.actions.toast(`Beacon placed`); ctx.actions.renderRooms(); })
+          .catch(e => ctx.actions.toast("Failed: " + (e.message||e)));
+      }
+    },
+  });
+  wrap.appendChild(editorWrap);
+
+  // Legend
+  wrap.appendChild(el("div", { style: "font-size:11px;color:#78909c;text-align:center" },
+    `${floorBeacons.length} beacon(s) on this floor \u00b7 drag to reposition \u00b7 double-click to place new`));
+
+  return wrap;
+}
+// OLD BEACON TUNE CODE — dead, preserved for reference
+if (false) {
+  const snap = null;
+  const maps_list = [];
+  const wrap = null;
 
   if (!maps_list.length) {
-    wrap.appendChild(el("div", { class: "card" }, [
-      el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px;color:#52b788" }, "No Maps Uploaded"),
-      el("div", { style: "font-size:12px;color:#94a3b8" },
-        "Upload floor plan images in the Maps tab first, then return here to mark beacon reference positions."),
-    ]));
+    wrap.appendChild(null);
     return wrap;
   }
 
@@ -5402,6 +5682,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
   return wrap;
 }
+} // end if(false) dead beacon tune code
 
 
 function _pointInPoly(px, py, points) {
