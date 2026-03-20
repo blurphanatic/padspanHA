@@ -1451,13 +1451,14 @@ function _tuneTab(ctx, el, cs, calData) {
   ]));
 
   // ── Fabric floor canvas (metre-space, no map images) ──────────────────────
+  const _fabricSnap = (ctx.state.live && ctx.state.live.snapshot) || null;
   const _floorId = cs._floorId || (maps_list[0]?.floor_id) || "main";
   const _geo = ctx.state.model?.room_geometry_m || {};
   const _scanPos = ctx.state.model?.scanner_positions_m || {};
   const _hasFloorGeo = Object.values(_geo).some(g => g.floor_id === _floorId);
   if (_hasFloorGeo) {
     const _floorScanners = Object.entries(_scanPos).filter(([,sp]) => sp.floor_id === _floorId);
-    const _liveRadios = _snap?.ble?.radios || [];
+    const _liveRadios = _fabricSnap?.ble?.radios || [];
 
     // Build metre bounding box
     let _mMinX=Infinity,_mMinY=Infinity,_mMaxX=-Infinity,_mMaxY=-Infinity;
