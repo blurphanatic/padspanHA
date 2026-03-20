@@ -318,15 +318,9 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
           for(const [k,v] of Object.entries(m.room_bounds||{})){
             if(!movedRooms.has(k)) newBounds[k] = v;
           }
-          await ctx.actions.mapsUpdate({
-            map_id: _mig.targetMapId,
-            receivers: newRx,
-            calibration: m.calibration || {},
-            notes: m.notes || "",
-            floor_id: m.floor_id || "",
-            room_bounds: newBounds,
-            stack: m.stack || {},
-            beacons: newBk,
+          await ctx.actions.fabricSpatialSave({
+            map_id: _mig.targetMapId, floor_id: m.floor_id || "",
+            scanners: newRx, rooms: newBounds, beacons: newBk,
           });
           // Revert canvas extension if it was applied
           if(_mig.canvasExtended){
@@ -380,17 +374,17 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
       masterBtn = el("button",{class:"btn inline",style:"font-size:11px;color:#94a3b8", onclick: async()=>{
         if(!confirm(`Remove master status from "${m.name||m.id}"? It will no longer be protected from modification.`)) return;
         const newStk = Object.assign({}, m.stack||{}, { is_master: false });
-        await ctx.actions.mapsUpdate({ map_id:m.id, receivers:m.receivers||[], calibration:m.calibration||{}, notes:m.notes||"", floor_id:m.floor_id||"", room_bounds:m.room_bounds||{}, stack:newStk });
+        await ctx.actions.mapsUpdateQuiet({ map_id:m.id, stack:newStk });
         ctx.toast("Master status removed");
       }}, "Unset Master");
     } else if(isEligible){
       masterBtn = el("button",{class:"btn inline",style:"font-size:10px;padding:2px 6px;color:#6b7280;border-color:#334155", onclick: async()=>{
         const _doSet = async ()=>{
           const newStk = Object.assign({}, m.stack||{}, { is_master: true, master_set_date: new Date().toISOString().slice(0,10) });
-          await ctx.actions.mapsUpdate({ map_id:m.id, receivers:m.receivers||[], calibration:m.calibration||{}, notes:m.notes||"", floor_id:m.floor_id||"", room_bounds:m.room_bounds||{}, stack:newStk });
+          await ctx.actions.mapsUpdateQuiet({ map_id:m.id, stack:newStk });
           if(currentMaster){
             const oldStk = Object.assign({}, currentMaster.stack||{}, { is_master: false });
-            await ctx.actions.mapsUpdate({ map_id:currentMaster.id, receivers:currentMaster.receivers||[], calibration:currentMaster.calibration||{}, notes:currentMaster.notes||"", floor_id:currentMaster.floor_id||"", room_bounds:currentMaster.room_bounds||{}, stack:oldStk });
+            await ctx.actions.mapsUpdateQuiet({ map_id:currentMaster.id, stack:oldStk });
           }
           ctx.toast("Map set as master — it is now your alignment anchor");
         };
@@ -1098,7 +1092,7 @@ function _edit(ctx, map){
       // Persist backfill to backend so it sticks
       if(_backfilled){
         const _bfRx = ctx.state.maps._draftReceivers;
-        ctx.actions.mapsUpdate({ map_id: map.id, receivers: _bfRx, calibration: map.calibration||{}, notes: map.notes||"" }).catch(()=>{});
+        ctx.actions.fabricSpatialSave({ map_id: map.id, floor_id: map.floor_id||"", scanners: _bfRx }).catch(()=>{});
       }
     }
     ctx.state.maps._draftRoomBounds = JSON.parse(JSON.stringify(map.room_bounds||{}));
@@ -1200,14 +1194,19 @@ function _edit(ctx, map){
       const btn = e.currentTarget;
       btn.disabled = true; btn.textContent = "Saving…";
       try{
-        await ctx.actions.mapsUpdate({
+        await ctx.actions.fabricSpatialSave({
           map_id: map.id,
-          receivers: ctx.state.maps._draftReceivers,
-          room_bounds: ctx.state.maps._draftRoomBounds,
-          rf_barriers: ctx.state.maps._draftBarriers || [],
           floor_id: ctx.state.maps._draftFloorId,
+          scanners: ctx.state.maps._draftReceivers,
+          rooms: ctx.state.maps._draftRoomBounds,
+          rf_barriers: ctx.state.maps._draftBarriers || [],
+          beacons: map.beacons || [],
+        });
+        await ctx.actions.mapsUpdateQuiet({
+          map_id: map.id,
           calibration: map.calibration||{},
-          notes: map.notes||""
+          notes: map.notes||"",
+          floor_id: ctx.state.maps._draftFloorId,
         });
         ctx.toast("Layout saved ✔");
       }catch(err){ ctx.toast("Save failed: "+String(err), true); }
@@ -2035,13 +2034,9 @@ function _edit(ctx, map){
         await ctx.actions.mapsReplaceImage({ map_id: map.id, png_base64: b64, width: nw, height: nh });
         // Save rotated coordinates
         if(newReceivers.length || Object.keys(newBounds).length || newBeacons.length){
-          await ctx.actions.mapsUpdate({
-            map_id: map.id,
-            receivers: newReceivers,
-            calibration: map.calibration || {},
-            notes: map.notes || "",
-            room_bounds: newBounds,
-            beacons: newBeacons,
+          await ctx.actions.fabricSpatialSave({
+            map_id: map.id, floor_id: map.floor_id || "",
+            scanners: newReceivers, rooms: newBounds, beacons: newBeacons,
           });
         }
         applyStatus.style.color = "#4ade80";
@@ -2468,10 +2463,8 @@ async function _executeChangeMaster(ctx, oldMaster, newMaster, allMaps) {
   const inv = _invertTransform(bx, by, bs, br);
 
   // 1. New master → pristine origin
-  await ctx.actions.mapsUpdate({
-    map_id: newMaster.id, receivers: newMaster.receivers||[],
-    calibration: newMaster.calibration||{}, notes: newMaster.notes||"",
-    floor_id: newMaster.floor_id||"", room_bounds: newMaster.room_bounds||{},
+  await ctx.actions.mapsUpdateQuiet({
+    map_id: newMaster.id,
     stack: Object.assign({}, ns, {
       is_master: true, x_offset: 0, y_offset: 0, scale: 1.0,
       rotation: 0, scale_x_adj: 1.0, ref_map_id: null, tie_ins: [],
@@ -2480,10 +2473,8 @@ async function _executeChangeMaster(ctx, oldMaster, newMaster, allMaps) {
 
   // 2. Old master → inverse transform, referenced to new master
   const os = oldMaster.stack || {};
-  await ctx.actions.mapsUpdate({
-    map_id: oldMaster.id, receivers: oldMaster.receivers||[],
-    calibration: oldMaster.calibration||{}, notes: oldMaster.notes||"",
-    floor_id: oldMaster.floor_id||"", room_bounds: oldMaster.room_bounds||{},
+  await ctx.actions.mapsUpdateQuiet({
+    map_id: oldMaster.id,
     stack: Object.assign({}, os, {
       is_master: false, x_offset: inv.x, y_offset: inv.y,
       scale: inv.scale, rotation: inv.rotation,
@@ -2502,9 +2493,8 @@ async function _executeChangeMaster(ctx, oldMaster, newMaster, allMaps) {
       { x: inv.x, y: inv.y, scale: inv.scale, rotation: inv.rotation },
       { x: ms.x_offset||0, y: ms.y_offset||0, scale: ms.scale||1.0, rotation: ms.rotation||0 }
     );
-    await ctx.actions.mapsUpdate({
-      map_id: m.id, receivers: m.receivers||[], calibration: m.calibration||{},
-      notes: m.notes||"", floor_id: m.floor_id||"", room_bounds: m.room_bounds||{},
+    await ctx.actions.mapsUpdateQuiet({
+      map_id: m.id,
       stack: Object.assign({}, ms, {
         x_offset: comp.x, y_offset: comp.y,
         scale: comp.scale, rotation: comp.rotation,
@@ -2913,14 +2903,14 @@ function _export(ctx, active, maps_list){
         // mapsUpload refreshes ctx.state.maps.list — find the new map by name
         const newMap = (ctx.state.maps.list||[]).find(m=>m.name===(bm.name||"Restored Map"));
         if(newMap){
-          await ctx.actions.mapsUpdate({
-            map_id: newMap.id,
-            receivers: bm.receivers||[],
-            calibration: bm.calibration||{},
-            notes: bm.notes||"",
-            floor_id: bm.floor_id||"",
-            room_bounds: bm.room_bounds||{},
-            stack: bm.stack||{},
+          await ctx.actions.fabricSpatialSave({
+            map_id: newMap.id, floor_id: bm.floor_id||"",
+            scanners: bm.receivers||[], rooms: bm.room_bounds||{},
+            rf_barriers: bm.rf_barriers||[], beacons: bm.beacons||[],
+          });
+          await ctx.actions.mapsUpdateQuiet({
+            map_id: newMap.id, calibration: bm.calibration||{},
+            notes: bm.notes||"", stack: bm.stack||{},
           });
         }
         ok++;
@@ -3336,11 +3326,7 @@ function _stack(ctx, maps, helpBtn){
         z_level: parseInt(zLevelInput.value, 10) || 0,
         ceiling_height_m: parseFloat(ceilInput.value) || 2.4,
       });
-      await ctx.actions.mapsUpdate({
-        map_id: m.id, receivers: m.receivers||[], calibration: m.calibration||{},
-        notes: m.notes||"", floor_id: floorSel2.value || m.floor_id||"",
-        room_bounds: m.room_bounds||{}, stack: newStk,
-      });
+      await ctx.actions.mapsUpdateQuiet({ map_id: m.id, floor_id: floorSel2.value || m.floor_id||"", stack: newStk });
       ctx.actions.mapsRefresh();
     }},"Save"));
     tr.appendChild(tdSave);
@@ -4659,19 +4645,11 @@ function _stack(ctx, maps, helpBtn){
       _m_ar: (overX !== undefined) ? null : (alignState._m_ar || null),
       ...(tgtWasMaster && !keepTgt ? { is_master: false } : {}),
     });
-    await ctx.actions.mapsUpdate({
-      map_id: tM.id, receivers: tM.receivers||[], calibration: tM.calibration||{},
-      notes: tM.notes||"", floor_id: tM.floor_id||"", room_bounds: tM.room_bounds||{},
-      stack: newStk,
-    });
+    await ctx.actions.mapsUpdateQuiet({ map_id: tM.id, stack: newStk });
     // If user chose to keep target, also revoke master on the reference map
     if(keepTgt && rM2){
       const refStk2 = Object.assign({}, rM2.stack||{}, { is_master: false });
-      await ctx.actions.mapsUpdate({
-        map_id: rM2.id, receivers: rM2.receivers||[], calibration: rM2.calibration||{},
-        notes: rM2.notes||"", floor_id: rM2.floor_id||"", room_bounds: rM2.room_bounds||{},
-        stack: refStk2,
-      });
+      await ctx.actions.mapsUpdateQuiet({ map_id: rM2.id, stack: refStk2 });
     }
     const saved = (ctx.state.maps.list||[]).find(m=>m.id===tId);
     if(saved?.stack) alignState.rotation = saved.stack.rotation ?? alignState.rotation;
@@ -4706,11 +4684,7 @@ function _stack(ctx, maps, helpBtn){
           const newTIs = ((tM3?.stack?.tie_ins)||[]).filter(t=>t.ref_map_id !== ti.ref_map_id);
           const newStk3 = Object.assign({}, tM3.stack||{}, { tie_ins: newTIs });
           try {
-            await ctx.actions.mapsUpdate({
-              map_id: tM3.id, receivers: tM3.receivers||[], calibration: tM3.calibration||{},
-              notes: tM3.notes||"", floor_id: tM3.floor_id||"", room_bounds: tM3.room_bounds||{},
-              stack: newStk3,
-            });
+            await ctx.actions.mapsUpdateQuiet({ map_id: tM3.id, stack: newStk3 });
             ctx.toast("Tie-in removed");
             renderTieIns();
           } catch(e3){ ctx.toast("Failed: "+String(e3), true); }
@@ -4876,11 +4850,7 @@ function _stack(ctx, maps, helpBtn){
       }];
       const newStk = Object.assign({}, tM.stack||{}, { tie_ins: newTieIns });
       try {
-        await ctx.actions.mapsUpdate({
-          map_id: tM.id, receivers: tM.receivers||[], calibration: tM.calibration||{},
-          notes: tM.notes||"", floor_id: tM.floor_id||"", room_bounds: tM.room_bounds||{},
-          stack: newStk,
-        });
+        await ctx.actions.mapsUpdateQuiet({ map_id: tM.id, stack: newStk });
         ctx.toast("Tie-in added ✔");
         renderTieIns();
       } catch(e){ ctx.toast("Failed: "+String(e), true); }
@@ -4940,11 +4910,7 @@ function _stack(ctx, maps, helpBtn){
         try{
           for(const p of plans){
             const freshMap = (ctx.state.maps.list||maps).find(m=>m.id===p.map.id)||p.map;
-            await ctx.actions.mapsUpdate({
-              map_id: freshMap.id, receivers: freshMap.receivers||[], calibration: freshMap.calibration||{},
-              notes: freshMap.notes||"", floor_id: freshMap.floor_id||"", room_bounds: freshMap.room_bounds||{},
-              stack: Object.assign({}, freshMap.stack||{}, { tie_ins: p.keptTieIns }),
-            });
+            await ctx.actions.mapsUpdateQuiet({ map_id: freshMap.id, stack: Object.assign({}, freshMap.stack||{}, { tie_ins: p.keptTieIns }) });
           }
           recovDetailPanel.style.display="none";
           renderTieIns();
@@ -5111,7 +5077,7 @@ function _stack(ctx, maps, helpBtn){
   if(backfillMaps.length){
     (async ()=>{
       for(const m of backfillMaps){
-        try{ await ctx.actions.mapsUpdate({ map_id: m.id, receivers: m.receivers||[], calibration: m.calibration||{}, notes: m.notes||"" }); }catch(e){}
+        try{ await ctx.actions.fabricSpatialSave({ map_id: m.id, floor_id: m.floor_id||"", scanners: m.receivers||[] }); }catch(e){}
       }
     })();
   }
@@ -5141,10 +5107,7 @@ function _stack(ctx, maps, helpBtn){
           const orig = m.receivers || [];
           const kept = orig.filter(r => _rxIsLive(r));
           if(kept.length < orig.length){
-            await ctx.actions.mapsUpdate({
-              map_id: m.id, receivers: kept,
-              calibration: m.calibration||{}, notes: m.notes||"",
-            });
+            await ctx.actions.fabricSpatialSave({ map_id: m.id, floor_id: m.floor_id||"", scanners: kept });
           }
         }
         cleanLbl.textContent = `Removed ${staleCount} ✓`;
