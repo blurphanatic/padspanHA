@@ -449,174 +449,142 @@ function _pinAndListen(ctx, el, cs, calData) {
 
   const maps = ctx.state.maps?.list || [];
   const mapData = maps.find(m => m.id === cs.mapId);
-  if (!mapData?.image?.filename) {
+
+  // Floor ID — from floor selector state, map fallback, or default
+  const floorId = cs._floorId || (mapData?.floor_id) || "main";
+  cs._floorId = floorId;
+
+  // Check if we have fabric data for this floor
+  const _floorGeo = ctx.state.model?.room_geometry_m || {};
+  const _hasFloorData = Object.values(_floorGeo).some(g => g.floor_id === floorId);
+  if (!_hasFloorData && !mapData?.image?.filename) {
     wrap.appendChild(el("div", { class: "card" }, [
-      el("div", { class: "muted" }, "Selected map has no image. Upload a floor plan in the Maps tab."),
+      el("div", { class: "muted" }, "No room geometry for this floor. Draw room boundaries in the Maps tab first, or upload a floor plan."),
     ]));
     return wrap;
   }
 
-  // Instructions (collapsed after first point)
-  // All calibration points on this floor (not just one map)
+  // All calibration points on this floor
   const pts = calData.points || [];
-  const floorId = mapData.floor_id || "main";
-  const floorPts = pts.filter(p => p.floor_id === floorId || p.map_id === cs.mapId);
+  const floorPts = pts.filter(p => p.floor_id === floorId);
   if (!floorPts.length) {
     wrap.appendChild(el("div", { style: "font-size:12px;color:#78909c;padding:8px 4px;line-height:1.6" },
-      "Tap anywhere on the floor to place a calibration pin, then press Start Collecting. Stand still at that exact spot for the full duration."));
+      "Tap anywhere on the floor plan to place a calibration pin, then press Start Collecting. Stand still at that exact spot for the full duration."));
   }
 
-  // ── Floor-level composite canvas ───────────────────────────────────────
-  // Shows ALL maps on this floor composited via stack transforms.
-  // Clicks convert to world coords → metres → fabric.
+  // ── Fabric-only floor canvas ─────────────────────────────────────────
+  // Renders room geometry, scanner positions, and calibration points
+  // directly from the fabric in metre space. No map images.
   const mapWrap = el("div", { style: "position:relative;border-radius:10px;overflow:hidden;border:2px solid #1b3526;touch-action:none" });
   const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
 
-  // Gather all maps on this floor
-  const allMaps = ctx.state.maps?.list || [];
-  const floorMaps = allMaps.filter(m => (m.floor_id || "main") === floorId);
+  // Fabric spatial data for this floor
+  const geo = ctx.state.model?.room_geometry_m || {};
+  const scanPos = ctx.state.model?.scanner_positions_m || {};
+  const beaconPos = ctx.state.model?.beacon_positions_m || {};
 
-  // Build world-space transform for each map (same approach as overview.js)
-  const _mapTf = {};
-  for (const m of floorMaps) {
-    const stk = m.stack || {};
-    const ox = stk.x_offset || 0, oy = stk.y_offset || 0, sc = stk.scale || 1.0;
-    const mapAr = (m.image?.height || 600) / (m.image?.width || 800);
-    const arRef = stk.ref_ar || mapAr, sxAdj = stk.scale_x_adj || 1.0;
-    const rotRad = (stk.rotation || 0) * Math.PI / 180;
-    const mapPt = (stk._m && stk._m.length === 4)
-      ? (px, py) => {
-          const u = px - 0.5, v = py - 0.5;
-          return [stk._m[0]*u + stk._m[1]*v + 0.5 + ox, arRef*(stk._m[2]*u + stk._m[3]*v + 0.5 + oy)];
-        }
-      : (px, py) => {
-          const dx = (px - 0.5)*sc*sxAdj, dy = (py - 0.5)*sc*arRef;
-          const rx = dx*Math.cos(rotRad) - dy*Math.sin(rotRad);
-          const ry = dx*Math.sin(rotRad) + dy*Math.cos(rotRad);
-          return [(0.5 + ox) + rx, arRef*(0.5 + oy) + ry];
-        };
-    // Inverse: world → map frac (for click handling)
-    const invPt = (stk._m && stk._m.length === 4)
-      ? (wx, wy) => {
-          const det = stk._m[0]*stk._m[3] - stk._m[1]*stk._m[2];
-          if (Math.abs(det) < 1e-12) return [0.5, 0.5];
-          const rx = wx - 0.5 - ox, ry = wy/arRef - 0.5 - oy;
-          return [(stk._m[3]*rx - stk._m[1]*ry)/det + 0.5, (-stk._m[2]*rx + stk._m[0]*ry)/det + 0.5];
-        }
-      : (wx, wy) => {
-          const rx = wx - (0.5 + ox), ry = wy - arRef*(0.5 + oy);
-          const dx2 = rx*Math.cos(-rotRad) - ry*Math.sin(-rotRad);
-          const dy2 = rx*Math.sin(-rotRad) + ry*Math.cos(-rotRad);
-          const dxS = (Math.abs(sc*sxAdj) > 1e-9) ? dx2/(sc*sxAdj) : 0;
-          const dyS = (Math.abs(sc*arRef) > 1e-9) ? dy2/(sc*arRef) : 0;
-          return [dxS + 0.5, dyS + 0.5];
-        };
-    _mapTf[m.id] = { mapPt, invPt, ar: mapAr, arRef };
-  }
-
-  // Compute world-space bounding box across all floor maps
-  let bbMinX = Infinity, bbMinY = Infinity, bbMaxX = -Infinity, bbMaxY = -Infinity;
-  for (const m of floorMaps) {
-    const tf = _mapTf[m.id]; if (!tf) continue;
-    for (const [cx, cy] of [[0,0],[1,0],[1,1],[0,1]]) {
-      const [wx, wy] = tf.mapPt(cx, cy);
-      bbMinX = Math.min(bbMinX, wx); bbMinY = Math.min(bbMinY, wy);
-      bbMaxX = Math.max(bbMaxX, wx); bbMaxY = Math.max(bbMaxY, wy);
+  // Compute metre-space bounding box from room geometry + scanner positions on this floor
+  let mMinX = Infinity, mMinY = Infinity, mMaxX = -Infinity, mMaxY = -Infinity;
+  for (const [rname, g] of Object.entries(geo)) {
+    if (g.floor_id !== floorId) continue;
+    if (g.type === "poly" && g.points_m) {
+      for (const p of g.points_m) { mMinX = Math.min(mMinX, p[0]); mMinY = Math.min(mMinY, p[1]); mMaxX = Math.max(mMaxX, p[0]); mMaxY = Math.max(mMaxY, p[1]); }
+    } else if (g.type === "circle") {
+      mMinX = Math.min(mMinX, g.cx_m - g.r_m); mMinY = Math.min(mMinY, g.cy_m - g.r_m);
+      mMaxX = Math.max(mMaxX, g.cx_m + g.r_m); mMaxY = Math.max(mMaxY, g.cy_m + g.r_m);
     }
   }
-  if (!isFinite(bbMinX)) { bbMinX = 0; bbMinY = 0; bbMaxX = 1; bbMaxY = 0.75; }
-  const pad = 0.02;
-  bbMinX -= pad; bbMinY -= pad; bbMaxX += pad; bbMaxY += pad;
-  const bbW = bbMaxX - bbMinX || 1;
-  const bbH = bbMaxY - bbMinY || 0.75;
+  for (const [src, sp] of Object.entries(scanPos)) {
+    if (sp.floor_id !== floorId) continue;
+    mMinX = Math.min(mMinX, sp.x_m); mMinY = Math.min(mMinY, sp.y_m);
+    mMaxX = Math.max(mMaxX, sp.x_m); mMaxY = Math.max(mMaxY, sp.y_m);
+  }
+  for (const p of floorPts) {
+    if (p.x_m != null) { mMinX = Math.min(mMinX, p.x_m); mMinY = Math.min(mMinY, p.y_m); mMaxX = Math.max(mMaxX, p.x_m); mMaxY = Math.max(mMaxY, p.y_m); }
+  }
+  if (!isFinite(mMinX)) { mMinX = 0; mMinY = 0; mMaxX = 20; mMaxY = 15; }
+  const mPad = Math.max(1, (mMaxX - mMinX) * 0.08);
+  mMinX -= mPad; mMinY -= mPad; mMaxX += mPad; mMaxY += mPad;
+  const mW = mMaxX - mMinX || 20;
+  const mH = mMaxY - mMinY || 15;
   const vbW = 100;
-  const vbH = (bbH / bbW) * vbW;
+  const vbH = (mH / mW) * vbW;
+  const m2svgX = (xm) => ((xm - mMinX) / mW) * vbW;
+  const m2svgY = (ym) => ((ym - mMinY) / mH) * vbH;
 
-  // Build SVG with composited maps
-  let mapsSvg = "";
-  // Sort: non-master maps first (underneath), master on top
-  const sortedFloorMaps = [...floorMaps].sort((a, b) => (a.stack?.is_master ? 1 : 0) - (b.stack?.is_master ? 1 : 0));
-  for (const m of sortedFloorMaps) {
-    const tf = _mapTf[m.id]; if (!tf) continue;
-    const imgUrl = `/local/padspan_ha/maps/${m.image?.filename}`;
-    // Transform corners to SVG viewport coords
-    const corners = [[0,0],[1,0],[1,1],[0,1]].map(([cx,cy]) => {
-      const [wx, wy] = tf.mapPt(cx, cy);
-      return [((wx - bbMinX) / bbW) * vbW, ((wy - bbMinY) / bbH) * vbH];
-    });
-    // Use SVG polygon clip + image transform
-    const clipId = `clip_${m.id}`;
-    const polyPts = corners.map(c => `${c[0]},${c[1]}`).join(" ");
-    // Compute affine for image: map (0,0)-(1,1) → SVG corners
-    // Simplified: use top-left + width/height with rotation via CSS transform in <image>
-    const tl = corners[0], tr = corners[1], bl = corners[3];
-    const w = Math.sqrt((tr[0]-tl[0])**2 + (tr[1]-tl[1])**2);
-    const h = Math.sqrt((bl[0]-tl[0])**2 + (bl[1]-tl[1])**2);
-    const angle = Math.atan2(tr[1]-tl[1], tr[0]-tl[0]) * 180 / Math.PI;
-    mapsSvg += `<clipPath id="${clipId}"><polygon points="${polyPts}"/></clipPath>`;
-    mapsSvg += `<g clip-path="url(#${clipId})">`;
-    mapsSvg += `<image href="${imgUrl}" x="${tl[0]}" y="${tl[1]}" width="${w}" height="${h}" preserveAspectRatio="none"`;
-    if (Math.abs(angle) > 0.1) mapsSvg += ` transform="rotate(${angle.toFixed(2)},${tl[0]},${tl[1]})"`;
-    mapsSvg += ` opacity="0.85"/>`;
-    mapsSvg += `</g>`;
+  // Room polygons from fabric geometry
+  let roomsSvg = "";
+  for (const [rname, g] of Object.entries(geo)) {
+    if (g.floor_id !== floorId) continue;
+    const col = ctx.helpers.roomColor ? ctx.helpers.roomColor(rname) : "#52b788";
+    if (g.type === "poly" && g.points_m?.length >= 3) {
+      const pts2 = g.points_m.map(p => `${m2svgX(p[0]).toFixed(2)},${m2svgY(p[1]).toFixed(2)}`).join(" ");
+      roomsSvg += `<polygon points="${pts2}" fill="${col}" fill-opacity="0.15" stroke="${col}" stroke-width="0.4" stroke-opacity="0.6"/>`;
+      // Room label at centroid
+      const cx = g.points_m.reduce((s, p) => s + p[0], 0) / g.points_m.length;
+      const cy = g.points_m.reduce((s, p) => s + p[1], 0) / g.points_m.length;
+      roomsSvg += `<text x="${m2svgX(cx).toFixed(2)}" y="${m2svgY(cy).toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="2.5" fill="${col}" fill-opacity="0.7" font-weight="600">${rname.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</text>`;
+    } else if (g.type === "circle") {
+      roomsSvg += `<circle cx="${m2svgX(g.cx_m).toFixed(2)}" cy="${m2svgY(g.cy_m).toFixed(2)}" r="${((g.r_m / mW) * vbW).toFixed(2)}" fill="${col}" fill-opacity="0.15" stroke="${col}" stroke-width="0.4"/>`;
+      roomsSvg += `<text x="${m2svgX(g.cx_m).toFixed(2)}" y="${m2svgY(g.cy_m).toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="2.5" fill="${col}" fill-opacity="0.7" font-weight="600">${rname.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</text>`;
+    }
   }
 
-  // Calibration points on this floor
+  // Scanner positions
+  let scanSvg = "";
+  for (const [src, sp] of Object.entries(scanPos)) {
+    if (sp.floor_id !== floorId) continue;
+    const sx = m2svgX(sp.x_m), sy = m2svgY(sp.y_m);
+    scanSvg += `<rect x="${(sx-1.2).toFixed(2)}" y="${(sy-1.2).toFixed(2)}" width="2.4" height="2.4" rx="0.4" fill="#4db6ac" fill-opacity="0.7" stroke="white" stroke-width="0.3"/>`;
+    scanSvg += `<text x="${sx.toFixed(2)}" y="${(sy+3).toFixed(2)}" text-anchor="middle" font-size="1.6" fill="#4db6ac" fill-opacity="0.6">${src.length > 12 ? src.slice(-8) : src}</text>`;
+  }
+
+  // Calibration points
   let dotsSvg = floorPts.map(p => {
-    // Use metre coords if available, fall back to map fracs
-    let svgX, svgY;
-    if (p.x_m != null && p.y_m != null) {
-      // Convert metres to world coords via fabric transform
-      const _transforms = ctx.state.model?.map_transforms || {};
-      let found = false;
-      for (const [mid, t] of Object.entries(_transforms)) {
-        if (t.floor_id !== floorId) continue;
-        const tf = _mapTf[mid]; if (!tf) continue;
-        // Metres → frac → world
-        const sx = t.scale_x_m || 1, sy = t.scale_y_m || 1;
-        const rot = t.rotation_rad || 0;
-        let dx = p.x_m - (t.origin_x_m || 0), dy = p.y_m - (t.origin_y_m || 0);
-        if (Math.abs(rot) > 1e-9) { const c=Math.cos(-rot),s=Math.sin(-rot); const nx=dx*c-dy*s; dy=dx*s+dy*c; dx=nx; }
-        const fx = dx / sx, fy = dy / sy;
-        const [wx, wy] = tf.mapPt(fx, fy);
-        svgX = ((wx - bbMinX) / bbW) * vbW;
-        svgY = ((wy - bbMinY) / bbH) * vbH;
-        found = true; break;
-      }
-      if (!found) return "";
-    } else if (p.map_id && _mapTf[p.map_id]) {
-      const [wx, wy] = _mapTf[p.map_id].mapPt(p.x_frac, p.y_frac);
-      svgX = ((wx - bbMinX) / bbW) * vbW;
-      svgY = ((wy - bbMinY) / bbH) * vbH;
-    } else return "";
+    if (p.x_m == null) return "";
+    const sx = m2svgX(p.x_m), sy = m2svgY(p.y_m);
     const sc = (p.scanner_readings || []).length;
-    return `<circle cx="${svgX.toFixed(2)}" cy="${svgY.toFixed(2)}" r="2.5" fill="#52b788" stroke="white" stroke-width="0.7" opacity="0.85"/>
-            <title>${p.room || p.label || ""} (${sc} scanners)</title>`;
+    return `<circle cx="${sx.toFixed(2)}" cy="${sy.toFixed(2)}" r="1.8" fill="#52b788" stroke="white" stroke-width="0.5" opacity="0.85"><title>${p.room || p.label || ""} (${sc} scanners)</title></circle>`;
   }).join("");
 
-  // Current pin in world space
+  // Current pin in metre space
   let pinSvg = "";
-  if (cs.pinX !== null) {
-    const [wx, wy] = _mapTf[cs.mapId] ? _mapTf[cs.mapId].mapPt(cs.pinX, cs.pinY) : [cs.pinX, cs.pinY];
-    const px = ((wx - bbMinX) / bbW) * vbW;
-    const py = ((wy - bbMinY) / bbH) * vbH;
+  if (cs._pinXm !== undefined && cs._pinXm !== null) {
+    const px = m2svgX(cs._pinXm), py = m2svgY(cs._pinYm);
     pinSvg = `
-      <circle cx="${px.toFixed(2)}" cy="${py.toFixed(2)}" r="7" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/>
-      <circle cx="${px.toFixed(2)}" cy="${py.toFixed(2)}" r="3" fill="#f59e0b" stroke="white" stroke-width="1"/>
-      <line x1="${px.toFixed(2)}" y1="${(py-7).toFixed(2)}" x2="${px.toFixed(2)}" y2="${(py-12).toFixed(2)}" stroke="#f59e0b" stroke-width="1.2"/>`;
+      <circle cx="${px.toFixed(2)}" cy="${py.toFixed(2)}" r="5" fill="none" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="2 1.5" opacity="0.8"/>
+      <circle cx="${px.toFixed(2)}" cy="${py.toFixed(2)}" r="2" fill="#f59e0b" stroke="white" stroke-width="0.8"/>
+      <line x1="${px.toFixed(2)}" y1="${(py-5).toFixed(2)}" x2="${px.toFixed(2)}" y2="${(py-9).toFixed(2)}" stroke="#f59e0b" stroke-width="1"/>`;
+  }
+
+  // Grid lines for scale reference (every 5m)
+  let gridSvg = "";
+  const gridStep = mW > 40 ? 10 : 5;
+  const gridStart = Math.ceil(mMinX / gridStep) * gridStep;
+  for (let gx = gridStart; gx < mMaxX; gx += gridStep) {
+    const sx = m2svgX(gx);
+    gridSvg += `<line x1="${sx.toFixed(2)}" y1="0" x2="${sx.toFixed(2)}" y2="${vbH.toFixed(2)}" stroke="#1a3a2a" stroke-width="0.15"/>`;
+    gridSvg += `<text x="${sx.toFixed(2)}" y="2" font-size="1.5" fill="#2d5a3d" fill-opacity="0.5">${gx.toFixed(0)}m</text>`;
+  }
+  const gridStartY = Math.ceil(mMinY / gridStep) * gridStep;
+  for (let gy = gridStartY; gy < mMaxY; gy += gridStep) {
+    const sy = m2svgY(gy);
+    gridSvg += `<line x1="0" y1="${sy.toFixed(2)}" x2="${vbW}" y2="${sy.toFixed(2)}" stroke="#1a3a2a" stroke-width="0.15"/>`;
+    gridSvg += `<text x="1" y="${(sy-0.5).toFixed(2)}" font-size="1.5" fill="#2d5a3d" fill-opacity="0.5">${gy.toFixed(0)}m</text>`;
   }
 
   const svgStr = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vbW} ${vbH.toFixed(2)}"
-      preserveAspectRatio="xMidYMid meet" style="width:100%;display:block;cursor:crosshair;background:#0a1a10">
-    <defs>${mapsSvg.match(/<clipPath[^]*?<\/clipPath>/g)?.join("") || ""}</defs>
-    ${mapsSvg.replace(/<clipPath[^]*?<\/clipPath>/g, "")}
+      preserveAspectRatio="xMidYMid meet" style="width:100%;display:block;cursor:crosshair;background:#0a1a10;min-height:250px">
+    ${gridSvg}
+    ${roomsSvg}
+    ${scanSvg}
     ${dotsSvg}
     ${pinSvg}
   </svg>`;
 
   mapWrap.innerHTML = svgStr;
 
-  // Tap handler — convert click → world coords → find best map → map fracs
+  // Tap handler — click → metres directly
   const svgEl = mapWrap.querySelector("svg");
   if (svgEl && !cs.collecting) {
     const onTap = (ev) => {
@@ -624,56 +592,40 @@ function _pinAndListen(ctx, el, cs, calData) {
       const touch = (ev.changedTouches && ev.changedTouches[0]) || null;
       const clientX = touch ? touch.clientX : ev.clientX;
       const clientY = touch ? touch.clientY : ev.clientY;
-      // Click → SVG viewport → world coords
-      const svgFracX = (clientX - rect.left) / rect.width;
-      const svgFracY = (clientY - rect.top) / rect.height;
-      const worldX = bbMinX + svgFracX * bbW;
-      const worldY = bbMinY + svgFracY * bbH;
-      // Find which map the click falls inside (try each, pick best fit)
-      let bestMap = cs.mapId;
-      let bestFx = 0.5, bestFy = 0.5;
-      for (const m of floorMaps) {
-        const tf = _mapTf[m.id]; if (!tf || !tf.invPt) continue;
-        const [fx, fy] = tf.invPt(worldX, worldY);
-        if (fx >= -0.05 && fx <= 1.05 && fy >= -0.05 && fy <= 1.05) {
-          bestMap = m.id;
-          bestFx = Math.max(0, Math.min(1, fx));
-          bestFy = Math.max(0, Math.min(1, fy));
-          break;
-        }
+      const fracX = (clientX - rect.left) / rect.width;
+      const fracY = (clientY - rect.top) / rect.height;
+      // Convert directly to metres
+      const xm = mMinX + fracX * mW;
+      const ym = mMinY + fracY * mH;
+      cs._pinXm = xm;
+      cs._pinYm = ym;
+      // Also set legacy pinX/pinY for save compatibility — derive from first map transform
+      cs.pinX = 0.5; cs.pinY = 0.5;
+      const _transforms = ctx.state.model?.map_transforms || {};
+      for (const [mid, t] of Object.entries(_transforms)) {
+        if (t.floor_id !== floorId) continue;
+        const sx = t.scale_x_m || 1, sy = t.scale_y_m || 1;
+        const rot = t.rotation_rad || 0;
+        let dx = xm - (t.origin_x_m || 0), dy = ym - (t.origin_y_m || 0);
+        if (Math.abs(rot) > 1e-9) { const c = Math.cos(-rot), s = Math.sin(-rot); const nx = dx*c - dy*s; dy = dx*s + dy*c; dx = nx; }
+        cs.pinX = dx / sx; cs.pinY = dy / sy;
+        cs.mapId = mid;
+        break;
       }
-      cs.mapId = bestMap;
-      cs.pinX = bestFx;
-      cs.pinY = bestFy;
       cs.readings = null;
       // Auto-detect room from fabric geometry
-      const _transforms = ctx.state.model?.map_transforms || {};
-      const _t = _transforms[bestMap];
-      if (_t && _t.scale_x_m) {
-        const dx = bestFx * _t.scale_x_m, dy = bestFy * _t.scale_y_m;
-        const rot = _t.rotation_rad || 0;
-        let xm, ym;
-        if (Math.abs(rot) > 1e-9) {
-          xm = (_t.origin_x_m||0) + dx*Math.cos(rot) - dy*Math.sin(rot);
-          ym = (_t.origin_y_m||0) + dx*Math.sin(rot) + dy*Math.cos(rot);
-        } else { xm = (_t.origin_x_m||0) + dx; ym = (_t.origin_y_m||0) + dy; }
-        // Check fabric room geometry
-        const geo = ctx.state.model?.room_geometry_m || {};
-        cs.pinRoom = "";
-        for (const [rname, g] of Object.entries(geo)) {
-          if (g.floor_id !== floorId) continue;
-          if (g.type === "poly" && g.points_m?.length >= 3) {
-            let inside = false;
-            const pts2 = g.points_m;
-            for (let i = 0, j = pts2.length - 1; i < pts2.length; j = i++) {
-              const [xi, yi] = pts2[i], [xj, yj] = pts2[j];
-              if (((yi > ym) !== (yj > ym)) && (xm < (xj - xi) * (ym - yi) / (yj - yi) + xi)) inside = !inside;
-            }
-            if (inside) { cs.pinRoom = rname; break; }
+      cs.pinRoom = "";
+      for (const [rname, g] of Object.entries(geo)) {
+        if (g.floor_id !== floorId) continue;
+        if (g.type === "poly" && g.points_m?.length >= 3) {
+          let inside = false;
+          const pts3 = g.points_m;
+          for (let i = 0, j = pts3.length - 1; i < pts3.length; j = i++) {
+            const [xi, yi] = pts3[i], [xj, yj] = pts3[j];
+            if (((yi > ym) !== (yj > ym)) && (xm < (xj - xi) * (ym - yi) / (yj - yi) + xi)) inside = !inside;
           }
+          if (inside) { cs.pinRoom = rname; break; }
         }
-      } else {
-        cs.pinRoom = _detectRoom(bestFx, bestFy, mapData) || "";
       }
       ctx.actions.renderRooms();
     };
@@ -683,8 +635,10 @@ function _pinAndListen(ctx, el, cs, calData) {
   wrap.appendChild(mapWrap);
 
   // Floor legend
+  const roomCount = Object.values(geo).filter(g => g.floor_id === floorId).length;
+  const scanCount = Object.values(scanPos).filter(s => s.floor_id === floorId).length;
   wrap.appendChild(el("div", { style: "font-size:11px;color:#78909c;text-align:center" },
-    `${floorPts.length} point${floorPts.length !== 1 ? "s" : ""} on this floor · ${floorMaps.length} map(s) · tap to place pin`));
+    `${floorPts.length} cal point${floorPts.length !== 1 ? "s" : ""} \u00b7 ${roomCount} rooms \u00b7 ${scanCount} scanners \u00b7 tap to place pin`));
 
   // ── Pin info panel ────────────────────────────────────────────────────────
   if (cs.pinX !== null) {
@@ -703,17 +657,9 @@ function _pinAndListen(ctx, el, cs, calData) {
         el("div", { style: "font-weight:700;font-size:14px;margin-bottom:4px" },
           `Pin at: ${cs.pinRoom || "Unknown room"}`),
         el("div", { style: "font-size:12px;color:#94a3b8" },
-          (() => {
-            const _t2 = (ctx.state.model?.map_transforms || {})[cs.mapId];
-            if (_t2 && _t2.scale_x_m) {
-              const dx2 = cs.pinX * _t2.scale_x_m, dy2 = cs.pinY * _t2.scale_y_m;
-              const r2 = _t2.rotation_rad || 0;
-              let xm2 = (_t2.origin_x_m||0) + dx2, ym2 = (_t2.origin_y_m||0) + dy2;
-              if (Math.abs(r2) > 1e-9) { xm2 = (_t2.origin_x_m||0)+dx2*Math.cos(r2)-dy2*Math.sin(r2); ym2 = (_t2.origin_y_m||0)+dx2*Math.sin(r2)+dy2*Math.cos(r2); }
-              return `Position: ${xm2.toFixed(1)}m, ${ym2.toFixed(1)}m`;
-            }
-            return `Position: ${(cs.pinX * 100).toFixed(1)}% \u00d7 ${(cs.pinY * 100).toFixed(1)}%`;
-          })()),
+          cs._pinXm != null
+            ? `Position: ${cs._pinXm.toFixed(1)}m, ${cs._pinYm.toFixed(1)}m`
+            : `Position: ${(cs.pinX * 100).toFixed(1)}% \u00d7 ${(cs.pinY * 100).toFixed(1)}%`),
       ]));
 
       // Optional label
@@ -933,34 +879,23 @@ function _buildSavePanel(ctx, el, cs, calData, mapData) {
           name: rd.name || source,
           rssi_samples: rd.samples,
         }));
-        // Compute metre coords from map fracs using fabric transform
-        const _transforms = ctx.state.model?.map_transforms || {};
-        const _t = _transforms[cs.mapId];
-        let _x_m = null, _y_m = null;
-        if (_t && _t.scale_x_m && _t.scale_y_m) {
-          const dx = cs.pinX * _t.scale_x_m;
-          const dy = cs.pinY * _t.scale_y_m;
-          const rot = _t.rotation_rad || 0;
-          if (Math.abs(rot) > 1e-9) {
-            _x_m = (_t.origin_x_m||0) + dx*Math.cos(rot) - dy*Math.sin(rot);
-            _y_m = (_t.origin_y_m||0) + dx*Math.sin(rot) + dy*Math.cos(rot);
-          } else {
-            _x_m = (_t.origin_x_m||0) + dx;
-            _y_m = (_t.origin_y_m||0) + dy;
-          }
-        }
+        // Save with metre coords directly (fabric authority)
         const _pt = {
-          map_id:    cs.mapId,
-          x_frac:    cs.pinX,
-          y_frac:    cs.pinY,
-          floor_id:  mapData.floor_id || "",
+          floor_id:  floorId,
           room:      cs.pinRoom || "",
           label:     cs.pinLabel || "",
           device_id: cs.deviceId || "",
           duration_s: cs.duration,
           scanner_readings: scannerReadings,
+          x_frac:    cs.pinX ?? 0.5,
+          y_frac:    cs.pinY ?? 0.5,
+          map_id:    cs.mapId || "",
         };
-        if (_x_m !== null) { _pt.x_m = Math.round(_x_m * 1000) / 1000; _pt.y_m = Math.round(_y_m * 1000) / 1000; }
+        // Metre coords from the fabric canvas tap (primary)
+        if (cs._pinXm != null) {
+          _pt.x_m = Math.round(cs._pinXm * 1000) / 1000;
+          _pt.y_m = Math.round(cs._pinYm * 1000) / 1000;
+        }
         await ctx.actions.calibrationSavePoint(_pt);
         // Refresh local DB
         const fresh = await ctx.actions.calibrationGet();
@@ -987,6 +922,8 @@ function _buildSavePanel(ctx, el, cs, calData, mapData) {
     cs.readings = null;
     cs.pinX     = null;
     cs.pinY     = null;
+    cs._pinXm   = null;
+    cs._pinYm   = null;
     cs.pinLabel = "";
     ctx.actions.renderRooms();
   });
