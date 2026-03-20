@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.15.56";
-const BUILD_ID = "20260320T215344Z";
+const APP_VERSION = "0.15.57";
+const BUILD_ID = "20260320T215831Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -288,7 +288,7 @@ class PadSpanHaApp extends HTMLElement {
       status: {},
       roomTagMap: {},
       savedRoomTagMap: {},
-      model: { floors: [], room_meta: {} },
+      model: { floors: [], room_meta: {}, scanners: {}, room_adjacency: {}, fabric_sync_mode: "auto", scanner_positions_m: {}, room_geometry_m: {}, rf_barriers_m: [], map_transforms: {}, beacon_positions_m: {} },
       live: { snapshot: null, sources: null, error: null },
       maps: { list: [], lastError: null },
       mapsTab: "library",
