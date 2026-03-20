@@ -1447,8 +1447,65 @@ function _tuneTab(ctx, el, cs, calData) {
   wrap.appendChild(el("div", { class: "card", style: "border-color:#52b788" }, [
     el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px;color:#52b788" }, "Receiver Position Tuning"),
     el("div", { style: "font-size:12px;color:#94a3b8;line-height:1.5" },
-      "Drag BLE scanner markers to match their real-world positions. The 3D view matches the Overview map. Click Save when done."),
+      "Drag BLE scanner markers on the floor plan below. Double-click to place a new scanner. Positions save to the fabric in metres."),
   ]));
+
+  // ── Fabric floor canvas (metre-space, no map images) ──────────────────────
+  const _floorId = cs._floorId || (maps_list[0]?.floor_id) || "main";
+  const _geo = ctx.state.model?.room_geometry_m || {};
+  const _scanPos = ctx.state.model?.scanner_positions_m || {};
+  const _hasFloorGeo = Object.values(_geo).some(g => g.floor_id === _floorId);
+  if (_hasFloorGeo) {
+    const _floorScanners = Object.entries(_scanPos).filter(([,sp]) => sp.floor_id === _floorId);
+    const _liveRadios = _snap?.ble?.radios || [];
+
+    // Build metre bounding box
+    let _mMinX=Infinity,_mMinY=Infinity,_mMaxX=-Infinity,_mMaxY=-Infinity;
+    for(const g of Object.values(_geo)){if(g.floor_id!==_floorId)continue;if(g.type==="poly"&&g.points_m)for(const p of g.points_m){_mMinX=Math.min(_mMinX,p[0]);_mMinY=Math.min(_mMinY,p[1]);_mMaxX=Math.max(_mMaxX,p[0]);_mMaxY=Math.max(_mMaxY,p[1]);}else if(g.type==="circle"){_mMinX=Math.min(_mMinX,g.cx_m-g.r_m);_mMinY=Math.min(_mMinY,g.cy_m-g.r_m);_mMaxX=Math.max(_mMaxX,g.cx_m+g.r_m);_mMaxY=Math.max(_mMaxY,g.cy_m+g.r_m);}}
+    for(const[,sp]of _floorScanners){_mMinX=Math.min(_mMinX,sp.x_m);_mMinY=Math.min(_mMinY,sp.y_m);_mMaxX=Math.max(_mMaxX,sp.x_m);_mMaxY=Math.max(_mMaxY,sp.y_m);}
+    if(!isFinite(_mMinX)){_mMinX=0;_mMinY=0;_mMaxX=20;_mMaxY=15;}
+    const _mPad=Math.max(1,(_mMaxX-_mMinX)*0.1);_mMinX-=_mPad;_mMinY-=_mPad;_mMaxX+=_mPad;_mMaxY+=_mPad;
+    const _mW=_mMaxX-_mMinX||20,_mH=_mMaxY-_mMinY||15,_vbW=100,_vbH=(_mH/_mW)*_vbW;
+    const _m2x=xm=>(((xm-_mMinX)/_mW)*_vbW),_m2y=ym=>(((ym-_mMinY)/_mH)*_vbH);
+
+    // Grid
+    let _gridSvg="";const _gs=_mW>40?10:5;
+    for(let gx=Math.ceil(_mMinX/_gs)*_gs;gx<_mMaxX;gx+=_gs){const sx=_m2x(gx);_gridSvg+=`<line x1="${sx.toFixed(1)}" y1="0" x2="${sx.toFixed(1)}" y2="${_vbH.toFixed(1)}" stroke="#1a3a2a" stroke-width="0.15"/><text x="${sx.toFixed(1)}" y="2" font-size="1.5" fill="#2d5a3d" fill-opacity="0.5">${gx.toFixed(0)}m</text>`;}
+    for(let gy=Math.ceil(_mMinY/_gs)*_gs;gy<_mMaxY;gy+=_gs){const sy=_m2y(gy);_gridSvg+=`<line x1="0" y1="${sy.toFixed(1)}" x2="${_vbW}" y2="${sy.toFixed(1)}" stroke="#1a3a2a" stroke-width="0.15"/>`;}
+
+    // Rooms
+    let _roomsSvg="";const _rcFn=ctx.helpers.roomColor||(()=>"#52b788");
+    for(const[rn,g]of Object.entries(_geo)){if(g.floor_id!==_floorId)continue;const col=_rcFn(rn);
+      if(g.type==="poly"&&g.points_m?.length>=3){_roomsSvg+=`<polygon points="${g.points_m.map(p=>`${_m2x(p[0]).toFixed(1)},${_m2y(p[1]).toFixed(1)}`).join(" ")}" fill="${col}" fill-opacity="0.12" stroke="${col}" stroke-width="0.4"/>`;const cx=g.points_m.reduce((s,p)=>s+p[0],0)/g.points_m.length,cy=g.points_m.reduce((s,p)=>s+p[1],0)/g.points_m.length;_roomsSvg+=`<text x="${_m2x(cx).toFixed(1)}" y="${_m2y(cy).toFixed(1)}" text-anchor="middle" dominant-baseline="central" font-size="2.2" fill="${col}" fill-opacity="0.6" font-weight="600">${rn.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</text>`;}
+      else if(g.type==="circle"){_roomsSvg+=`<circle cx="${_m2x(g.cx_m).toFixed(1)}" cy="${_m2y(g.cy_m).toFixed(1)}" r="${((g.r_m/_mW)*_vbW).toFixed(1)}" fill="${col}" fill-opacity="0.12" stroke="${col}" stroke-width="0.4"/>`;}}
+
+    // Scanners (draggable)
+    let _scanSvg="";
+    for(const[src,sp]of _floorScanners){const sx=_m2x(sp.x_m),sy=_m2y(sp.y_m);
+      _scanSvg+=`<circle data-src="${src}" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="2.5" fill="#4db6ac" stroke="white" stroke-width="0.6" style="cursor:grab" opacity="0.9"/>`;
+      const short=src.length>12?src.slice(-10):src;_scanSvg+=`<text x="${sx.toFixed(1)}" y="${(sy+3.5).toFixed(1)}" text-anchor="middle" font-size="1.5" fill="#4db6ac" fill-opacity="0.7">${short.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</text>`;}
+
+    const _fWrap=el("div",{style:"position:relative;border-radius:10px;overflow:hidden;border:2px solid #1b3526;touch-action:none;margin-bottom:8px"});
+    _fWrap.innerHTML=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${_vbW} ${_vbH.toFixed(1)}" preserveAspectRatio="xMidYMid meet" style="width:100%;display:block;cursor:crosshair;background:#0a1a10;min-height:250px">${_gridSvg}${_roomsSvg}${_scanSvg}</svg>`;
+
+    // Drag + double-click handlers
+    const _svgEl=_fWrap.querySelector("svg");
+    if(_svgEl){
+      let _drag=null;
+      const _coords=(ev)=>{const r=_svgEl.getBoundingClientRect();const t=(ev.changedTouches&&ev.changedTouches[0])||null;const cx2=(t?t.clientX:ev.clientX)-r.left,cy2=(t?t.clientY:ev.clientY)-r.top;return[_mMinX+(cx2/r.width)*_mW,_mMinY+(cy2/r.height)*_mH];};
+      _svgEl.addEventListener("mousedown",(ev)=>{const c=ev.target.closest("circle[data-src]");if(c){_drag={src:c.dataset.src,el:c};ev.preventDefault();}});
+      _svgEl.addEventListener("mousemove",(ev)=>{if(!_drag)return;const[xm,ym]=_coords(ev);_drag.el.setAttribute("cx",_m2x(xm).toFixed(1));_drag.el.setAttribute("cy",_m2y(ym).toFixed(1));});
+      const _endDrag=async(ev)=>{if(!_drag)return;const[xm,ym]=_coords(ev);const src=_drag.src;_drag=null;try{await ctx.actions.callWS({type:"padspan_ha/fabric_scanner_position_set",source:src,x_m:xm,y_m:ym,floor_id:_floorId});ctx.toast("Scanner moved \u2714");}catch(e){ctx.toast("Save failed: "+(e.message||e));}};
+      _svgEl.addEventListener("mouseup",_endDrag);_svgEl.addEventListener("mouseleave",_endDrag);
+      _svgEl.addEventListener("touchstart",(ev)=>{const c=ev.target.closest("circle[data-src]");if(c){_drag={src:c.dataset.src,el:c};ev.preventDefault();}},{passive:false});
+      _svgEl.addEventListener("touchmove",(ev)=>{if(!_drag)return;ev.preventDefault();const[xm,ym]=_coords(ev);_drag.el.setAttribute("cx",_m2x(xm).toFixed(1));_drag.el.setAttribute("cy",_m2y(ym).toFixed(1));},{passive:false});
+      _svgEl.addEventListener("touchend",(ev)=>{if(_drag){_endDrag(ev);ev.preventDefault();}});
+      _svgEl.addEventListener("dblclick",(ev)=>{const[xm,ym]=_coords(ev);const placed=new Set(_floorScanners.map(([s])=>s));const unplaced=_liveRadios.filter(r=>r.source&&!placed.has(r.source));if(!unplaced.length){ctx.toast("All live radios already placed");return;}const choice=prompt("Place which scanner?\\n"+unplaced.slice(0,15).map(r=>r.source+" ("+( r.name||"?")+ ")").join("\\n")+"\\n\\nEnter source:");if(choice){ctx.actions.callWS({type:"padspan_ha/fabric_scanner_position_set",source:choice.trim(),x_m:xm,y_m:ym,floor_id:_floorId}).then(()=>{ctx.toast("Placed");ctx.actions.renderRooms();}).catch(e=>ctx.toast("Failed: "+(e.message||e)));}});
+    }
+    wrap.appendChild(_fWrap);
+    wrap.appendChild(el("div",{style:"font-size:11px;color:#78909c;text-align:center;margin-bottom:8px"},
+      `${_floorScanners.length} scanner(s) on floor \u00b7 drag to reposition \u00b7 double-click to place new`));
+  }
 
   // ── Constants & state ─────────────────────────────────────────────────────
   const TILE = 220, CX = 380, CY = 590, W = 760, BASE_H = 940;
