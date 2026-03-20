@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.15.58";
-const BUILD_ID = "20260320T220311Z";
+const APP_VERSION = "0.15.59";
+const BUILD_ID = "20260320T220608Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -288,7 +288,7 @@ class PadSpanHaApp extends HTMLElement {
       status: {},
       roomTagMap: {},
       savedRoomTagMap: {},
-      model: { floors: [], room_meta: {} },
+      model: { floors: [], room_meta: {}, scanners: {}, room_adjacency: {}, fabric_sync_mode: "auto", scanner_positions_m: {}, room_geometry_m: {}, rf_barriers_m: [], map_transforms: {}, beacon_positions_m: {} },
       live: { snapshot: null, sources: null, error: null },
       maps: { list: [], lastError: null },
       mapsTab: "library",
@@ -1071,7 +1071,16 @@ class PadSpanHaApp extends HTMLElement {
   async _getModel(){
     try {
       const res = await this._callWS({ type: "padspan_ha/model_get" });
-      this.state.model = { floors: res?.floors || [], areas: res?.areas || [], room_meta: res?.room_meta || {} };
+      this.state.model = {
+        floors: res?.floors || [], areas: res?.areas || [], room_meta: res?.room_meta || {},
+        scanners: res?.scanners || {}, room_adjacency: res?.room_adjacency || {},
+        fabric_sync_mode: res?.fabric_sync_mode || "auto",
+        scanner_positions_m: res?.scanner_positions_m || {},
+        room_geometry_m: res?.room_geometry_m || {},
+        rf_barriers_m: res?.rf_barriers_m || [],
+        map_transforms: res?.map_transforms || {},
+        beacon_positions_m: res?.beacon_positions_m || {},
+      };
     } catch (e) {
       // non-fatal
       console.warn("model_get failed", e);
