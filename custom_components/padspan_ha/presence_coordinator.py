@@ -95,7 +95,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
-    DOMAIN, DATA_SETTINGS, DATA_CALIBRATION, DATA_ADAPTIVE, DATA_MAPS, DATA_MODEL,
+    DOMAIN, DATA_SETTINGS, DATA_CALIBRATION, DATA_ADAPTIVE, DATA_MODEL,
     DEFAULT_KALMAN_Q, DEFAULT_KALMAN_R,
     DEFAULT_REF_POWER, DEFAULT_PATH_LOSS_EXP, DEFAULT_ROOM_SIGMA_M,
     OUTSIDE_FLOOR_ID,
@@ -168,78 +168,9 @@ _KNN_MIN_POINTS: int = 5
 _KNN_LIVE_THRESHOLD: float = 0.15
 
 
-def _room_centroids_from_maps(maps_list: list) -> dict[str, tuple[float, float, str]]:
-    """Compute room centroids from all maps' room_bounds.
-
-    Returns {room_name: (cx, cy, map_id)} where (cx, cy) is the centroid in
-    normalised [0,1] map coordinates.  If a room appears on multiple maps, the
-    master map takes precedence.
-    """
-    centroids: dict[str, tuple[float, float, str]] = {}
-    master_id = ""
-    for m in (maps_list or []):
-        mid = m.get("id", "")
-        is_master = (m.get("stack") or {}).get("is_master", False)
-        if is_master:
-            master_id = mid
-        for rname, b in (m.get("room_bounds") or {}).items():
-            # Skip if already have from master map
-            if rname in centroids and centroids[rname][2] == master_id:
-                continue
-            btype = b.get("type", "")
-            cx, cy = 0.5, 0.5
-            if btype == "circle":
-                cx = float(b.get("cx", 0.5))
-                cy = float(b.get("cy", 0.5))
-            elif btype == "poly":
-                pts = b.get("points") or []
-                if len(pts) >= 3:
-                    cx = sum(float(p[0]) for p in pts) / len(pts)
-                    cy = sum(float(p[1]) for p in pts) / len(pts)
-            # Prefer master map's centroid
-            if rname not in centroids or is_master:
-                centroids[rname] = (cx, cy, mid)
-    return centroids
-
-
-def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
-    """Determine which room a map-space (x, y) coordinate falls inside.
-
-    Used by k-NN positioning and pinned-beacon room resolution to convert
-    fractional map coordinates into a named room.  Supports two boundary
-    types defined in the map editor: circles and polygons.
-
-    Returns the room name, or '' if the point is outside all defined rooms.
-    """
-    for room_name, b in room_bounds.items():
-        if not isinstance(b, dict):
-            continue
-        btype = b.get("type", "poly")
-        if btype == "circle":
-            # Simple Euclidean distance check against the circle's radius
-            cx = float(b.get("cx", 0.5))
-            cy = float(b.get("cy", 0.5))
-            r = float(b.get("r", 0.12))
-            if (x - cx) ** 2 + (y - cy) ** 2 <= r ** 2:
-                return str(room_name)
-        elif btype == "poly":
-            pts = b.get("points") or []
-            if len(pts) < 3:
-                continue
-            # Ray-casting algorithm: cast a horizontal ray from (x, y) to
-            # the right and count edge crossings.  Odd count = inside.
-            inside = False
-            n = len(pts)
-            j = n - 1
-            for i in range(n):
-                xi, yi = float(pts[i][0]), float(pts[i][1])
-                xj, yj = float(pts[j][0]), float(pts[j][1])
-                if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
-                    inside = not inside
-                j = i
-            if inside:
-                return str(room_name)
-    return ""
+## _room_centroids_from_maps and _room_from_bounds removed — fabric is the
+# sole authority for room geometry.  Room centroids: model.room_centroids_m().
+# Room point-in-polygon: model.beacon_room_from_geometry().
 
 
 def _segments_intersect(
@@ -260,16 +191,18 @@ def _segments_intersect(
 
 
 def _barrier_attenuation(
-    sx: float, sy: float, s_map: str,
-    rx: float, ry: float, r_map: str,
+    sx: float, sy: float, s_floor: str,
+    rx: float, ry: float, r_floor: str,
     barriers: list[dict],
 ) -> float:
     """Compute total RF attenuation (dBm) for barriers crossing the line from
     scanner (sx,sy) to room centroid (rx,ry). Only considers barriers on the
-    same map as the scanner."""
+    same floor as the scanner."""
     total = 0.0
     for bar in barriers:
-        if bar.get("map_id") != s_map:
+        # Match by floor_id (fabric), fall back to map_id (legacy)
+        bar_floor = bar.get("floor_id") or bar.get("map_id", "")
+        if bar_floor and bar_floor != s_floor:
             continue
         pts = bar["points"]
         for i in range(len(pts) - 1):
@@ -514,12 +447,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Pinned beacons have known positions; their room is determined by
         # fabric room_geometry_m (point-in-polygon in metres).
         _pinned: dict[str, dict[str, Any]] = {}  # key → {room, floor_id, x_m, y_m}
-        _maps_store = None
         try:
-            _maps_store = self.hass.data.get(DOMAIN, {}).get(DATA_MAPS)
 
-            # Fabric beacon positions (primary — floor-based, metre-space)
-            if _model and _model.data.get("beacon_positions_m"):
+            # Fabric beacon positions (floor-based, metre-space — no map fallback)
+            if _model:
                 for _bk_key, _bk_pos in _model.beacon_positions_m().items():
                     if not isinstance(_bk_pos, dict):
                         continue
@@ -529,18 +460,6 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "x_m": _bk_pos.get("x_m"),
                         "y_m": _bk_pos.get("y_m"),
                     }
-            elif _maps_store:
-                # Fallback: read beacons from maps (legacy)
-                for _m in (_maps_store.data.get("maps") or []):
-                    _rb = _m.get("room_bounds") or {}
-                    for _bk in (_m.get("beacons") or []):
-                        _bk_key = _bk.get("key")
-                        if _bk_key and _bk.get("x") is not None:
-                            _room = _room_from_bounds(_rb, float(_bk.get("x", 0)), float(_bk.get("y", 0)))
-                            _pinned[_bk_key] = {
-                                "room": _room,
-                                "floor_id": _m.get("floor_id", ""),
-                            }
         except Exception:
             pass
 
@@ -550,12 +469,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _fabric_rooms = set(_model.data.get("room_geometry_m", {}).keys())
 
         # ── Velocity gate: compute room centroids once per poll ────────────
-        # ── Phase 2: prefer real-world model (metres) for spatial data ────────
-        # Falls back to map-derived data (0-1 fracs) if no metre model exists.
+        # ── Spatial data from fabric (metre-space, floor-based) ────────────
+        # All spatial data comes from the fabric. No map fallback.
         self._use_metres = False
         try:
-            if _model and _model.has_spatial_model():
-                # Use real-world metre model
+            if _model:
                 self._room_centroids = _model.room_centroids_m()
                 self._scanner_positions = {
                     src: (pos["x_m"], pos["y_m"], pos.get("floor_id", ""))
@@ -567,52 +485,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "points": [(float(p[0]), float(p[1])) for p in (b.get("points_m") or [])],
                         "attenuation_dbm": float(b.get("attenuation_dbm", 6)),
                         "material": str(b.get("material", "custom")),
-                        "map_id": b.get("map_id", ""),
                         "floor_id": str(b.get("floor_id", "")),
                     }
                     for b in _mb if len(b.get("points_m") or []) >= 2
                 ]
-                self._use_metres = True
+                if self._room_centroids or self._scanner_positions:
+                    self._use_metres = True
         except Exception:
             pass
-
-        # Fallback: map-derived spatial data (legacy path)
-        if not self._use_metres:
-            try:
-                if _maps_store:
-                    self._room_centroids = _room_centroids_from_maps(
-                        _maps_store.data.get("maps") or []
-                    )
-            except Exception:
-                pass  # centroids are best-effort; gate degrades gracefully
-
-            try:
-                if _maps_store:
-                    _sc_pos: dict[str, tuple[float, float, str]] = {}
-                    _barriers: list[dict] = []
-                    for _m in (_maps_store.data.get("maps") or []):
-                        _mid = _m.get("id", "")
-                        for _rx in (_m.get("receivers") or []):
-                            _src = _rx.get("source") or _rx.get("id", "")
-                            if _src and _rx.get("x") is not None:
-                                _sc_pos[str(_src)] = (
-                                    float(_rx["x"]), float(_rx["y"]), _mid
-                                )
-                        _m_floor = str(_m.get("floor_id", ""))
-                        for _bar in (_m.get("rf_barriers") or []):
-                            pts = _bar.get("points") or []
-                            if len(pts) >= 2:
-                                _barriers.append({
-                                    "points": [(float(p[0]), float(p[1])) for p in pts],
-                                    "attenuation_dbm": float(_bar.get("attenuation_dbm", 6)),
-                                    "material": str(_bar.get("material", "custom")),
-                                    "map_id": _mid,
-                                    "floor_id": _m_floor,
-                                })
-                    self._scanner_positions = _sc_pos
-                    self._rf_barriers = _barriers
-            except Exception:
-                pass  # barrier data is best-effort
 
         for obj in objects:
             key = obj.get("key", "")
@@ -1675,9 +1555,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Inject calibration points immediately for beacons with live RSSI.
 
         Called by the Beacon Tune save handler when the user confirms beacon
-        positions on the map.  Bypasses the normal 10-minute rate limit because
-        this is an explicit user action — the positions are fresh and intentional.
-        Uses the coordinator's Kalman-smoothed RSSI (not raw) for better quality.
+        positions. Uses fabric geometry for room resolution. Accepts both
+        map-frac and metre-space beacon positions.
 
         Returns the number of calibration points successfully injected.
         """
@@ -1685,44 +1564,62 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not cal_store:
             return 0
 
+        _model = self.hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+
         injected = 0
         now = time.monotonic()
         for bk in beacons:
             key = bk.get("key", "")
-            if not key or bk.get("x") is None or bk.get("y") is None:
+            if not key:
                 continue
-            # Determine room from room_bounds
-            bx, by = float(bk.get("x", 0)), float(bk.get("y", 0))
-            room = _room_from_bounds(room_bounds or {}, bx, by)
-            # Find RSSI data — try both key directly and known object addresses
+            # Find RSSI data
             smoothed_rssi = dict(self._ema_rssi.get(key, {}))
             if not smoothed_rssi:
-                # For iBeacons, RSSI is stored under the UUID key
                 smoothed_rssi = dict(self._ema_rssi.get(key.upper(), {}))
             if not smoothed_rssi:
-                # Try known objects cache for the address
                 obj = self._known_objs.get(key) or {}
                 smoothed_rssi = obj.get("_source_rssi") or {}
             if not smoothed_rssi:
                 continue
-            # Reset rate limit so periodic injection also picks up new position
+
+            # Resolve position and room from fabric
+            _pt: dict[str, Any] = {
+                "floor_id": floor_id,
+                "label": f"[auto] {(self._known_objs.get(key) or {}).get('user_label') or key}",
+                "device_id": key,
+                "duration_s": 10,
+                "scanner_readings": [
+                    {"source": src, "rssi_samples": [rssi]}
+                    for src, rssi in smoothed_rssi.items()
+                ],
+            }
+
+            # Check fabric beacon positions first (metre-space authority)
+            _fb = (_model.beacon_positions_m().get(key) or {}) if _model else {}
+            if _fb and _fb.get("x_m") is not None:
+                _pt["x_m"] = _fb["x_m"]
+                _pt["y_m"] = _fb["y_m"]
+                _pt["room"] = _fb.get("room", "")
+                _pt["x_frac"] = 0.5
+                _pt["y_frac"] = 0.5
+                _pt["map_id"] = ""
+            elif bk.get("x") is not None:
+                # Fallback: map fracs from beacon dict
+                bx, by = float(bk.get("x", 0)), float(bk.get("y", 0))
+                _pt["map_id"] = map_id
+                _pt["x_frac"] = bx
+                _pt["y_frac"] = by
+                # Room from fabric geometry if available
+                if _model:
+                    _pt["room"] = _model.beacon_room_from_geometry(bx, by, floor_id)
+                else:
+                    _pt["room"] = ""
+            else:
+                continue
+
             self._beacon_autocal_last[key] = now
             try:
-                label = (self._known_objs.get(key) or {}).get("user_label") or key
-                await cal_store.async_add_point({
-                    "map_id": map_id,
-                    "x_frac": bx,
-                    "y_frac": by,
-                    "floor_id": floor_id,
-                    "room": room,
-                    "label": f"[auto] {label}",
-                    "device_id": key,
-                    "duration_s": 10,
-                    "scanner_readings": [
-                        {"source": src, "rssi_samples": [rssi]}
-                        for src, rssi in smoothed_rssi.items()
-                    ],
-                })
+                await cal_store.async_add_point(_pt)
                 await cal_store.async_prune_auto_points(max_per_beacon=50)
                 injected += 1
             except Exception:

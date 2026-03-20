@@ -5804,31 +5804,25 @@ async def ws_store_backup_delete(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/beacon_positions_get"})
 @websocket_api.async_response
 async def ws_beacon_positions_get(hass: HomeAssistant, connection, msg) -> None:
-    """Return all pinned beacon positions across all maps with their computed room.
+    """Return all pinned beacon positions from the fabric (metre-space authority).
 
-    Used by the Beacon Tune tab to show where beacons are placed.  Room is
-    determined by point-in-polygon/circle test against the map's room_bounds.
+    Used by the Beacon Tune tab to show where beacons are placed.
+    Room is determined from fabric room_geometry_m, not map room_bounds.
     """
-    ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
-    if not ms:
-        connection.send_result(msg["id"], {"positions": []})
-        return
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
     positions: list[dict[str, Any]] = []
-    for m in ms.list_maps():
-        map_id = m.get("id", "")
-        floor_id = m.get("floor_id", "")
-        room_bounds = m.get("room_bounds") or {}
-        for bk in m.get("beacons") or []:
-            room = _room_from_bounds(room_bounds, float(bk.get("x", 0)), float(bk.get("y", 0)))
+    if mdl:
+        for key, bp in mdl.beacon_positions_m().items():
+            if not isinstance(bp, dict):
+                continue
             positions.append({
-                "key": bk.get("key", ""),
-                "map_id": map_id,
-                "x": bk.get("x", 0),
-                "y": bk.get("y", 0),
-                "label": bk.get("label", ""),
-                "floor_id": floor_id,
-                "room": room,
-                "kind": bk.get("kind", ""),
+                "key": key,
+                "x_m": bp.get("x_m"),
+                "y_m": bp.get("y_m"),
+                "floor_id": bp.get("floor_id", ""),
+                "room": bp.get("room", ""),
+                "label": bp.get("label", ""),
+                "kind": bp.get("kind", ""),
             })
     connection.send_result(msg["id"], {"positions": positions})
 
@@ -6006,7 +6000,8 @@ async def ws_ha_entities_audit(hass: HomeAssistant, connection, msg) -> None:
     })
 
 
-# ── Geometry Helpers ───────────────────────────────────────────────────────────
+# ── Geometry Helpers (legacy — kept for maps.js editor use only) ──────────────
+# Room geometry for positioning is in model_store.beacon_room_from_geometry().
 
 def _room_from_bounds(room_bounds: dict, x: float, y: float) -> str:
     """Determine which room a point (x,y) falls in using room boundary shapes.
