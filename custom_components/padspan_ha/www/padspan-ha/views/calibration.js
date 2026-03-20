@@ -266,66 +266,56 @@ function _setup(ctx, el, cs, calData) {
   }
   wrap.appendChild(deviceCard);
 
-  // Map selector
+  // Floor selector (primary) — maps are background images, not the selection unit
   const maps = ctx.state.maps?.list || [];
   const mapCard = el("div", { class: "card" });
-  mapCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;margin-bottom:8px" }, "Floor Map"));
+  mapCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;margin-bottom:8px" }, "Floor"));
   mapCard.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:10px" },
-    "Select the floor plan you'll be calibrating. You can switch maps at any time."));
+    "Select which floor you're calibrating. The map image is used as a visual reference."));
   if (maps.length) {
     const mapSel = document.createElement("select");
     mapSel.style.width = "100%";
     const mp0 = document.createElement("option");
     mp0.value = "";
-    mp0.textContent = cs.mapId ? "" : "— choose map or floor —";
+    mp0.textContent = cs.mapId ? "" : "\u2014 choose a floor \u2014";
     mapSel.appendChild(mp0);
 
-    // Build floor → maps lookup
+    // Build floor_id → maps lookup
     const _fl = ctx.state.model?.floors || [];
-    const _floorMaps = new Map(); // z_level → [map, ...]
+    const _floorMaps = new Map(); // floor_id → [map, ...]
     for (const m of maps) {
-      const z = m.stack?.z_level ?? 0;
-      if (!_floorMaps.has(z)) _floorMaps.set(z, []);
-      _floorMaps.get(z).push(m);
-    }
-    // Floor entries at the top (only floors with maps)
-    const _sortedZ = [..._floorMaps.keys()].sort((a, b) => a - b);
-    if (_sortedZ.length > 1) {
-      const floorGroup = document.createElement("optgroup");
-      floorGroup.label = "Floors";
-      for (const z of _sortedZ) {
-        const fObj = _fl.find(f => f.level === z);
-        const fName = fObj ? (fObj.name || `Floor ${z}`) : `Floor ${z}`;
-        const opt = document.createElement("option");
-        opt.value = `__floor__${z}`;
-        opt.textContent = `${fName} (${_floorMaps.get(z).length} map${_floorMaps.get(z).length > 1 ? "s" : ""})`;
-        floorGroup.appendChild(opt);
-      }
-      mapSel.appendChild(floorGroup);
+      const fid = m.floor_id || "main";
+      if (!_floorMaps.has(fid)) _floorMaps.set(fid, []);
+      _floorMaps.get(fid).push(m);
     }
 
-    // Map entries
-    const mapGroup = _sortedZ.length > 1 ? document.createElement("optgroup") : null;
-    if (mapGroup) mapGroup.label = "Maps";
-    for (const m of maps) {
-      const z = m.stack?.z_level ?? 0;
-      const fObj = _fl.find(f => f.level === z);
-      const fLabel = fObj ? ` (${fObj.name || `Floor ${z}`})` : "";
+    // Floor entries — primary selection
+    for (const f of _fl) {
+      const fMaps = _floorMaps.get(f.id) || [];
+      if (!fMaps.length) continue;
       const opt = document.createElement("option");
-      opt.value = m.id;
-      opt.textContent = (m.name || m.id) + fLabel;
-      if (m.id === cs.mapId) opt.selected = true;
-      (mapGroup || mapSel).appendChild(opt);
+      opt.value = `__floor__${f.id}`;
+      opt.textContent = `${f.name || f.id} (${fMaps.length} map${fMaps.length > 1 ? "s" : ""})`;
+      // Auto-select if current mapId is on this floor
+      if (cs.mapId && fMaps.some(m => m.id === cs.mapId)) opt.selected = true;
+      mapSel.appendChild(opt);
     }
-    if (mapGroup) mapSel.appendChild(mapGroup);
+    // Also show floors not in model but present in maps
+    for (const [fid, fMaps] of _floorMaps) {
+      if (_fl.some(f => f.id === fid)) continue;
+      const opt = document.createElement("option");
+      opt.value = `__floor__${fid}`;
+      opt.textContent = `${fid} (${fMaps.length} map${fMaps.length > 1 ? "s" : ""})`;
+      if (cs.mapId && fMaps.some(m => m.id === cs.mapId)) opt.selected = true;
+      mapSel.appendChild(opt);
+    }
 
     mapSel.addEventListener("change", () => {
       const v = mapSel.value;
       if (v.startsWith("__floor__")) {
-        // Floor selected — pick the map on that floor with the most calibration data
-        const z = Number(v.replace("__floor__", ""));
-        const candidates = _floorMaps.get(z) || [];
-        // Rank by receiver count, then room_bounds count (most activity first)
+        const fid = v.replace("__floor__", "");
+        const candidates = _floorMaps.get(fid) || [];
+        // Pick the best map on this floor (most receivers + room_bounds)
         const best = candidates.slice().sort((a, b) => {
           const ra = (a.receivers || []).length + Object.keys(a.room_bounds || {}).length;
           const rb = (b.receivers || []).length + Object.keys(b.room_bounds || {}).length;
@@ -408,7 +398,7 @@ function _setup(ctx, el, cs, calData) {
         (cs.deviceId ? "✓" : "✗") + " Beacon device selected"),
       el("br"),
       el("span", { style: `color:${cs.mapId ? "#52b788" : "#f59e0b"}` },
-        (cs.mapId ? "✓" : "✗") + " Floor map selected"),
+        (cs.mapId ? "\u2713" : "\u2717") + " Floor selected"),
     ]),
     ...(ready ? [
       el("button", {
@@ -423,11 +413,12 @@ function _setup(ctx, el, cs, calData) {
   // Progress summary
   const pts = calData.points || [];
   if (pts.length) {
-    const mapIds = [...new Set(pts.map(p => p.map_id))];
+    const mapIds = [...new Set(pts.map(p => p.map_id).filter(Boolean))];
+    const floorIds = [...new Set(pts.map(p => p.floor_id).filter(Boolean))];
     wrap.appendChild(el("div", { class: "card" }, [
       el("div", { style: "font-weight:700;font-size:14px;margin-bottom:6px" }, "Calibration Progress"),
       el("div", { style: "font-size:13px;color:#94a3b8" },
-        `${pts.length} point${pts.length > 1 ? "s" : ""} collected across ${mapIds.length} map${mapIds.length > 1 ? "s" : ""}.`),
+        `${pts.length} point${pts.length > 1 ? "s" : ""} collected across ${floorIds.length} floor${floorIds.length > 1 ? "s" : ""}.`),
       el("button", {
         class: "btn inline",
         style: "margin-top:8px",
@@ -447,7 +438,7 @@ function _pinAndListen(ctx, el, cs, calData) {
     wrap.appendChild(el("div", { class: "card", style: "border-color:#f59e0b" }, [
       el("div", { style: "font-size:13px;color:#f59e0b;font-weight:700" }, "Setup required"),
       el("div", { class: "muted", style: "font-size:12px;margin-top:4px" },
-        "Return to Setup and select your beacon device and floor map."),
+        "Return to Setup and select your beacon device and floor."),
       el("button", {
         class: "btn", style: "margin-top:10px",
         onclick: () => { cs.tab = "setup"; ctx.actions.renderRooms(); },

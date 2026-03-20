@@ -262,12 +262,13 @@ function _compareAllMaps(ctx, maps, resultDiv) {
 function _library(ctx, maps, activeId, helpBtn, isBasic){
   const { el } = ctx.helpers;
   helpBtn = helpBtn || (()=>null);
+  const _floorCount = new Set(maps.map(m => m.floor_id || "main")).size;
   const _compareResultDiv = el("div",{});
   const wrap = el("div",{class:"card"},[
     el("div",{class:"card-head"},[
       el("div",{style:"display:flex;align-items:center;gap:10px;flex-wrap:wrap"},[
         el("div",{class:"muted"}, isBasic ? "Your floor plans" : "Maps Library"),
-        el("div",{class:"muted"},`${maps.length} map(s)`),
+        el("div",{class:"muted"},`${maps.length} map(s) on ${_floorCount} floor(s)`),
         ...(!isBasic && maps.length >= 2 ? [el("button",{class:"btn inline",style:"font-size:11px;padding:2px 10px;background:#0a1a2a;border-color:#1e4976;color:#7dd3fc",
           onclick:()=>{ _compareAllMaps(ctx, maps, _compareResultDiv); }
         }, "Compare Maps")] : []),
@@ -343,12 +344,36 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
     }
   }
 
-  // Masters first, then by name
-  const sortedMaps = [...maps].sort((a,b) => (b.stack?.is_master?1:0) - (a.stack?.is_master?1:0));
+  // Group maps by floor
+  const _floors = ctx.state.model?.floors || [];
+  const _floorMap = new Map(); // floor_id → [map, ...]
+  for (const m of maps) {
+    const fid = m.floor_id || "main";
+    if (!_floorMap.has(fid)) _floorMap.set(fid, []);
+    _floorMap.get(fid).push(m);
+  }
+  // Sort floors by model order, with unmatched at end
+  const _floorOrder = _floors.map(f => f.id);
+  const _sortedFloors = [..._floorMap.keys()].sort((a, b) => {
+    const ia = _floorOrder.indexOf(a), ib = _floorOrder.indexOf(b);
+    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+  });
+
   const currentMaster = maps.find(m => !!(m.stack?.is_master)) || null;
   const list = el("div",{style:"margin-top:10px;display:flex;flex-direction:column;gap:8px"});
   const wizardContainer = el("div",{});
-  for(const m of sortedMaps){
+
+  for (const fid of _sortedFloors) {
+    const floorMaps = _floorMap.get(fid) || [];
+    // Sort: masters first, then by name
+    floorMaps.sort((a, b) => (b.stack?.is_master ? 1 : 0) - (a.stack?.is_master ? 1 : 0));
+    // Floor header
+    const floorObj = _floors.find(f => f.id === fid);
+    const floorName = floorObj ? (floorObj.name || fid) : fid;
+    list.appendChild(el("div",{style:"font-weight:700;font-size:13px;color:#52b788;margin-top:8px;margin-bottom:2px;text-transform:uppercase;letter-spacing:.5px"},
+      `${floorName} (${floorMaps.length} map${floorMaps.length > 1 ? "s" : ""})`));
+
+  for(const m of floorMaps){
     const row = el("div",{class:"maprow" + (m.id===activeId ? " active" : "")});
 
     // Thumbnail with room bounds + recommendation overlay
@@ -438,6 +463,7 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
     row.appendChild(actions);
     list.appendChild(row);
   }
+  } // end floor loop
   wrap.appendChild(list);
   wrap.appendChild(wizardContainer);
   return wrap;
@@ -1230,7 +1256,7 @@ function _edit(ctx, map){
   ]);
 
   const info = el("div",{class:"muted", style:"margin-top:10px;font-size:12px"},
-    "Coordinates are stored normalized (0–1), so they stay correct if you re-upload a resized map with the same aspect ratio."
+    "Positions are stored in real-world metres in the positioning fabric. Map images are rendering references \u2014 replacing a map image preserves all spatial data."
   );
 
   const list = el("div",{class:"mono", style:"margin-top:10px;white-space:pre-wrap"});
