@@ -139,6 +139,41 @@ function _renderFabric(ctx, container, data) {
   container.innerHTML = "";
   const { summary, checks, scanners, scanner_positions_m, room_geometry_m, adjacency } = data;
 
+  // ── Migration prompt for old system users ───────────────────────────────
+  const maps = data.maps || [];
+  const hasMapsWithData = maps.some(m => m.has_receivers > 0 || m.has_room_bounds > 0);
+  const hasNoFabric = !scanner_positions_m?.length && !room_geometry_m?.length;
+  if (hasMapsWithData && hasNoFabric) {
+    const migrBanner = el("div",{class:"card",style:"border:2px solid #f59e0b;background:rgba(245,158,11,.08);margin-bottom:12px;padding:16px"});
+    migrBanner.innerHTML = `
+      <div style="font-weight:800;font-size:14px;color:#fbbf24;margin-bottom:8px">\u26a0 Migration Required</div>
+      <div style="font-size:12px;color:#e2e8f0;margin-bottom:12px">
+        Your maps have spatial data (receivers, rooms, barriers) that needs to be migrated to the positioning fabric.
+        This is a one-time process. After migration, your positioning data lives independently of map images.
+      </div>`;
+    const migrRow = el("div",{style:"display:flex;align-items:center;gap:8px"});
+    const migrInput = el("input",{type:"number",value:"20",min:"5",max:"200",step:"1",
+      style:"width:80px;padding:4px 8px;border:1px solid #334155;border-radius:4px;background:#1e293b;color:#e2e8f0;font-size:12px"});
+    migrRow.appendChild(el("span",{style:"font-size:11px;color:#94a3b8"},"Floor width:"));
+    migrRow.appendChild(migrInput);
+    migrRow.appendChild(el("span",{style:"font-size:11px;color:#94a3b8"},"metres"));
+    const migrBtn = el("button",{class:"btn",style:"width:auto;padding:6px 16px;font-size:12px;background:#92400e;border-color:#f59e0b;color:#fbbf24;font-weight:700"},"Migrate to Fabric");
+    migrBtn.addEventListener("click", async () => {
+      const w = parseFloat(migrInput.value);
+      if (!w || w < 1) { ctx.actions.toast("Enter a valid floor width"); return; }
+      migrBtn.disabled = true; migrBtn.textContent = "Migrating\u2026";
+      try {
+        const res = await ctx.actions.callWS({type:"padspan_ha/fabric_migrate_from_maps", default_floor_width_m: w});
+        try { await ctx.actions.callWS({type:"padspan_ha/calibration_retrain_rf"}); } catch(e){}
+        ctx.actions.toast(`Migrated: ${res.transforms_computed} transforms, ${res.scanners_migrated} scanners, ${res.rooms_migrated} rooms, ${res.beacons_migrated||0} beacons, ${res.cal_points_backfilled||0} cal points`);
+        _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container);
+      } catch(e) { ctx.actions.toast("Migration failed: "+(e.message||e)); migrBtn.disabled=false; migrBtn.textContent="Migrate to Fabric"; }
+    });
+    migrRow.appendChild(migrBtn);
+    migrBanner.appendChild(migrRow);
+    container.appendChild(migrBanner);
+  }
+
   // ── Summary banner ─────────────────────────────────────────────────────
   const color = summary.healthy ? "#52b788" : summary.failed > 2 ? "#f87171" : "#f59e0b";
   const bg = summary.healthy ? "rgba(82,183,136,.08)" : "rgba(248,113,113,.08)";

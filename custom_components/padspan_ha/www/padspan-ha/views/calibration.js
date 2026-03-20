@@ -933,152 +933,169 @@ function _buildSavePanel(ctx, el, cs, calData, mapData) {
   return wrap;
 }
 
-// ── Roam tab ──────────────────────────────────────────────────────────────────
+// ── Roam tab (fabric-based, no map images) ───────────────────────────────────
 function _roam(ctx, el, cs, calData) {
   const wrap = el("div", { style: "display:flex;flex-direction:column;gap:14px" });
+  const floorId = cs._floorId || "main";
 
-  if (!cs.deviceId || !cs.mapId) {
+  if (!cs.deviceId) {
     wrap.appendChild(el("div", { class: "card", style: "border-color:#f59e0b" }, [
       el("div", { style: "color:#f59e0b;font-weight:700" }, "Setup required"),
-      el("button", {
-        class: "btn", style: "margin-top:10px",
+      el("button", { class: "btn", style: "margin-top:10px",
         onclick: () => { cs.tab = "setup"; ctx.actions.renderRooms(); },
       }, "Go to Setup"),
     ]));
     return wrap;
   }
 
-  const maps = ctx.state.maps?.list || [];
-  const mapData = maps.find(m => m.id === cs.mapId);
-  if (!mapData?.image?.filename) {
-    wrap.appendChild(el("div", { class: "card" }, [
-      el("div", { class: "muted" }, "No map image available."),
-    ]));
-    return wrap;
-  }
-
+  const geo = ctx.state.model?.room_geometry_m || {};
+  const scanPos = ctx.state.model?.scanner_positions_m || {};
   const pts = calData.points || [];
-  const mapPts = pts.filter(p => p.map_id === cs.mapId);
+  const floorPts = pts.filter(p => p.floor_id === floorId && p.x_m != null);
 
-  // Compute coverage grid (JS side)
-  const grid = _computeCoverage(mapPts, GRID_N);
+  // Coverage grid in metre space
+  const grid = _computeCoverage(floorPts.map(p => ({x_frac: p.x_m, y_frac: p.y_m})), GRID_N);
   const covered = grid.filter(v => v >= 0.5).length;
   const pct = Math.round(covered / (GRID_N * GRID_N) * 100);
   const target = _nextTarget(grid, GRID_N);
 
-  // Coverage progress bar
+  // Progress bar
   const progCard = el("div", { class: "card" });
   progCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:10px;margin-bottom:8px" }, [
     el("div", { style: "font-weight:700;font-size:14px" }, "Coverage"),
-    el("span", { class: "badge", style: "margin-left:auto" }, `${mapPts.length} points`),
+    el("span", { class: "badge", style: "margin-left:auto" }, `${floorPts.length} points`),
     el("span", { class: pct >= 70 ? "badge" : "badge warn" }, `${pct}%`),
   ]));
   const barOuter = el("div", { style: "height:10px;background:#1b3526;border-radius:5px;overflow:hidden" });
-  const barInner = el("div", { style: `height:100%;width:${pct}%;background:${pct >= 70 ? "#52b788" : pct >= 40 ? "#f59e0b" : "#dc2626"};transition:width 0.5s` });
-  barOuter.appendChild(barInner);
+  barOuter.appendChild(el("div", { style: `height:100%;width:${pct}%;background:${pct >= 70 ? "#52b788" : pct >= 40 ? "#f59e0b" : "#dc2626"};transition:width 0.5s` }));
   progCard.appendChild(barOuter);
   progCard.appendChild(el("div", { class: "muted", style: "font-size:11px;margin-top:6px" },
-    pct >= 80
-      ? "✓ Excellent coverage — model should be highly accurate."
-      : pct >= 50
-      ? "Good progress. Keep adding points to improve accuracy."
-      : "Keep going — more points needed for a reliable model."));
+    pct >= 80 ? "\u2713 Excellent coverage." : pct >= 50 ? "Good progress. Keep adding points." : "Keep going \u2014 more points needed."));
   wrap.appendChild(progCard);
 
-  // Coverage heatmap map
-  const ar = (mapData.image.height || 600) / (mapData.image.width || 800);
-  const vbH = ar * 100;
-  const imgUrl = `/local/padspan_ha/maps/${mapData.image.filename}`;
-  const cellW = 100 / GRID_N;
-  const cellH = vbH / GRID_N;
+  // Fabric floor canvas with coverage heatmap overlay
+  // Compute metre bounding box
+  let mMinX = Infinity, mMinY = Infinity, mMaxX = -Infinity, mMaxY = -Infinity;
+  for (const g of Object.values(geo)) {
+    if (g.floor_id !== floorId) continue;
+    if (g.type === "poly" && g.points_m) for (const p of g.points_m) { mMinX=Math.min(mMinX,p[0]); mMinY=Math.min(mMinY,p[1]); mMaxX=Math.max(mMaxX,p[0]); mMaxY=Math.max(mMaxY,p[1]); }
+    else if (g.type === "circle") { mMinX=Math.min(mMinX,g.cx_m-g.r_m); mMinY=Math.min(mMinY,g.cy_m-g.r_m); mMaxX=Math.max(mMaxX,g.cx_m+g.r_m); mMaxY=Math.max(mMaxY,g.cy_m+g.r_m); }
+  }
+  for (const sp of Object.values(scanPos)) { if(sp.floor_id===floorId){mMinX=Math.min(mMinX,sp.x_m);mMinY=Math.min(mMinY,sp.y_m);mMaxX=Math.max(mMaxX,sp.x_m);mMaxY=Math.max(mMaxY,sp.y_m);} }
+  if (!isFinite(mMinX)) { mMinX=0; mMinY=0; mMaxX=20; mMaxY=15; }
+  const mPad = Math.max(1, (mMaxX-mMinX)*0.08);
+  mMinX-=mPad; mMinY-=mPad; mMaxX+=mPad; mMaxY+=mPad;
+  const mW=mMaxX-mMinX||20, mH=mMaxY-mMinY||15;
+  const vbW=100, vbH=(mH/mW)*vbW;
+  const m2x = xm => ((xm-mMinX)/mW)*vbW;
+  const m2y = ym => ((ym-mMinY)/mH)*vbH;
 
-  // Coverage grid cells
+  // Coverage grid cells (in metre space, mapped to SVG)
+  const cellW = vbW / GRID_N, cellH = vbH / GRID_N;
   let gridSvg = "";
-  for (let cy = 0; cy < GRID_N; cy++) {
-    for (let cx = 0; cx < GRID_N; cx++) {
-      const v = grid[cy * GRID_N + cx];
-      const opacity = Math.max(0, 0.6 * (1 - v)).toFixed(2);
-      const color = v >= 0.5 ? "#52b788" : v >= 0.2 ? "#f59e0b" : "#dc2626";
-      gridSvg += `<rect x="${(cx * cellW).toFixed(2)}" y="${(cy * cellH).toFixed(2)}" width="${cellW.toFixed(2)}" height="${cellH.toFixed(2)}" fill="${color}" opacity="${opacity}" rx="0.5"/>`;
+  for (let cy=0; cy<GRID_N; cy++) for (let cx=0; cx<GRID_N; cx++) {
+    const v = grid[cy*GRID_N+cx];
+    const opacity = Math.max(0, 0.5*(1-v)).toFixed(2);
+    const color = v >= 0.5 ? "#52b788" : v >= 0.2 ? "#f59e0b" : "#dc2626";
+    gridSvg += `<rect x="${(cx*cellW).toFixed(2)}" y="${(cy*cellH).toFixed(2)}" width="${cellW.toFixed(2)}" height="${cellH.toFixed(2)}" fill="${color}" opacity="${opacity}" rx="0.3"/>`;
+  }
+
+  // Room outlines
+  let roomsSvg = "";
+  for (const [rname, g] of Object.entries(geo)) {
+    if (g.floor_id !== floorId) continue;
+    const col = ctx.helpers.roomColor ? ctx.helpers.roomColor(rname) : "#52b788";
+    if (g.type === "poly" && g.points_m?.length >= 3) {
+      roomsSvg += `<polygon points="${g.points_m.map(p=>`${m2x(p[0]).toFixed(2)},${m2y(p[1]).toFixed(2)}`).join(" ")}" fill="none" stroke="${col}" stroke-width="0.5" stroke-opacity="0.8"/>`;
+      const cx2=g.points_m.reduce((s,p)=>s+p[0],0)/g.points_m.length;
+      const cy2=g.points_m.reduce((s,p)=>s+p[1],0)/g.points_m.length;
+      roomsSvg += `<text x="${m2x(cx2).toFixed(2)}" y="${m2y(cy2).toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="2.2" fill="${col}" fill-opacity="0.6" font-weight="600">${rname.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</text>`;
     }
   }
 
-  // Existing calibration dots
-  const dotsSvg = mapPts.map(p =>
-    `<circle cx="${(p.x_frac * 100).toFixed(2)}" cy="${(p.y_frac * vbH).toFixed(2)}" r="2.5" fill="#52b788" stroke="white" stroke-width="0.8" opacity="0.9"/>`
-  ).join("");
+  // Cal points
+  const dotsSvg = floorPts.map(p => `<circle cx="${m2x(p.x_m).toFixed(2)}" cy="${m2y(p.y_m).toFixed(2)}" r="1.5" fill="#52b788" stroke="white" stroke-width="0.4" opacity="0.9"/>`).join("");
 
-  // Next target crosshair
-  const tx = (target.x_frac * 100).toFixed(2);
+  // Target crosshair (target is in 0-1 grid space → convert to SVG)
+  const tx = (target.x_frac * vbW).toFixed(2);
   const ty = (target.y_frac * vbH).toFixed(2);
-  const targetSvg = `
-    <circle cx="${tx}" cy="${ty}" r="7" fill="none" stroke="#60a5fa" stroke-width="2" stroke-dasharray="3 2"/>
-    <circle cx="${tx}" cy="${ty}" r="2.5" fill="#60a5fa"/>
-    <line x1="${tx}" y1="${(parseFloat(ty) - 7)}" x2="${tx}" y2="${(parseFloat(ty) - 13)}" stroke="#60a5fa" stroke-width="1.5"/>
-    <line x1="${tx}" y1="${(parseFloat(ty) + 7)}" x2="${tx}" y2="${(parseFloat(ty) + 13)}" stroke="#60a5fa" stroke-width="1.5"/>
-    <line x1="${(parseFloat(tx) - 7)}" y1="${ty}" x2="${(parseFloat(tx) - 13)}" y2="${ty}" stroke="#60a5fa" stroke-width="1.5"/>
-    <line x1="${(parseFloat(tx) + 7)}" y1="${ty}" x2="${(parseFloat(tx) + 13)}" y2="${ty}" stroke="#60a5fa" stroke-width="1.5"/>`;
+  const targetSvg = pct < 100 ? `
+    <circle cx="${tx}" cy="${ty}" r="5" fill="none" stroke="#60a5fa" stroke-width="1.5" stroke-dasharray="2 1.5"/>
+    <circle cx="${tx}" cy="${ty}" r="2" fill="#60a5fa"/>
+    <line x1="${tx}" y1="${(parseFloat(ty)-5)}" x2="${tx}" y2="${(parseFloat(ty)-9)}" stroke="#60a5fa" stroke-width="1"/>
+    <line x1="${tx}" y1="${(parseFloat(ty)+5)}" x2="${tx}" y2="${(parseFloat(ty)+9)}" stroke="#60a5fa" stroke-width="1"/>
+    <line x1="${(parseFloat(tx)-5)}" y1="${ty}" x2="${(parseFloat(tx)-9)}" y2="${ty}" stroke="#60a5fa" stroke-width="1"/>
+    <line x1="${(parseFloat(tx)+5)}" y1="${ty}" x2="${(parseFloat(tx)+9)}" y2="${ty}" stroke="#60a5fa" stroke-width="1"/>` : "";
 
-  const mapWrap = el("div", { style: "border-radius:10px;overflow:hidden;border:2px solid #1b3526" });
-  mapWrap.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 ${vbH}"
-      preserveAspectRatio="none" style="width:100%;display:block">
-    <image href="${imgUrl}" x="0" y="0" width="100" height="${vbH}" preserveAspectRatio="none"/>
-    ${gridSvg}
-    ${dotsSvg}
-    ${pct < 100 ? targetSvg : ""}
+  const mapWrap2 = el("div", { style: "border-radius:10px;overflow:hidden;border:2px solid #1b3526" });
+  mapWrap2.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vbW} ${vbH.toFixed(2)}"
+      preserveAspectRatio="xMidYMid meet" style="width:100%;display:block;background:#0a1a10;min-height:200px">
+    ${gridSvg}${roomsSvg}${dotsSvg}${targetSvg}
   </svg>`;
-  wrap.appendChild(mapWrap);
+  wrap.appendChild(mapWrap2);
 
   // Legend
   wrap.appendChild(el("div", { style: "display:flex;gap:14px;font-size:11px;color:#78909c;padding:0 4px" }, [
-    el("span", {}, [el("span", { style: "color:#52b788" }, "■ "), "Covered"]),
-    el("span", {}, [el("span", { style: "color:#f59e0b" }, "■ "), "Partial"]),
-    el("span", {}, [el("span", { style: "color:#dc2626" }, "■ "), "Uncovered"]),
-    el("span", {}, [el("span", { style: "color:#60a5fa" }, "⊕ "), "Target"]),
+    el("span", {}, [el("span", { style: "color:#52b788" }, "\u25a0 "), "Covered"]),
+    el("span", {}, [el("span", { style: "color:#f59e0b" }, "\u25a0 "), "Partial"]),
+    el("span", {}, [el("span", { style: "color:#dc2626" }, "\u25a0 "), "Uncovered"]),
+    el("span", {}, [el("span", { style: "color:#60a5fa" }, "\u2295 "), "Target"]),
   ]));
 
   // Next target card
   if (pct < 100) {
-    const tgtRoom = _detectRoom(target.x_frac, target.y_frac, mapData);
+    // Convert target grid position to metres for room detection
+    const tgtXm = mMinX + target.x_frac * mW;
+    const tgtYm = mMinY + target.y_frac * mH;
+    let tgtRoom = "";
+    for (const [rname, g] of Object.entries(geo)) {
+      if (g.floor_id !== floorId || g.type !== "poly" || !g.points_m?.length) continue;
+      let inside = false;
+      const pts2 = g.points_m;
+      for (let i=0, j=pts2.length-1; i<pts2.length; j=i++) {
+        const [xi,yi]=pts2[i],[xj,yj]=pts2[j];
+        if(((yi>tgtYm)!==(yj>tgtYm))&&(tgtXm<(xj-xi)*(tgtYm-yi)/(yj-yi)+xi)) inside=!inside;
+      }
+      if (inside) { tgtRoom = rname; break; }
+    }
+
     const tgtCard = el("div", { class: "card", style: "border-color:#60a5fa" });
-    tgtCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;color:#60a5fa;margin-bottom:6px" },
-      "Next Target"));
+    tgtCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;color:#60a5fa;margin-bottom:6px" }, "Next Target"));
     tgtCard.appendChild(el("div", { style: "font-size:13px;margin-bottom:4px" },
-      tgtRoom ? `Go to: ${tgtRoom}` : `Position: ${(target.x_frac * 100).toFixed(0)}% × ${(target.y_frac * 100).toFixed(0)}%`));
+      tgtRoom ? `Go to: ${tgtRoom}` : `Position: ${tgtXm.toFixed(1)}m, ${tgtYm.toFixed(1)}m`));
     tgtCard.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:12px" },
-      "Walk to the blue crosshair location on the map. Stand still, then press the button below."));
+      "Walk to the blue crosshair. Stand still, then press the button below."));
 
     if (cs.collecting) {
       tgtCard.appendChild(_buildCollectionUI(ctx, el, cs));
     } else if (cs.readings) {
+      const maps = ctx.state.maps?.list || [];
+      const mapData = maps.find(m => m.id === cs.mapId);
       tgtCard.appendChild(_buildSavePanel(ctx, el, cs, calData, mapData));
     } else {
-      const collectBtn = el("button", {
-        class: "btn",
-        style: "width:100%;font-size:15px;padding:12px",
-      }, `▶  I'm Here — Collect (${cs.duration}s)`);
+      const collectBtn = el("button", { class: "btn", style: "width:100%;font-size:15px;padding:12px" },
+        `\u25b6  I'm Here \u2014 Collect (${cs.duration}s)`);
       collectBtn.addEventListener("click", () => {
-        // Auto-set pin to target location
-        cs.pinX     = target.x_frac;
-        cs.pinY     = target.y_frac;
-        cs.pinRoom  = tgtRoom || "";
+        cs._pinXm = tgtXm;
+        cs._pinYm = tgtYm;
+        cs.pinRoom = tgtRoom || "";
         cs.pinLabel = tgtRoom ? `Roam: ${tgtRoom}` : "Roam point";
+        // Derive legacy fracs for save compat
+        cs.pinX = target.x_frac; cs.pinY = target.y_frac;
         const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
-        _startCollection(ctx, cs, snap, mapData);
+        _startCollection(ctx, cs, snap);
       });
       tgtCard.appendChild(collectBtn);
     }
     wrap.appendChild(tgtCard);
   } else {
     wrap.appendChild(el("div", { class: "card", style: "border-color:#52b788;text-align:center" }, [
-      el("div", { style: "font-size:28px;margin-bottom:8px" }, "🎉"),
+      el("div", { style: "font-size:28px;margin-bottom:8px" }, "\ud83c\udf89"),
       el("div", { style: "font-weight:700;font-size:15px;color:#52b788;margin-bottom:6px" }, "Full Coverage!"),
-      el("div", { class: "muted", style: "font-size:12px" },
-        "Every zone has calibration data. Check the Model tab to see accuracy estimates."),
-      el("button", {
-        class: "btn", style: "margin-top:12px",
+      el("div", { class: "muted", style: "font-size:12px" }, "Every zone has calibration data. Check the Model tab."),
+      el("button", { class: "btn", style: "margin-top:12px",
         onclick: () => { cs.tab = "model"; ctx.actions.renderRooms(); },
-      }, "View Model →"),
+      }, "View Model \u2192"),
     ]));
   }
 
