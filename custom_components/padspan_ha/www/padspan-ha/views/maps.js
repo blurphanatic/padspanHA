@@ -1373,6 +1373,7 @@ function _edit(ctx, map){
       mk.title = (r.label || r.id || "receiver") + (sid ? ` [${sid}]` : "") + (r.room ? ` • ${r.room}` : "");
       mk.textContent = sid || (r.label || r.id || "R").slice(0,2).toUpperCase();
       mk.addEventListener("click", (ev)=>{
+        if(ctx.state.maps._mode==="measure") return; // let click pass through to stage
         ev.stopPropagation();
         if(ctx.state.maps._mode!=="receivers") return;
         ctx.state.maps._selectedRxId = r.id;
@@ -1394,11 +1395,13 @@ function _edit(ctx, map){
         sLine.setAttribute("x2", sm.p2[0]); sLine.setAttribute("y2", sm.p2[1]);
         sLine.setAttribute("stroke", col); sLine.setAttribute("stroke-width", "0.003");
         sLine.setAttribute("stroke-dasharray", "0.008 0.004"); sLine.setAttribute("opacity", "0.6");
+        sLine.style.pointerEvents = "none";
         svg.appendChild(sLine);
         for (const pt of [sm.p1, sm.p2]) {
           const d = document.createElementNS("http://www.w3.org/2000/svg", "circle");
           d.setAttribute("cx", pt[0]); d.setAttribute("cy", pt[1]);
           d.setAttribute("r", "0.006"); d.setAttribute("fill", col); d.setAttribute("opacity", "0.6");
+          d.style.pointerEvents = "none";
           svg.appendChild(d);
         }
         // Label
@@ -1410,13 +1413,14 @@ function _edit(ctx, map){
         lab.textContent = `${sm.distance_m}m @ ${sm.angle_deg}\u00b0`;
         svg.appendChild(lab);
       }
-      // Current points being placed
+      // Current points being placed (pointer-events:none so clicks pass through)
       const mPts = ctx.state.maps._measurePts || [];
       for (const pt of mPts) {
         const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         dot.setAttribute("cx", pt[0]); dot.setAttribute("cy", pt[1]);
         dot.setAttribute("r", "0.008"); dot.setAttribute("fill", "#60a5fa");
         dot.setAttribute("stroke", "white"); dot.setAttribute("stroke-width", "0.002");
+        dot.style.pointerEvents = "none";
         svg.appendChild(dot);
       }
       if (mPts.length === 2) {
@@ -1425,6 +1429,7 @@ function _edit(ctx, map){
         line.setAttribute("x2", mPts[1][0]); line.setAttribute("y2", mPts[1][1]);
         line.setAttribute("stroke", "#60a5fa"); line.setAttribute("stroke-width", "0.003");
         line.setAttribute("stroke-dasharray", "0.01 0.005");
+        line.style.pointerEvents = "none";
         svg.appendChild(line);
       }
     }
