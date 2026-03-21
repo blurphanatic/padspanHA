@@ -1915,22 +1915,33 @@ function _edit(ctx, map){
           `Apply Scale: ${avgPpm.toFixed(1)} px/m`);
         applyBtn.addEventListener("click", async () => {
           applyBtn.disabled = true; applyBtn.textContent = "Saving\u2026";
-          const existing = cal.reference_points || [];
-          const newRefs = meas.map(m2 => ({
-            p1: { x_frac: m2.p1[0], y_frac: m2.p1[1] },
-            p2: { x_frac: m2.p2[0], y_frac: m2.p2[1] },
-            distance_m: m2.distance_m, px_per_meter: Math.round(m2.px_per_meter * 100) / 100,
-            angle_deg: m2.angle_deg, date: new Date().toISOString().slice(0, 10),
-          }));
-          const newCal = Object.assign({}, cal, {
-            mode: "reference",
-            px_per_meter: Math.round(avgPpm * 100) / 100,
-            reference_points: [...existing, ...newRefs],
-          });
+          const ppm = Math.round(avgPpm * 100) / 100;
+          const stk = map.stack || {};
+          const fl = map.floor_id || "main";
+          const rotRad = (stk.rotation || 0) * Math.PI / 180;
+          const isMaster = !!(stk.is_master);
+
+          // Compute transform directly and save to fabric (authority)
+          const scale_x_m = Math.round((imgW / ppm) * 10000) / 10000;
+          const scale_y_m = Math.round((imgH / ppm) * 10000) / 10000;
+          const transform = {
+            origin_x_m: isMaster ? 0 : Math.round((stk.x_offset || 0) * scale_x_m * 10000) / 10000,
+            origin_y_m: isMaster ? 0 : Math.round((stk.y_offset || 0) * scale_y_m * 10000) / 10000,
+            scale_x_m, scale_y_m,
+            rotation_rad: Math.round(rotRad * 1000000) / 1000000,
+            floor_id: fl,
+            reference_measurements: meas.map(m2 => ({
+              p1: [m2.p1[0], m2.p1[1]], p2: [m2.p2[0], m2.p2[1]],
+              distance_m: m2.distance_m, px_per_meter: Math.round(m2.px_per_meter * 100) / 100,
+              angle_deg: m2.angle_deg, date: new Date().toISOString().slice(0, 10),
+            })),
+          };
           try {
-            await ctx.actions.mapsUpdateQuiet({ map_id: map.id, calibration: newCal });
+            // Save transform directly to fabric — fabric is the sole authority
+            await ctx.actions.callWS({ type: "padspan_ha/fabric_map_transform_set", map_id: map.id, transform });
+            // Re-migrate spatial data with the new transform
             try { await ctx.actions.callWS({ type: "padspan_ha/fabric_migrate_from_maps" }); } catch(e2) {}
-            ctx.toast(`Scale set: ${avgPpm.toFixed(1)} px/m. Aspect ratio ${diffPct.toFixed(1)}% diff. Fabric updated.`);
+            ctx.toast(`Scale: ${ppm} px/m (${scale_x_m.toFixed(1)}m \u00d7 ${scale_y_m.toFixed(1)}m). Saved to fabric.`);
             ctx.state.maps._measurePts = [];
             ctx.state.maps._measurements = [];
             await ctx.actions.mapsRefresh();
@@ -1942,10 +1953,14 @@ function _edit(ctx, map){
         mPanel.appendChild(applyBtn);
       }
 
-      // Current scale + reset
-      if (cal.px_per_meter) {
+      // Current scale from fabric transform
+      const _fabTx = (ctx.state.model?.map_transforms || {})[map.id];
+      if (_fabTx && _fabTx.scale_x_m) {
         mPanel.appendChild(el("div",{style:"font-size:11px;color:#52b788;margin-top:8px"},
-          `Current scale: ${cal.px_per_meter.toFixed(1)} px/m \u2014 map: ${(imgW/cal.px_per_meter).toFixed(1)}m \u00d7 ${(imgH/cal.px_per_meter).toFixed(1)}m`));
+          `Current fabric scale: ${_fabTx.scale_x_m.toFixed(1)}m \u00d7 ${_fabTx.scale_y_m.toFixed(1)}m`));
+      } else if (cal.px_per_meter) {
+        mPanel.appendChild(el("div",{style:"font-size:11px;color:#f59e0b;margin-top:8px"},
+          `Legacy map scale: ${cal.px_per_meter.toFixed(1)} px/m (not in fabric yet)`));
       }
       const resetBtn = el("button",{class:"btn inline",style:"font-size:10px;padding:2px 8px;margin-top:6px;color:#94a3b8"}, "Start Over");
       resetBtn.addEventListener("click", () => { ctx.state.maps._measurePts = []; ctx.state.maps._measurements = []; renderAll(); renderTools(); });
