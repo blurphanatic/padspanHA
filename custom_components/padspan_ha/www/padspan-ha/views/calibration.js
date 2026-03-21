@@ -1793,12 +1793,11 @@ function _tuneTab(ctx, el, cs, calData) {
       const sy = ev.clientX * inv.b + ev.clientY * inv.d + inv.f;
       const [wx, wy] = invIso(sx, sy, z);
       const [nx, ny] = xf.invMapPt(wx, wy);
-      const cx = Math.max(0, Math.min(1, nx));
-      const cy = Math.max(0, Math.min(1, ny));
-      rxObj.x = cx;
-      rxObj.y = cy;
+      // No 0-1 clamp — allow cross-map dragging on the same floor
+      rxObj.x = nx;
+      rxObj.y = ny;
       ts.dirtyMaps[mapId] = true;
-      const [newWx, newWy] = xf.mapPt(cx, cy);
+      const [newWx, newWy] = xf.mapPt(nx, ny);
       const [newPx, newPy] = iso(newWx, newWy, z);
       g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
     };
@@ -1841,8 +1840,8 @@ function _tuneTab(ctx, el, cs, calData) {
     const newRx = {
       id: "rx_" + Date.now().toString(16),
       label: rd.name || rd.source || "",
-      x: Math.max(0, Math.min(1, nx)),
-      y: Math.max(0, Math.min(1, ny)),
+      x: nx,
+      y: ny,
       room: _detectRoom(nx, ny, m) || rd.area_name || "",
       source: rd.source || "",
     };
@@ -3509,12 +3508,10 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       const sy = ev.clientX * inv.b + ev.clientY * inv.d + inv.f;
       const [wx, wy] = invIso(sx, sy, z);
       const [nx, ny] = xf.invMapPt(wx, wy);
-      const cx2 = Math.max(0, Math.min(1, nx));
-      const cy2 = Math.max(0, Math.min(1, ny));
-      bkObj.x = cx2;
-      bkObj.y = cy2;
+      bkObj.x = nx;
+      bkObj.y = ny;
       bs.dirtyMaps[mapId] = true;
-      const [newWx, newWy] = xf.mapPt(cx2, cy2);
+      const [newWx, newWy] = xf.mapPt(nx, ny);
       const [newPx, newPy] = iso(newWx, newWy, z);
       g.setAttribute("transform", `translate(${newPx - origPx},${newPy - origPy})`);
     };
@@ -3573,13 +3570,13 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         if (oldMapId !== m.id) {
           bs.draftBeacons[oldMapId] = (bs.draftBeacons[oldMapId] || []).filter(b => b.id !== oldId);
           bs.dirtyMaps[oldMapId] = true;
-          oldDraft.x = Math.max(0, Math.min(1, nx));
-          oldDraft.y = Math.max(0, Math.min(1, ny));
+          oldDraft.x = nx;
+          oldDraft.y = ny;
           if (!bs.draftBeacons[m.id]) bs.draftBeacons[m.id] = [];
           bs.draftBeacons[m.id].push(oldDraft);
         } else {
-          oldDraft.x = Math.max(0, Math.min(1, nx));
-          oldDraft.y = Math.max(0, Math.min(1, ny));
+          oldDraft.x = nx;
+          oldDraft.y = ny;
         }
         bs.dirtyMaps[m.id] = true;
         bs.selectedBk = { mapId: m.id, bkId: oldId };
@@ -3602,8 +3599,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       label: pd.label || pd.key || "",
       key: pd.key || "",
       kind: pd.kind || "ble",
-      x: Math.max(0, Math.min(1, nx)),
-      y: Math.max(0, Math.min(1, ny)),
+      x: nx,
+      y: ny,
     };
     if (!bs.draftBeacons[m.id]) bs.draftBeacons[m.id] = [];
     bs.draftBeacons[m.id].push(newBk);
