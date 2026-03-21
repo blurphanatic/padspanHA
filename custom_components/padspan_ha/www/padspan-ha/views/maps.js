@@ -1382,12 +1382,39 @@ function _edit(ctx, map){
       overlay.appendChild(mk);
     }
 
-    // Measure mode: draw points and line
+    // Measure mode: draw saved measurement lines + current points
     if (ctx.state.maps._mode === "measure") {
+      // Previously saved measurements (dimmed)
+      const savedMeas = ctx.state.maps._measurements || [];
+      const measColors = ["#f59e0b", "#e879f9"];
+      for (let mi = 0; mi < savedMeas.length; mi++) {
+        const sm = savedMeas[mi]; const col = measColors[mi % measColors.length];
+        const sLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        sLine.setAttribute("x1", sm.p1[0]); sLine.setAttribute("y1", sm.p1[1]);
+        sLine.setAttribute("x2", sm.p2[0]); sLine.setAttribute("y2", sm.p2[1]);
+        sLine.setAttribute("stroke", col); sLine.setAttribute("stroke-width", "0.003");
+        sLine.setAttribute("stroke-dasharray", "0.008 0.004"); sLine.setAttribute("opacity", "0.6");
+        svg.appendChild(sLine);
+        for (const pt of [sm.p1, sm.p2]) {
+          const d = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          d.setAttribute("cx", pt[0]); d.setAttribute("cy", pt[1]);
+          d.setAttribute("r", "0.006"); d.setAttribute("fill", col); d.setAttribute("opacity", "0.6");
+          svg.appendChild(d);
+        }
+        // Label
+        const mx = (sm.p1[0] + sm.p2[0]) / 2, my = (sm.p1[1] + sm.p2[1]) / 2;
+        const lab = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        lab.setAttribute("x", mx); lab.setAttribute("y", my - 0.015);
+        lab.setAttribute("text-anchor", "middle"); lab.setAttribute("font-size", "0.025");
+        lab.setAttribute("fill", col); lab.setAttribute("opacity", "0.8");
+        lab.textContent = `${sm.distance_m}m @ ${sm.angle_deg}\u00b0`;
+        svg.appendChild(lab);
+      }
+      // Current points being placed
       const mPts = ctx.state.maps._measurePts || [];
-      for (let i = 0; i < mPts.length; i++) {
+      for (const pt of mPts) {
         const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        dot.setAttribute("cx", mPts[i][0]); dot.setAttribute("cy", mPts[i][1]);
+        dot.setAttribute("cx", pt[0]); dot.setAttribute("cy", pt[1]);
         dot.setAttribute("r", "0.008"); dot.setAttribute("fill", "#60a5fa");
         dot.setAttribute("stroke", "white"); dot.setAttribute("stroke-width", "0.002");
         svg.appendChild(dot);
@@ -1769,109 +1796,156 @@ function _edit(ctx, map){
       }
     }
 
-    // ── Measure tool panel ─────────────────────────────────────────────────
+    // ── Measure tool panel (two-measurement aspect ratio validation) ─────
     if (ctx.state.maps._mode === "measure") {
       const mPanel = el("div",{style:"margin-top:10px;padding:10px;border:1px solid #1e4976;border-radius:8px;background:#0a1a2a"});
       const mPts = ctx.state.maps._measurePts || [];
       const imgW = map.image?.width || 800;
       const imgH = map.image?.height || 600;
       const cal = map.calibration || {};
+      if (!ctx.state.maps._measurements) ctx.state.maps._measurements = [];
+      const meas = ctx.state.maps._measurements;
 
       mPanel.appendChild(el("div",{style:"font-weight:700;font-size:13px;color:#7dd3fc;margin-bottom:6px"},
-        "\ud83d\udccf Reference Distance Measurement"));
+        "\ud83d\udccf Reference Distance Calibration"));
       mPanel.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:8px;line-height:1.5"},
-        "Click two points on the map where you know the real-world distance. Enter the measured distance in metres. This sets the map scale so all positions convert accurately to real-world coordinates."));
+        "Two measurements at different angles are required to verify the map's aspect ratio. Click two points, enter the real distance, then repeat at a different angle."));
+
+      // Current measurement progress
+      const needed = 2 - meas.length;
+      if (needed > 0) {
+        mPanel.appendChild(el("div",{style:"font-size:11px;color:#f59e0b;margin-bottom:6px;font-weight:600"},
+          `Measurement ${meas.length + 1} of 2`));
+      }
 
       if (mPts.length === 0) {
         mPanel.appendChild(el("div",{style:"color:#94a3b8;font-size:12px"}, "Click the first point on the map\u2026"));
       } else if (mPts.length === 1) {
-        mPanel.appendChild(el("div",{style:"color:#7dd3fc;font-size:12px"}, `Point 1 set at ${(mPts[0][0]*100).toFixed(1)}%, ${(mPts[0][1]*100).toFixed(1)}%. Now click the second point\u2026`));
+        mPanel.appendChild(el("div",{style:"color:#7dd3fc;font-size:12px"}, `Point 1 set. Now click the second point\u2026`));
       } else if (mPts.length >= 2) {
-        // Calculate pixel distance
-        const dx_frac = mPts[1][0] - mPts[0][0];
-        const dy_frac = mPts[1][1] - mPts[0][1];
-        const dx_px = dx_frac * imgW;
-        const dy_px = dy_frac * imgH;
+        const dx_px = (mPts[1][0] - mPts[0][0]) * imgW;
+        const dy_px = (mPts[1][1] - mPts[0][1]) * imgH;
         const dist_px = Math.sqrt(dx_px * dx_px + dy_px * dy_px);
-        const dist_frac = Math.sqrt(dx_frac * dx_frac + (dy_frac * imgH / imgW) * (dy_frac * imgH / imgW));
+        const angle_deg = Math.round(Math.atan2(Math.abs(dy_px), Math.abs(dx_px)) * 180 / Math.PI);
 
-        mPanel.appendChild(el("div",{style:"color:#52b788;font-size:12px;margin-bottom:8px"},
-          `Two points selected \u2014 pixel distance: ${dist_px.toFixed(1)}px`));
+        mPanel.appendChild(el("div",{style:"color:#52b788;font-size:12px;margin-bottom:4px"},
+          `Two points selected \u2014 ${dist_px.toFixed(1)}px at ${angle_deg}\u00b0`));
 
-        // Existing measurements
-        const existing = (cal.reference_points || []);
-        const measList = el("div",{style:"margin-bottom:8px"});
-
-        // Input for distance
-        const inputRow = el("div",{style:"display:flex;align-items:center;gap:8px"});
+        const inputRow = el("div",{style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap"});
         const distInput = document.createElement("input");
         distInput.type = "number"; distInput.min = "0.1"; distInput.max = "500"; distInput.step = "0.1";
-        distInput.placeholder = "Distance in metres";
-        distInput.style.cssText = "width:140px;padding:4px 8px;border:1px solid #334155;border-radius:4px;background:#1e293b;color:#e2e8f0;font-size:12px";
+        distInput.placeholder = "metres";
+        distInput.style.cssText = "width:100px;padding:4px 8px;border:1px solid #334155;border-radius:4px;background:#1e293b;color:#e2e8f0;font-size:12px";
         inputRow.appendChild(el("span",{style:"font-size:11px;color:#94a3b8"},"Real distance:"));
         inputRow.appendChild(distInput);
         inputRow.appendChild(el("span",{style:"font-size:11px;color:#94a3b8"},"m"));
 
-        const applyBtn = el("button",{class:"btn inline",style:"font-size:11px;padding:4px 12px;color:#7dd3fc;border-color:#1e4976"}, "Apply Scale");
-        applyBtn.addEventListener("click", async () => {
+        const addBtn = el("button",{class:"btn inline",style:"font-size:11px;padding:4px 12px;color:#7dd3fc;border-color:#1e4976"},
+          meas.length === 0 ? "Add 1st Measurement" : "Add 2nd Measurement");
+        addBtn.addEventListener("click", () => {
           const realDist = parseFloat(distInput.value);
           if (!realDist || realDist <= 0) { ctx.toast("Enter a valid distance"); return; }
           const ppm = dist_px / realDist;
-          // Save to map calibration
+          meas.push({
+            p1: [mPts[0][0], mPts[0][1]], p2: [mPts[1][0], mPts[1][1]],
+            dist_px, distance_m: realDist, px_per_meter: ppm, angle_deg,
+          });
+          ctx.state.maps._measurePts = [];
+          renderAll(); renderTools();
+        });
+        inputRow.appendChild(addBtn);
+        mPanel.appendChild(inputRow);
+      }
+
+      // Show collected measurements
+      if (meas.length > 0) {
+        const measDiv = el("div",{style:"margin-top:8px;border-top:1px solid #1e3a4a;padding-top:8px"});
+        for (let i = 0; i < meas.length; i++) {
+          const m2 = meas[i];
+          measDiv.appendChild(el("div",{style:"font-size:11px;color:#7dd3fc;margin-bottom:2px"},
+            `#${i+1}: ${m2.distance_m}m \u2192 ${m2.px_per_meter.toFixed(1)} px/m at ${m2.angle_deg}\u00b0`));
+        }
+        mPanel.appendChild(measDiv);
+      }
+
+      // When 2 measurements collected — show analysis + apply
+      if (meas.length >= 2) {
+        const ppm1 = meas[0].px_per_meter;
+        const ppm2 = meas[1].px_per_meter;
+        const avgPpm = (ppm1 + ppm2) / 2;
+        const diff = Math.abs(ppm1 - ppm2);
+        const diffPct = (diff / avgPpm * 100);
+        const angleDiff = Math.abs(meas[0].angle_deg - meas[1].angle_deg);
+
+        const analysisDiv = el("div",{style:"margin-top:8px;padding:8px;border-radius:6px"});
+
+        if (angleDiff < 15) {
+          analysisDiv.style.background = "rgba(245,158,11,.08)";
+          analysisDiv.style.border = "1px solid #f59e0b33";
+          analysisDiv.appendChild(el("div",{style:"font-size:11px;color:#fbbf24;font-weight:600"},
+            `\u26a0 Measurements are at similar angles (${meas[0].angle_deg}\u00b0 vs ${meas[1].angle_deg}\u00b0). For best results, measure at different orientations (e.g., one horizontal, one more vertical).`));
+        }
+
+        if (diffPct <= 10) {
+          analysisDiv.style.background = analysisDiv.style.background || "rgba(82,183,136,.08)";
+          analysisDiv.style.border = analysisDiv.style.border || "1px solid #52b78833";
+          analysisDiv.appendChild(el("div",{style:"font-size:12px;color:#52b788;font-weight:700;margin-bottom:4px"},
+            `\u2705 Aspect ratio OK \u2014 ${diffPct.toFixed(1)}% difference`));
+          analysisDiv.appendChild(el("div",{style:"font-size:11px;color:#94a3b8"},
+            `Scale: ${avgPpm.toFixed(1)} px/m (avg of ${ppm1.toFixed(1)} and ${ppm2.toFixed(1)}). Map width = ${(imgW/avgPpm).toFixed(1)}m, height = ${(imgH/avgPpm).toFixed(1)}m`));
+        } else {
+          analysisDiv.style.background = "rgba(248,113,113,.08)";
+          analysisDiv.style.border = "1px solid #f8717133";
+          analysisDiv.appendChild(el("div",{style:"font-size:12px;color:#f87171;font-weight:700;margin-bottom:4px"},
+            `\u26a0 Map appears stretched \u2014 ${diffPct.toFixed(1)}% scale difference`));
+          analysisDiv.appendChild(el("div",{style:"font-size:11px;color:#94a3b8"},
+            `Measurement 1: ${ppm1.toFixed(1)} px/m at ${meas[0].angle_deg}\u00b0. Measurement 2: ${ppm2.toFixed(1)} px/m at ${meas[1].angle_deg}\u00b0. Average: ${avgPpm.toFixed(1)} px/m`));
+          analysisDiv.appendChild(el("div",{style:"font-size:10px;color:#fca5a5;margin-top:4px"},
+            "The floor plan image may have non-uniform scaling. Consider re-exporting the image with correct proportions."));
+        }
+        mPanel.appendChild(analysisDiv);
+
+        // Apply button
+        const applyBtn = el("button",{class:"btn",style:"margin-top:8px;width:100%;padding:8px;font-size:13px;color:#7dd3fc;border-color:#1e4976;font-weight:700"},
+          `Apply Scale: ${avgPpm.toFixed(1)} px/m`);
+        applyBtn.addEventListener("click", async () => {
+          applyBtn.disabled = true; applyBtn.textContent = "Saving\u2026";
+          const existing = cal.reference_points || [];
+          const newRefs = meas.map(m2 => ({
+            p1: { x_frac: m2.p1[0], y_frac: m2.p1[1] },
+            p2: { x_frac: m2.p2[0], y_frac: m2.p2[1] },
+            distance_m: m2.distance_m, px_per_meter: Math.round(m2.px_per_meter * 100) / 100,
+            angle_deg: m2.angle_deg, date: new Date().toISOString().slice(0, 10),
+          }));
           const newCal = Object.assign({}, cal, {
             mode: "reference",
-            px_per_meter: Math.round(ppm * 100) / 100,
-            reference_points: [...existing, {
-              p1: { x_frac: mPts[0][0], y_frac: mPts[0][1] },
-              p2: { x_frac: mPts[1][0], y_frac: mPts[1][1] },
-              distance_m: realDist,
-              px_per_meter: Math.round(ppm * 100) / 100,
-              date: new Date().toISOString().slice(0, 10),
-            }],
+            px_per_meter: Math.round(avgPpm * 100) / 100,
+            reference_points: [...existing, ...newRefs],
           });
-          applyBtn.disabled = true; applyBtn.textContent = "Saving\u2026";
           try {
             await ctx.actions.mapsUpdateQuiet({ map_id: map.id, calibration: newCal });
-            // Re-derive fabric transforms with the new px_per_meter
-            try {
-              const mdl = ctx.state.model;
-              if (mdl) {
-                await ctx.actions.callWS({ type: "padspan_ha/fabric_migrate_from_maps" });
-              }
-            } catch(e2) {}
-            ctx.toast(`Scale set: ${ppm.toFixed(1)} px/m (${realDist}m between points). Fabric transforms updated.`);
+            try { await ctx.actions.callWS({ type: "padspan_ha/fabric_migrate_from_maps" }); } catch(e2) {}
+            ctx.toast(`Scale set: ${avgPpm.toFixed(1)} px/m. Aspect ratio ${diffPct.toFixed(1)}% diff. Fabric updated.`);
             ctx.state.maps._measurePts = [];
+            ctx.state.maps._measurements = [];
             await ctx.actions.mapsRefresh();
           } catch(e) {
             ctx.toast("Save failed: " + (e.message || e));
             applyBtn.disabled = false; applyBtn.textContent = "Apply Scale";
           }
         });
-        inputRow.appendChild(applyBtn);
-        mPanel.appendChild(inputRow);
-
-        // Show existing measurements
-        if (existing.length) {
-          measList.appendChild(el("div",{style:"font-size:10px;color:#64748b;margin-top:8px;font-weight:600;text-transform:uppercase"},"Previous measurements:"));
-          for (const ref of existing) {
-            measList.appendChild(el("div",{style:"font-size:10px;color:#94a3b8"},
-              `${ref.distance_m}m \u2192 ${ref.px_per_meter} px/m (${ref.date || "?"})`));
-          }
-          mPanel.appendChild(measList);
-        }
-
-        // Current scale
-        if (cal.px_per_meter) {
-          const scaleM = imgW / cal.px_per_meter;
-          mPanel.appendChild(el("div",{style:"font-size:11px;color:#52b788;margin-top:6px"},
-            `Current scale: ${cal.px_per_meter.toFixed(1)} px/m \u2014 map width = ${scaleM.toFixed(1)}m`));
-        }
-
-        // Reset button
-        const resetBtn = el("button",{class:"btn inline",style:"font-size:10px;padding:2px 8px;margin-top:6px;color:#94a3b8"}, "Reset Points");
-        resetBtn.addEventListener("click", () => { ctx.state.maps._measurePts = []; renderAll(); renderTools(); });
-        mPanel.appendChild(resetBtn);
+        mPanel.appendChild(applyBtn);
       }
+
+      // Current scale + reset
+      if (cal.px_per_meter) {
+        mPanel.appendChild(el("div",{style:"font-size:11px;color:#52b788;margin-top:8px"},
+          `Current scale: ${cal.px_per_meter.toFixed(1)} px/m \u2014 map: ${(imgW/cal.px_per_meter).toFixed(1)}m \u00d7 ${(imgH/cal.px_per_meter).toFixed(1)}m`));
+      }
+      const resetBtn = el("button",{class:"btn inline",style:"font-size:10px;padding:2px 8px;margin-top:6px;color:#94a3b8"}, "Start Over");
+      resetBtn.addEventListener("click", () => { ctx.state.maps._measurePts = []; ctx.state.maps._measurements = []; renderAll(); renderTools(); });
+      mPanel.appendChild(resetBtn);
+
       right.appendChild(mPanel);
     }
 
