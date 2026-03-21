@@ -8164,11 +8164,33 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
             "ok": True, "value": len(barriers),
             "detail": f"{len(barriers)} barriers in real-world metre space",
         })
+        # Build transform detail with scale and measurement info
+        _tx_details = []
+        for _mid, _tx in transforms.items():
+            sx = _tx.get("scale_x_m", 0)
+            sy = _tx.get("scale_y_m", 0)
+            _refs = _tx.get("reference_measurements") or []
+            _ref_str = f", {len(_refs)} ref measurement(s)" if _refs else ""
+            _map_name = ""
+            if ms:
+                _m = ms.get_map(_mid)
+                if _m:
+                    _map_name = _m.get("name", _mid)
+            _tx_details.append(f"{_map_name or _mid}: {sx:.1f}m × {sy:.1f}m{_ref_str}")
         checks.append({
             "group": "spatial", "name": "Map Transforms",
             "ok": len(transforms) > 0 or (ms and not ms.list_maps()),
             "value": len(transforms),
-            "detail": f"{len(transforms)} maps have frac↔metre transforms",
+            "detail": "; ".join(_tx_details) if _tx_details else "No transforms",
+        })
+        # Reference measurements check
+        _total_refs = sum(len(t.get("reference_measurements") or []) for t in transforms.values())
+        _has_refs = _total_refs > 0
+        checks.append({
+            "group": "spatial", "name": "Scale Calibration",
+            "ok": _has_refs,
+            "value": f"{_total_refs} measurement(s)" if _has_refs else "not calibrated",
+            "detail": f"{_total_refs} reference distance measurement(s) from the Measure tool" if _has_refs else "Use the Measure tool in Maps \u2192 Edit to set real-world scale from known distances",
         })
 
         # Check if coordinator is using metre model

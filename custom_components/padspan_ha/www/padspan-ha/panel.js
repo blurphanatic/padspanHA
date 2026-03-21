@@ -22,9 +22,9 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.16.0";
-const BUILD_ID = "20260321T232739Z";
-const CHANNEL = "stable";
+const APP_VERSION = "0.16.1";
+const BUILD_ID = "20260321T233014Z";
+const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Two-phase loading for fast first paint:
@@ -860,7 +860,7 @@ class PadSpanHaApp extends HTMLElement {
       this._updateBadges();
 
       // Re-render views that show live data.
-      const liveViews = new Set(["overview","follow","objects","devices","bluetooth","presence","history","monitor","events","health","diagnostics","debug","qa","sandbox","manage","calibration","maps"]);
+      const liveViews = new Set(["overview","follow","objects","devices","bluetooth","presence","history","monitor","events","diagnostics","debug","qa","sandbox","manage","calibration","maps"]);
       // Render with poll guard.  _renderCurrentView(fromPoll=true) skips
       // re-render when the user is dragging/confirming; fromPoll=false forces
       // a full rebuild.  Overview ALWAYS uses poll mode because it has its own
