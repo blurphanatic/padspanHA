@@ -1632,5 +1632,132 @@ export function render(ctx) {
     _renderDiscoMap();
   }
 
+  // ── Distance Traveled panel ───────────────────────────────────────────────
+  {
+    const distCard = el("div",{class:"card",style:"margin-top:12px"});
+    distCard.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:8px"},[
+      el("div",{style:"font-weight:700;font-size:14px;color:#5eead4"},"\ud83d\udeb6 Distance Traveled"),
+    ]));
+    distCard.appendChild(el("div",{class:"muted",style:"font-size:11px;margin-bottom:10px"},
+      "Estimated distance each tracked object has moved based on position history. Requires traceback data — load a time range above."));
+
+    // Time window selector
+    const windowRow = el("div",{style:"display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap"});
+    const windows = [
+      {label:"15 min", mins:15}, {label:"1 hour", mins:60}, {label:"4 hours", mins:240},
+      {label:"24 hours", mins:1440}, {label:"All data", mins:0},
+    ];
+    if (!ctx.state._distWindow) ctx.state._distWindow = 60;
+    for (const w of windows) {
+      const btn = el("button",{class:"btn inline"+(ctx.state._distWindow===w.mins?" primary":""),
+        style:"font-size:10px;padding:2px 8px",
+        onclick:()=>{ ctx.state._distWindow = w.mins; ctx.actions.renderRooms(); }
+      }, w.label);
+      windowRow.appendChild(btn);
+    }
+    distCard.appendChild(windowRow);
+
+    // Compute distances from traceback frames
+    const frames = tb.frames || [];
+    if (frames.length >= 2) {
+      const windowMins = ctx.state._distWindow || 0;
+      const now = frames[frames.length - 1]?.ts ? new Date(frames[frames.length - 1].ts).getTime() : Date.now();
+      const cutoff = windowMins > 0 ? now - windowMins * 60000 : 0;
+
+      // Get fabric room centroids for room-based distance estimation
+      const centroids = ctx.state.model?.room_geometry_m || {};
+      const _centroid = (room) => {
+        const g = centroids[room];
+        if (!g) return null;
+        if (g.type === "poly" && g.points_m?.length >= 3) {
+          const cx = g.points_m.reduce((s,p)=>s+p[0],0)/g.points_m.length;
+          const cy = g.points_m.reduce((s,p)=>s+p[1],0)/g.points_m.length;
+          return [cx, cy];
+        }
+        if (g.type === "circle") return [g.cx_m, g.cy_m];
+        return null;
+      };
+
+      // Get map transforms for k-NN position → metres conversion
+      const transforms = ctx.state.model?.map_transforms || {};
+      const _toMetres = (x, y, mid) => {
+        const t = transforms[mid];
+        if (!t) return null;
+        const sx = t.scale_x_m || 1, sy = t.scale_y_m || 1;
+        const rot = t.rotation_rad || 0;
+        let dx = x * sx, dy = y * sy;
+        if (Math.abs(rot) > 1e-9) {
+          const c = Math.cos(rot), s = Math.sin(rot);
+          return [(t.origin_x_m||0) + dx*c - dy*s, (t.origin_y_m||0) + dx*s + dy*c];
+        }
+        return [(t.origin_x_m||0) + dx, (t.origin_y_m||0) + dy];
+      };
+
+      // Track per-object: accumulate distance between consecutive frames
+      const objDist = {}; // key → {dist_m, transitions, lastPos, lastRoom, label}
+      for (const frame of frames) {
+        const ts = frame.ts ? new Date(frame.ts).getTime() : 0;
+        if (ts < cutoff) continue;
+        for (const o of (frame.objects || [])) {
+          if (!o.k) continue;
+          if (!objDist[o.k]) objDist[o.k] = { dist_m: 0, transitions: 0, lastPos: null, lastRoom: null, label: o.n || o.k };
+
+          // Get position in metres
+          let pos = null;
+          if (o.x != null && o.y != null && o.m) {
+            pos = _toMetres(o.x, o.y, o.m);
+          }
+          if (!pos && o.r) {
+            pos = _centroid(o.r);
+          }
+
+          const od = objDist[o.k];
+          if (pos && od.lastPos) {
+            const dx = pos[0] - od.lastPos[0], dy = pos[1] - od.lastPos[1];
+            const step = Math.sqrt(dx*dx + dy*dy);
+            // Filter out teleportation artifacts (>50m in one step)
+            if (step < 50) od.dist_m += step;
+          }
+          if (o.r && od.lastRoom && o.r !== od.lastRoom) od.transitions++;
+          od.lastPos = pos;
+          od.lastRoom = o.r || od.lastRoom;
+          if (o.n) od.label = o.n;
+        }
+      }
+
+      // Sort by distance, show table
+      const sorted = Object.entries(objDist).sort((a,b) => b[1].dist_m - a[1].dist_m);
+      if (sorted.length) {
+        const tbl = el("div",{style:"display:grid;grid-template-columns:1fr auto auto auto;gap:3px 10px;font-size:11px;align-items:center"});
+        for (const h of ["Object","Distance","Room Changes","Steps/min"]) {
+          tbl.appendChild(el("div",{style:"font-weight:600;color:#64748b;font-size:10px;text-transform:uppercase"},h));
+        }
+        const timeSpanMins = windowMins > 0 ? windowMins : Math.max(1, (now - (frames[0]?.ts ? new Date(frames[0].ts).getTime() : now)) / 60000);
+        for (const [key, od] of sorted.slice(0, 30)) {
+          const dist = od.dist_m;
+          const distStr = dist >= 1000 ? `${(dist/1000).toFixed(2)} km` : `${dist.toFixed(1)} m`;
+          const rate = (od.transitions / timeSpanMins).toFixed(2);
+          const distColor = dist > 500 ? "#52b788" : dist > 100 ? "#5eead4" : dist > 10 ? "#94a3b8" : "#64748b";
+          tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2e8f0"}, od.label || key));
+          tbl.appendChild(el("div",{style:`color:${distColor};font-weight:600;text-align:right;font-family:monospace`}, distStr));
+          tbl.appendChild(el("div",{style:"text-align:right;color:#94a3b8"}, String(od.transitions)));
+          tbl.appendChild(el("div",{style:"text-align:right;color:#64748b;font-family:monospace"}, rate));
+        }
+        distCard.appendChild(tbl);
+
+        // Summary
+        const totalDist = sorted.reduce((s,[,od]) => s + od.dist_m, 0);
+        const totalStr = totalDist >= 1000 ? `${(totalDist/1000).toFixed(2)} km` : `${totalDist.toFixed(0)} m`;
+        distCard.appendChild(el("div",{style:"margin-top:8px;font-size:10px;color:#64748b"},
+          `${sorted.length} objects tracked \u00b7 ${totalStr} total \u00b7 ${timeSpanMins < 60 ? timeSpanMins.toFixed(0) + " min" : (timeSpanMins/60).toFixed(1) + " hr"} window`));
+      } else {
+        distCard.appendChild(el("div",{style:"color:#64748b;font-size:12px"}, "No position data in this time window. Load traceback data above."));
+      }
+    } else {
+      distCard.appendChild(el("div",{style:"color:#64748b;font-size:12px"}, "Load traceback data above to see distance estimates."));
+    }
+    outer.appendChild(distCard);
+  }
+
   return outer;
 }
