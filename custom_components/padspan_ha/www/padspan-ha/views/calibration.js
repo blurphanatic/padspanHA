@@ -2725,8 +2725,6 @@ function _beaconTuneTab(ctx, el, cs, calData) {
               floor_id: origMap.floor_id || "",
               scanners: origMap.receivers || [],
               beacons: bs.draftBeacons[mid] || [],
-              calibration: origMap.calibration || {},
-              notes: origMap.notes || "",
             });
             bs.dirtyMaps[mid] = false;
           } catch(_) {}
@@ -3219,8 +3217,6 @@ function _beaconTuneTab(ctx, el, cs, calData) {
               floor_id: origMap.floor_id || "",
               scanners: origMap.receivers || [],
               beacons: bs.draftBeacons[mid] || [],
-              calibration: origMap.calibration || {},
-              notes: origMap.notes || "",
             });
             bs.dirtyMaps[mid] = false;
           } catch(_) {}
@@ -3326,8 +3322,6 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           floor_id: origMap.floor_id || "",
           scanners: origMap.receivers || [],
           beacons: bs.draftBeacons[mapId] || [],
-          calibration: origMap.calibration || {},
-          notes: origMap.notes || "",
         });
       }
       bs.dirtyMaps = {};
@@ -3741,8 +3735,6 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         floor_id: origMap.floor_id || "",
         scanners: origMap.receivers || [],
         beacons: bs.draftBeacons[mapId] || [],
-        calibration: origMap.calibration || {},
-        notes: origMap.notes || "",
       });
       bs.dirtyMaps[mapId] = false;
       _refreshDirtyLabel();
@@ -4558,8 +4550,6 @@ function _beaconTuneTab(ctx, el, cs, calData) {
               floor_id: origMap.floor_id || "",
               scanners: origMap.receivers || [],
               beacons: bs.draftBeacons[map.id] || [],
-              calibration: origMap.calibration || {},
-              notes: origMap.notes || "",
             });
             bs.dirtyMaps[map.id] = false;
           }
