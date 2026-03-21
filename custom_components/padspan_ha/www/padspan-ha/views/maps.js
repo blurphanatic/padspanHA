@@ -1967,6 +1967,8 @@ function _edit(ctx, map){
       mPanel.appendChild(resetBtn);
 
       right.appendChild(mPanel);
+      // Auto-scroll to make measure panel visible
+      setTimeout(() => mPanel.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
     }
 
     right.appendChild(saveRow);
