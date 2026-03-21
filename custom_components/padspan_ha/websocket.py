@@ -195,6 +195,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_fabric_rf_barrier_remove)
     websocket_api.async_register_command(hass, ws_fabric_map_transform_set)
     websocket_api.async_register_command(hass, ws_fabric_migrate_from_maps)
+    websocket_api.async_register_command(hass, ws_fabric_spatial_batch_save)
     websocket_api.async_register_command(hass, ws_fabric_health)
     websocket_api.async_register_command(hass, ws_fabric_resync)
     websocket_api.async_register_command(hass, ws_radio_audit)
@@ -8020,6 +8021,64 @@ async def ws_fabric_migrate_from_maps(hass: HomeAssistant, connection, msg) -> N
         "cal_points_backfilled": cal_backfilled,
         **stats,
     })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Fabric Authority — batch spatial save
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/fabric_spatial_batch_save",
+        vol.Optional("map_id"): str,
+        vol.Optional("floor_id"): str,
+        vol.Optional("scanners"): list,
+        vol.Optional("rooms"): dict,
+        vol.Optional("rf_barriers"): list,
+        vol.Optional("beacons"): list,
+    }
+)
+@websocket_api.async_response
+async def ws_fabric_spatial_batch_save(hass: HomeAssistant, connection, msg) -> None:
+    """Save spatial data to fabric. Accepts map fracs, converts to metres."""
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+    map_id = (msg.get("map_id") or "").strip()
+    floor_id = (msg.get("floor_id") or "").strip()
+    if not floor_id:
+        ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+        if ms and map_id:
+            m = ms.get_map(map_id)
+            if m:
+                floor_id = m.get("floor_id", DEFAULT_FLOOR_ID)
+        if not floor_id:
+            floor_id = DEFAULT_FLOOR_ID
+    stats = await mdl.async_batch_save_spatial(
+        map_id, floor_id,
+        scanners=msg.get("scanners"), rooms=msg.get("rooms"),
+        rf_barriers=msg.get("rf_barriers"), beacons=msg.get("beacons"),
+    )
+    # Re-derive map fracs for rendering
+    try:
+        ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+        if ms and map_id:
+            _m = ms.get_map(map_id)
+            if _m:
+                await mdl.async_rederive_map_fracs(map_id, _m)
+                await ms.store.async_save(ms.data)
+    except Exception:
+        pass
+    # Calibration remap
+    try:
+        _cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+        if _cal and map_id:
+            await _cal.async_remap_from_metres(map_id)
+    except Exception:
+        pass
+    connection.send_result(msg["id"], {"ok": True, **stats})
 
 
 # ══════════════════════════════════════════════════════════════════════════════

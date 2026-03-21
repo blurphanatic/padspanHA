@@ -607,6 +607,82 @@ class ModelStore:
                     return str(room)
         return ""
 
+    # ── Batch spatial save (fabric authority) ────────────────────────────────
+
+    async def async_batch_save_spatial(
+        self, map_id: str, floor_id: str,
+        scanners: list[dict] | None = None,
+        rooms: dict | None = None,
+        rf_barriers: list[dict] | None = None,
+        beacons: list[dict] | None = None,
+    ) -> dict[str, int]:
+        """Atomic batch save of spatial data from map-fraction coordinates.
+
+        Converts fracs to metres using the map transform, writes to fabric.
+        Returns counts: {scanners, rooms, barriers, beacons}.
+        """
+        stats = {"scanners": 0, "rooms": 0, "barriers": 0, "beacons": 0}
+        t = (self.data.get("map_transforms") or {}).get(map_id)
+        fl = str(floor_id or DEFAULT_FLOOR_ID)
+        positions = self.data.setdefault("scanner_positions_m", {})
+        geometry = self.data.setdefault("room_geometry_m", {})
+        beacons_m = self.data.setdefault("beacon_positions_m", {})
+
+        if scanners is not None:
+            for rx in scanners:
+                src = rx.get("source") or rx.get("id", "")
+                if not src:
+                    continue
+                if positions.get(src, {}).get("origin") == "manual":
+                    continue
+                if t:
+                    coords = self.map_frac_to_metres(float(rx.get("x", 0)), float(rx.get("y", 0)), map_id)
+                    if coords:
+                        positions[src] = {"x_m": round(coords[0], 3), "y_m": round(coords[1], 3), "z_m": 2.4, "floor_id": fl, "origin": "map", "map_id": map_id}
+                        stats["scanners"] += 1
+
+        if rooms is not None:
+            for rname, b in rooms.items():
+                if not isinstance(b, dict) or geometry.get(rname, {}).get("origin") == "manual":
+                    continue
+                btype = b.get("type", "poly")
+                if btype == "poly" and t:
+                    pts = b.get("points") or []
+                    pts_m = [([round(c[0], 3), round(c[1], 3)]) for p in pts if (c := self.map_frac_to_metres(float(p[0]), float(p[1]), map_id))]
+                    if len(pts_m) >= 3:
+                        geometry[rname] = {"type": "poly", "floor_id": fl, "origin": "map", "points_m": pts_m}
+                        stats["rooms"] += 1
+                elif btype == "circle" and t:
+                    c_center = self.map_frac_to_metres(float(b.get("cx", 0.5)), float(b.get("cy", 0.5)), map_id)
+                    if c_center:
+                        avg_scale = (float(t["scale_x_m"]) + float(t["scale_y_m"])) / 2
+                        geometry[rname] = {"type": "circle", "floor_id": fl, "origin": "map", "cx_m": round(c_center[0], 3), "cy_m": round(c_center[1], 3), "r_m": round(float(b.get("r", 0.12)) * avg_scale, 3)}
+                        stats["rooms"] += 1
+
+        if rf_barriers is not None and t:
+            self.data["rf_barriers_m"] = [bm for bm in self.data.get("rf_barriers_m", []) if not (bm.get("origin") == "map" and bm.get("map_id") == map_id)]
+            for idx, bar in enumerate(rf_barriers):
+                pts = bar.get("points") or []
+                pts_m = [([round(c[0], 3), round(c[1], 3)]) for p in pts if (c := self.map_frac_to_metres(float(p[0]), float(p[1]), map_id))]
+                if len(pts_m) >= 2:
+                    self.data["rf_barriers_m"].append({"name": str(bar.get("name", f"Barrier {map_id}_{idx+1}"))[:80], "material": str(bar.get("material", "custom"))[:20], "attenuation_dbm": float(bar.get("attenuation_dbm", 6)), "floor_id": fl, "points_m": pts_m, "origin": "map", "map_id": map_id})
+                    stats["barriers"] += 1
+
+        if beacons is not None:
+            for bk in beacons:
+                bk_key = bk.get("key")
+                if not bk_key or beacons_m.get(bk_key, {}).get("origin") == "manual":
+                    continue
+                if t:
+                    coords = self.map_frac_to_metres(float(bk.get("x", 0)), float(bk.get("y", 0)), map_id)
+                    if coords:
+                        room = self.beacon_room_from_geometry(coords[0], coords[1], fl)
+                        beacons_m[bk_key] = {"x_m": round(coords[0], 3), "y_m": round(coords[1], 3), "floor_id": fl, "room": room or str(bk.get("label", "")), "kind": str(bk.get("kind", "")), "label": str(bk.get("label", "")), "origin": "map", "map_id": map_id}
+                        stats["beacons"] += 1
+
+        await self.store.async_save(self.data)
+        return stats
+
     # ── Migration: derive transforms + convert map data to metres ─────────
 
     async def async_derive_transforms(self, maps_store: Any, default_floor_width_m: float = 0.0) -> int:
