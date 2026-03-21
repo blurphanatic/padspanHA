@@ -1939,8 +1939,16 @@ function _edit(ctx, map){
           try {
             // Save transform directly to fabric — fabric is the sole authority
             await ctx.actions.callWS({ type: "padspan_ha/fabric_map_transform_set", map_id: map.id, transform });
-            // Re-migrate spatial data with the new transform
-            try { await ctx.actions.callWS({ type: "padspan_ha/fabric_migrate_from_maps" }); } catch(e2) {}
+            // Re-derive spatial data for this map only (don't overwrite other transforms)
+            try {
+              await ctx.actions.fabricSpatialSave({
+                map_id: map.id, floor_id: fl,
+                scanners: map.receivers || [],
+                rooms: map.room_bounds || {},
+                rf_barriers: map.rf_barriers || [],
+                beacons: map.beacons || [],
+              });
+            } catch(e2) {}
             ctx.toast(`Scale: ${ppm} px/m (${scale_x_m.toFixed(1)}m \u00d7 ${scale_y_m.toFixed(1)}m). Saved to fabric.`);
             ctx.state.maps._measurePts = [];
             ctx.state.maps._measurements = [];
