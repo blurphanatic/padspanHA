@@ -13,7 +13,7 @@
 */
 
 const APP_VERSION = "0.15.75";
-const BUILD_ID = "20260321T232104Z";
+const BUILD_ID = "20260321T232728Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
