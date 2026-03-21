@@ -3235,9 +3235,9 @@ async def ws_maps_upload(hass: HomeAssistant, connection, msg) -> None:
     {
         "type": "padspan_ha/maps_update",
         "map_id": str,
-        "receivers": list,
-        "calibration": dict,
-        "notes": str,
+        vol.Optional("receivers"): list,
+        vol.Optional("calibration"): dict,
+        vol.Optional("notes"): str,
         vol.Optional("floor_id"): str,
         vol.Optional("room_bounds"): dict,
         vol.Optional("stack"): dict,
