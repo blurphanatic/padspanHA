@@ -196,6 +196,8 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_fabric_map_transform_set)
     websocket_api.async_register_command(hass, ws_fabric_migrate_from_maps)
     websocket_api.async_register_command(hass, ws_fabric_spatial_batch_save)
+    websocket_api.async_register_command(hass, ws_occupancy_estimate)
+    websocket_api.async_register_command(hass, ws_occupancy_train)
     websocket_api.async_register_command(hass, ws_fabric_health)
     websocket_api.async_register_command(hass, ws_fabric_resync)
     websocket_api.async_register_command(hass, ws_radio_audit)
@@ -8085,6 +8087,297 @@ async def ws_fabric_spatial_batch_save(hass: HomeAssistant, connection, msg) -> 
     except Exception:
         pass
     connection.send_result(msg["id"], {"ok": True, **stats})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Occupancy Estimation (experimental)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/occupancy_estimate"})
+@websocket_api.async_response
+async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
+    """Estimate building and per-room occupancy from live BLE data.
+
+    Hybrid approach: identified devices count 1:1, unidentified BLE
+    with sufficient dwell time count with a configurable multiplier.
+    Auto-excludes iBeacons, infrastructure, and known IoT devices.
+    """
+    from .bluetooth_live import get_bluetooth_live
+
+    # Settings
+    _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    _sd = (_st.data if _st else {}) or {}
+    multiplier = float(_sd.get("occupancy_multiplier", 1.5))
+    dwell_min = float(_sd.get("occupancy_dwell_min", 5.0))  # minutes
+    dwell_s = dwell_min * 60
+
+    # Training history
+    training = _sd.get("occupancy_training") or []
+
+    # Adjusted multiplier from training (EMA of observed ratios)
+    if training:
+        # Use last 20 observations, EMA with alpha=0.3
+        recent = training[-20:]
+        ema = multiplier
+        for obs in recent:
+            if obs.get("computed_multiplier"):
+                ema = ema * 0.7 + float(obs["computed_multiplier"]) * 0.3
+        multiplier = round(max(0.5, min(5.0, ema)), 2)
+
+    # Known IoT OUI prefixes (first 3 bytes of MAC) — common BLE IoT manufacturers
+    _IOT_OUIS = {
+        "AC:67:B2", "24:6F:28", "30:AE:A4", "A4:CF:12",  # Espressif
+        "E8:DB:84", "CC:50:E3",  # Espressif variants
+        "F4:12:FA", "D4:F9:8D",  # Nordic Semi
+        "DC:A6:32", "B8:27:EB",  # Raspberry Pi
+        "A4:C1:38",  # Tuya/Zigbee
+    }
+
+    # Get live snapshot
+    bl = get_bluetooth_live(hass)
+    if not bl:
+        connection.send_result(msg["id"], {
+            "total_estimate": 0, "confidence": "low", "rooms": [],
+            "identified": 0, "unidentified": 0, "excluded": 0, "multiplier": multiplier,
+        })
+        return
+
+    snap = bl.get_snapshot(max_ads=10000, max_age_s=600)
+    ads = snap.get("advertisements") or []
+    radios = snap.get("radios") or []
+
+    # Build radio source→room mapping from fabric
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    source_to_room: dict[str, str] = {}
+    source_to_floor: dict[str, str] = {}
+    if mdl:
+        source_to_room, source_to_floor = mdl.get_scanner_mappings()
+
+    # Get presence coordinator data for enriched objects
+    pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+    pc_data = (pc.data or {}) if pc else {}
+
+    # Phase 1: Collect unique devices with room assignments
+    import time as _time
+    now_mono = _time.monotonic()
+    devices: dict[str, dict] = {}  # addr → {room, floor, kind, label, first_seen_s, is_identified, rssi_var}
+
+    # From enriched objects (presence coordinator) — these are identified
+    for key, obj in pc_data.items():
+        if not isinstance(obj, dict):
+            continue
+        room = obj.get("room") or ""
+        kind = obj.get("kind") or ""
+        addr = obj.get("address") or key
+        age_s = obj.get("age_s")
+        if age_s is not None and float(age_s) > 600:
+            continue  # too stale
+
+        # Classify
+        is_ibeacon = kind == "ibeacon"
+        is_entity = kind == "entity"
+        has_label = bool(obj.get("user_label"))
+        is_identified = has_label or is_entity
+
+        # Skip iBeacons (infrastructure)
+        if is_ibeacon and not has_label:
+            continue
+
+        # IoT OUI check
+        addr_upper = str(addr).upper()
+        is_iot = any(addr_upper.startswith(oui) for oui in _IOT_OUIS)
+        if is_iot and not has_label:
+            continue
+
+        devices[addr_upper] = {
+            "room": room, "floor": source_to_floor.get(room, ""),
+            "kind": kind, "label": obj.get("user_label") or obj.get("name") or "",
+            "is_identified": is_identified,
+            "dwell_s": float(age_s) if age_s is not None else 999,
+            "excluded": False,
+        }
+
+    # Phase 2: Count raw BLE advertisements for untracked devices
+    # Group by address, find room by strongest scanner
+    raw_by_addr: dict[str, list] = {}
+    for ad in ads:
+        addr = str(ad.get("address") or "").upper()
+        if not addr or addr in devices:
+            continue  # already tracked
+        raw_by_addr.setdefault(addr, []).append(ad)
+
+    for addr, ad_list in raw_by_addr.items():
+        # IoT OUI check
+        is_iot = any(addr.startswith(oui) for oui in _IOT_OUIS)
+        if is_iot:
+            continue
+
+        # Find best scanner (strongest RSSI)
+        best_rssi = -999
+        best_src = ""
+        for ad in ad_list:
+            rssi = ad.get("rssi")
+            src = ad.get("source")
+            if rssi is not None and src and float(rssi) > best_rssi:
+                best_rssi = float(rssi)
+                best_src = str(src)
+
+        room = source_to_room.get(best_src, "")
+
+        # Compute dwell from first/last seen
+        times = [ad.get("timestamp") or 0 for ad in ad_list if ad.get("timestamp")]
+        if len(times) >= 2:
+            dwell = max(times) - min(times)
+        else:
+            dwell = 0
+
+        devices[addr] = {
+            "room": room, "floor": source_to_floor.get(best_src, ""),
+            "kind": "ble_raw", "label": "",
+            "is_identified": False,
+            "dwell_s": dwell,
+            "excluded": False,
+        }
+
+    # Phase 3: Apply dwell filter + infrastructure detection
+    excluded_count = 0
+    for addr, dev in devices.items():
+        # Dwell too short
+        if dev["dwell_s"] < dwell_s and not dev["is_identified"]:
+            dev["excluded"] = True
+            excluded_count += 1
+            continue
+        # Infrastructure: >24hr dwell, likely always-on device
+        if dev["dwell_s"] > 86400 and not dev["is_identified"]:
+            dev["excluded"] = True
+            excluded_count += 1
+
+    # Phase 4: Compute per-room occupancy
+    room_data: dict[str, dict] = {}  # room → {identified, unidentified, estimate_low, estimate_high, estimate}
+    for addr, dev in devices.items():
+        if dev["excluded"]:
+            continue
+        room = dev["room"] or "Unknown"
+        if room not in room_data:
+            room_data[room] = {"identified": 0, "unidentified": 0, "devices": []}
+        if dev["is_identified"]:
+            room_data[room]["identified"] += 1
+        else:
+            room_data[room]["unidentified"] += 1
+        room_data[room]["devices"].append({
+            "addr": addr[-8:],  # last 8 chars for privacy
+            "label": dev["label"],
+            "kind": dev["kind"],
+            "is_identified": dev["is_identified"],
+        })
+
+    # Compute estimates per room
+    rooms_result = []
+    total_identified = 0
+    total_unidentified = 0
+    total_estimate = 0
+    for room, rd in sorted(room_data.items()):
+        ident = rd["identified"]
+        unident = rd["unidentified"]
+        est = ident + round(unident / multiplier)
+        est_low = ident + max(0, round(unident / (multiplier * 1.5)))
+        est_high = ident + round(unident / max(0.5, multiplier * 0.7))
+        total_identified += ident
+        total_unidentified += unident
+        total_estimate += est
+        rooms_result.append({
+            "room": room,
+            "identified": ident,
+            "unidentified": unident,
+            "estimate": est,
+            "estimate_low": est_low,
+            "estimate_high": est_high,
+            "devices": rd["devices"],
+        })
+
+    # Overall confidence
+    total_devices = total_identified + total_unidentified
+    if total_devices == 0:
+        confidence = "low"
+    elif total_identified / max(total_devices, 1) > 0.8:
+        confidence = "high"
+    elif total_identified / max(total_devices, 1) > 0.4:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    total_low = sum(r["estimate_low"] for r in rooms_result)
+    total_high = sum(r["estimate_high"] for r in rooms_result)
+
+    connection.send_result(msg["id"], {
+        "total_estimate": total_estimate,
+        "total_low": total_low,
+        "total_high": total_high,
+        "confidence": confidence,
+        "rooms": rooms_result,
+        "identified": total_identified,
+        "unidentified": total_unidentified,
+        "excluded": excluded_count,
+        "multiplier": multiplier,
+        "dwell_min": dwell_min,
+        "training_count": len(training),
+    })
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/occupancy_train",
+    "actual_count": vol.Coerce(int),
+    vol.Optional("room"): str,
+})
+@websocket_api.async_response
+async def ws_occupancy_train(hass: HomeAssistant, connection, msg) -> None:
+    """Record actual headcount for occupancy multiplier training."""
+    _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    if not _st:
+        connection.send_error(msg["id"], "no_settings", "Settings not loaded")
+        return
+
+    actual = int(msg["actual_count"])
+    room = (msg.get("room") or "").strip()
+
+    # Get current estimate for comparison
+    from .bluetooth_live import get_bluetooth_live
+    bl = get_bluetooth_live(hass)
+    pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+    pc_data = (pc.data or {}) if pc else {}
+
+    # Quick device count
+    identified = sum(1 for o in pc_data.values() if isinstance(o, dict) and o.get("user_label"))
+    unidentified_raw = sum(1 for o in pc_data.values() if isinstance(o, dict) and not o.get("user_label") and o.get("kind") in ("ble", "private_ble"))
+
+    # Compute what multiplier would match
+    if actual > identified and unidentified_raw > 0:
+        computed_mult = round(unidentified_raw / max(1, actual - identified), 2)
+    elif actual <= identified:
+        computed_mult = 99.0  # all accounted for by identified
+    else:
+        computed_mult = 1.5  # can't compute
+
+    from datetime import datetime, timezone
+    observation = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "actual": actual,
+        "room": room,
+        "identified": identified,
+        "unidentified": unidentified_raw,
+        "computed_multiplier": min(5.0, computed_mult),
+    }
+
+    training = list(_st.data.get("occupancy_training") or [])
+    training.append(observation)
+    # Keep last 100 observations
+    if len(training) > 100:
+        training = training[-100:]
+    _st.data["occupancy_training"] = training
+    await _st.async_save()
+
+    connection.send_result(msg["id"], {"ok": True, "observation": observation, "total_observations": len(training)})
 
 
 # ══════════════════════════════════════════════════════════════════════════════

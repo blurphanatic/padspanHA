@@ -3536,6 +3536,134 @@ export function render(ctx){
       ]));
     }
   }
+  // ── Occupancy Estimator card (clickable) ───────────────────────────────
+  {
+    const occCard = el("div",{class:"card",style:"margin-bottom:10px;cursor:pointer;border-color:#5eead433;transition:border-color 0.2s"});
+    occCard.addEventListener("mouseenter",()=>{occCard.style.borderColor="#5eead4";});
+    occCard.addEventListener("mouseleave",()=>{occCard.style.borderColor="#5eead433";});
+    const occContent = el("div",{style:"display:flex;align-items:center;gap:12px"});
+    occContent.appendChild(el("div",{style:"font-size:28px"},"\ud83c\udfe0"));
+    const occText = el("div",{style:"flex:1"});
+    occText.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#5eead4"},"Occupancy Estimate"));
+    occText.appendChild(el("div",{style:"font-size:12px;color:#94a3b8"},"Loading\u2026"));
+    occContent.appendChild(occText);
+    const occBadge = el("div",{style:"font-size:11px;padding:2px 8px;border-radius:12px;background:#0a2a2a;border:1px solid #5eead433;color:#5eead4"});
+    occBadge.textContent = "\u2026";
+    occContent.appendChild(occBadge);
+    occCard.appendChild(occContent);
+    section.appendChild(occCard);
+
+    // Async load occupancy data
+    (async () => {
+      try {
+        const res = await ctx.actions.callWS({type:"padspan_ha/occupancy_estimate"});
+        const confColor = res.confidence === "high" ? "#52b788" : res.confidence === "medium" ? "#f59e0b" : "#f87171";
+        occText.innerHTML = "";
+        occText.appendChild(el("div",{style:"font-weight:700;font-size:14px;color:#5eead4"},
+          `~${res.total_estimate} ${res.total_estimate === 1 ? "person" : "people"} in building`));
+        occText.appendChild(el("div",{style:"font-size:11px;color:#94a3b8"},
+          `${res.identified} identified + ${res.unidentified} unidentified devices \u00b7 ${res.excluded} excluded`));
+        occBadge.textContent = `${res.total_low}\u2013${res.total_high}`;
+        occBadge.style.borderColor = confColor + "44";
+        occBadge.style.color = confColor;
+      } catch(e) {
+        occText.lastChild.textContent = "Unavailable";
+      }
+    })();
+
+    // Click → detail modal
+    occCard.addEventListener("click", async () => {
+      try {
+        const res = await ctx.actions.callWS({type:"padspan_ha/occupancy_estimate"});
+        const confColor = res.confidence === "high" ? "#52b788" : res.confidence === "medium" ? "#f59e0b" : "#f87171";
+        const body = el("div",{style:"max-width:500px"});
+
+        // Summary
+        body.appendChild(el("div",{style:"display:flex;align-items:center;gap:10px;margin-bottom:12px"},[
+          el("div",{style:"font-size:32px"},"\ud83c\udfe0"),
+          el("div",{},[
+            el("div",{style:`font-weight:800;font-size:20px;color:${confColor}`},
+              `~${res.total_estimate} people`),
+            el("div",{style:"font-size:12px;color:#94a3b8"},
+              `Range: ${res.total_low}\u2013${res.total_high} \u00b7 Confidence: ${res.confidence}`),
+          ]),
+        ]));
+
+        // Stats
+        body.appendChild(el("div",{style:"display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px"},[
+          el("div",{class:"card",style:"text-align:center;padding:8px"},[
+            el("div",{style:"font-size:18px;font-weight:700;color:#52b788"},String(res.identified)),
+            el("div",{style:"font-size:10px;color:#94a3b8"},"Identified"),
+          ]),
+          el("div",{class:"card",style:"text-align:center;padding:8px"},[
+            el("div",{style:"font-size:18px;font-weight:700;color:#f59e0b"},String(res.unidentified)),
+            el("div",{style:"font-size:10px;color:#94a3b8"},"Unidentified"),
+          ]),
+          el("div",{class:"card",style:"text-align:center;padding:8px"},[
+            el("div",{style:"font-size:18px;font-weight:700;color:#64748b"},String(res.excluded)),
+            el("div",{style:"font-size:10px;color:#94a3b8"},"Excluded"),
+          ]),
+        ]));
+
+        // Per-room table
+        if (res.rooms.length) {
+          body.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#94a3b8;margin-bottom:6px;text-transform:uppercase"},"Per-Room Breakdown"));
+          const tbl = el("div",{style:"display:grid;grid-template-columns:1fr auto auto auto;gap:3px 10px;font-size:11px;align-items:center"});
+          for (const h of ["Room","Identified","Unidentified","Estimate"]) {
+            tbl.appendChild(el("div",{style:"font-weight:600;color:#64748b;font-size:10px;text-transform:uppercase"},h));
+          }
+          for (const r of res.rooms) {
+            const rc = ctx.helpers.roomColor ? ctx.helpers.roomColor(r.room) : "#5eead4";
+            tbl.appendChild(el("div",{style:`color:${rc};font-weight:600`},r.room));
+            tbl.appendChild(el("div",{style:"text-align:right;color:#52b788"},String(r.identified)));
+            tbl.appendChild(el("div",{style:"text-align:right;color:#f59e0b"},String(r.unidentified)));
+            tbl.appendChild(el("div",{style:"text-align:right;font-weight:700;color:#e2e8f0"},
+              `~${r.estimate} (${r.estimate_low}\u2013${r.estimate_high})`));
+          }
+          body.appendChild(tbl);
+        }
+
+        // Settings info
+        body.appendChild(el("div",{style:"margin-top:12px;font-size:10px;color:#64748b"},
+          `Multiplier: ${res.multiplier}x \u00b7 Dwell threshold: ${res.dwell_min} min \u00b7 Training: ${res.training_count} observations`));
+
+        // Training input
+        body.appendChild(el("div",{style:"margin-top:12px;padding-top:12px;border-top:1px solid #1b3526"}));
+        body.appendChild(el("div",{style:"font-weight:700;font-size:12px;color:#5eead4;margin-bottom:6px"},"\ud83c\udfaf Train the Estimator"));
+        body.appendChild(el("div",{style:"font-size:11px;color:#94a3b8;margin-bottom:8px"},
+          "Enter how many people are actually in the building right now. This helps the system learn the correct device-to-person ratio."));
+        const trainRow = el("div",{style:"display:flex;align-items:center;gap:8px"});
+        const trainInput = document.createElement("input");
+        trainInput.type="number";trainInput.min="0";trainInput.max="500";trainInput.step="1";
+        trainInput.placeholder="people";
+        trainInput.style.cssText="width:80px;padding:4px 8px;border:1px solid #334155;border-radius:4px;background:#1e293b;color:#e2e8f0;font-size:12px";
+        trainRow.appendChild(el("span",{style:"font-size:11px;color:#94a3b8"},"Actual count:"));
+        trainRow.appendChild(trainInput);
+        const trainBtn = el("button",{class:"btn save-pulse",style:"width:auto;padding:4px 14px;font-size:11px"});
+        trainBtn.textContent = "\ud83d\udcbe Train";
+        trainBtn.addEventListener("click", async () => {
+          const v = parseInt(trainInput.value);
+          if (v == null || v < 0) { ctx.actions.toast("Enter a valid count"); return; }
+          trainBtn.disabled = true; trainBtn.textContent = "Saving\u2026"; trainBtn.classList.remove("save-pulse");
+          try {
+            const tr = await ctx.actions.callWS({type:"padspan_ha/occupancy_train",actual_count:v});
+            ctx.actions.toast(`Trained: actual=${v}, computed multiplier=${tr.observation.computed_multiplier}x (${tr.total_observations} total observations)`);
+            trainBtn.textContent = "\u2714 Saved";
+          } catch(e) {
+            ctx.actions.toast("Train failed: "+(e.message||e));
+            trainBtn.disabled=false; trainBtn.textContent="Train"; trainBtn.classList.add("save-pulse");
+          }
+        });
+        trainRow.appendChild(trainBtn);
+        body.appendChild(trainRow);
+
+        ctx.actions.openModal("Occupancy Estimate", body, "Experimental");
+      } catch(e) {
+        ctx.actions.toast("Failed to load occupancy: "+(e.message||e));
+      }
+    });
+  }
+
   section.appendChild(companionCard);
   if(mapEl) section.appendChild(mapEl);
   section.appendChild(grid);
