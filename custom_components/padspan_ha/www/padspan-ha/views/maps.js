@@ -1910,9 +1910,9 @@ function _edit(ctx, map){
         }
         mPanel.appendChild(analysisDiv);
 
-        // Apply button
-        const applyBtn = el("button",{class:"btn",style:"margin-top:8px;width:100%;padding:8px;font-size:13px;color:#7dd3fc;border-color:#1e4976;font-weight:700"},
-          `Apply Scale: ${avgPpm.toFixed(1)} px/m`);
+        // Save button — prominent green to make it clear this is the save action
+        const applyBtn = el("button",{class:"btn",style:"margin-top:12px;width:100%;padding:12px;font-size:15px;background:#1a3a0a;border:2px solid #52b788;color:#86efac;font-weight:800;border-radius:8px;cursor:pointer"},
+          `\ud83d\udcbe  Save Scale: ${avgPpm.toFixed(1)} px/m \u2192 ${scale_x_m.toFixed(1)}m \u00d7 ${scale_y_m.toFixed(1)}m`);
         applyBtn.addEventListener("click", async () => {
           applyBtn.disabled = true; applyBtn.textContent = "Saving\u2026";
           const ppm = Math.round(avgPpm * 100) / 100;
