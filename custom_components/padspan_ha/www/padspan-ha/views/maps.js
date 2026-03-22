@@ -2026,7 +2026,7 @@ function _edit(ctx, map){
   });
 
   stage.addEventListener("click", (ev)=>{
-    // Measure mode: collect 2 points
+    // Measure mode: collect 2 points (minimal DOM update, no full re-render)
     if(ctx.state.maps._mode==="measure"){
       const rect = overlay.getBoundingClientRect();
       const x = (ev.clientX - rect.left) / rect.width;
@@ -2034,7 +2034,25 @@ function _edit(ctx, map){
       if (!ctx.state.maps._measurePts) ctx.state.maps._measurePts = [];
       if (ctx.state.maps._measurePts.length < 2) {
         ctx.state.maps._measurePts.push([x, y]);
-        renderAll(); renderTools();
+        // Add dot directly to SVG without full re-render
+        const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        dot.setAttribute("cx", x); dot.setAttribute("cy", y);
+        dot.setAttribute("r", "0.008"); dot.setAttribute("fill", "#60a5fa");
+        dot.setAttribute("stroke", "white"); dot.setAttribute("stroke-width", "0.002");
+        dot.style.pointerEvents = "none";
+        svg.appendChild(dot);
+        if (ctx.state.maps._measurePts.length === 2) {
+          const p = ctx.state.maps._measurePts;
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("x1", p[0][0]); line.setAttribute("y1", p[0][1]);
+          line.setAttribute("x2", p[1][0]); line.setAttribute("y2", p[1][1]);
+          line.setAttribute("stroke", "#60a5fa"); line.setAttribute("stroke-width", "0.003");
+          line.setAttribute("stroke-dasharray", "0.01 0.005");
+          line.style.pointerEvents = "none";
+          svg.appendChild(line);
+          // Only rebuild tools panel when both points placed (to show distance input)
+          renderTools();
+        }
       }
       return;
     }
