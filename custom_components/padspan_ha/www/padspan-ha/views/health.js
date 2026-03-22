@@ -139,6 +139,39 @@ function _renderFabric(ctx, container, data) {
   container.innerHTML = "";
   const { summary, checks, scanners, scanner_positions_m, room_geometry_m, adjacency } = data;
 
+  // ── Migration prompt for old system users ───────────────────────────────
+  const _maps = data.maps || [];
+  const _hasMapsData = _maps.some(m => m.has_receivers > 0 || m.has_room_bounds > 0);
+  const _noFabric = !scanner_positions_m?.length && !room_geometry_m?.length;
+  if (_hasMapsData && _noFabric) {
+    const _mb = el("div",{class:"card",style:"border:2px solid #f59e0b;background:rgba(245,158,11,.08);margin-bottom:12px;padding:16px"});
+    _mb.appendChild(el("div",{style:"font-weight:800;font-size:14px;color:#fbbf24;margin-bottom:8px"},"\u26a0 Migration Required"));
+    _mb.appendChild(el("div",{style:"font-size:12px;color:#e2e8f0;margin-bottom:12px"},
+      "Your maps have spatial data that needs to be migrated to the positioning fabric. This is a one-time process."));
+    const _mr = el("div",{style:"display:flex;align-items:center;gap:8px"});
+    const _mi = document.createElement("input");
+    _mi.type="number";_mi.value="20";_mi.min="5";_mi.max="200";_mi.step="1";
+    _mi.style.cssText="width:80px;padding:4px 8px;border:1px solid #334155;border-radius:4px;background:#1e293b;color:#e2e8f0;font-size:12px";
+    _mr.appendChild(el("span",{style:"font-size:11px;color:#94a3b8"},"Floor width:"));
+    _mr.appendChild(_mi);
+    _mr.appendChild(el("span",{style:"font-size:11px;color:#94a3b8"},"m"));
+    const _mbtn = el("button",{class:"btn save-pulse",style:"width:auto;padding:6px 16px;font-size:12px;background:#92400e;border-color:#f59e0b;color:#fbbf24;font-weight:700"},"\ud83d\udcbe Migrate to Fabric");
+    _mbtn.addEventListener("click", async () => {
+      const w = parseFloat(_mi.value);
+      if (!w || w < 1) { ctx.actions.toast("Enter a valid floor width"); return; }
+      _mbtn.disabled = true; _mbtn.textContent = "Migrating\u2026"; _mbtn.classList.remove("save-pulse");
+      try {
+        const res = await ctx.actions.callWS({type:"padspan_ha/fabric_migrate_from_maps", default_floor_width_m: w});
+        try { await ctx.actions.callWS({type:"padspan_ha/calibration_retrain_rf"}); } catch(e){}
+        ctx.actions.toast(`Migrated: ${res.transforms_computed} transforms, ${res.scanners_migrated} scanners, ${res.rooms_migrated} rooms`);
+        _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container);
+      } catch(e) { ctx.actions.toast("Failed: "+(e.message||e)); _mbtn.disabled=false; _mbtn.textContent="Migrate to Fabric"; _mbtn.classList.add("save-pulse"); }
+    });
+    _mr.appendChild(_mbtn);
+    _mb.appendChild(_mr);
+    container.appendChild(_mb);
+  }
+
   // ── Summary banner ─────────────────────────────────────────────────────
   const color = summary.healthy ? "#52b788" : summary.failed > 2 ? "#f87171" : "#f59e0b";
   const bg = summary.healthy ? "rgba(82,183,136,.08)" : "rgba(248,113,113,.08)";

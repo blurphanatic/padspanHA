@@ -1843,7 +1843,8 @@ export function render(ctx){
           [bx,by]=iso(lwx, lwy, tf.z);
           posConf = o.knn_confidence || 0;
         }
-        // Priority 2: Client-side fingerprint — only if no server k-NN AND confidence > 40%
+        // Priority 2: Client-side fingerprint fallback — server k-NN is authoritative,
+        // this only fires when the server didn't provide a position (e.g., no calibration data).
         if(bx == null){
           const readings = _getObjReadings(o);
           const match = _matchFingerprint(readings);

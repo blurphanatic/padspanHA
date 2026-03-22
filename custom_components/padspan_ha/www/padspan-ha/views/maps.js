@@ -340,12 +340,26 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
     }
   }
 
-  // Masters first, then by name
-  const sortedMaps = [...maps].sort((a,b) => (b.stack?.is_master?1:0) - (a.stack?.is_master?1:0));
+  // Group maps by floor
+  const _floors = ctx.state.model?.floors || [];
+  const _floorMap = new Map();
+  for (const m of maps) { const fid = m.floor_id || "main"; if (!_floorMap.has(fid)) _floorMap.set(fid, []); _floorMap.get(fid).push(m); }
+  const _floorOrder = _floors.map(f => f.id);
+  const _sortedFloors = [..._floorMap.keys()].sort((a, b) => { const ia = _floorOrder.indexOf(a), ib = _floorOrder.indexOf(b); return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib); });
+
   const currentMaster = maps.find(m => !!(m.stack?.is_master)) || null;
   const list = el("div",{style:"margin-top:10px;display:flex;flex-direction:column;gap:8px"});
   const wizardContainer = el("div",{});
-  for(const m of sortedMaps){
+
+  for (const fid of _sortedFloors) {
+    const floorMaps = _floorMap.get(fid) || [];
+    floorMaps.sort((a, b) => (b.stack?.is_master ? 1 : 0) - (a.stack?.is_master ? 1 : 0));
+    const floorObj = _floors.find(f => f.id === fid);
+    const floorName = floorObj ? (floorObj.name || fid) : fid;
+    list.appendChild(el("div",{style:"font-weight:700;font-size:13px;color:#52b788;margin-top:8px;margin-bottom:2px;text-transform:uppercase;letter-spacing:.5px"},
+      `${floorName} (${floorMaps.length})`));
+
+  for(const m of floorMaps){
     const row = el("div",{class:"maprow" + (m.id===activeId ? " active" : "")});
 
     // Thumbnail with room bounds + recommendation overlay
@@ -435,6 +449,7 @@ function _library(ctx, maps, activeId, helpBtn, isBasic){
     row.appendChild(actions);
     list.appendChild(row);
   }
+  } // end floor loop
   wrap.appendChild(list);
   wrap.appendChild(wizardContainer);
   return wrap;
