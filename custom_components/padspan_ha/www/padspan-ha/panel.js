@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.16.15";
-const BUILD_ID = "20260322T013753Z";
+const APP_VERSION = "0.16.16";
+const BUILD_ID = "20260322T014128Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1466,7 +1466,7 @@ class PadSpanHaApp extends HTMLElement {
         mapsUpload: async (payload)=>{ const r = await this._callWS(Object.assign({type:"padspan_ha/maps_upload"}, payload)); await this._getMapsList(); return r; },
         mapsUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         mapsUpdateQuiet: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); },
-        fabricSpatialSave: async (payload)=>{ const r = await this._callWS(Object.assign({type:"padspan_ha/fabric_spatial_batch_save"}, payload)); await this._getMapsList(); return r; },
+        fabricSpatialSave: async (payload)=>{ return await this._callWS(Object.assign({type:"padspan_ha/fabric_spatial_batch_save"}, payload)); },
         mapsReplaceImage: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_replace_image"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         modelUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/model_update"}, payload)); await this._getModel(); this._renderCurrentView(); },
 

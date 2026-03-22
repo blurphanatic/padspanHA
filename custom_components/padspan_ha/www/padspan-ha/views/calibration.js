@@ -3055,43 +3055,34 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
   const pickerRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
 
-  // Map selector for beacon placement (with floor groups, matching Setup tab)
+  // Floor selector for beacon placement
   const bkMapSel = document.createElement("select");
   bkMapSel.style.cssText = "min-width:120px;";
   {
     const _fl = ctx.state.model?.floors || [];
     const _floorMaps = new Map();
     for (const m of sorted) {
-      const z = m.stack?.z_level ?? 0;
-      if (!_floorMaps.has(z)) _floorMaps.set(z, []);
-      _floorMaps.get(z).push(m);
+      const fid = m.floor_id || "main";
+      if (!_floorMaps.has(fid)) _floorMaps.set(fid, []);
+      _floorMaps.get(fid).push(m);
     }
-    const _sortedZ = [..._floorMaps.keys()].sort((a, b) => a - b);
-    if (_sortedZ.length > 1) {
-      const floorGroup = document.createElement("optgroup");
-      floorGroup.label = "Floors";
-      for (const z of _sortedZ) {
-        const fObj = _fl.find(f => f.level === z);
-        const fName = fObj ? (fObj.name || `Floor ${z}`) : `Floor ${z}`;
-        const opt = document.createElement("option");
-        opt.value = `__floor__${z}`;
-        opt.textContent = `${fName} (${_floorMaps.get(z).length} map${_floorMaps.get(z).length > 1 ? "s" : ""})`;
-        floorGroup.appendChild(opt);
-      }
-      bkMapSel.appendChild(floorGroup);
-    }
-    const mapGroup = _sortedZ.length > 1 ? document.createElement("optgroup") : null;
-    if (mapGroup) mapGroup.label = "Maps";
-    for (const m of sorted) {
-      const z = m.stack?.z_level ?? 0;
-      const fObj = _fl.find(f => f.level === z);
-      const fLabel = fObj ? ` (${fObj.name || `Floor ${z}`})` : "";
+    // Floor entries only
+    for (const f of _fl) {
+      const fMaps = _floorMaps.get(f.id) || [];
+      if (!fMaps.length) continue;
       const opt = document.createElement("option");
-      opt.value = m.id;
-      opt.textContent = (m.name || m.id) + fLabel;
-      (mapGroup || bkMapSel).appendChild(opt);
+      opt.value = `__floor__${f.id}`;
+      opt.textContent = f.name || f.id;
+      bkMapSel.appendChild(opt);
     }
-    if (mapGroup) bkMapSel.appendChild(mapGroup);
+    // Floors in maps but not in model
+    for (const [fid, fMaps] of _floorMaps) {
+      if (_fl.some(f => f.id === fid)) continue;
+      const opt = document.createElement("option");
+      opt.value = `__floor__${fid}`;
+      opt.textContent = fid;
+      bkMapSel.appendChild(opt);
+    }
   }
 
   const bkSel = document.createElement("select");
@@ -3117,8 +3108,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     let targetMapId = bkMapSel.value;
     // Resolve floor selection to best map on that floor
     if (targetMapId.startsWith("__floor__")) {
-      const z = Number(targetMapId.replace("__floor__", ""));
-      const candidates = sorted.filter(m => (m.stack?.z_level ?? 0) === z);
+      const fid = targetMapId.replace("__floor__", "");
+      const candidates = sorted.filter(m => (m.floor_id || "main") === fid);
       const best = candidates.slice().sort((a, b) => {
         const ra = (a.receivers || []).length + Object.keys(a.room_bounds || {}).length;
         const rb = (b.receivers || []).length + Object.keys(b.room_bounds || {}).length;
