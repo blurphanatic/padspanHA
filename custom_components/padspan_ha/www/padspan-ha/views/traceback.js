@@ -1819,8 +1819,8 @@ export function render(ctx) {
       }
     }
 
-    // Auto-load on first render
-    _loadDist();
+    // Auto-load after a short delay (ensures DOM is mounted)
+    setTimeout(_loadDist, 200);
 
     outer.appendChild(distCard);
   }

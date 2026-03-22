@@ -3524,6 +3524,18 @@ export function render(ctx){
     ]),
     el("div",{style:"color:#94a3b8;margin-top:2px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
   ]);
+  // Migration banner — show on overview if fabric is empty but maps have data
+  {
+    const _maps2 = ctx.state.maps?.list || [];
+    const _hasMaps = _maps2.some(m => (m.receivers||[]).length > 0 || Object.keys(m.room_bounds||{}).length > 0);
+    const _hasFabric = Object.keys(ctx.state.model?.scanner_positions_m || {}).length > 0 || Object.keys(ctx.state.model?.room_geometry_m || {}).length > 0;
+    if (_hasMaps && !_hasFabric) {
+      section.appendChild(el("div",{style:"padding:10px 14px;border:2px solid #f59e0b;background:rgba(245,158,11,.08);border-radius:8px;margin-bottom:10px"},[
+        el("div",{style:"font-weight:700;color:#fbbf24;font-size:13px"},"\u26a0 Fabric migration needed"),
+        el("div",{style:"font-size:11px;color:#e2e8f0;margin-top:4px"},"Go to Health tab \u2192 Positioning Fabric \u2192 Migrate to Fabric to enable real-world positioning."),
+      ]));
+    }
+  }
   section.appendChild(companionCard);
   if(mapEl) section.appendChild(mapEl);
   section.appendChild(grid);

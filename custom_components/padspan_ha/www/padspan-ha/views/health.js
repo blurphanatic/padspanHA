@@ -139,11 +139,12 @@ function _renderFabric(ctx, container, data) {
   container.innerHTML = "";
   const { summary, checks, scanners, scanner_positions_m, room_geometry_m, adjacency } = data;
 
-  // ── Migration prompt for old system users ───────────────────────────────
+  // ── Migration status ─────────────────────────────────────────────────────
   const _maps = data.maps || [];
   const _hasMapsData = _maps.some(m => m.has_receivers > 0 || m.has_room_bounds > 0);
   const _noFabric = !scanner_positions_m?.length && !room_geometry_m?.length;
   if (_hasMapsData && _noFabric) {
+    // Migration needed
     const _mb = el("div",{class:"card",style:"border:2px solid #f59e0b;background:rgba(245,158,11,.08);margin-bottom:12px;padding:16px"});
     _mb.appendChild(el("div",{style:"font-weight:800;font-size:14px;color:#fbbf24;margin-bottom:8px"},"\u26a0 Migration Required"));
     _mb.appendChild(el("div",{style:"font-size:12px;color:#e2e8f0;margin-bottom:12px"},
@@ -170,6 +171,14 @@ function _renderFabric(ctx, container, data) {
     _mr.appendChild(_mbtn);
     _mb.appendChild(_mr);
     container.appendChild(_mb);
+  } else if (scanner_positions_m?.length || room_geometry_m?.length) {
+    // Migration complete
+    container.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:rgba(82,183,136,.06);border:1px solid #52b78833;border-radius:8px"},[
+      el("span",{style:"color:#52b788;font-size:13px"},"\u2705"),
+      el("span",{style:"font-size:12px;color:#52b788;font-weight:600"},"Fabric migration complete"),
+      el("span",{style:"font-size:11px;color:#94a3b8"},
+        `${scanner_positions_m?.length || 0} scanners \u00b7 ${room_geometry_m?.length || 0} rooms`),
+    ]));
   }
 
   // ── Summary banner ─────────────────────────────────────────────────────
