@@ -712,6 +712,11 @@ class ModelStore:
             mid = m.get("id", "")
             if not mid:
                 continue
+            # Skip maps that already have a manually-set transform with reference measurements
+            _existing = transforms.get(mid)
+            if _existing and _existing.get("reference_measurements"):
+                count += 1  # count as already done
+                continue
             cal = m.get("calibration") or {}
             ppm = cal.get("px_per_meter")
             img = m.get("image") or {}
