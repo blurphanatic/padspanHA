@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.16.4";
-const BUILD_ID = "20260322T002158Z";
+const APP_VERSION = "0.16.5";
+const BUILD_ID = "20260322T002614Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -860,7 +860,7 @@ class PadSpanHaApp extends HTMLElement {
       this._updateBadges();
 
       // Re-render views that show live data.
-      const liveViews = new Set(["overview","follow","objects","devices","bluetooth","presence","history","monitor","events","diagnostics","debug","qa","sandbox","manage","calibration","maps"]);
+      const liveViews = new Set(["overview","follow","objects","devices","bluetooth","presence","history","monitor","events","diagnostics","debug","qa","sandbox","manage","calibration"]);
       // Render with poll guard.  _renderCurrentView(fromPoll=true) skips
       // re-render when the user is dragging/confirming; fromPoll=false forces
       // a full rebuild.  Overview ALWAYS uses poll mode because it has its own
@@ -1464,7 +1464,7 @@ class PadSpanHaApp extends HTMLElement {
         mapsUpload: async (payload)=>{ const r = await this._callWS(Object.assign({type:"padspan_ha/maps_upload"}, payload)); await this._getMapsList(); return r; },
         mapsUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         mapsUpdateQuiet: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); },
-        fabricSpatialSave: async (payload)=>{ const r = await this._callWS(Object.assign({type:"padspan_ha/fabric_spatial_batch_save"}, payload)); await this._getMapsList(); this._renderCurrentView(); return r; },
+        fabricSpatialSave: async (payload)=>{ const r = await this._callWS(Object.assign({type:"padspan_ha/fabric_spatial_batch_save"}, payload)); await this._getMapsList(); return r; },
         mapsReplaceImage: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_replace_image"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         modelUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/model_update"}, payload)); await this._getModel(); this._renderCurrentView(); },
 
