@@ -1190,10 +1190,20 @@ function _edit(ctx, map){
     el("span",{class:"muted", style:"font-size:12px"}, _modeHelp[ctx.state.maps._mode] || ""),
   ]);
 
-  const saveRow = el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;margin-top:10px"},[
-    el("button",{class:"btn inline", onclick:async (e)=>{
+  // Detect unsaved changes by comparing draft to saved
+  const _hasDraftChanges = () => {
+    const sRx = JSON.stringify((map.receivers||[]).map(r=>[r.x,r.y,r.source,r.room]));
+    const dRx = JSON.stringify((ctx.state.maps._draftReceivers||[]).map(r=>[r.x,r.y,r.source,r.room]));
+    if (sRx !== dRx) return true;
+    if (JSON.stringify(map.room_bounds||{}) !== JSON.stringify(ctx.state.maps._draftRoomBounds||{})) return true;
+    if (JSON.stringify(map.rf_barriers||[]) !== JSON.stringify(ctx.state.maps._draftBarriers||[])) return true;
+    return false;
+  };
+  const _dirty = _hasDraftChanges();
+
+  const _saveBtn = el("button",{class:"btn inline" + (_dirty ? " save-pulse" : ""), onclick:async (e)=>{
       const btn = e.currentTarget;
-      btn.disabled = true; btn.textContent = "Saving…";
+      btn.disabled = true; btn.textContent = "Saving\u2026"; btn.classList.remove("save-pulse");
       try{
         await ctx.actions.fabricSpatialSave({
           map_id: map.id,
@@ -1209,10 +1219,14 @@ function _edit(ctx, map){
           notes: map.notes||"",
           floor_id: ctx.state.maps._draftFloorId,
         });
-        ctx.toast("Layout saved ✔");
+        ctx.toast("Layout saved \u2714");
       }catch(err){ ctx.toast("Save failed: "+String(err), true); }
-      btn.disabled = false; btn.textContent = "Save Layout";
-    }}, "Save Layout"),
+      btn.disabled = false; btn.textContent = "\ud83d\udcbe Save Layout"; btn.classList.remove("save-pulse");
+  }});
+  _saveBtn.textContent = _dirty ? "\ud83d\udcbe Save Layout" : "Save Layout";
+
+  const saveRow = el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;margin-top:10px"},[
+    _saveBtn,
     el("button",{class:"btn inline", onclick:()=>{
       // reset drafts from last saved map
       ctx.state.maps._draftReceivers = (map.receivers||[]).map(r=>({id:r.id||"", label:r.label||"", x:Number(r.x||0), y:Number(r.y||0), room:r.room||"", source:r.source||""}));
@@ -1911,7 +1925,7 @@ function _edit(ctx, map){
         mPanel.appendChild(analysisDiv);
 
         // Save button — prominent green to make it clear this is the save action
-        const applyBtn = el("button",{class:"btn",style:"margin-top:12px;width:100%;padding:12px;font-size:15px;background:#1a3a0a;border:2px solid #52b788;color:#86efac;font-weight:800;border-radius:8px;cursor:pointer"},
+        const applyBtn = el("button",{class:"btn save-pulse",style:"margin-top:12px;width:100%;padding:12px;font-size:15px;background:#1a3a0a;border:2px solid #52b788;color:#86efac;font-weight:800;border-radius:8px;cursor:pointer"},
           `\ud83d\udcbe  Save Scale: ${avgPpm.toFixed(1)} px/m \u2192 ${scale_x_m.toFixed(1)}m \u00d7 ${scale_y_m.toFixed(1)}m`);
         applyBtn.addEventListener("click", async () => {
           applyBtn.disabled = true; applyBtn.textContent = "Saving\u2026";

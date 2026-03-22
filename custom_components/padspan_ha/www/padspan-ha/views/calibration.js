@@ -751,7 +751,7 @@ function _buildSavePanel(ctx, el, cs, calData, mapData) {
   const btnRow = el("div", { style: "display:flex;gap:8px;margin-top:12px" });
 
   if (readingsEntries.length > 0) {
-    const saveBtn = el("button", { class: "btn", style: "flex:1" }, "Save Point");
+    const saveBtn = el("button", { class: "btn save-pulse", style: "flex:1" }, "\ud83d\udcbe Save Point");
     saveBtn.addEventListener("click", async () => {
       saveBtn.disabled = true;
       saveBtn.textContent = "Saving…";
@@ -2044,9 +2044,9 @@ function _tuneTab(ctx, el, cs, calData) {
   const statusLbl = document.createElement("span");
   statusLbl.style.cssText = "font-size:11px;color:#94a3b8;min-width:90px";
   const saveBtn = document.createElement("button");
-  saveBtn.className = "btn inline";
+  saveBtn.className = "btn inline" + (hasDirty ? " save-pulse" : "");
   saveBtn.style.cssText = "padding:2px 10px;font-size:12px";
-  saveBtn.textContent = "Save";
+  saveBtn.textContent = hasDirty ? "\ud83d\udcbe Save" : "Save";
   saveBtn.title = "Save updated receiver positions to all modified maps";
   saveBtn.addEventListener("click", async () => {
     const dirtyIds = Object.keys(ts.dirtyMaps).filter(id => ts.dirtyMaps[id]);
@@ -3291,11 +3291,12 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   // Save button
   const statusLbl = document.createElement("span");
   statusLbl.style.cssText = "font-size:11px;color:#94a3b8;min-width:90px";
+  const _bsDirty = Object.values(bs.dirtyMaps).some(Boolean);
   const saveBtn = document.createElement("button");
-  saveBtn.className = "btn inline";
+  saveBtn.className = "btn inline" + (_bsDirty ? " save-pulse" : "");
   saveBtn.style.cssText = "padding:2px 10px;font-size:12px";
-  saveBtn.textContent = "Save";
-  saveBtn.title = "Save beacon reference positions to maps";
+  saveBtn.textContent = _bsDirty ? "\ud83d\udcbe Save" : "Save";
+  saveBtn.title = "Save beacon reference positions";
   saveBtn.addEventListener("click", async () => {
     const dirtyIds = Object.keys(bs.dirtyMaps).filter(id => bs.dirtyMaps[id]);
     if (!dirtyIds.length) { statusLbl.textContent = "No changes"; setTimeout(() => { statusLbl.textContent = ""; }, 2000); return; }

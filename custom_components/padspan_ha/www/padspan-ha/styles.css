@@ -39,6 +39,11 @@
 
 .btn.inline.danger{border-color:#7d2b2b;background:#2a1414}
 
+/* Unsaved changes pulse — subtle green glow on save buttons with pending data */
+@keyframes save-pulse{0%,100%{box-shadow:0 0 4px rgba(82,183,136,.3)}50%{box-shadow:0 0 14px rgba(82,183,136,.7),0 0 24px rgba(82,183,136,.2)}}
+.btn.save-pulse{animation:save-pulse 2s ease-in-out infinite;border-color:#52b788 !important}
+.btn.save-done{animation:none;box-shadow:none}
+
 .mapstage{position:relative;margin-top:10px;border-radius:14px;overflow:hidden;border:1px solid #1a4228;background:#091610;min-height:240px}
 .mapimg{display:block;width:100%;height:auto;user-select:none;pointer-events:none}
 .mapoverlay{position:absolute;left:0;top:0;right:0;bottom:0}
