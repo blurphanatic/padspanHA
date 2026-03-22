@@ -2137,11 +2137,19 @@ function _tuneTab(ctx, el, cs, calData) {
     if (!rx) { infoCard.textContent = "Receiver not found."; return; }
     const mapObj = maps_list.find(m => m.id === ts.selectedRx.mapId);
     infoCard.innerHTML = "";
+    // Show floor + metres from fabric when available
+    const _floorName = (() => {
+      const fid = mapObj?.floor_id || "main";
+      const fObj = (ctx.state.model?.floors || []).find(f => f.id === fid);
+      return fObj ? fObj.name : fid;
+    })();
+    const _fabPos = (ctx.state.model?.scanner_positions_m || {})[rx.source];
+    const _posStr = _fabPos ? `${_fabPos.x_m?.toFixed(1)}m, ${_fabPos.y_m?.toFixed(1)}m` : `${(rx.x * 100).toFixed(1)}%, ${(rx.y * 100).toFixed(1)}%`;
     const lines = [
       `<b style="color:#52b788">${_esc(rx.label || rx.id)}</b>`,
-      `Map: ${_esc(mapObj?.name || ts.selectedRx.mapId)}`,
-      `Room: ${_esc(rx.room || "—")}`,
-      `Position: x ${(rx.x * 100).toFixed(1)}%, y ${(rx.y * 100).toFixed(1)}%`,
+      `Floor: ${_esc(_floorName)}`,
+      `Room: ${_esc(rx.room || "\u2014")}`,
+      `Position: ${_posStr}`,
     ];
     const infoLine = document.createElement("div");
     infoLine.innerHTML = lines.join(" &nbsp;·&nbsp; ");
@@ -2152,8 +2160,8 @@ function _tuneTab(ctx, el, cs, calData) {
     const removeBtn = document.createElement("button");
     removeBtn.className = "btn inline";
     removeBtn.style.cssText = "font-size:10px;padding:2px 10px;color:#f87171;border-color:#f8717140;margin-top:6px";
-    removeBtn.textContent = "Remove from this map";
-    removeBtn.title = "Remove this receiver from " + (mapObj?.name || "this map") + " only";
+    removeBtn.textContent = "Remove from floor";
+    removeBtn.title = "Remove this receiver from " + _floorName;
     removeBtn.addEventListener("click", async () => {
       const d = ts.draftReceivers[_selMapId] || [];
       ts.draftReceivers[_selMapId] = d.filter(r => r.id !== _selRxId);
@@ -2170,7 +2178,7 @@ function _tuneTab(ctx, el, cs, calData) {
           });
           ts.dirtyMaps = {};
           ts._mapsStamp = null;
-          ctx.toast("Receiver removed from " + (origMap.name || "map"));
+          ctx.toast("Receiver removed");
           await ctx.actions.mapsRefresh();
         } catch (e) {
           ctx.toast("Remove failed: " + String(e), true);
@@ -4096,11 +4104,15 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     infoCard.innerHTML = "";
     const infoLine = document.createElement("div");
     infoLine.style.cssText = "display:flex;align-items:center;gap:0;flex-wrap:wrap";
+    const _bkFloor = (() => { const fid = mapObj?.floor_id || "main"; const f = (ctx.state.model?.floors||[]).find(f2=>f2.id===fid); return f ? f.name : fid; })();
+    const _bkFab = (ctx.state.model?.beacon_positions_m || {})[bk.key];
+    const _bkPos = _bkFab ? `${_bkFab.x_m?.toFixed(1)}m, ${_bkFab.y_m?.toFixed(1)}m` : `${(bk.x*100).toFixed(1)}%, ${(bk.y*100).toFixed(1)}%`;
+    const _bkRoom = _bkFab?.room || detectedRoom;
     const lines = [
       `<b style="color:#5eead4">${_esc(bk.label || bk.key)}</b>`,
-      `Map: ${_esc(mapObj?.name || bs.selectedBk.mapId)}`,
-      `Room: ${_esc(detectedRoom || "\u2014")}`,
-      `Position: x ${(bk.x * 100).toFixed(1)}%, y ${(bk.y * 100).toFixed(1)}%`,
+      `Floor: ${_esc(_bkFloor)}`,
+      `Room: ${_esc(_bkRoom || "\u2014")}`,
+      `Position: ${_bkPos}`,
       `RSSI: ${lastRssi}`,
       `Kind: ${_esc(bk.kind || "ble")}`,
     ];
