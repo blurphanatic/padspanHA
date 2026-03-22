@@ -937,6 +937,27 @@ export function render(ctx) {
       });
       rangeRow.appendChild(btn);
     }
+    // Custom minutes input
+    const _customInput = document.createElement("input");
+    _customInput.type = "number"; _customInput.min = "1"; _customInput.max = "99999"; _customInput.step = "1";
+    _customInput.placeholder = "min";
+    _customInput.style.cssText = "width:55px;padding:2px 6px;border:1px solid #334155;border-radius:4px;background:#1e293b;color:#e2e8f0;font-size:10px";
+    const _customBtn = document.createElement("button");
+    _customBtn.className = "btn inline";
+    _customBtn.style.cssText = "font-size:10px;padding:2px 8px;color:#94a3b8";
+    _customBtn.textContent = "Go";
+    _customBtn.addEventListener("click", async () => {
+      const v = parseInt(_customInput.value);
+      if (v && v > 0) {
+        _stopPlayback();
+        tb.rangePreset = v * 60;
+        tb.startTs = null; tb.endTs = null;
+        await _loadTracebackData();
+        _buildControls(); _renderFrame();
+      }
+    });
+    rangeRow.appendChild(_customInput);
+    rangeRow.appendChild(_customBtn);
     ctrlCard.appendChild(rangeRow);
 
     // Object filter

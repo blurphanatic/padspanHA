@@ -540,16 +540,8 @@ class ModelStore:
 
     async def async_set_map_transform(self, map_id: str, transform: dict) -> None:
         """Set the affine transform for a map (frac ↔ metres)."""
-        import logging
-        _log = logging.getLogger(__name__)
         transforms = self.data.setdefault("map_transforms", {})
-        _has_refs = "reference_measurements" in transform
-        _ref_count = len(transform.get("reference_measurements", []))
-        _log.warning("SET_MAP_TRANSFORM map_id=%s has_refs=%s ref_count=%d keys=%s", map_id, _has_refs, _ref_count, sorted(transform.keys()))
         transforms[str(map_id)] = dict(transform)
-        # Verify it stuck
-        _stored = transforms[str(map_id)]
-        _log.warning("SET_MAP_TRANSFORM VERIFY stored_keys=%s stored_refs=%d", sorted(_stored.keys()), len(_stored.get("reference_measurements", [])))
         await self.store.async_save(self.data)
 
     # ── Beacon positions (metre space) ──────────────────────────────────────

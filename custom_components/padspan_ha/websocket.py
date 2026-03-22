@@ -7973,22 +7973,19 @@ async def ws_fabric_map_transform_set(hass: HomeAssistant, connection, msg) -> N
         return
     transform.setdefault("floor_id", DEFAULT_FLOOR_ID)
     await mdl.async_set_map_transform(map_id, transform)
-    # Verify it persisted
-    _stored = (mdl.data.get("map_transforms") or {}).get(map_id, {})
-    _stored_keys = sorted(_stored.keys()) if isinstance(_stored, dict) else []
-    _stored_refs = len(_stored.get("reference_measurements", [])) if isinstance(_stored, dict) else -1
-    # Phase 3: remap calibration points using the new transform
+    # Remap calibration points using the new transform
     try:
         _cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
         if _cal:
             await _cal.async_remap_from_metres(map_id)
     except Exception:
         pass
+    _stored = (mdl.data.get("map_transforms") or {}).get(map_id, {})
     connection.send_result(msg["id"], {
         "ok": True, "map_id": map_id,
-        "debug_stored_keys": _stored_keys,
-        "debug_stored_refs": _stored_refs,
-        "debug_scale_x": _stored.get("scale_x_m"),
+        "scale_x_m": _stored.get("scale_x_m"),
+        "scale_y_m": _stored.get("scale_y_m"),
+        "refs": len(_stored.get("reference_measurements", [])),
     })
 
 
@@ -8192,23 +8189,14 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
             "value": len(transforms),
             "detail": "; ".join(_tx_details) if _tx_details else "No transforms",
         })
-        # Reference measurements check — dump raw keys for debugging
-        _total_refs = 0
-        _ref_debug = []
-        for _mid2, _tx2 in transforms.items():
-            _keys = sorted(_tx2.keys()) if isinstance(_tx2, dict) else ["NOT_A_DICT"]
-            _refs2 = _tx2.get("reference_measurements") if isinstance(_tx2, dict) else None
-            _ref_count = len(_refs2) if isinstance(_refs2, list) else 0
-            _total_refs += _ref_count
-            _ref_debug.append(f"{_mid2[:8]}:keys={_keys},refs={_ref_count}")
+        # Reference measurements check
+        _total_refs = sum(len(t.get("reference_measurements") or []) for t in transforms.values() if isinstance(t, dict))
         _has_refs = _total_refs > 0
         checks.append({
             "group": "spatial", "name": "Scale Calibration",
             "ok": _has_refs,
             "value": f"{_total_refs} measurement(s)" if _has_refs else "not calibrated",
-            "detail": (f"{_total_refs} reference distance measurement(s) from the Measure tool"
-                       if _has_refs
-                       else "Not calibrated. Debug: " + "; ".join(_ref_debug[:3])),
+            "detail": f"{_total_refs} reference distance measurement(s) from the Measure tool" if _has_refs else "Use the Measure tool in Maps \u2192 Edit to set real-world scale from known distances",
         })
 
         # Check if coordinator is using metre model
