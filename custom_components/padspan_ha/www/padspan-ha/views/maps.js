@@ -1938,7 +1938,9 @@ function _edit(ctx, map){
           };
           try {
             // Save transform directly to fabric — fabric is the sole authority
-            await ctx.actions.callWS({ type: "padspan_ha/fabric_map_transform_set", map_id: map.id, transform });
+            const _txResult = await ctx.actions.callWS({ type: "padspan_ha/fabric_map_transform_set", map_id: map.id, transform });
+            // Show debug from backend
+            const _dbg = _txResult ? `[refs=${_txResult.debug_stored_refs},sx=${_txResult.debug_scale_x}]` : "[no result]";
             // Re-derive spatial data for this map only (don't overwrite other transforms)
             try {
               await ctx.actions.fabricSpatialSave({
@@ -1949,7 +1951,7 @@ function _edit(ctx, map){
                 beacons: map.beacons || [],
               });
             } catch(e2) {}
-            ctx.toast(`Scale: ${ppm} px/m (${scale_x_m.toFixed(1)}m \u00d7 ${scale_y_m.toFixed(1)}m). Saved to fabric.`);
+            ctx.toast(`Scale: ${ppm} px/m (${scale_x_m.toFixed(1)}m \u00d7 ${scale_y_m.toFixed(1)}m). ${_dbg}`);
             ctx.state.maps._measurePts = [];
             ctx.state.maps._measurements = [];
             await ctx.actions.mapsRefresh();
