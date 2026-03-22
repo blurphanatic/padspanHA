@@ -7973,6 +7973,10 @@ async def ws_fabric_map_transform_set(hass: HomeAssistant, connection, msg) -> N
         return
     transform.setdefault("floor_id", DEFAULT_FLOOR_ID)
     await mdl.async_set_map_transform(map_id, transform)
+    # Verify it persisted
+    _stored = (mdl.data.get("map_transforms") or {}).get(map_id, {})
+    _stored_keys = sorted(_stored.keys()) if isinstance(_stored, dict) else []
+    _stored_refs = len(_stored.get("reference_measurements", [])) if isinstance(_stored, dict) else -1
     # Phase 3: remap calibration points using the new transform
     try:
         _cal = hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
@@ -7980,7 +7984,12 @@ async def ws_fabric_map_transform_set(hass: HomeAssistant, connection, msg) -> N
             await _cal.async_remap_from_metres(map_id)
     except Exception:
         pass
-    connection.send_result(msg["id"], {"ok": True, "map_id": map_id})
+    connection.send_result(msg["id"], {
+        "ok": True, "map_id": map_id,
+        "debug_stored_keys": _stored_keys,
+        "debug_stored_refs": _stored_refs,
+        "debug_scale_x": _stored.get("scale_x_m"),
+    })
 
 
 @websocket_api.websocket_command({
