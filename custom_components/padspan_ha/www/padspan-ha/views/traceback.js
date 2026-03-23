@@ -1752,9 +1752,8 @@ export function render(ctx) {
           prevTs = ts;
           for (const o of (frame.o || [])) {
             if (!o.k) continue;
-            // Skip devices marked as stationary
-            if (_stationarySet.has(String(o.k).toUpperCase())) continue;
-            if (!objDist[o.k]) objDist[o.k] = {dist_m:0, transitions:0, lastPos:null, lastRoom:null, lastTs:0, label:o.n||o.k, steps:0, jitter_steps:0, max_step:0};
+            const _isRef = _stationarySet.has(String(o.k).toUpperCase());
+            if (!objDist[o.k]) objDist[o.k] = {dist_m:0, transitions:0, lastPos:null, lastRoom:null, lastTs:0, label:o.n||o.k, steps:0, jitter_steps:0, max_step:0, isRef: _isRef};
             let pos = null;
             if (o.x!=null && o.y!=null && o.m) pos = _toMetres(o.x, o.y, o.m);
             if (!pos && o.r) pos = _centroid(o.r);
@@ -1830,7 +1829,19 @@ export function render(ctx) {
             const goodSteps = totalSteps - (od.jitter_steps || 0);
             const reliability = Math.round((goodSteps / totalSteps) * 100);
             const relColor = reliability > 80 ? "#52b788" : reliability > 50 ? "#f59e0b" : "#f87171";
-            tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2e8f0"}, od.label || key));
+            const nameDiv = el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2e8f0"});
+            nameDiv.textContent = od.label || key;
+            if (od.isRef) {
+              const refBadge = el("span",{style:"font-size:8px;padding:0 4px;margin-left:4px;border-radius:3px;background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;vertical-align:middle"}, "REF");
+              nameDiv.appendChild(refBadge);
+              // For reference devices, distance = phantom jitter (quality metric)
+              if (dist > 5) {
+                const warnBadge = el("span",{style:"font-size:8px;padding:0 4px;margin-left:3px;border-radius:3px;background:#f8717122;color:#f87171;border:1px solid #f8717144;vertical-align:middle"}, `${distStr} jitter`);
+                warnBadge.title = "This stationary device shows phantom distance — indicates BLE positioning noise in your setup";
+                nameDiv.appendChild(warnBadge);
+              }
+            }
+            tbl.appendChild(nameDiv);
             tbl.appendChild(el("div",{style:`color:${distColor};font-weight:600;text-align:right;font-family:monospace`}, distStr));
             tbl.appendChild(el("div",{style:"text-align:right;color:#94a3b8"}, String(od.transitions)));
             tbl.appendChild(el("div",{style:`text-align:right;color:${relColor};font-weight:600`}, `${reliability}%`));
@@ -1853,17 +1864,24 @@ export function render(ctx) {
               alert(msg);
             });
             actDiv.appendChild(invBtn);
-            // Mark stationary button
-            const statBtn = el("button",{class:"btn tiny",style:"font-size:9px;padding:1px 4px;color:#f59e0b;border-color:#92400e"}, "\ud83d\udccc");
-            statBtn.title = "Mark as stationary (exclude from distance tracking)";
+            // Mark as stationary reference — still tracked, but flagged for accuracy monitoring
+            const isStationary = _stationarySet.has(String(key).toUpperCase());
+            const statBtn = el("button",{class:"btn tiny",style:`font-size:9px;padding:1px 4px;${isStationary ? "color:#52b788;border-color:#52b788" : "color:#f59e0b;border-color:#92400e"}`}, isStationary ? "\u2713 Ref" : "\ud83d\udccc Ref");
+            statBtn.title = isStationary ? "This device is a stationary reference — click to remove" : "Mark as stationary reference (known-fixed device for accuracy monitoring)";
             statBtn.addEventListener("click", async () => {
-              if (!confirm(`Mark "${od.label || key}" as stationary?\n\nIt will be excluded from future distance calculations.`)) return;
               try {
-                const existing = ctx.state.settings?.distance_stationary_devices || [];
-                const updated = [...new Set([...existing, key])];
+                const existing = (ctx.state.settings?.distance_stationary_devices || []).map(s => String(s));
+                let updated;
+                if (isStationary) {
+                  updated = existing.filter(s => s.toUpperCase() !== String(key).toUpperCase());
+                  ctx.toast(`${od.label || key} removed as reference`);
+                } else {
+                  if (!confirm(`Mark "${od.label || key}" as a stationary reference?\n\nStationary references are devices you KNOW don't move (TVs, fixed beacons). Their phantom distance reveals BLE positioning jitter — high distance on a stationary device means your scanner setup needs attention.\n\nThe device stays visible with a reference badge.`)) return;
+                  updated = [...new Set([...existing, key])];
+                  ctx.toast(`${od.label || key} marked as stationary reference`);
+                }
                 await ctx.actions.settingsSave({ distance_stationary_devices: updated });
-                ctx.toast(`${od.label || key} marked as stationary`);
-                _loadDist(); // refresh
+                _loadDist();
               } catch(e) { ctx.toast("Failed: " + (e.message||e), true); }
             });
             actDiv.appendChild(statBtn);
@@ -1876,18 +1894,17 @@ export function render(ctx) {
           const avgReliability = shown.length ? Math.round(shown.reduce((s,[,od]) => s + ((od.steps - (od.jitter_steps||0)) / Math.max(1,od.steps)) * 100, 0) / shown.length) : 0;
           tblDiv.appendChild(el("div",{style:"margin-top:8px;font-size:10px;color:#64748b"},
             `${shown.length} object${shown.length!==1?"s":""} \u00b7 ${totalStr} total \u00b7 ${avgReliability}% avg reliability \u00b7 ${frames.length} frames`));
-          // Show stationary exclusions
-          if (_stationarySet.size) {
-            const clearBtn = el("span",{style:"color:#f59e0b;cursor:pointer;text-decoration:underline"}, "clear all");
-            clearBtn.addEventListener("click", async () => {
-              await ctx.actions.settingsSave({ distance_stationary_devices: [] });
-              ctx.toast("Stationary list cleared");
-              _loadDist();
-            });
-            const exRow = el("div",{style:"margin-top:4px;font-size:10px;color:#64748b"});
-            exRow.appendChild(document.createTextNode(`${_stationarySet.size} stationary device${_stationarySet.size!==1?"s":""} excluded \u2014 `));
-            exRow.appendChild(clearBtn);
-            tblDiv.appendChild(exRow);
+          // Show stationary reference summary
+          const refDevices = shown.filter(([,od]) => od.isRef);
+          if (refDevices.length) {
+            const refJitter = refDevices.reduce((s,[,od]) => s + od.dist_m, 0);
+            const refStr = refJitter >= 1000 ? `${(refJitter/1000).toFixed(2)} km` : `${refJitter.toFixed(1)} m`;
+            const jitterQuality = refJitter < 10 ? "Excellent" : refJitter < 50 ? "Good" : refJitter < 200 ? "Fair" : "Poor";
+            const jitterColor = refJitter < 10 ? "#52b788" : refJitter < 50 ? "#5eead4" : refJitter < 200 ? "#f59e0b" : "#f87171";
+            tblDiv.appendChild(el("div",{style:`margin-top:6px;padding:6px 8px;background:${jitterColor}11;border:1px solid ${jitterColor}33;border-radius:6px;font-size:10px`}, [
+              el("span",{style:`color:${jitterColor};font-weight:700`}, `BLE Accuracy: ${jitterQuality}`),
+              el("span",{style:"color:#94a3b8;margin-left:6px"}, `${refDevices.length} stationary ref${refDevices.length!==1?"s":""} show ${refStr} phantom distance (lower = better scanner positioning)`),
+            ]));
           }
         }
         _renderTable();
