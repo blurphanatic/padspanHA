@@ -41,7 +41,8 @@ class MovementStore:
         self._prune()
         return self.entries
 
-    async def record(self, device: str, from_room: str | None, to_room: str | None, label: str | None = None) -> None:
+    async def record(self, device: str, from_room: str | None, to_room: str | None,
+                     label: str | None = None, padspan_id: str | None = None) -> None:
         """Record a room transition."""
         entry = {
             "device": device,
@@ -50,6 +51,8 @@ class MovementStore:
             "to": to_room,
             "ts": time.time(),
         }
+        if padspan_id:
+            entry["padspan_id"] = padspan_id
         self.entries.append(entry)
         self._prune()
         await self.store.async_save(self.entries)

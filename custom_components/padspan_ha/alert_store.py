@@ -42,8 +42,11 @@ class AlertStore:
             self.data = {}
         return self.data
 
-    async def async_save_config(self, addr: str, config: dict[str, Any]) -> None:
+    async def async_save_config(self, addr: str, config: dict[str, Any],
+                               padspan_id: str | None = None) -> None:
         """Save alert config for a single device address/key."""
+        if padspan_id:
+            config["padspan_id"] = padspan_id
         self.data[addr] = config
         await self.store.async_save(self.data)
 

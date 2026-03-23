@@ -83,6 +83,10 @@ class TracebackStore:
                 "k": key,
                 "r": room,
             }
+            # Stable identity: include padspan_id if available
+            pid = o.get("padspan_id")
+            if pid:
+                entry["pid"] = pid
             # k-NN sub-room position (precise map placement)
             x_frac = o.get("x_frac")
             y_frac = o.get("y_frac")

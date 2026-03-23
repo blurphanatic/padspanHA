@@ -4360,11 +4360,18 @@ async def ws_follow_alert_save(hass: HomeAssistant, connection, msg) -> None:
     if len(str(config)) > 50000:
         connection.send_error(msg["id"], "config_too_large", "Alert config exceeds size limit")
         return
-    # Persist to AlertStore (disk-backed)
-    from .const import DATA_ALERTS
+    # Persist to AlertStore (disk-backed) — resolve padspan_id for stable identity
+    from .const import DATA_ALERTS, DATA_DEVICE_REGISTRY
     alert_store = hass.data.get(DOMAIN, {}).get(DATA_ALERTS)
+    _pid = None
+    try:
+        _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+        if _dev_reg:
+            _pid = _dev_reg.resolve(addr)
+    except Exception:
+        pass
     if alert_store:
-        await alert_store.async_save_config(addr, config)
+        await alert_store.async_save_config(addr, config, padspan_id=_pid)
     else:
         # Fallback: session-only (shouldn't happen if stores loaded)
         hass.data.setdefault(DOMAIN, {}).setdefault("follow_alerts", {})[addr] = config
@@ -8689,6 +8696,50 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
                 "ok": False, "value": "not loaded",
                 "detail": "DeviceRegistry is not initialized",
             })
+    except Exception:
+        pass
+
+    # ── Dependent store identity migration ──────────────────────────────────
+    try:
+        from .const import DATA_MOVEMENT, DATA_TRACEBACK, DATA_ALERTS, DATA_DEVICE_REGISTRY
+        _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+        if _dev_reg and _dev_reg.device_count() > 0:
+            # Movement store: check how many entries have padspan_id
+            _mv = hass.data.get(DOMAIN, {}).get(DATA_MOVEMENT)
+            if _mv:
+                _mv_total = len(_mv.entries)
+                _mv_with_pid = sum(1 for e in _mv.entries if e.get("padspan_id"))
+                checks.append({
+                    "group": "identity", "name": "Movement History",
+                    "ok": _mv_total == 0 or _mv_with_pid > 0,
+                    "value": f"{_mv_with_pid}/{_mv_total}",
+                    "detail": f"{_mv_with_pid} of {_mv_total} movement entries have stable padspan_id",
+                })
+
+            # Traceback: check recent frames for padspan_id
+            _tb = hass.data.get(DOMAIN, {}).get(DATA_TRACEBACK)
+            if _tb and _tb.frames:
+                _recent = _tb.frames[-min(100, len(_tb.frames)):]
+                _tb_objs = sum(len(f.get("o", [])) for f in _recent)
+                _tb_with_pid = sum(1 for f in _recent for o in f.get("o", []) if o.get("pid"))
+                checks.append({
+                    "group": "identity", "name": "Traceback Frames",
+                    "ok": _tb_objs == 0 or _tb_with_pid > 0,
+                    "value": f"{_tb_with_pid}/{_tb_objs} (last 100 frames)",
+                    "detail": f"{_tb_with_pid} of {_tb_objs} traceback objects have stable padspan_id",
+                })
+
+            # Alert configs: check for padspan_id
+            _al = hass.data.get(DOMAIN, {}).get(DATA_ALERTS)
+            if _al:
+                _al_total = len(_al.data)
+                _al_with_pid = sum(1 for v in _al.data.values() if isinstance(v, dict) and v.get("padspan_id"))
+                checks.append({
+                    "group": "identity", "name": "Follow Alerts",
+                    "ok": _al_total == 0 or _al_with_pid > 0,
+                    "value": f"{_al_with_pid}/{_al_total}",
+                    "detail": f"{_al_with_pid} of {_al_total} alert configs have stable padspan_id",
+                })
     except Exception:
         pass
 

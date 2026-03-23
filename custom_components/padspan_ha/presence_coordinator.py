@@ -1739,16 +1739,22 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Manage → History view.  Each transition is recorded with a timestamp,
         the object's display label, and the old/new room names.
         """
-        from .const import DOMAIN, DATA_MOVEMENT, DATA_OBJECTS
+        from .const import DOMAIN, DATA_MOVEMENT, DATA_OBJECTS, DATA_DEVICE_REGISTRY
         try:
             mv_store = self.hass.data.get(DOMAIN, {}).get(DATA_MOVEMENT)
             if not mv_store:
                 return
             obj_store = self.hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+            dev_reg = self.hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
             for key, old_room, new_room in self._pending_room_changes:
                 label = None
-                if obj_store:
+                pid = None
+                if dev_reg:
+                    pid = dev_reg.resolve(key)
+                    if pid:
+                        label = dev_reg.get_label(pid)
+                if not label and obj_store:
                     label = obj_store.get_label(key)
-                await mv_store.record(key, old_room, new_room, label=label)
+                await mv_store.record(key, old_room, new_room, label=label, padspan_id=pid)
         except Exception as err:
             _LOGGER.debug("Movement recording failed: %s", err)
