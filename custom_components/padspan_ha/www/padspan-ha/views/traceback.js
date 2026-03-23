@@ -1739,7 +1739,7 @@ export function render(ctx) {
         // Compute distances
         const objDist = {};
         for (const frame of frames) {
-          for (const o of (frame.objects || [])) {
+          for (const o of (frame.o || [])) {
             if (!o.k) continue;
             if (!objDist[o.k]) objDist[o.k] = {dist_m:0, transitions:0, lastPos:null, lastRoom:null, label:o.n||o.k};
             let pos = null;

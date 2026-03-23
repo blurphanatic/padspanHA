@@ -1967,6 +1967,7 @@ function _tuneTab(ctx, el, cs, calData) {
 
   // ── Helper: rebuild SVG without losing scroll ─────────────────────────────
   function _refreshSVG() {
+    if (ts._dragging) return; // Don't rebuild SVG mid-drag
     const scrollTop = isoDiv.scrollTop, scrollLeft = isoDiv.scrollLeft;
     isoDiv.innerHTML = buildTuneSVG(_getFocusZ(ts.focusIdx));
     isoDiv.scrollTop = scrollTop;
@@ -4029,6 +4030,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
   // ── Helper: rebuild SVG without losing scroll ─────────────────────────────
   function _refreshSVG() {
+    if (bs._dragging) return; // Don't rebuild SVG mid-drag
     const scrollTop = isoDiv.scrollTop, scrollLeft = isoDiv.scrollLeft;
     isoDiv.innerHTML = buildBeaconSVG(_getFocusZ(bs.focusIdx));
     isoDiv.scrollTop = scrollTop;
