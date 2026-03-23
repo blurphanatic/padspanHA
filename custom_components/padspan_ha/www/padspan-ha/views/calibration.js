@@ -1637,12 +1637,12 @@ function _tuneTab(ctx, el, cs, calData) {
           if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
           const color = roomColorFn(room);
           const pp = b.points.map(p => { const [wx, wy] = xf.mapPt(p[0], p[1]); return pt(iso(wx, wy, z)); }).join(" ");
-          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9"/>`;
+          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9" pointer-events="none"/>`;
           const cx2 = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
           const cy2 = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
           const [lwx, lwy] = xf.mapPt(cx2, cy2);
           const [lix, liy] = iso(lwx, lwy, z);
-          s += `<text x="${Math.round(lix)}" y="${Math.round(liy) + lidx * 2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
+          s += `<text x="${Math.round(lix)}" y="${Math.round(liy) + lidx * 2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7" pointer-events="none">${_esc(room)}</text>`;
         }
       }
 
@@ -2901,12 +2901,12 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
           const color = roomColorFn(room);
           const pp = b.points.map(p => { const [wx, wy] = xf.mapPt(p[0], p[1]); return pt(iso(wx, wy, z)); }).join(" ");
-          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9"/>`;
+          s += `<polygon points="${pp}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" opacity="0.9" pointer-events="none"/>`;
           const rcx = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
           const rcy = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
           const [lwx, lwy] = xf.mapPt(rcx, rcy);
           const [lix, liy] = iso(lwx, lwy, z);
-          s += `<text x="${Math.round(lix)}" y="${Math.round(liy) + lidx * 2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7">${_esc(room)}</text>`;
+          s += `<text x="${Math.round(lix)}" y="${Math.round(liy) + lidx * 2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="7" pointer-events="none">${_esc(room)}</text>`;
         }
 
         // Receiver markers (non-draggable green reference) — show all, dim offline
