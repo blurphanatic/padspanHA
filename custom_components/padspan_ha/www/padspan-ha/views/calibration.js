@@ -3483,8 +3483,10 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     if (!xf) { console.warn("[PadSpan] bk drag: no xform for map", mapId); isoDiv.style.cursor = ""; return; }
     const [origWx, origWy] = xf.mapPt(bkObj.x, bkObj.y);
     const [origPx, origPy] = iso(origWx, origWy, z);
+    console.log("[PadSpan] bk drag START:", {id: bkId, mapId, z, x: bkObj.x, y: bkObj.y, origWx, origWy, origPx, origPy, sc: xf.sc, arRef: xf.arRef, sxAdj: xf.sxAdj, ox: xf.ox, oy_: xf.oy_});
 
     bs._dragging = true;
+    let _moveCount = 0;
 
     const onMove = (ev) => {
       ev.preventDefault();
@@ -3498,6 +3500,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       const sy = ev.clientX * inv.b + ev.clientY * inv.d + inv.f;
       const [wx, wy] = invIso(sx, sy, z);
       const [nx, ny] = xf.invMapPt(wx, wy);
+      if (_moveCount++ < 3) console.log("[PadSpan] bk drag MOVE:", {sx: sx.toFixed(1), sy: sy.toFixed(1), wx: wx.toFixed(3), wy: wy.toFixed(3), nx: nx.toFixed(3), ny: ny.toFixed(3)});
       bkObj.x = nx;
       bkObj.y = ny;
       bs.dirtyMaps[mapId] = true;
