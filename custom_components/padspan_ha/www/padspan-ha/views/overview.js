@@ -945,7 +945,8 @@ export function render(ctx){
       return btn;
     };
 
-    // Layer toggles — room lines first, then object types
+    // Layer toggles (map image off by default — setup tool only) + room lines
+    filterBar.appendChild(makeFilterBtn("mapImg", "Map", "#a78bfa"));
     filterBar.appendChild(makeFilterBtn("rooms", "Rooms", "#60a5fa"));
     // Separator
     const sep2d = document.createElement("span");
