@@ -1476,7 +1476,7 @@ function _tuneTab(ctx, el, cs, calData) {
     for (const m of maps_list) {
       ts.draftReceivers[m.id] = (m.receivers || [])
         .map(r => ({
-          id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
+          id: r.id || r.source || ("rx_" + Math.random().toString(16).slice(2, 10)), label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
         }));
     }
     // Remove drafts for maps that no longer exist
@@ -2088,7 +2088,7 @@ function _tuneTab(ctx, el, cs, calData) {
     for (const m of maps_list) {
       ts.draftReceivers[m.id] = (m.receivers || [])
         .map(r => ({
-          id: r.id || "", label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
+          id: r.id || r.source || ("rx_" + Math.random().toString(16).slice(2, 10)), label: r.label || "", x: Number(r.x || 0), y: Number(r.y || 0), room: r.room || "", source: r.source || ""
         }));
     }
     ts.dirtyMaps = {};
@@ -2664,7 +2664,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   if (!Object.keys(bs.draftBeacons).length || (mapsStamp !== bs._mapsStamp && !hasDirty)) {
     for (const m of maps_list) {
       bs.draftBeacons[m.id] = (m.beacons || []).map(bk => ({
-        id: bk.id || "", label: bk.label || "", key: bk.key || "",
+        id: bk.id || ("bk_" + Math.random().toString(16).slice(2, 10)),
+        label: bk.label || "", key: bk.key || "",
         kind: bk.kind || "", x: Number(bk.x || 0), y: Number(bk.y || 0),
       }));
     }

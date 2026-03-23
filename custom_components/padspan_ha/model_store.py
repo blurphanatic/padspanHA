@@ -1134,7 +1134,10 @@ class ModelStore:
         barriers_m = self.data.get("rf_barriers_m") or []
 
         # ── Receivers ─────────────────────────────────────────────────────
-        for rx in (map_dict.get("receivers") or []):
+        existing_receivers = map_dict.get("receivers") or []
+        existing_sources = {(rx.get("source") or rx.get("id", "")) for rx in existing_receivers}
+
+        for rx in existing_receivers:
             src = rx.get("source") or rx.get("id", "")
             if not src or src not in positions:
                 continue
@@ -1146,6 +1149,25 @@ class ModelStore:
                 rx["x"] = round(max(0.0, min(1.0, fracs[0])), 4)
                 rx["y"] = round(max(0.0, min(1.0, fracs[1])), 4)
                 count += 1
+
+        # Add receivers from fabric that belong to this map but aren't in map_dict yet
+        for src, pos in positions.items():
+            if src in existing_sources:
+                continue
+            if pos.get("map_id") != map_id:
+                continue
+            fracs = self.metres_to_map_frac(float(pos["x_m"]), float(pos["y_m"]), map_id)
+            if fracs:
+                existing_receivers.append({
+                    "id": src,
+                    "source": src,
+                    "label": src,
+                    "x": round(max(0.0, min(1.0, fracs[0])), 4),
+                    "y": round(max(0.0, min(1.0, fracs[1])), 4),
+                    "room": pos.get("room", ""),
+                })
+                count += 1
+        map_dict["receivers"] = existing_receivers
 
         # ── Room bounds ───────────────────────────────────────────────────
         for rname, b in (map_dict.get("room_bounds") or {}).items():
@@ -1201,7 +1223,11 @@ class ModelStore:
 
         # ── Beacons ───────────────────────────────────────────────────────
         beacons_m = self.data.get("beacon_positions_m") or {}
-        for bk in (map_dict.get("beacons") or []):
+        existing_beacons = map_dict.get("beacons") or []
+        existing_keys = {bk.get("key") for bk in existing_beacons if bk.get("key")}
+
+        # Update existing beacon entries
+        for bk in existing_beacons:
             bk_key = bk.get("key")
             if not bk_key or bk_key not in beacons_m:
                 continue
@@ -1213,6 +1239,25 @@ class ModelStore:
                 bk["x"] = round(max(0.0, min(1.0, fracs[0])), 4)
                 bk["y"] = round(max(0.0, min(1.0, fracs[1])), 4)
                 count += 1
+
+        # Add new beacons from fabric that belong to this map but aren't in m.beacons yet
+        for bk_key, bm in beacons_m.items():
+            if bk_key in existing_keys:
+                continue
+            if bm.get("map_id") != map_id:
+                continue
+            fracs = self.metres_to_map_frac(float(bm["x_m"]), float(bm["y_m"]), map_id)
+            if fracs:
+                existing_beacons.append({
+                    "id": f"bk_{bk_key[:12]}",
+                    "key": bk_key,
+                    "label": bm.get("label", ""),
+                    "kind": bm.get("kind", ""),
+                    "x": round(max(0.0, min(1.0, fracs[0])), 4),
+                    "y": round(max(0.0, min(1.0, fracs[1])), 4),
+                })
+                count += 1
+        map_dict["beacons"] = existing_beacons
 
         return count
 
