@@ -2681,6 +2681,9 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         if "beacon_group_overrides" in msg:
             raw = msg["beacon_group_overrides"]
             payload["beacon_group_overrides"] = {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+        if "distance_stationary_devices" in msg:
+            raw = msg["distance_stationary_devices"]
+            payload["distance_stationary_devices"] = [str(x) for x in raw] if isinstance(raw, list) else []
         await st.async_set(**payload)
         # ── Toggle existing PadSpan entities in HA registry ──────────────────
         _entity_keys = {

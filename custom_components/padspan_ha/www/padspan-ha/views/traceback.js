@@ -1736,12 +1736,25 @@ export function render(ctx) {
           return;
         }
 
-        // Compute distances
+        // Compute distances with jitter filtering
+        // Jitter causes stationary objects to accumulate fake distance from
+        // k-NN position noise (~0.2-1m per poll). We filter:
+        //   - Steps < 0.5m are ignored (sub-metre jitter)
+        //   - Steps where room doesn't change are capped at 3m (same-room noise)
+        //   - Steps > 50m are ignored (teleport/tracking error)
+        //   - Time-gap scaling: require larger steps when frames are far apart
+        const _stationarySet = new Set((ctx.state.settings?.distance_stationary_devices || []).map(s => String(s).toUpperCase()));
         const objDist = {};
+        let prevTs = 0;
         for (const frame of frames) {
+          const ts = frame.ts || 0;
+          const dt = prevTs ? (ts - prevTs) : 10;
+          prevTs = ts;
           for (const o of (frame.o || [])) {
             if (!o.k) continue;
-            if (!objDist[o.k]) objDist[o.k] = {dist_m:0, transitions:0, lastPos:null, lastRoom:null, label:o.n||o.k};
+            // Skip devices marked as stationary
+            if (_stationarySet.has(String(o.k).toUpperCase())) continue;
+            if (!objDist[o.k]) objDist[o.k] = {dist_m:0, transitions:0, lastPos:null, lastRoom:null, lastTs:0, label:o.n||o.k, steps:0, jitter_steps:0, max_step:0};
             let pos = null;
             if (o.x!=null && o.y!=null && o.m) pos = _toMetres(o.x, o.y, o.m);
             if (!pos && o.r) pos = _centroid(o.r);
@@ -1749,11 +1762,24 @@ export function render(ctx) {
             if (pos && od.lastPos) {
               const dx=pos[0]-od.lastPos[0], dy=pos[1]-od.lastPos[1];
               const step=Math.sqrt(dx*dx+dy*dy);
-              if (step < 50) od.dist_m += step;
+              od.steps++;
+              // Minimum step: 0.5m (below is jitter noise)
+              // Time-gap scaling: if >60s between frames, require proportionally larger step
+              const minStep = dt > 60 ? Math.min(2.0, 0.5 + (dt - 60) * 0.01) : 0.5;
+              // Same-room cap: if room unchanged, max credible step is 3m
+              const sameRoom = o.r && o.r === od.lastRoom;
+              const maxStep = sameRoom ? 3.0 : 50.0;
+              if (step >= minStep && step <= maxStep) {
+                od.dist_m += step;
+                od.max_step = Math.max(od.max_step, step);
+              } else {
+                od.jitter_steps++;
+              }
             }
             if (o.r && od.lastRoom && o.r !== od.lastRoom) od.transitions++;
             od.lastPos = pos;
             od.lastRoom = o.r || od.lastRoom;
+            od.lastTs = ts;
             if (o.n) od.label = o.n;
           }
         }
@@ -1790,27 +1816,79 @@ export function render(ctx) {
           tblDiv.innerHTML = "";
           const filter = ctx.state._distFilter;
           const shown = filter ? sorted.filter(([k]) => k === filter) : sorted;
-          const tbl = el("div",{style:"display:grid;grid-template-columns:1fr auto auto auto;gap:3px 10px;font-size:11px;align-items:center"});
-          for (const h of ["Object","Distance","Room Changes","Changes/hr"]) {
+          const tbl = el("div",{style:"display:grid;grid-template-columns:1fr auto auto auto auto;gap:3px 10px;font-size:11px;align-items:center"});
+          for (const h of ["Object","Distance","Room Changes","Reliability",""]) {
             tbl.appendChild(el("div",{style:"font-weight:600;color:#64748b;font-size:10px;text-transform:uppercase"},h));
           }
           const hrs = Math.max(0.01, mins / 60);
           for (const [key, od] of shown.slice(0, 50)) {
             const dist = od.dist_m;
             const distStr = dist >= 1000 ? `${(dist/1000).toFixed(2)} km` : `${dist.toFixed(1)} m`;
-            const rate = (od.transitions / hrs).toFixed(1);
             const distColor = dist > 500 ? "#52b788" : dist > 100 ? "#5eead4" : dist > 10 ? "#94a3b8" : "#64748b";
+            // Reliability: what % of steps passed the jitter filter
+            const totalSteps = od.steps || 1;
+            const goodSteps = totalSteps - (od.jitter_steps || 0);
+            const reliability = Math.round((goodSteps / totalSteps) * 100);
+            const relColor = reliability > 80 ? "#52b788" : reliability > 50 ? "#f59e0b" : "#f87171";
             tbl.appendChild(el("div",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2e8f0"}, od.label || key));
             tbl.appendChild(el("div",{style:`color:${distColor};font-weight:600;text-align:right;font-family:monospace`}, distStr));
             tbl.appendChild(el("div",{style:"text-align:right;color:#94a3b8"}, String(od.transitions)));
-            tbl.appendChild(el("div",{style:"text-align:right;color:#64748b;font-family:monospace"}, rate));
+            tbl.appendChild(el("div",{style:`text-align:right;color:${relColor};font-weight:600`}, `${reliability}%`));
+            // Action buttons
+            const actDiv = el("div",{style:"display:flex;gap:3px;justify-content:flex-end"});
+            // Investigate button
+            const invBtn = el("button",{class:"btn tiny",style:"font-size:9px;padding:1px 4px"}, "\ud83d\udd0d");
+            invBtn.title = `Investigate: ${totalSteps} steps, ${od.jitter_steps||0} filtered as jitter, max step ${od.max_step?.toFixed(1)||0}m`;
+            invBtn.addEventListener("click", () => {
+              const msg = [
+                `\ud83d\udd0d ${od.label || key}`,
+                `Total steps: ${totalSteps}`,
+                `Good steps: ${goodSteps} (${reliability}%)`,
+                `Jitter filtered: ${od.jitter_steps||0}`,
+                `Max single step: ${od.max_step?.toFixed(1)||0} m`,
+                `Room changes: ${od.transitions}`,
+                `Distance: ${distStr}`,
+                reliability < 50 ? `\u26a0 Low reliability — mostly jitter. Consider marking as stationary.` : "",
+              ].filter(Boolean).join("\n");
+              alert(msg);
+            });
+            actDiv.appendChild(invBtn);
+            // Mark stationary button
+            const statBtn = el("button",{class:"btn tiny",style:"font-size:9px;padding:1px 4px;color:#f59e0b;border-color:#92400e"}, "\ud83d\udccc");
+            statBtn.title = "Mark as stationary (exclude from distance tracking)";
+            statBtn.addEventListener("click", async () => {
+              if (!confirm(`Mark "${od.label || key}" as stationary?\n\nIt will be excluded from future distance calculations.`)) return;
+              try {
+                const existing = ctx.state.settings?.distance_stationary_devices || [];
+                const updated = [...new Set([...existing, key])];
+                await ctx.actions.settingsSave({ distance_stationary_devices: updated });
+                ctx.toast(`${od.label || key} marked as stationary`);
+                _loadDist(); // refresh
+              } catch(e) { ctx.toast("Failed: " + (e.message||e), true); }
+            });
+            actDiv.appendChild(statBtn);
+            tbl.appendChild(actDiv);
           }
           tblDiv.appendChild(tbl);
           // Summary
           const totalDist = shown.reduce((s,[,od]) => s + od.dist_m, 0);
           const totalStr = totalDist >= 1000 ? `${(totalDist/1000).toFixed(2)} km` : `${totalDist.toFixed(0)} m`;
+          const avgReliability = shown.length ? Math.round(shown.reduce((s,[,od]) => s + ((od.steps - (od.jitter_steps||0)) / Math.max(1,od.steps)) * 100, 0) / shown.length) : 0;
           tblDiv.appendChild(el("div",{style:"margin-top:8px;font-size:10px;color:#64748b"},
-            `${shown.length} object${shown.length!==1?"s":""} \u00b7 ${totalStr} total \u00b7 ${mins < 60 ? mins+" min" : (mins/60).toFixed(1)+" hr"} \u00b7 ${frames.length} frames`));
+            `${shown.length} object${shown.length!==1?"s":""} \u00b7 ${totalStr} total \u00b7 ${avgReliability}% avg reliability \u00b7 ${frames.length} frames`));
+          // Show stationary exclusions
+          if (_stationarySet.size) {
+            const clearBtn = el("span",{style:"color:#f59e0b;cursor:pointer;text-decoration:underline"}, "clear all");
+            clearBtn.addEventListener("click", async () => {
+              await ctx.actions.settingsSave({ distance_stationary_devices: [] });
+              ctx.toast("Stationary list cleared");
+              _loadDist();
+            });
+            const exRow = el("div",{style:"margin-top:4px;font-size:10px;color:#64748b"});
+            exRow.appendChild(document.createTextNode(`${_stationarySet.size} stationary device${_stationarySet.size!==1?"s":""} excluded \u2014 `));
+            exRow.appendChild(clearBtn);
+            tblDiv.appendChild(exRow);
+          }
         }
         _renderTable();
       } catch(err) {
