@@ -123,8 +123,11 @@ def _should_track(obj: dict[str, Any]) -> bool:
 
 
 def _device_uid(obj: dict[str, Any]) -> str:
-    # For private_ble (rotating MAC), use the stable canonical_id so the HA
-    # device identity survives address rotation.
+    # Prefer padspan_id (immutable stable identity from DeviceRegistry),
+    # then canonical_id (survives MAC rotation for private_ble),
+    # then volatile identifiers as last resort.
+    if obj.get("padspan_id"):
+        return obj["padspan_id"]
     if obj.get("canonical_id"):
         return obj["canonical_id"]
     return obj.get("address") or obj.get("entity_id") or obj.get("key", "")
@@ -200,6 +203,7 @@ class PadSpanAreaSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity):
         attrs: dict[str, Any] = {
             "kind": obj.get("kind"),
             "address": obj.get("address"),
+            "padspan_id": obj.get("padspan_id"),
             "rssi": obj.get("rssi") if home else None,
             "age_s": round(age, 1) if isinstance(age, (int, float)) else None,
             "sources": obj.get("sources") if home else None,

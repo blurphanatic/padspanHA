@@ -8747,6 +8747,23 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
     except Exception:
         pass
 
+    # ── HA Entity identity ──────────────────────────────────────────────────
+    try:
+        from .const import DATA_DEVICE_REGISTRY
+        _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+        _pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+        if _dev_reg and _pc and _pc.data:
+            _ent_total = len(_pc.data)
+            _ent_with_pid = sum(1 for v in _pc.data.values() if isinstance(v, dict) and v.get("padspan_id"))
+            checks.append({
+                "group": "identity", "name": "Entity Identity",
+                "ok": _ent_total == 0 or _ent_with_pid > 0,
+                "value": f"{_ent_with_pid}/{_ent_total}",
+                "detail": f"{_ent_with_pid} of {_ent_total} tracked objects have padspan_id (used for HA device identity)",
+            })
+    except Exception:
+        pass
+
     # ── Summary ──────────────────────────────────────────────────────────────
     total = len(checks)
     passed = sum(1 for c in checks if c["ok"])
