@@ -356,16 +356,16 @@ class DeviceRegistry:
         if not all_labels:
             return {"migrated": 0, "merged": 0, "skipped": 0}
 
-        # Already migrated?
-        if self._devices:
-            return {"migrated": 0, "merged": 0, "skipped": len(all_labels)}
-
         stats = {"migrated": 0, "merged": 0, "skipped": 0}
 
         # Group by label to detect cross-stored duplicates
         by_label: dict[str, list[tuple[str, dict]]] = {}
         for key, val in all_labels.items():
             if not isinstance(val, dict):
+                continue
+            # Skip entries already in the device registry (backfill mode)
+            if self.resolve(key):
+                stats["skipped"] += 1
                 continue
             label = val.get("label", "")
             if label:
@@ -387,8 +387,26 @@ class DeviceRegistry:
                 stats["migrated"] += 1
 
         # For each label group, create one device with all identities
+        # (or link to existing device if label already in registry)
         for label, entries in by_label.items():
+            # Check if a device with this label already exists
+            existing_pid = self.find_by_label(label)
+            if existing_pid:
+                # Backfill: add new identities to existing device
+                for key, val in entries:
+                    kind = "ibeacon" if key.startswith("ibeacon:") else "irk" if key.startswith("irk:") else "entity" if key.startswith("entity:") else "mac"
+                    idents = self._devices[existing_pid].setdefault("identities", [])
+                    if not any(i.get("value") == key for i in idents):
+                        idents.append({"kind": kind, "value": key})
+                        nk = _normalize_key(key)
+                        self._index[nk] = existing_pid
+                        self._index[key] = existing_pid
+                stats["merged"] += len(entries)
+                continue
+
             pid = _gen_padspan_id()
+            while pid in self._devices:
+                pid = _gen_padspan_id()
             identities = []
             created_at = None
             for key, val in entries:

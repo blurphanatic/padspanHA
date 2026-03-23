@@ -72,6 +72,10 @@ class AdaptiveStore:
             self.data = loaded
         else:
             self.data = _empty_data()
+        # Schema migration: ensure all keys exist (added in later versions)
+        for key, default in _empty_data().items():
+            if key not in self.data:
+                self.data[key] = default
         return self.data
 
     async def _save(self) -> None:

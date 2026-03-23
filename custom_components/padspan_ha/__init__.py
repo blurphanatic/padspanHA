@@ -154,10 +154,12 @@ async def _ensure_stores(hass: HomeAssistant, *, critical_only: bool = False) ->
         dev_reg = DeviceRegistry(hass)
         await dev_reg.async_load()
         # One-time migration from ObjectStore if device registry is empty
-        if dev_reg.device_count() == 0:
-            obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
-            if obj_store and obj_store.all():
-                stats = await dev_reg.async_migrate_from_object_store(obj_store)
+        # Backfill migration: import any ObjectStore labels not yet in DeviceRegistry
+        # Runs every startup (idempotent — skips already-known keys)
+        obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+        if obj_store and obj_store.all():
+            stats = await dev_reg.async_migrate_from_object_store(obj_store)
+            if stats["migrated"] or stats["merged"]:
                 _LOGGER.info(
                     "DeviceRegistry migration: %d devices, %d merged, %d skipped",
                     stats["migrated"], stats["merged"], stats["skipped"],
