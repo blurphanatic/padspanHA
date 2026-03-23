@@ -1157,13 +1157,13 @@ class ModelStore:
             if pos.get("map_id") != map_id:
                 continue
             fracs = self.metres_to_map_frac(float(pos["x_m"]), float(pos["y_m"]), map_id)
-            if fracs:
+            if fracs and 0.0 <= fracs[0] <= 1.0 and 0.0 <= fracs[1] <= 1.0:
                 existing_receivers.append({
                     "id": src,
                     "source": src,
                     "label": src,
-                    "x": round(max(0.0, min(1.0, fracs[0])), 4),
-                    "y": round(max(0.0, min(1.0, fracs[1])), 4),
+                    "x": round(fracs[0], 4),
+                    "y": round(fracs[1], 4),
                     "room": pos.get("room", ""),
                 })
                 count += 1
@@ -1241,20 +1241,21 @@ class ModelStore:
                 count += 1
 
         # Add new beacons from fabric that belong to this map but aren't in m.beacons yet
+        # Only add if fracs are within map bounds (skip beacons outside this map's area)
         for bk_key, bm in beacons_m.items():
             if bk_key in existing_keys:
                 continue
             if bm.get("map_id") != map_id:
                 continue
             fracs = self.metres_to_map_frac(float(bm["x_m"]), float(bm["y_m"]), map_id)
-            if fracs:
+            if fracs and 0.0 <= fracs[0] <= 1.0 and 0.0 <= fracs[1] <= 1.0:
                 existing_beacons.append({
                     "id": f"bk_{bk_key[:12]}",
                     "key": bk_key,
                     "label": bm.get("label", ""),
                     "kind": bm.get("kind", ""),
-                    "x": round(max(0.0, min(1.0, fracs[0])), 4),
-                    "y": round(max(0.0, min(1.0, fracs[1])), 4),
+                    "x": round(fracs[0], 4),
+                    "y": round(fracs[1], 4),
                 })
                 count += 1
         map_dict["beacons"] = existing_beacons

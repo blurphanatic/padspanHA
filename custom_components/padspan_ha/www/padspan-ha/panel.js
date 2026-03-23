@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.16.22";
-const BUILD_ID = "20260323T180639Z";
+const APP_VERSION = "0.16.23";
+const BUILD_ID = "20260323T182645Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -716,9 +716,16 @@ class PadSpanHaApp extends HTMLElement {
           }
 
           // 6. Escalation: no successful render in 20s → full rebuild
+          // Skip for non-live views (calibration, maps, etc.) — they don't poll-render,
+          // so _lastGoodRender goes stale naturally. Forcing a render mid-drag breaks things.
+          const _liveSet = new Set(["overview","follow","monitor"]);
+          const _isLiveView = _liveSet.has(this.state?.view);
           const sinceGoodRender = this._lastGoodRender ? performance.now() - this._lastGoodRender : 0;
           if(sinceGoodRender > 20_000){
-            if((this._renderFailCount || 0) >= 2){
+            if(!_isLiveView){
+              // Non-live view: just reset the timer, don't force render
+              this._lastGoodRender = performance.now();
+            } else if((this._renderFailCount || 0) >= 2){
               console.warn("PadSpan watchdog: no successful render in 20s + %d failures — full rebuild", this._renderFailCount);
               this._renderFailCount = 0;
               this._lastGoodRender = performance.now();
