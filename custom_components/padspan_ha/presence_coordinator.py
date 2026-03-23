@@ -270,6 +270,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ── Velocity gate state ────────────────────────────────────────────────
         # {key: monotonic_ts} — when each device last changed rooms
         self._last_room_change_mono: dict[str, float] = {}
+        # {key: monotonic_ts} — when each device entered its current confirmed room
+        self._room_dwell_start: dict[str, float] = {}
+        # {key: monotonic_ts} — when each device arrived on its current floor
+        self._floor_dwell_start: dict[str, float] = {}
+        # {key: floor_id} — each device's current confirmed floor
+        self._device_floor: dict[str, str] = {}
         # {room_name: (cx, cy, map_id)} — room centroids (rebuilt each poll)
         self._room_centroids: dict[str, tuple[float, float, str]] = {}
         # RF barrier data for Gaussian scoring penalty (rebuilt each poll)
@@ -893,10 +899,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _ref   = float(_d_pl.get("ref_power",    DEFAULT_REF_POWER))
             _n_exp = float(_d_pl.get("path_loss_exp", DEFAULT_PATH_LOSS_EXP))
             _sigma = float(_d_pl.get("room_sigma_m",  DEFAULT_ROOM_SIGMA_M))
+            _floor_on = bool(_d_pl.get("adaptive_floor_detection", False))
         except Exception:
             _ref   = DEFAULT_REF_POWER
             _n_exp = DEFAULT_PATH_LOSS_EXP
             _sigma = DEFAULT_ROOM_SIGMA_M
+            _floor_on = False
 
         # ── Stage 1.5: Gaussian room scoring ─────────────────────────────
         # Why Gaussian instead of raw "max RSSI wins"?
@@ -943,6 +951,21 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             self._rf_barriers,
                         )
                         _eff_rssi -= _ba
+                # Learned cross-floor attenuation: if scanner is on a different
+                # floor than the candidate room, apply the learned RSSI correction.
+                # This makes cross-floor scanners read appropriately weaker.
+                if _floor_on and source_to_floor:
+                    _src_fl = source_to_floor.get(_src, "")
+                    _room_fl = _room_to_floor.get(_room, "")
+                    if _src_fl and _room_fl and _src_fl != _room_fl:
+                        try:
+                            _ad_s = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
+                            if _ad_s:
+                                _learned_delta = _ad_s.learned_floor_attenuation(_room_fl, _src_fl)
+                                if _learned_delta is not None:
+                                    _eff_rssi += _learned_delta  # typically negative
+                        except Exception:
+                            pass
                 # Path-loss model: RSSI → estimated distance in meters
                 # d = 10 ^ ((ref_power - rssi) / (10 * n))
                 _dist  = max(0.1, 10.0 ** ((_ref - _eff_rssi) / (10.0 * _n_exp)))
@@ -1315,10 +1338,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _vg_block = False
                     if confirmed is not None:
                         _now_mono = time.monotonic()
-                        # Check 1: rapid transition cooldown
+                        # Check 1: dwell-proportional transition gate
+                        # Short dwell (<30s): require unanimous (just arrived, likely noise)
+                        # Medium dwell (30-120s): require supermajority
+                        # Long dwell (>120s): normal threshold (device is settled)
                         _last_change = self._last_room_change_mono.get(key, 0.0)
                         _elapsed = _now_mono - _last_change if _last_change else 999.0
-                        _is_rapid = _elapsed < _VG_RAPID_COOLDOWN_S
+                        _dwell = _now_mono - self._room_dwell_start.get(key, 0.0) if self._room_dwell_start.get(key) else 999.0
+                        _is_rapid = _dwell < 30.0  # short dwell = high bar
                         # Check 2: room distance (non-adjacent)
                         _is_distant = False
                         _c1 = self._room_centroids.get(confirmed)
@@ -1349,13 +1376,27 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             if _conf_outside != _top_outside:
                                 _is_outdoor_cross = True
 
-                        if (_is_rapid or _is_distant or _is_outdoor_cross) and top_count < len(votes):
-                            # Not unanimous — hold current room
+                        # Cross-floor transitions: require higher evidence when dwell is short
+                        _is_cross_floor = False
+                        if _conf_fl and _top_fl and _conf_fl != _top_fl:
+                            _is_cross_floor = True
+                        # Determine required vote count based on dwell + context
+                        if _is_outdoor_cross:
+                            _required = len(votes)  # unanimous for outdoor
+                        elif _is_cross_floor and _dwell < 60.0:
+                            _required = len(votes)  # unanimous for quick floor changes
+                        elif _is_rapid or _is_distant:
+                            _required = len(votes)  # unanimous for rapid/distant
+                        elif _is_cross_floor and _dwell < 120.0:
+                            _required = min(len(votes), vote_threshold + 1)  # supermajority
+                        else:
+                            _required = vote_threshold  # normal
+                        if top_count < _required:
                             _vg_block = True
                             _LOGGER.debug(
-                                "Velocity gate blocked %s: %s → %s (rapid=%.1fs, distant=%s, votes=%d/%d)",
-                                key[:30], confirmed, top_room, _elapsed,
-                                _is_distant, top_count, len(votes),
+                                "Velocity gate blocked %s: %s → %s (dwell=%.0fs, rapid=%s, distant=%s, cross_floor=%s, votes=%d/%d need %d)",
+                                key[:30], confirmed, top_room, _dwell,
+                                _is_rapid, _is_distant, _is_cross_floor, top_count, len(votes), _required,
                             )
                     if not _vg_block:
                         _LOGGER.debug(
@@ -1364,7 +1405,25 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         )
                         # Track room change for alert processing
                         self._pending_room_changes.append((key, confirmed, top_room))
-                        self._last_room_change_mono[key] = time.monotonic()
+                        _change_mono = time.monotonic()
+                        self._last_room_change_mono[key] = _change_mono
+                        self._room_dwell_start[key] = _change_mono
+                        # Floor transition learning
+                        _old_fl = _room_to_floor.get(confirmed, "")
+                        _new_fl = _room_to_floor.get(top_room, "")
+                        if _old_fl and _new_fl and _old_fl != _new_fl:
+                            _fl_dwell = _change_mono - self._floor_dwell_start.get(key, _change_mono)
+                            self._floor_dwell_start[key] = _change_mono
+                            self._device_floor[key] = _new_fl
+                            # Record to adaptive store for learning
+                            try:
+                                _ad = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
+                                if _ad:
+                                    _ad.record_floor_transition(_old_fl, _new_fl, _fl_dwell)
+                            except Exception:
+                                pass
+                        elif _new_fl:
+                            self._device_floor[key] = _new_fl
                         confirmed = top_room
 
         self._confirmed_room[key] = confirmed

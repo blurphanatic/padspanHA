@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.16.36";
-const BUILD_ID = "20260323T201337Z";
+const APP_VERSION = "0.16.37";
+const BUILD_ID = "20260323T202059Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -59,6 +59,7 @@ const _VIEW_PATHS = {
   calibration:  "./views/calibration.js",
   traceback:    "./views/traceback.js",
   sandbox:      "./views/sandbox.js",
+  occupancy:    "./views/occupancy.js",
 };
 
 // Track in-flight imports to avoid duplicate fetches
@@ -125,6 +126,7 @@ const MENU = [
   ["training","Training","mdi:school-outline"],
   ["calibration","Calibration","mdi:crosshairs"],
   ["traceback","Traceback","mdi:history"],
+  ["occupancy","Occupancy","mdi:account-group-outline"],
   ["health","Health","mdi:heart-pulse"],
   ["qa","QA","mdi:clipboard-check-outline"],
   ["sandbox","Sandbox","mdi:flask-outline"],
@@ -136,7 +138,7 @@ const MENU = [
 //   Advanced  — default set plus user-chosen extras from Settings -> UI Structure
 //   Dev       — everything visible (includes QA, Sandbox, raw Debug, etc.)
 const BASIC_TABS = new Set(["follow", "overview", "maps", "settings", "training"]);
-const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration","traceback","health"]);
+const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration","traceback","occupancy","health"]);
 const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox"];
 
 // Accent color per tab — used for the sidebar dot, mobile nav, and active highlights
@@ -158,6 +160,7 @@ const MENU_COLORS = {
   manage: "#78909c",
   training: "#4dd0e1",
   calibration: "#26a69a",
+  occupancy: "#a78bfa",
   diagnostics: "#9575cd",
   debug: "#ef5350",
   traceback: "#fbbf24",

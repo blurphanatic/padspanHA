@@ -46,6 +46,7 @@ def _empty_data() -> dict[str, Any]:
         "room_fingerprints": {},
         "transition_counts": {},
         "floor_pairs": {},
+        "floor_transitions": {},  # "fromFloor|toFloor" → Welford stats of dwell_s + count
         "stats": {
             "total_observations": 0,
             "learning_since": None,
@@ -147,6 +148,45 @@ class AdaptiveStore:
         tc = self.data.setdefault("transition_counts", {})
         from_map = tc.setdefault(from_room, {})
         from_map[to_room] = from_map.get(to_room, 0) + 1
+
+    def record_floor_transition(
+        self, from_floor: str, to_floor: str, dwell_s: float
+    ) -> None:
+        """Record a floor-to-floor transition with dwell time before the switch."""
+        if not from_floor or not to_floor or from_floor == to_floor:
+            return
+        ft = self.data.setdefault("floor_transitions", {})
+        pair_key = f"{from_floor}|{to_floor}"
+        existing = ft.get(pair_key, {})
+        ft[pair_key] = self._welford_update(existing, dwell_s)
+
+    def floor_transition_prior(
+        self, from_floor: str, candidate_floors: Any
+    ) -> dict[str, float]:
+        """Return normalized transition probability per destination floor."""
+        ft = self.data.get("floor_transitions", {})
+        counts: dict[str, int] = {}
+        total = 0
+        for fl in candidate_floors:
+            pair_key = f"{from_floor}|{fl}"
+            n = ft.get(pair_key, {}).get("n", 0)
+            counts[fl] = n
+            total += n
+        if total < 10:
+            return {}
+        return {fl: n / total for fl, n in counts.items()}
+
+    def learned_floor_attenuation(self, from_floor: str, cross_floor: str) -> float | None:
+        """Return mean RSSI delta for cross-floor signals, or None if insufficient data.
+
+        The delta is typically negative (cross-floor scanners read weaker).
+        """
+        fp_data = self.data.get("floor_pairs", {})
+        pair_key = f"{from_floor}|{cross_floor}"
+        entry = fp_data.get(pair_key, {})
+        if entry.get("n", 0) < _MIN_PAIR_OBS:
+            return None
+        return entry.get("mean")
 
     async def async_save_periodic(self) -> None:
         """Called periodically (not every poll) to persist to disk."""
