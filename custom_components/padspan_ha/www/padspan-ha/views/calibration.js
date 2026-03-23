@@ -2120,6 +2120,8 @@ function _tuneTab(ctx, el, cs, calData) {
   function _refreshDirtyLabel() {
     const n = Object.keys(ts.dirtyMaps).filter(id => ts.dirtyMaps[id]).length;
     dirtyLbl.textContent = n ? `${n} map${n > 1 ? "s" : ""} unsaved` : "";
+    if (n) { saveBtn.classList.add("save-pulse"); saveBtn.textContent = "\ud83d\udcbe Save"; }
+    else { saveBtn.classList.remove("save-pulse"); saveBtn.textContent = "Save"; }
   }
   _refreshDirtyLabel();
   ctrlRow.appendChild(dirtyLbl);
@@ -3419,6 +3421,8 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   function _refreshDirtyLabel() {
     const n = Object.keys(bs.dirtyMaps).filter(id => bs.dirtyMaps[id]).length;
     dirtyLbl.textContent = n ? `${n} map${n > 1 ? "s" : ""} unsaved` : "";
+    if (n) { saveBtn.classList.add("save-pulse"); saveBtn.textContent = "\ud83d\udcbe Save"; }
+    else { saveBtn.classList.remove("save-pulse"); saveBtn.textContent = "Save"; }
   }
   _refreshDirtyLabel();
   ctrlRow.appendChild(dirtyLbl);
