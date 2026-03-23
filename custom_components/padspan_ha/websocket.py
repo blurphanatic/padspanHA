@@ -205,6 +205,10 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_device_registry_list)
     websocket_api.async_register_command(hass, ws_device_registry_migrate)
     websocket_api.async_register_command(hass, ws_device_registry_merge)
+    websocket_api.async_register_command(hass, ws_device_registry_resolve)
+    websocket_api.async_register_command(hass, ws_device_registry_label_set)
+    websocket_api.async_register_command(hass, ws_device_registry_add_identity)
+    websocket_api.async_register_command(hass, ws_device_registry_delete)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -9111,3 +9115,102 @@ async def ws_device_registry_merge(hass: HomeAssistant, connection, msg) -> None
         "absorbed": absorb_id,
         "device": dev_reg.get(keep_id),
     })
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/device_registry_resolve",
+    "key": str,
+})
+@websocket_api.async_response
+async def ws_device_registry_resolve(hass: HomeAssistant, connection, msg) -> None:
+    """Resolve a volatile key (MAC, iBeacon, canonical_id) to a padspan_id."""
+    from .const import DATA_DEVICE_REGISTRY
+    dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+    if not dev_reg:
+        connection.send_error(msg["id"], "no_device_registry", "Device Registry not initialized")
+        return
+    key = str(msg["key"]).strip()
+    pid = dev_reg.resolve(key)
+    device = dev_reg.get(pid) if pid else None
+    connection.send_result(msg["id"], {
+        "padspan_id": pid,
+        "device": device,
+    })
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/device_registry_label_set",
+    "padspan_id": str,
+    "label": str,
+})
+@websocket_api.async_response
+async def ws_device_registry_label_set(hass: HomeAssistant, connection, msg) -> None:
+    """Set label on a device by padspan_id."""
+    from .const import DATA_DEVICE_REGISTRY
+    dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+    if not dev_reg:
+        connection.send_error(msg["id"], "no_device_registry", "Device Registry not initialized")
+        return
+    pid = str(msg["padspan_id"]).strip()
+    label = str(msg["label"]).strip()[:48]
+    await dev_reg.async_set_label(pid, label)
+    # Also sync to ObjectStore for backwards compat
+    obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+    if obj_store:
+        dev = dev_reg.get(pid)
+        if dev:
+            for ident in (dev.get("identities") or []):
+                val = ident.get("value", "")
+                if val:
+                    await obj_store.async_set(val, label)
+    connection.send_result(msg["id"], {
+        "ok": True,
+        "padspan_id": pid,
+        "label": label,
+        "device": dev_reg.get(pid),
+    })
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/device_registry_add_identity",
+    "padspan_id": str,
+    "kind": str,
+    "value": str,
+})
+@websocket_api.async_response
+async def ws_device_registry_add_identity(hass: HomeAssistant, connection, msg) -> None:
+    """Link an additional volatile key to an existing device."""
+    from .const import DATA_DEVICE_REGISTRY
+    dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+    if not dev_reg:
+        connection.send_error(msg["id"], "no_device_registry", "Device Registry not initialized")
+        return
+    pid = str(msg["padspan_id"]).strip()
+    kind = str(msg["kind"]).strip()
+    value = str(msg["value"]).strip()
+    await dev_reg.async_add_identity(pid, kind, value)
+    connection.send_result(msg["id"], {
+        "ok": True,
+        "padspan_id": pid,
+        "device": dev_reg.get(pid),
+    })
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/device_registry_delete",
+    "padspan_id": str,
+})
+@websocket_api.async_response
+async def ws_device_registry_delete(hass: HomeAssistant, connection, msg) -> None:
+    """Delete a device from the Device Registry."""
+    from .const import DATA_DEVICE_REGISTRY
+    dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+    if not dev_reg:
+        connection.send_error(msg["id"], "no_device_registry", "Device Registry not initialized")
+        return
+    pid = str(msg["padspan_id"]).strip()
+    if not dev_reg.get(pid):
+        connection.send_error(msg["id"], "not_found", f"Device {pid} not found")
+        return
+    await dev_reg.async_delete(pid)
+    connection.send_result(msg["id"], {"ok": True, "padspan_id": pid})

@@ -299,6 +299,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         except Exception as err:
             _LOGGER.debug("Phase 3 calibration backfill skipped: %s", err)
 
+        # Phase 4: backfill padspan_id on existing alert configs
+        try:
+            _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+            _alerts = hass.data.get(DOMAIN, {}).get(DATA_ALERTS)
+            if _dev_reg and _alerts and _dev_reg.device_count() > 0:
+                _backfilled = 0
+                for _addr, _cfg in list(_alerts.data.items()):
+                    if isinstance(_cfg, dict) and not _cfg.get("padspan_id"):
+                        _pid = _dev_reg.resolve(_addr)
+                        if _pid:
+                            _cfg["padspan_id"] = _pid
+                            _backfilled += 1
+                if _backfilled:
+                    await _alerts.store.async_save(_alerts.data)
+                    _LOGGER.info("Phase 4: backfilled padspan_id on %d alert configs", _backfilled)
+        except Exception as err:
+            _LOGGER.debug("Phase 4 alert backfill skipped: %s", err)
+
         try:
             from .bluetooth_live import async_setup_bluetooth_live
             await async_setup_bluetooth_live(hass)
