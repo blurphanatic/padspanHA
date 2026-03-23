@@ -8652,6 +8652,35 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
     except Exception:
         pass
 
+    # ── Label pipeline health ───────────────────────────────────────────────
+    try:
+        from .const import DATA_DEVICE_REGISTRY
+        _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+        obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+        if _dev_reg:
+            # Compare label counts: DeviceRegistry vs ObjectStore
+            _reg_labeled = len(_dev_reg.all_labeled())
+            _obj_labeled = 0
+            _obj_only = 0  # labels in ObjectStore but NOT in DeviceRegistry
+            if obj_store:
+                _obj_all = obj_store.all()
+                for _oaddr, _oval in _obj_all.items():
+                    if isinstance(_oval, dict) and _oval.get("label"):
+                        _obj_labeled += 1
+                        _pid = _dev_reg.resolve(_oaddr)
+                        if not _pid or not _dev_reg.get_label(_pid):
+                            _obj_only += 1
+            checks.append({
+                "group": "identity", "name": "Label Pipeline",
+                "ok": _obj_only == 0,
+                "value": f"Registry: {_reg_labeled}, Legacy: {_obj_labeled}" + (f", {_obj_only} unmigrated" if _obj_only else ""),
+                "detail": (f"{_obj_only} labels exist only in legacy ObjectStore — re-save them or restart to trigger migration"
+                           if _obj_only else
+                           f"All labels in DeviceRegistry ({_reg_labeled} devices). Legacy ObjectStore has {_obj_labeled} entries (fallback only)."),
+            })
+    except Exception:
+        pass
+
     # ── HA Entity identity ──────────────────────────────────────────────────
     try:
         from .const import DATA_DEVICE_REGISTRY
