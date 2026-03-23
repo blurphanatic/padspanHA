@@ -47,6 +47,7 @@ export function render(ctx) {
                       : (o.address || "");
       return {
         id: stableId,
+        padspan_id: o.padspan_id || "",
         type: o.kind,
         name: o.user_label || o.name || o.address || "Unknown",
         room: o.room || "",
@@ -189,6 +190,7 @@ export function render(ctx) {
         : el("span", { class: "pill", style: "color:#94a3b8" }, "No room");
 
     const sub = [d.id];
+    if (d.padspan_id) sub.push(d.padspan_id);
     if (d.rssi != null) sub.push(`RSSI ${d.rssi}`);
     if (d.age_s != null) sub.push(`${Math.round(d.age_s)}s ago`);
     if (d.sources && d.sources.length) sub.push(`${d.sources.length} radio${d.sources.length > 1 ? "s" : ""}`);
@@ -260,7 +262,60 @@ export function render(ctx) {
       : el("div", { class: "dev-tag-list list-scroll" }, rows),
   ]);
 
-  return el("div", {}, [header, controls, listCard]);
+  // ── Device Registry card ─────────────────────────────────────────────────
+  const regCard = el("div", { class: "card", style: "margin-top:12px" });
+  const _pidCount = allDevices.filter(d => d.padspan_id).length;
+  regCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [
+    el("div", { style: "font-weight:700;font-size:13px;color:#52b788" }, "Device Identity Registry"),
+    el("div", { class: "pill", style: `background:#52b78822;color:#52b788;font-size:10px;padding:2px 8px` },
+      `${_pidCount}/${allDevices.length} with stable ID`),
+  ]));
+  regCard.appendChild(el("div", { style: "font-size:11px;color:#94a3b8;margin-bottom:8px" },
+    "Each device gets an immutable padspan_id that survives MAC rotation, iBeacon changes, and firmware updates."));
+
+  // Show labeled devices from registry
+  const _regListBtn = el("button", { class: "btn inline", style: "font-size:11px;padding:3px 10px" }, "Show Registry");
+  let _regListOpen = false;
+  const _regListContainer = el("div", { style: "display:none" });
+  _regListBtn.addEventListener("click", async () => {
+    if (_regListOpen) { _regListContainer.style.display = "none"; _regListOpen = false; _regListBtn.textContent = "Show Registry"; return; }
+    _regListBtn.disabled = true; _regListBtn.textContent = "Loading\u2026";
+    try {
+      const res = await ctx.actions.callWS({ type: "padspan_ha/device_registry_list" });
+      const devs = res.devices || {};
+      const entries = Object.values(devs).sort((a, b) => (a.label || "").localeCompare(b.label || ""));
+      _regListContainer.innerHTML = "";
+      if (!entries.length) {
+        _regListContainer.appendChild(el("div", { style: "font-size:11px;color:#64748b;padding:8px 0" }, "No devices in registry yet."));
+      } else {
+        const grid = el("div", { style: "display:grid;grid-template-columns:auto 1fr auto auto;gap:4px 10px;font-size:11px;align-items:center" });
+        grid.appendChild(el("div", { style: "font-weight:600;color:#64748b" }, "ID"));
+        grid.appendChild(el("div", { style: "font-weight:600;color:#64748b" }, "Label"));
+        grid.appendChild(el("div", { style: "font-weight:600;color:#64748b" }, "Identities"));
+        grid.appendChild(el("div", { style: "font-weight:600;color:#64748b" }, "Created"));
+        for (const d of entries) {
+          const idents = (d.identities || []).map(i => `${i.kind}:${(i.value||"").substring(0,20)}`).join(", ");
+          const created = d.created_at ? d.created_at.substring(0, 10) : "";
+          grid.appendChild(el("div", { class: "mono", style: "color:#52b788;font-size:10px" }, d.padspan_id || "?"));
+          grid.appendChild(el("div", { style: d.label ? "color:#e2e8f0;font-weight:600" : "color:#64748b;font-style:italic" }, d.label || "unlabeled"));
+          grid.appendChild(el("div", { style: "color:#94a3b8;font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, idents || "none"));
+          grid.appendChild(el("div", { style: "color:#64748b;font-size:10px" }, created));
+        }
+        _regListContainer.appendChild(grid);
+      }
+      _regListContainer.style.display = "block";
+      _regListOpen = true;
+      _regListBtn.textContent = "Hide Registry";
+    } catch (e) {
+      ctx.toast("Failed to load registry: " + (e.message || e), true);
+      _regListBtn.textContent = "Show Registry";
+    }
+    _regListBtn.disabled = false;
+  });
+  regCard.appendChild(el("div", { style: "display:flex;gap:8px;margin-bottom:8px" }, [_regListBtn]));
+  regCard.appendChild(_regListContainer);
+
+  return el("div", {}, [header, controls, listCard, regCard]);
 }
 
 function normalizeRoom(state) {

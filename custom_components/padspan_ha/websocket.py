@@ -4056,12 +4056,28 @@ async def ws_object_label_delete(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command({"type": "padspan_ha/object_label_list"})
 @websocket_api.async_response
 async def ws_object_label_list(hass: HomeAssistant, connection, msg) -> None:
-    """Return all stored object labels from the persistent ObjectStore."""
+    """Return all stored object labels from ObjectStore + DeviceRegistry."""
     obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
-    if not obj_store:
-        connection.send_result(msg["id"], {"labels": {}})
-        return
-    connection.send_result(msg["id"], {"labels": obj_store.all()})
+    labels = obj_store.all() if obj_store else {}
+    # Enrich with DeviceRegistry data
+    _reg_labels = {}
+    try:
+        from .const import DATA_DEVICE_REGISTRY
+        _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+        if _dev_reg:
+            for pid, dev in _dev_reg.all_labeled().items():
+                _reg_labels[pid] = {
+                    "label": dev.get("label", ""),
+                    "padspan_id": pid,
+                    "identities": len(dev.get("identities", [])),
+                    "source": "device_registry",
+                }
+    except Exception:
+        pass
+    connection.send_result(msg["id"], {
+        "labels": labels,
+        "registry_labels": _reg_labels,
+    })
 
 
 @websocket_api.websocket_command({"type": "padspan_ha/objects_clear_history"})
