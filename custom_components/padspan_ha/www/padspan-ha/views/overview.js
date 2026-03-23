@@ -654,6 +654,8 @@ export function render(ctx){
 
     // Filter state (persists within session)
     if(ctx.state._2dFilters === undefined) ctx.state._2dFilters = { scanners: true, tagged: true, unknown: false, rooms: true, mapImg: false, radioMap: false, distortion: false };
+    // Maps are setup tools only — never show floor plan images in overview
+    ctx.state._2dFilters.mapImg = false;
     const F = ctx.state._2dFilters;
 
     // Radio map state (must be declared before buildSVG closure captures them)
@@ -943,8 +945,7 @@ export function render(ctx){
       return btn;
     };
 
-    // Layer toggles (map image + room lines) first — top left
-    filterBar.appendChild(makeFilterBtn("mapImg", "Map", "#a78bfa"));
+    // Layer toggles — room lines first, then object types
     filterBar.appendChild(makeFilterBtn("rooms", "Rooms", "#60a5fa"));
     // Separator
     const sep2d = document.createElement("span");
