@@ -303,16 +303,21 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         try:
             _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
             _alerts = hass.data.get(DOMAIN, {}).get(DATA_ALERTS)
-            if _dev_reg and _alerts and _dev_reg.device_count() > 0:
+            if _dev_reg and _alerts:
                 _backfilled = 0
                 for _addr, _cfg in list(_alerts.data.items()):
                     if isinstance(_cfg, dict) and not _cfg.get("padspan_id"):
                         _pid = _dev_reg.resolve(_addr)
+                        # If can't resolve, create a persistent device entry
+                        if not _pid:
+                            _kind = "ibeacon" if _addr.startswith("ibeacon:") else "irk" if _addr.startswith("irk:") else "mac"
+                            _pid = _dev_reg.resolve_or_create(_addr, kind=_kind, persist=True)
                         if _pid:
                             _cfg["padspan_id"] = _pid
                             _backfilled += 1
                 if _backfilled:
                     await _alerts.store.async_save(_alerts.data)
+                    await _dev_reg.async_flush_dirty()
                     _LOGGER.info("Phase 4: backfilled padspan_id on %d alert configs", _backfilled)
         except Exception as err:
             _LOGGER.debug("Phase 4 alert backfill skipped: %s", err)
