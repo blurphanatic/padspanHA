@@ -273,43 +273,154 @@ export function render(ctx) {
   regCard.appendChild(el("div", { style: "font-size:11px;color:#94a3b8;margin-bottom:8px" },
     "Each device gets an immutable padspan_id that survives MAC rotation, iBeacon changes, and firmware updates."));
 
-  // Show labeled devices from registry
+  // Interactive registry list with merge, relabel, delete, add identity
   const _regListBtn = el("button", { class: "btn inline", style: "font-size:11px;padding:3px 10px" }, "Show Registry");
   let _regListOpen = false;
   const _regListContainer = el("div", { style: "display:none" });
-  _regListBtn.addEventListener("click", async () => {
-    if (_regListOpen) { _regListContainer.style.display = "none"; _regListOpen = false; _regListBtn.textContent = "Show Registry"; return; }
-    _regListBtn.disabled = true; _regListBtn.textContent = "Loading\u2026";
+  const _selected = new Set(); // padspan_ids selected for merge
+
+  async function _loadRegistry() {
+    _regListContainer.innerHTML = "";
+    _selected.clear();
     try {
       const res = await ctx.actions.callWS({ type: "padspan_ha/device_registry_list" });
       const devs = res.devices || {};
-      const entries = Object.values(devs).sort((a, b) => (a.label || "").localeCompare(b.label || ""));
-      _regListContainer.innerHTML = "";
+      const entries = Object.values(devs).sort((a, b) => {
+        if (a.label && !b.label) return -1; if (!a.label && b.label) return 1;
+        return (a.label || a.padspan_id || "").localeCompare(b.label || b.padspan_id || "");
+      });
       if (!entries.length) {
         _regListContainer.appendChild(el("div", { style: "font-size:11px;color:#64748b;padding:8px 0" }, "No devices in registry yet."));
-      } else {
-        const grid = el("div", { style: "display:grid;grid-template-columns:auto 1fr auto auto;gap:4px 10px;font-size:11px;align-items:center" });
-        grid.appendChild(el("div", { style: "font-weight:600;color:#64748b" }, "ID"));
-        grid.appendChild(el("div", { style: "font-weight:600;color:#64748b" }, "Label"));
-        grid.appendChild(el("div", { style: "font-weight:600;color:#64748b" }, "Identities"));
-        grid.appendChild(el("div", { style: "font-weight:600;color:#64748b" }, "Created"));
-        for (const d of entries) {
-          const idents = (d.identities || []).map(i => `${i.kind}:${(i.value||"").substring(0,20)}`).join(", ");
-          const created = d.created_at ? d.created_at.substring(0, 10) : "";
-          grid.appendChild(el("div", { class: "mono", style: "color:#52b788;font-size:10px" }, d.padspan_id || "?"));
-          grid.appendChild(el("div", { style: d.label ? "color:#e2e8f0;font-weight:600" : "color:#64748b;font-style:italic" }, d.label || "unlabeled"));
-          grid.appendChild(el("div", { style: "color:#94a3b8;font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, idents || "none"));
-          grid.appendChild(el("div", { style: "color:#64748b;font-size:10px" }, created));
-        }
-        _regListContainer.appendChild(grid);
+        return;
       }
-      _regListContainer.style.display = "block";
-      _regListOpen = true;
-      _regListBtn.textContent = "Hide Registry";
+
+      // Merge bar (hidden until 2 selected)
+      const mergeBar = el("div", { style: "display:none;padding:6px 10px;background:#1a2a0a;border:1px solid #52b78844;border-radius:6px;margin-bottom:8px;font-size:11px;color:#a7f3d0" });
+      const mergeBtn = el("button", { class: "btn", style: "font-size:11px;padding:2px 10px;margin-left:8px" }, "Merge Selected");
+      mergeBar.appendChild(document.createTextNode("Select exactly 2 devices to merge "));
+      mergeBar.appendChild(mergeBtn);
+      _regListContainer.appendChild(mergeBar);
+
+      function _updateMergeBar() {
+        if (_selected.size === 2) {
+          mergeBar.style.display = "flex"; mergeBar.style.alignItems = "center";
+          mergeBtn.disabled = false;
+        } else {
+          mergeBar.style.display = _selected.size > 0 ? "flex" : "none";
+          mergeBtn.disabled = true;
+        }
+      }
+      mergeBtn.addEventListener("click", async () => {
+        const ids = [..._selected];
+        if (ids.length !== 2) return;
+        const d0 = devs[ids[0]], d1 = devs[ids[1]];
+        const n0 = d0?.label || ids[0], n1 = d1?.label || ids[1];
+        if (!confirm(`Merge "${n1}" into "${n0}"?\n\nAll identities from "${n1}" will move to "${n0}". "${n1}" will be deleted.`)) return;
+        mergeBtn.disabled = true; mergeBtn.textContent = "Merging\u2026";
+        try {
+          await ctx.actions.callWS({ type: "padspan_ha/device_registry_merge", keep_id: ids[0], absorb_id: ids[1] });
+          ctx.toast(`Merged: ${n1} \u2192 ${n0}`);
+          _loadRegistry();
+        } catch (e) { ctx.toast("Merge failed: " + (e.message || e), true); mergeBtn.disabled = false; mergeBtn.textContent = "Merge Selected"; }
+      });
+
+      // Device rows
+      for (const d of entries) {
+        const pid = d.padspan_id || "?";
+        const row = el("div", { style: "border:1px solid #1b3526;border-radius:6px;padding:8px 10px;margin-bottom:4px;background:#0d1f14" });
+
+        // Header: checkbox + id + label + actions
+        const hdr = el("div", { style: "display:flex;align-items:center;gap:8px;flex-wrap:wrap" });
+        const cb = document.createElement("input"); cb.type = "checkbox"; cb.style.cssText = "accent-color:#52b788";
+        cb.addEventListener("change", () => { if (cb.checked) _selected.add(pid); else _selected.delete(pid); _updateMergeBar(); });
+        hdr.appendChild(cb);
+        hdr.appendChild(el("span", { class: "mono", style: "color:#52b788;font-size:10px;min-width:110px" }, pid));
+
+        // Inline-editable label
+        const lblInput = document.createElement("input");
+        lblInput.type = "text"; lblInput.value = d.label || "";
+        lblInput.placeholder = "unlabeled";
+        lblInput.style.cssText = "background:transparent;border:1px solid #334155;border-radius:4px;padding:2px 6px;color:#e2e8f0;font-size:12px;font-weight:600;width:140px";
+        lblInput.addEventListener("keydown", async (e) => {
+          if (e.key !== "Enter") return;
+          const newLabel = lblInput.value.trim();
+          if (!newLabel) return;
+          try {
+            await ctx.actions.callWS({ type: "padspan_ha/device_registry_label_set", padspan_id: pid, label: newLabel });
+            ctx.toast(`Label set: ${newLabel}`);
+          } catch (err) { ctx.toast("Failed: " + (err.message || err), true); }
+        });
+        hdr.appendChild(lblInput);
+        hdr.appendChild(el("span", { style: "font-size:10px;color:#64748b;margin-left:auto" }, d.created_at ? d.created_at.substring(0, 10) : ""));
+
+        // Delete button
+        const delBtn = el("button", { class: "btn tiny", style: "font-size:10px;padding:1px 6px;color:#f87171;border-color:#7f1d1d" }, "\u2716");
+        delBtn.title = "Delete device from registry";
+        delBtn.addEventListener("click", async () => {
+          if (!confirm(`Delete device ${d.label || pid}? This removes it from the identity registry.`)) return;
+          try {
+            await ctx.actions.callWS({ type: "padspan_ha/device_registry_delete", padspan_id: pid });
+            ctx.toast("Deleted " + (d.label || pid));
+            _loadRegistry();
+          } catch (e) { ctx.toast("Delete failed: " + (e.message || e), true); }
+        });
+        hdr.appendChild(delBtn);
+        row.appendChild(hdr);
+
+        // Identity pills
+        const idents = d.identities || [];
+        if (idents.length) {
+          const pillRow = el("div", { style: "display:flex;flex-wrap:wrap;gap:4px;margin-top:4px" });
+          for (const id of idents) {
+            const kindColor = id.kind === "mac" ? "#60a5fa" : id.kind === "ibeacon" ? "#c4b5fd" : id.kind === "irk" ? "#fbbf24" : "#94a3b8";
+            pillRow.appendChild(el("span", { style: `font-size:9px;padding:1px 6px;border-radius:3px;background:${kindColor}22;color:${kindColor};border:1px solid ${kindColor}44` },
+              `${id.kind}: ${(id.value || "").substring(0, 25)}`));
+          }
+          row.appendChild(pillRow);
+        }
+
+        // Add Identity inline
+        const addRow = el("div", { style: "display:none;margin-top:4px;gap:4px;align-items:center;font-size:10px" });
+        const addKind = document.createElement("select");
+        addKind.style.cssText = "padding:2px;border:1px solid #334155;border-radius:3px;background:#1e293b;color:#e2e8f0;font-size:10px";
+        for (const k of ["mac","ibeacon","irk","entity"]) { const o = document.createElement("option"); o.value = k; o.textContent = k; addKind.appendChild(o); }
+        const addVal = document.createElement("input");
+        addVal.type = "text"; addVal.placeholder = "address or key";
+        addVal.style.cssText = "flex:1;padding:2px 4px;border:1px solid #334155;border-radius:3px;background:#1e293b;color:#e2e8f0;font-size:10px;min-width:120px";
+        const addGo = el("button", { class: "btn tiny", style: "font-size:10px;padding:1px 6px" }, "Add");
+        addGo.addEventListener("click", async () => {
+          const v = addVal.value.trim(); if (!v) return;
+          try {
+            await ctx.actions.callWS({ type: "padspan_ha/device_registry_add_identity", padspan_id: pid, kind: addKind.value, value: v });
+            ctx.toast("Identity added"); addVal.value = ""; _loadRegistry();
+          } catch (e) { ctx.toast("Failed: " + (e.message || e), true); }
+        });
+        addRow.appendChild(addKind); addRow.appendChild(addVal); addRow.appendChild(addGo);
+
+        const addLink = el("span", { style: "font-size:10px;color:#52b788;cursor:pointer;margin-top:4px;display:inline-block" }, "+ Add Identity");
+        addLink.addEventListener("click", () => { addRow.style.display = addRow.style.display === "none" ? "flex" : "none"; });
+        row.appendChild(addLink);
+        row.appendChild(addRow);
+
+        // Merged from
+        if (d.merged_from && d.merged_from.length) {
+          row.appendChild(el("div", { style: "font-size:9px;color:#64748b;margin-top:2px" }, `Merged from: ${d.merged_from.join(", ")}`));
+        }
+
+        _regListContainer.appendChild(row);
+      }
     } catch (e) {
-      ctx.toast("Failed to load registry: " + (e.message || e), true);
-      _regListBtn.textContent = "Show Registry";
+      _regListContainer.appendChild(el("div", { style: "color:#f87171;font-size:11px" }, "Failed: " + (e.message || e)));
     }
+  }
+
+  _regListBtn.addEventListener("click", async () => {
+    if (_regListOpen) { _regListContainer.style.display = "none"; _regListOpen = false; _regListBtn.textContent = "Show Registry"; return; }
+    _regListBtn.disabled = true; _regListBtn.textContent = "Loading\u2026";
+    await _loadRegistry();
+    _regListContainer.style.display = "block";
+    _regListOpen = true;
+    _regListBtn.textContent = "Hide Registry";
     _regListBtn.disabled = false;
   });
   regCard.appendChild(el("div", { style: "display:flex;gap:8px;margin-bottom:8px" }, [_regListBtn]));

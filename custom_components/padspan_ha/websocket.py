@@ -1978,140 +1978,29 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         except Exception as _dedup_err:
             _LOGGER.debug("Aggressive dedup error: %s", _dedup_err)
 
-        # Attach user labels from ObjectStore (labels make BLE objects "identified")
-        # Labels propagate: iBeacon label → entity with same MAC; MAC label → iBeacon
+        # Attach user labels — DeviceRegistry is the primary source (resolved later
+        # in the DeviceRegistry enrichment block). ObjectStore is a thin fallback for
+        # any labels not yet migrated to DeviceRegistry.
         try:
             obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
             if obj_store:
-                # First pass: find the best label for each physical device
-                # (could be stored under iBeacon key, MAC address, or canonical_id)
-                _device_labels: dict[str, str] = {}  # any key → label
-
                 for obj in objects:
-                    addr = obj.get("address", "") or ""
+                    if obj.get("user_label"):
+                        continue  # already labeled
                     kind = obj.get("kind", "")
-
-                    if kind == "private_ble":
-                        lookup_key = obj.get("canonical_id") or addr
-                    elif kind == "ibeacon":
-                        lookup_key = obj.get("key") or addr
-                    else:
-                        lookup_key = addr
-
+                    addr = obj.get("address", "") or ""
+                    lookup_key = obj.get("canonical_id") or obj.get("key") or addr
                     if not lookup_key:
                         continue
-
                     entry = obj_store.get(lookup_key)
                     if not entry and lookup_key != addr:
                         entry = obj_store.get(addr)
-
-                    # Entity objects linked to private BLE — also check canonical_id
-                    if not entry and kind == "entity":
-                        _ent_cid = obj.get("canonical_id")
-                        if _ent_cid:
-                            entry = obj_store.get(_ent_cid)
-
-                    # Also check via iBeacon cross-reference
-                    if not entry and kind == "entity":
-                        ib_key = obj.get("ibeacon_key")
-                        if ib_key:
-                            entry = obj_store.get(ib_key)
-
-                    # For private_ble with iBeacon metadata, also check the iBeacon key
-                    # (companion_follow stores labels under ibeacon:uuid:major:minor)
-                    if not entry and kind == "private_ble":
-                        _ib_uuid = obj.get("ibeacon_uuid")
-                        _ib_major = obj.get("ibeacon_major")
-                        _ib_minor = obj.get("ibeacon_minor")
-                        if _ib_uuid is not None:
-                            _ib_key = f"ibeacon:{_ib_uuid}:{_ib_major}:{_ib_minor}"
-                            entry = obj_store.get(_ib_key)
-                            if entry:
-                                # Migrate: persist under canonical_id for faster future lookups
-                                _cid = obj.get("canonical_id")
-                                if _cid:
-                                    _migrate_label = entry.get("label", "")
-                                    if _migrate_label and not obj_store.get(_cid):
-                                        _LOGGER.info(
-                                            "Migrating label '%s' from ibeacon key %s → canonical %s",
-                                            _migrate_label, _ib_key, _cid,
-                                        )
-                                        hass.async_create_task(
-                                            obj_store.async_set(_cid, _migrate_label)
-                                        )
-
-                    # For private_ble, also check all rotating MACs (handles labels
-                    # stored under an old rotating MAC before canonical_id fix)
-                    if not entry and kind == "private_ble":
-                        for mac in (obj.get("all_addresses") or []):
-                            entry = obj_store.get(mac)
-                            if entry:
-                                # Migrate: persist under canonical_id so future lookups work
-                                _cid = obj.get("canonical_id")
-                                _mac_label = entry.get("label", "")
-                                if _cid and _cid != mac and _mac_label and not obj_store.get(_cid):
-                                    _LOGGER.info(
-                                        "Migrating label '%s' from rotating MAC %s → canonical %s",
-                                        _mac_label, mac, _cid,
-                                    )
-                                    hass.async_create_task(
-                                        obj_store.async_set(_cid, _mac_label)
-                                    )
-                                break
-
                     if entry:
                         label = entry.get("label", "")
                         if label:
-                            _device_labels[lookup_key] = label
-                            # Propagate to STABLE keys only — never to rotating MACs.
-                            # Propagating to individual MACs causes labels to bleed
-                            # to unrelated objects that share a coincidental MAC.
-                            if kind == "private_ble":
-                                _cid = obj.get("canonical_id")
-                                if _cid:
-                                    _device_labels[_cid] = label
-                                # Also register under iBeacon key if this device has one
-                                _ib_uuid = obj.get("ibeacon_uuid")
-                                if _ib_uuid is not None:
-                                    _ib_k = f"ibeacon:{_ib_uuid}:{obj.get('ibeacon_major')}:{obj.get('ibeacon_minor')}"
-                                    _device_labels[_ib_k] = label
-                                    _device_labels[_ib_k.upper()] = label
-                            elif kind == "ibeacon":
-                                # iBeacon label → also register under uppercase variant
-                                _device_labels[lookup_key.upper()] = label
-                            # Propagate to canonical_id for entity→private_ble cross-ref
-                            _ent_cid = obj.get("canonical_id")
-                            if _ent_cid and _ent_cid not in _device_labels:
-                                _device_labels[_ent_cid] = label
-
-                # Second pass: apply labels to all objects
-                for obj in objects:
-                    addr = obj.get("address", "") or ""
-                    kind = obj.get("kind", "")
-
-                    if kind == "private_ble":
-                        lookup_key = obj.get("canonical_id") or addr
-                    elif kind == "ibeacon":
-                        lookup_key = obj.get("key") or addr
-                    else:
-                        lookup_key = addr
-
-                    label = _device_labels.get(lookup_key)
-                    if not label and addr:
-                        label = _device_labels.get(addr)
-                    # Entity objects linked to private BLE — check canonical_id
-                    if not label and kind == "entity":
-                        _ent_cid = obj.get("canonical_id")
-                        if _ent_cid:
-                            label = _device_labels.get(_ent_cid)
-                    if not label and kind == "entity":
-                        ib_key = obj.get("ibeacon_key")
-                        if ib_key:
-                            label = _device_labels.get(ib_key)
-                    if label:
-                        obj["user_label"] = label
-                        if kind in ("ble", "ibeacon", "private_ble"):
-                            obj["identified"] = True
+                            obj["user_label"] = label
+                            if kind in ("ble", "ibeacon", "private_ble"):
+                                obj["identified"] = True
         except Exception:
             pass
 

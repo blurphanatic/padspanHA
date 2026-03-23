@@ -142,6 +142,14 @@ The result: a solo project that ships features at a pace that would normally req
 
 ---
 
+## Donate
+
+If this project saved you time (or you just like knowing which room your cat is in), you can buy me a coffee:
+
+**PayPal:** https://www.paypal.com/ncp/payment/4TJHCC8A2GCJQ
+
+---
+
 ## License
 
 Copyright (C) 2026 Garry Broeckling. Licensed under the [GNU General Public License v3.0](LICENSE).
