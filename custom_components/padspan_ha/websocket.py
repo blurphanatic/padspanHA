@@ -202,6 +202,9 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_fabric_resync)
     websocket_api.async_register_command(hass, ws_radio_audit)
     websocket_api.async_register_command(hass, ws_fabric_reset_spatial)
+    websocket_api.async_register_command(hass, ws_device_registry_list)
+    websocket_api.async_register_command(hass, ws_device_registry_migrate)
+    websocket_api.async_register_command(hass, ws_device_registry_merge)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -2418,6 +2421,40 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         _LOGGER.warning("Objects list build failed: %s", _obj_err, exc_info=True)
         snapshot["objects"] = {"list": [], "summary": {"total": 0, "identified": 0, "unidentified": 0, "entities": 0, "ble": 0, "common_prefixes": {}}}
 
+    # ── Enrich objects with stable padspan_id from DeviceRegistry ──
+    try:
+        from .const import DATA_DEVICE_REGISTRY
+        _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+        if _dev_reg:
+            for _o in (snapshot.get("objects") or {}).get("list") or []:
+                _okey = _o.get("key", "")
+                if not _okey:
+                    continue
+                # Try resolving by key, address, canonical_id, all_addresses
+                _pid = _dev_reg.resolve(_okey)
+                if not _pid:
+                    _pid = _dev_reg.resolve(_o.get("address") or "")
+                if not _pid and _o.get("canonical_id"):
+                    _pid = _dev_reg.resolve(_o["canonical_id"])
+                if not _pid:
+                    for _alt in (_o.get("all_addresses") or []):
+                        _pid = _dev_reg.resolve(str(_alt))
+                        if _pid:
+                            break
+                if _pid:
+                    _o["padspan_id"] = _pid
+                    _plbl = _dev_reg.get_label(_pid)
+                    if _plbl and not _o.get("user_label"):
+                        _o["user_label"] = _plbl
+                        _o["identified"] = True
+                else:
+                    # Auto-register in ephemeral cache (not persisted)
+                    _kind = "ibeacon" if _okey.startswith("ibeacon:") else "irk" if _okey.startswith("irk:") else "mac"
+                    _pid = _dev_reg.resolve_or_create(_okey, kind=_kind, persist=False)
+                    _o["padspan_id"] = _pid
+    except Exception as _dr_err:
+        _LOGGER.debug("DeviceRegistry enrichment: %s", _dr_err)
+
     # ── Enrich raw advertisements with decoded metadata + object cross-reference ──
     try:
         from .ble_enrichment import enrich_object as _enrich_ad
@@ -3873,9 +3910,35 @@ async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
     except Exception as _xs_err:
         _LOGGER.debug("object_label_set cross-store: %s", _xs_err)
 
+    # ── DeviceRegistry: persist label on stable padspan_id ──────────────
+    _padspan_id = None
+    try:
+        from .const import DATA_DEVICE_REGISTRY
+        _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+        if _dev_reg:
+            # Resolve or create persistent device entry
+            _kind = "ibeacon" if store_addr.startswith("ibeacon:") else "irk" if store_addr.startswith("irk:") else "mac"
+            _padspan_id = _dev_reg.resolve_or_create(store_addr, kind=_kind, persist=True)
+
+            # Link all known identities to this padspan_id
+            if addr != store_addr:
+                _ak = "ibeacon" if addr.startswith("ibeacon:") else "irk" if addr.startswith("irk:") else "mac"
+                await _dev_reg.async_add_identity(_padspan_id, _ak, addr)
+            for _xk in _cross_stored:
+                if _xk != store_addr and _xk != addr:
+                    _xkind = "ibeacon" if _xk.startswith("ibeacon:") else "irk" if _xk.startswith("irk:") else "mac"
+                    await _dev_reg.async_add_identity(_padspan_id, _xkind, _xk)
+
+            # Set the label on the padspan_id
+            await _dev_reg.async_set_label(_padspan_id, label)
+            _LOGGER.debug("DeviceRegistry: labeled %s as '%s' (padspan_id=%s)", store_addr, label, _padspan_id)
+    except Exception as _dr_err:
+        _LOGGER.debug("DeviceRegistry label_set: %s", _dr_err)
+
     connection.send_result(msg["id"], {
         "ok": True, "address": store_addr, "label": label,
         "cross_stored": _cross_stored,
+        "padspan_id": _padspan_id,
     })
 
 
@@ -3970,6 +4033,18 @@ async def ws_object_label_delete(hass: HomeAssistant, connection, msg) -> None:
                         _hv.pop("user_label", None)
         except Exception:
             pass
+
+    # ── DeviceRegistry: clear label on stable padspan_id ──────────────
+    try:
+        from .const import DATA_DEVICE_REGISTRY
+        _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+        if _dev_reg and addr:
+            _pid = _dev_reg.resolve(addr)
+            if _pid:
+                await _dev_reg.async_delete_label(_pid)
+                _LOGGER.debug("DeviceRegistry: cleared label for %s (padspan_id=%s)", addr, _pid)
+    except Exception as _dr_err:
+        _LOGGER.debug("DeviceRegistry label_delete: %s", _dr_err)
 
     connection.send_result(msg["id"], {"ok": True, "address": addr})
 
@@ -8583,6 +8658,40 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
             "detail": "CalibrationStore is not initialized",
         })
 
+    # ── Device Registry ───────────────────────────────────────────────────
+    try:
+        from .const import DATA_DEVICE_REGISTRY
+        _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+        if _dev_reg:
+            _dev_count = _dev_reg.device_count()
+            _labeled = _dev_reg.all_labeled()
+            _labeled_count = len(_labeled)
+            checks.append({
+                "group": "identity", "name": "Device Registry",
+                "ok": True, "value": f"{_dev_count} devices",
+                "detail": f"{_dev_count} persistent devices, {_labeled_count} labeled",
+            })
+            # Migration status
+            obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+            _obj_count = len(obj_store.all()) if obj_store else 0
+            _needs_migration = _dev_count == 0 and _obj_count > 0
+            checks.append({
+                "group": "identity", "name": "Identity Migration",
+                "ok": not _needs_migration,
+                "value": "needed" if _needs_migration else "complete",
+                "detail": (f"{_obj_count} objects in legacy store need migration to Device Registry"
+                           if _needs_migration else
+                           f"Device Registry active ({_dev_count} devices, {_labeled_count} labeled)"),
+            })
+        else:
+            checks.append({
+                "group": "identity", "name": "Device Registry",
+                "ok": False, "value": "not loaded",
+                "detail": "DeviceRegistry is not initialized",
+            })
+    except Exception:
+        pass
+
     # ── Summary ──────────────────────────────────────────────────────────────
     total = len(checks)
     passed = sum(1 for c in checks if c["ok"])
@@ -8878,4 +8987,76 @@ async def ws_fabric_reset_spatial(hass: HomeAssistant, connection, msg) -> None:
         "ok": True, "cleared": True,
         "cal_points_cleared": cal_cleared,
         "next_step": "Click 'Migrate to Metres' with your floor width to rebuild.",
+    })
+
+
+# ── Device Registry WS Handlers ──────────────────────────────────────────────
+
+@websocket_api.websocket_command({"type": "padspan_ha/device_registry_list"})
+@websocket_api.async_response
+async def ws_device_registry_list(hass: HomeAssistant, connection, msg) -> None:
+    """Return all devices in the Device Registry."""
+    from .const import DATA_DEVICE_REGISTRY
+    dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+    if not dev_reg:
+        connection.send_error(msg["id"], "no_device_registry", "Device Registry not initialized")
+        return
+    devices = dev_reg.all_devices()
+    connection.send_result(msg["id"], {
+        "devices": devices,
+        "count": len(devices),
+        "labeled": len(dev_reg.all_labeled()),
+    })
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/device_registry_migrate"})
+@websocket_api.async_response
+async def ws_device_registry_migrate(hass: HomeAssistant, connection, msg) -> None:
+    """Trigger migration from ObjectStore to DeviceRegistry."""
+    from .const import DATA_DEVICE_REGISTRY
+    dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+    obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+    if not dev_reg:
+        connection.send_error(msg["id"], "no_device_registry", "Device Registry not initialized")
+        return
+    if not obj_store:
+        connection.send_error(msg["id"], "no_object_store", "Object store not initialized")
+        return
+    stats = await dev_reg.async_migrate_from_object_store(obj_store)
+    connection.send_result(msg["id"], {
+        "ok": True,
+        "migrated": stats["migrated"],
+        "merged": stats["merged"],
+        "skipped": stats["skipped"],
+        "total_devices": dev_reg.device_count(),
+    })
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/device_registry_merge",
+    "keep_id": str,
+    "absorb_id": str,
+})
+@websocket_api.async_response
+async def ws_device_registry_merge(hass: HomeAssistant, connection, msg) -> None:
+    """Merge two devices in the Device Registry. absorb_id is removed."""
+    from .const import DATA_DEVICE_REGISTRY
+    dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+    if not dev_reg:
+        connection.send_error(msg["id"], "no_device_registry", "Device Registry not initialized")
+        return
+    keep_id = str(msg["keep_id"]).strip()
+    absorb_id = str(msg["absorb_id"]).strip()
+    if not keep_id or not absorb_id:
+        connection.send_error(msg["id"], "invalid_ids", "Both keep_id and absorb_id are required")
+        return
+    ok = await dev_reg.async_merge(keep_id, absorb_id)
+    if not ok:
+        connection.send_error(msg["id"], "merge_failed", "One or both devices not found")
+        return
+    connection.send_result(msg["id"], {
+        "ok": True,
+        "kept": keep_id,
+        "absorbed": absorb_id,
+        "device": dev_reg.get(keep_id),
     })

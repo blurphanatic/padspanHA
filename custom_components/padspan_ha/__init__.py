@@ -48,8 +48,10 @@ from .const import (
     DATA_TRACEBACK,
     DATA_TAG_INTEGRATION,
     DATA_PANEL_REGISTERED,
+    DATA_DEVICE_REGISTRY,
 )
 from .adaptive_store import AdaptiveStore
+from .device_registry import DeviceRegistry
 from .coordinator import PadSpanCoordinator
 from .maps_store import MapsStore
 from .model_store import ModelStore
@@ -148,6 +150,20 @@ async def _ensure_stores(hass: HomeAssistant, *, critical_only: bool = False) ->
         await tb_store.async_load()
         return (DATA_TRACEBACK, tb_store, f"TracebackStore ready ({len(tb_store.frames)} frames)")
 
+    async def _init_device_registry():
+        dev_reg = DeviceRegistry(hass)
+        await dev_reg.async_load()
+        # One-time migration from ObjectStore if device registry is empty
+        if dev_reg.device_count() == 0:
+            obj_store = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+            if obj_store and obj_store.all():
+                stats = await dev_reg.async_migrate_from_object_store(obj_store)
+                _LOGGER.info(
+                    "DeviceRegistry migration: %d devices, %d merged, %d skipped",
+                    stats["migrated"], stats["merged"], stats["skipped"],
+                )
+        return (DATA_DEVICE_REGISTRY, dev_reg, f"DeviceRegistry ready ({dev_reg.device_count()} devices)")
+
     async def _init_tag():
         from .tag_integration import TagIntegration
         tag_int = TagIntegration(hass)
@@ -188,6 +204,8 @@ async def _ensure_stores(hass: HomeAssistant, *, critical_only: bool = False) ->
         deferred.append(_init_traceback())
     if DATA_TAG_INTEGRATION not in hass.data[DOMAIN]:
         deferred.append(_init_tag())
+    if DATA_DEVICE_REGISTRY not in hass.data[DOMAIN]:
+        deferred.append(_init_device_registry())
 
     if deferred:
         results = await asyncio.gather(*deferred)
@@ -477,6 +495,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug("Object history flushed to disk (%d entries)", len(_hist))
     except Exception as err:
         _LOGGER.debug("Object history flush error: %s", err)
+
+    # Flush device registry to disk before shutdown
+    try:
+        _dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+        if _dev_reg:
+            await _dev_reg.async_flush_dirty()
+    except Exception as err:
+        _LOGGER.debug("DeviceRegistry flush error: %s", err)
 
     # Flush traceback store to disk before shutdown
     try:

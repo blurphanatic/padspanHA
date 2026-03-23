@@ -199,6 +199,7 @@ function _renderFabric(ctx, container, data) {
     { key: "fabric_sync", label: "Phase 1 \u2014 Scanner Fabric" },
     { key: "spatial", label: "Phase 2 \u2014 Spatial Model (metres)" },
     { key: "calibration", label: "Phase 3 \u2014 Calibration" },
+    { key: "identity", label: "Device Identity Registry" },
   ];
   for (const g of groups) {
     const gc = checks.filter(c => c.group === g.key);
@@ -344,6 +345,22 @@ function _renderFabric(ctx, container, data) {
       } catch(e) { ctx.actions.toast(`Failed: ${e.message||e}`); resetBtn.disabled = false; resetBtn.textContent = "Reset Spatial Model"; }
     });
     actCard.appendChild(resetBtn);
+
+    // Migrate Device Identity Registry (if needed)
+    const _idCheck = (checks||[]).find(c => c.group === "identity" && c.name === "Identity Migration");
+    if (_idCheck && _idCheck.value === "needed") {
+      const idBtn = el("button",{class:"btn save-pulse",style:"width:auto;padding:4px 14px;font-size:11px;background:#92400e;border-color:#f59e0b;color:#fbbf24;font-weight:700"},
+        "\ud83d\udd11 Migrate Device Identity");
+      idBtn.addEventListener("click", async () => {
+        idBtn.disabled = true; idBtn.textContent = "Migrating\u2026"; idBtn.classList.remove("save-pulse");
+        try {
+          const r = await ctx.actions.callWS({type:"padspan_ha/device_registry_migrate"});
+          ctx.actions.toast(`Identity: ${r.migrated} devices migrated, ${r.merged} merged \u2192 ${r.total_devices} total`);
+          _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container);
+        } catch(e) { ctx.actions.toast(`Failed: ${e.message||e}`); idBtn.disabled=false; idBtn.textContent="\ud83d\udd11 Migrate Device Identity"; idBtn.classList.add("save-pulse"); }
+      });
+      actCard.appendChild(idBtn);
+    }
 
     container.appendChild(actCard);
   }
