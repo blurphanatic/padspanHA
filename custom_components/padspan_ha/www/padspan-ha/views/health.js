@@ -200,6 +200,8 @@ function _renderFabric(ctx, container, data) {
     { key: "spatial", label: "Phase 2 \u2014 Spatial Model (metres)" },
     { key: "calibration", label: "Phase 3 \u2014 Calibration" },
     { key: "identity", label: "Device Identity Registry" },
+    { key: "multifloor", label: "Multi-Floor Accuracy" },
+    { key: "occupancy", label: "Occupancy Estimator" },
   ];
   for (const g of groups) {
     const gc = checks.filter(c => c.group === g.key);

@@ -8701,6 +8701,57 @@ async def ws_fabric_health(hass: HomeAssistant, connection, msg) -> None:
     except Exception:
         pass
 
+    # ── Phase B: Multi-floor + Occupancy ────────────────────────────────────
+    try:
+        _ad = hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
+        _pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+        if _ad:
+            # Floor transition learning
+            _ft = _ad.data.get("floor_transitions", {})
+            _ft_total = sum(e.get("n", 0) for e in _ft.values() if isinstance(e, dict))
+            _ft_pairs = len(_ft)
+            checks.append({
+                "group": "multifloor", "name": "Floor Transition Learning",
+                "ok": True, "value": f"{_ft_total} observations, {_ft_pairs} pairs",
+                "detail": f"{_ft_total} floor transitions recorded across {_ft_pairs} floor pairs" +
+                          (f" ({', '.join(k + ':' + str(v.get('n',0)) for k,v in _ft.items() if isinstance(v,dict))})" if _ft_pairs else "")
+                          if _ft_total else "No floor transitions recorded yet — learning starts automatically when devices change floors",
+            })
+            # Learned cross-floor attenuation
+            _fp = _ad.data.get("floor_pairs", {})
+            _fp_ready = sum(1 for v in _fp.values() if isinstance(v, dict) and v.get("n", 0) >= 10)
+            _fp_total = len(_fp)
+            checks.append({
+                "group": "multifloor", "name": "Cross-Floor Attenuation",
+                "ok": True, "value": f"{_fp_ready}/{_fp_total} pairs ready",
+                "detail": f"{_fp_ready} floor pairs have enough data (>10 obs) for learned attenuation correction" +
+                          (". " + ", ".join(f"{k}: {v.get('mean',0):.1f}dB ({v.get('n',0)} obs)" for k,v in _fp.items() if isinstance(v,dict) and v.get("n",0) >= 10) if _fp_ready else ""),
+            })
+        # Dwell tracking
+        if _pc:
+            _dwell_count = len(getattr(_pc, "_room_dwell_start", {}))
+            _floor_count = len(getattr(_pc, "_device_floor", {}))
+            checks.append({
+                "group": "multifloor", "name": "Dwell Tracking",
+                "ok": True, "value": f"{_dwell_count} devices tracked",
+                "detail": f"{_dwell_count} devices with room dwell tracking, {_floor_count} with floor assignment",
+            })
+        # Occupancy
+        try:
+            _st_occ = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            _occ_training = ((_st_occ.data if _st_occ else {}).get("occupancy_training") or []) if _st_occ else []
+            _occ_mult = float((_st_occ.data if _st_occ else {}).get("occupancy_multiplier", 1.5)) if _st_occ else 1.5
+            checks.append({
+                "group": "occupancy", "name": "Occupancy Estimator",
+                "ok": True, "value": f"multiplier {_occ_mult}x, {len(_occ_training)} training observations",
+                "detail": f"BLE device multiplier: {_occ_mult}x" +
+                          (f" (trained from {len(_occ_training)} observations)" if _occ_training else " (default — train with actual headcounts to improve accuracy)"),
+            })
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     # ── Summary ──────────────────────────────────────────────────────────────
     total = len(checks)
     passed = sum(1 for c in checks if c["ok"])
