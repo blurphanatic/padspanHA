@@ -2684,6 +2684,8 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         if "distance_stationary_devices" in msg:
             raw = msg["distance_stationary_devices"]
             payload["distance_stationary_devices"] = [str(x) for x in raw] if isinstance(raw, list) else []
+        if "onboarding_completed" in msg:
+            payload["onboarding_completed"] = bool(msg["onboarding_completed"])
         await st.async_set(**payload)
         # ── Toggle existing PadSpan entities in HA registry ──────────────────
         _entity_keys = {

@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.16.38";
-const BUILD_ID = "20260323T202629Z";
+const APP_VERSION = "0.16.39";
+const BUILD_ID = "20260323T203613Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -2354,24 +2354,70 @@ class PadSpanHaApp extends HTMLElement {
       }
     }
 
-    // First-run welcome banner (dismissible, once per session)
-    if(!this.state._welcomeDismissed && this.state.view === "follow"){
-      this.state._welcomeDismissed = true;
-      const welcome = el("div",{class:"card",style:"border:1px solid #1a4228;background:#0f1a12;margin-bottom:14px"});
-      welcome.appendChild(el("div",{style:"display:flex;align-items:center;justify-content:space-between"},[
-        el("div",{style:"font-weight:700;font-size:14px;color:#52b788"}, "Welcome to PadSpan\u2122 HA"),
-        (() => {
-          const x = el("span",{style:"cursor:pointer;color:#64748b;font-size:16px;padding:2px 6px"}, "\u2715");
-          x.addEventListener("click", ()=>welcome.remove());
-          return x;
-        })(),
-      ]));
-      welcome.appendChild(el("div",{style:"display:flex;flex-direction:column;gap:8px;margin-top:10px;font-size:12px;color:#94a3b8"},[
-        el("div",{}, [el("span",{style:"color:#5eead4;font-weight:700;margin-right:6px"},"1."), "Upload a floor plan in the ", el("span",{style:"color:#5eead4"},"Maps"), " tab"]),
-        el("div",{}, [el("span",{style:"color:#5eead4;font-weight:700;margin-right:6px"},"2."), "Place your scanners on the map in ", el("span",{style:"color:#5eead4"},"Maps \u2192 3D Stack")]),
-        el("div",{}, [el("span",{style:"color:#5eead4;font-weight:700;margin-right:6px"},"3."), "Tag your devices in the ", el("span",{style:"color:#5eead4"},"Objects"), " tab, then track them here"]),
-      ]));
-      frag.appendChild(welcome);
+    // ── Onboarding wizard ──────────────────────────────────────────────────
+    // Shows a persistent progress bar when setup is incomplete. Detects each
+    // step's completion from live state. Navigates to the right view on click.
+    {
+      const _onboardingDone = !!(this.state.settings && this.state.settings.onboarding_completed);
+      const _hasMaps = !!(this.state.maps && this.state.maps.list && this.state.maps.list.length);
+      const _hasReceivers = _hasMaps && this.state.maps.list.some(m => (m.receivers || []).length > 0);
+      const _hasRooms = _hasMaps && this.state.maps.list.some(m => Object.keys(m.room_bounds || {}).length > 0);
+      const _hasScale = !!(this.state.model && this.state.model.map_transforms && Object.values(this.state.model.map_transforms).some(t => t && t.reference_measurements && t.reference_measurements.length > 0));
+      const _hasCal = !!(this.state.calibration && this.state.calibration.points && this.state.calibration.points.length >= 5);
+      const _steps = [
+        { id: "upload",   label: "Upload Floor Plan",  done: _hasMaps,      view: "maps",        hint: "Maps tab \u2192 Upload a floor plan image" },
+        { id: "scale",    label: "Set Scale",           done: _hasScale,     view: "maps",        hint: "Maps tab \u2192 Edit \u2192 Measure tool" },
+        { id: "scanners", label: "Place Scanners",      done: _hasReceivers, view: "calibration", hint: "Calibration \u2192 Tune \u2192 drag scanners to position" },
+        { id: "rooms",    label: "Draw Rooms",          done: _hasRooms,     view: "maps",        hint: "Maps tab \u2192 Edit \u2192 draw room boundaries" },
+        { id: "calibrate",label: "Calibrate",           done: _hasCal,       view: "calibration", hint: "Calibration \u2192 Pin & Listen \u2192 collect 5+ points" },
+      ];
+      const _completedCount = _steps.filter(s => s.done).length;
+      const _allDone = _completedCount === _steps.length;
+
+      // Auto-mark completed when all steps done
+      if (_allDone && !_onboardingDone && this.state.settings) {
+        this.actions.settingsSave({ onboarding_completed: true }).catch(() => {});
+      }
+
+      if (!_onboardingDone && !_allDone && !this.state._onboardingDismissed) {
+        const bar = el("div",{style:"background:#0a1f14;border:1px solid #1a4228;border-radius:8px;padding:10px 14px;margin-bottom:12px"});
+        // Header
+        const hdr = el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"});
+        hdr.appendChild(el("div",{style:"font-weight:700;font-size:13px;color:#52b788"}, `Setup Progress \u2014 ${_completedCount}/${_steps.length}`));
+        const skipBtn = el("span",{style:"cursor:pointer;font-size:10px;color:#64748b;text-decoration:underline"}, "Skip setup");
+        skipBtn.addEventListener("click", () => {
+          this.state._onboardingDismissed = true;
+          this.actions.settingsSave({ onboarding_completed: true }).catch(() => {});
+          bar.remove();
+        });
+        hdr.appendChild(skipBtn);
+        bar.appendChild(hdr);
+
+        // Progress dots
+        const dots = el("div",{style:"display:flex;gap:4px;margin-bottom:8px"});
+        for (const s of _steps) {
+          dots.appendChild(el("div",{style:`flex:1;height:4px;border-radius:2px;background:${s.done ? "#52b788" : "#1b3526"}`}));
+        }
+        bar.appendChild(dots);
+
+        // Step list
+        const list = el("div",{style:"display:flex;flex-direction:column;gap:4px"});
+        for (let i = 0; i < _steps.length; i++) {
+          const s = _steps[i];
+          const isNext = !s.done && (i === 0 || _steps[i-1].done);
+          const row = el("div",{style:`display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:4px;font-size:12px;${isNext ? "background:#0f2a1a;cursor:pointer" : "cursor:pointer"}`});
+          row.appendChild(el("span",{style:`font-size:14px`}, s.done ? "\u2705" : isNext ? "\u25b6\ufe0f" : "\u2b1c"));
+          row.appendChild(el("span",{style:`color:${s.done ? "#52b788" : isNext ? "#5eead4" : "#64748b"};font-weight:${isNext ? "700" : "400"}`}, s.label));
+          if (isNext) row.appendChild(el("span",{style:"font-size:10px;color:#94a3b8;margin-left:auto"}, s.hint));
+          row.addEventListener("click", () => {
+            this.state.view = s.view;
+            this.actions.renderRooms();
+          });
+          list.appendChild(row);
+        }
+        bar.appendChild(list);
+        frag.appendChild(bar);
+      }
     }
 
     if(!mod || typeof mod.render !== "function") {
