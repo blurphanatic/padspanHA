@@ -1226,7 +1226,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             if _cr.get("source"):
                                 _cal_srcs.add(_cr["source"])
                     _overlap = set(ema.keys()) & _cal_srcs
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "k-NN [%s] addr=%s: ema=%d, cal_src=%d, overlap=%d, "
                         "result=%s, conf=%s, room=%s, positions_stored=%d",
                         key[:30], addr[:20], len(ema), len(_cal_srcs),

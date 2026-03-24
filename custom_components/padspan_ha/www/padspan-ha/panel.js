@@ -2379,8 +2379,8 @@ class PadSpanHaApp extends HTMLElement {
       const _allDone = _completedCount === _steps.length;
 
       // Auto-mark completed when all steps done
-      if (_allDone && !_onboardingDone && this.state.settings) {
-        this.actions.settingsSave({ onboarding_completed: true }).catch(() => {});
+      if (_allDone && !_onboardingDone && this.state.settings && this.actions?.settingsSave) {
+        try { this.actions.settingsSave({ onboarding_completed: true }).catch(() => {}); } catch(e) {}
       }
 
       if (!_onboardingDone && !_allDone && !this.state._onboardingDismissed && this.state.view === "overview") {
