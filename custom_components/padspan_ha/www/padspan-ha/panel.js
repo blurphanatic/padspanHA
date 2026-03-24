@@ -2393,7 +2393,7 @@ class PadSpanHaApp extends HTMLElement {
           this.state._onboardingDismissed = true;
           if (this.state.settings) this.state.settings.onboarding_completed = true;
           bar.remove();
-          try { this.actions.settingsSave({ onboarding_completed: true }).catch(() => {}); } catch(e) {}
+          try { this.actions?.settingsSave?.({ onboarding_completed: true })?.catch?.(() => {}); } catch(e) {}
           this._renderCurrentView();
         });
         hdr.appendChild(skipBtn);
