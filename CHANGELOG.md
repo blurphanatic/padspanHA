@@ -4,6 +4,20 @@ All notable changes to PadSpan HA are documented here.
 
 ---
 
+## 0.18.2 — Stable Release (2026-03-24)
+
+Consolidates all v0.17.2–v0.18.1 fixes into a clean stable release. Version string now consistent across all three sources (const.py, manifest.json, build_info.py).
+
+### Includes
+- Onboarding wizard: reordered steps, sub-tab routing, Basic mode fix
+- Private BLE friendly names on map/follow/devices
+- Map scale save, occupancy training save, blocking scandir fixes
+- Documentation overhaul (README, Getting Started, Floor Plan Setup)
+- New screenshots: Calibration Tune, Traceback Playback, Bluetooth Visualization
+- Clean HACS ZIP (flat structure, no __pycache__)
+
+---
+
 ## 0.18.1 — Onboarding Wizard Fix (2026-03-24)
 
 ### Fixed
