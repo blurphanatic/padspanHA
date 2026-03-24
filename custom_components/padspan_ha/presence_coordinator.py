@@ -980,13 +980,15 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if room_scores:
                 # ── Outdoor room damping ──────────────────────────────────
-                # If the device is currently indoors, heavily penalize outdoor
-                # room scores. Outdoor scanners pick up BLE at long range but
-                # should almost never claim indoor devices.
+                # Always penalize outdoor room scores unless the device is
+                # already confirmed outdoor. Outdoor scanners pick up BLE at
+                # long range but should almost never claim indoor devices.
+                # Previously this only fired when device was confirmed indoor,
+                # which meant unconfirmed devices got no outdoor penalty.
                 _cur_room_od = self._confirmed_room.get(key)
                 _cur_floor_od = _room_to_floor.get(_cur_room_od, "") if _cur_room_od else ""
-                _cur_is_indoor = _cur_floor_od and _cur_floor_od != OUTSIDE_FLOOR_ID
-                if _cur_is_indoor:
+                _cur_is_outdoor = _cur_floor_od == OUTSIDE_FLOOR_ID
+                if not _cur_is_outdoor:
                     for _rname in list(room_scores):
                         _rf = _room_to_floor.get(_rname, "")
                         if _rf == OUTSIDE_FLOOR_ID:

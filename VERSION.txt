@@ -1,1 +1,1 @@
-padspanHA package version: 0.18.5
+padspanHA package version: 0.18.6
