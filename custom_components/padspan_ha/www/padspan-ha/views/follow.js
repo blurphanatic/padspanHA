@@ -124,7 +124,7 @@ function _buildSelector(ctx, el, helpBtn, allObjects, currentAddr, isBasic) {
     if (!id) continue;
     if (_isScanner(o)) continue;
     if (_quietMode && !o.user_label && !o.identified && !ctx.actions.followedHas(id)) continue;
-    const name = o.user_label || o.name || o.entity_id || id;
+    const name = o.user_label || o.private_ble_name || o.name || o.entity_id || id;
     const room = o.room ? ` · ${o.room}` : "";
     const rssiStr = o.rssi != null ? ` (${o.rssi} dBm)` : "";
     const kind = o.kind === "entity" ? "[Entity]" : (o.identified ? "[Tagged]" : "[Unidentified]");

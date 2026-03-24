@@ -49,7 +49,7 @@ export function render(ctx) {
         id: stableId,
         padspan_id: o.padspan_id || "",
         type: o.kind,
-        name: o.user_label || o.name || o.address || "Unknown",
+        name: o.user_label || o.private_ble_name || o.name || o.address || "Unknown",
         room: o.room || "",
         stateRaw: o.room || (o.age_s != null ? `seen ${Math.round(o.age_s)}s ago` : ""),
         missing: false,

@@ -4,6 +4,13 @@ All notable changes to PadSpan HA are documented here.
 
 ---
 
+## 0.17.3 — Bug Fix (2026-03-24)
+
+### Fixed
+- **Private BLE devices show friendly name instead of MAC** — map, follow, and devices views now use the resolved `private_ble_name` (e.g., "Adam's iPhone") when no user label is set, instead of displaying the raw rotating MAC address. Affects overview (2D, 3D, room chips, ISO stack), follow view, and devices list.
+
+---
+
 ## 0.17.2 — Bug Fix (2026-03-24)
 
 ### Fixed

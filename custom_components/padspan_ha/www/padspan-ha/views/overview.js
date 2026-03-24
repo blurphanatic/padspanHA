@@ -885,7 +885,7 @@ export function render(ctx){
           continue;
         }
 
-        const lbl = (o.user_label || o.name || "").substring(0, 14);
+        const lbl = (o.user_label || o.private_ble_name || o.name || "").substring(0, 14);
         const _oKey = _esc(o.key || o.address || o.entity_id || "");
 
         if (isFollowed) {
@@ -1802,7 +1802,7 @@ export function render(ctx){
       // ── Helper: build tooltip string for any object ────────────────────────
       const _objTip = (o) => {
         const parts = [];
-        const n = o.user_label || o.name || o.address || o.entity_id || "Unknown";
+        const n = o.user_label || o.private_ble_name || o.name || o.address || o.entity_id || "Unknown";
         parts.push(n);
         if(o.kind) parts.push(`Kind: ${o.kind}`);
         if(o.address && o.address !== n) parts.push(`Addr: ${o.address}`);
@@ -1834,7 +1834,7 @@ export function render(ctx){
         const isGhost = o._ghost || o._stale;
         const ageS = typeof o.age_s === "number" ? o.age_s : 0;
         const isAway = isGhost && (o.rssi == null) && (ageS > _awayTimeoutS2);
-        const lbl = (o.user_label||o.name||"?").substring(0,14);
+        const lbl = (o.user_label||o.private_ble_name||o.name||"?").substring(0,14);
         let bx, by;
         let posConf = 0;  // confidence for dashed circle
 
@@ -1948,7 +1948,7 @@ export function render(ctx){
           const _awayThresh = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null)
             ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
           const isAway = typeof obj.age_s === "number" && obj.age_s > _awayThresh;
-          const objLabel = obj.user_label || obj.name || "";
+          const objLabel = obj.user_label || obj.private_ble_name || obj.name || "";
 
           // Position: server k-NN first, then high-confidence fingerprint, then room centroid + stagger
           let px, py;
@@ -2224,7 +2224,7 @@ export function render(ctx){
         for(const o of (rr.objects||[]).slice(0,6)){
           const oKey = o.address || o.entity_id || "";
           const isF = ctx.actions.followedHas(oKey);
-          const lbl = (o.user_label || o.name || o.address || "?").substring(0,16);
+          const lbl = (o.user_label || o.private_ble_name || o.name || o.address || "?").substring(0,16);
           const oc = isF ? "#fbbf24" : (o.identified ? "#5eead488" : "#f59e0b88");
           const chip = el("span",{style:`font-size:10px;padding:1px 5px;border-radius:3px;background:${oc}22;color:${isF?"#fbbf24":"#94a3b8"};border:1px solid ${oc};white-space:nowrap${isF?";font-weight:700":""}`}, isF ? lbl + " \u25C9" : lbl);
           objChips.appendChild(chip);
@@ -2678,7 +2678,7 @@ export function render(ctx){
         const ox = x + BW - 16 - oi * 28, oy = y + 100;
         const oc = o.identified ? "#5eead4" : "#f59e0b";
         s += `<circle cx="${ox}" cy="${oy}" r="7" fill="${oc}" opacity="0.9"/>`;
-        const lbl = (o.user_label || o.name || "?").substring(0, 6);
+        const lbl = (o.user_label || o.private_ble_name || o.name || "?").substring(0, 6);
         s += `<text x="${ox}" y="${oy + 18}" text-anchor="middle" fill="${oc}" font-size="9">${_esc(lbl)}</text>`;
       });
 
