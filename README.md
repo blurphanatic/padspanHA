@@ -26,6 +26,14 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 |:-:|:-:|
 | ![7 uploaded floor plans](images/maps-library.png) | ![Guided walkthroughs + full sidebar](images/training-hub.png) |
 
+| Calibration Tune (3D Scanner Positioning) | Bluetooth Scanner Visualization |
+|:-:|:-:|
+| ![3D isometric calibration with room polygons and scanner markers](images/calibration-tune-3d.png) | ![Scanner KPIs and device graph](images/bluetooth-visualization.png) |
+
+| Traceback Playback |
+|:-:|
+| ![Movement timeline with distance traveled and 3D replay](images/traceback-playback.png) |
+
 ---
 
 ## Feature Highlights
