@@ -59,13 +59,19 @@ async def _register_static(hass: HomeAssistant, static_dir: Path, url: str = STA
 
 def _remove_panels(hass: HomeAssistant) -> None:
     """Remove existing panel registrations so they can be refreshed."""
-    try:
-        from homeassistant.components.panel_custom import async_remove_panel  # type: ignore
-        async_remove_panel(hass, "padspan-ha")
-        async_remove_panel(hass, "padspan-lights")
-        _LOGGER.debug("Removed existing PadSpan panels for re-registration")
-    except Exception:
-        pass
+    for panel_id in ("padspan-ha", "padspan-lights"):
+        try:
+            if panel_id in hass.data.get("frontend_panels", {}):
+                hass.data["frontend_panels"].pop(panel_id, None)
+                _LOGGER.debug("Removed panel %s from frontend_panels", panel_id)
+        except Exception:
+            pass
+        try:
+            from homeassistant.components.frontend import async_remove_panel  # type: ignore
+            async_remove_panel(hass, panel_id)
+            _LOGGER.debug("Removed panel %s via frontend API", panel_id)
+        except Exception:
+            pass
 
 
 async def async_setup_panel(hass: HomeAssistant) -> None:
