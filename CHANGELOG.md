@@ -4,6 +4,23 @@ All notable changes to PadSpan HA are documented here.
 
 ---
 
+## 0.18.0 — Stable Release (2026-03-24)
+
+### Documentation
+- **README rewritten** for v0.17+ features: Device Registry, positioning fabric, occupancy estimation, onboarding wizard, 2D map mode, measure tool, multi-floor intelligence, experimental features, movement playback, comparison table updated (22 views)
+- **Getting Started guide updated** — onboarding wizard steps, Apple device tracking (Private BLE/IRK), occupancy estimation, movement history, troubleshooting for v0.17 fixes
+- **Floor Plan Setup guide updated** — measure tool instructions, master map concept, 2D flat map mode, multi-floor alignment workflow
+- **Documentation index** added to README linking all guides
+
+### Fixed (from v0.17.2–v0.17.3)
+- Private BLE devices show friendly name instead of MAC on map, follow, and devices views
+- Map scale save crash (`scale_x_m` undefined)
+- Occupancy training save crash (`async_save` → `store.async_save`)
+- Blocking `scandir` in factory reset event loop
+- Onboarding step click crash (`renderRooms` undefined)
+
+---
+
 ## 0.17.3 — Bug Fix (2026-03-24)
 
 ### Fixed

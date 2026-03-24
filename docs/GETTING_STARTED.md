@@ -54,7 +54,19 @@ Home/away just needs to see *any* signal from *any* scanner — easy. Room-level
 2. Search for **PadSpan HA**
 3. Follow the config flow (defaults are fine for most setups)
 
-## Step 3: Explore with Sample Mode
+## Step 3: Onboarding Wizard
+
+When you first open PadSpan, the **onboarding wizard** appears with 5 steps:
+
+1. **Upload a map** — Upload a floor plan image
+2. **Set scale** — Use the two-point measure tool to calibrate real-world distances
+3. **Draw rooms** — Draw room boundary polygons over your floor plan
+4. **Place scanners** — Drag scanner markers to their physical locations
+5. **Calibrate** — Walk-around fingerprint collection for room-level accuracy
+
+Each step auto-detects when it's complete. Click any step to jump to the relevant view.
+
+## Step 4: Explore with Sample Mode
 
 Before touching real data, flip to **Sample mode** (toggle in the top-right corner of the panel). This loads a complete demo house with:
 - 3 BLE scanners across 5 rooms
@@ -64,44 +76,69 @@ Before touching real data, flip to **Sample mode** (toggle in the top-right corn
 
 Explore every view to understand what PadSpan can do.
 
-## Step 4: Switch to Live Mode
+## Step 5: Switch to Live Mode
 
 Toggle back to **Live mode**. Your BLE scanners are auto-discovered. You should immediately see:
 - **Radios** — Your BLE scanners listed in the Bluetooth view
 - **Objects** — Every Bluetooth device your scanners detect (phones, AirTags, smart home gadgets, and plenty of unknown devices)
 
-## Step 5: Tag Your Devices
+## Step 6: Tag Your Devices
 
 Go to the **Objects** tab. You'll see a mix of named and unnamed Bluetooth devices. Click **Tag** next to any device you recognize:
 - Your phone → "Alice's Phone"
 - Your AirTag → "Car Keys"
 - Your Tile → "Backpack"
 
-Once tagged, PadSpan creates HA entities for that device (device_tracker, area sensor, distance sensor).
+Once tagged, PadSpan creates HA entities for that device (device_tracker, area sensor, distance sensor). Each tagged device gets a **stable padspan_id** that survives MAC rotation and firmware updates.
 
-## Step 6: Upload a Floor Plan
+## Step 7: Upload a Floor Plan
 
 Go to **Maps** → **Upload** tab:
 1. Upload a PNG/JPG of your floor plan (or draw one — even a rough sketch works)
-2. Draw room boundary polygons by clicking the map
-3. Place scanner markers where your BLE scanners are physically located
+2. Use the **measure tool** — click two points of known distance to set the scale
+3. Draw room boundary polygons by clicking the map
+4. Place scanner markers where your BLE scanners are physically located
 
-## Step 7: Start Following
+See [Floor Plan Setup](FLOOR_PLAN_SETUP.md) for detailed instructions.
+
+## Step 8: Start Following
 
 Go to the **Follow** tab:
 1. Select a tagged device from the dropdown
 2. Watch it move between rooms in real time on the animated map
 3. Optionally configure **email alerts** for room-change notifications
 
+## Step 9: Tracking Apple Devices (iPhone, Apple Watch)
+
+Apple devices use rotating MAC addresses for privacy. To track them:
+
+1. Set up the **Private BLE Device** integration in HA (registers the device's IRK)
+2. PadSpan auto-detects registered Private BLE devices
+3. Tag them in the Objects view — they appear with their friendly name (e.g., "Adam's iPhone")
+4. The IRK lets PadSpan follow the device through MAC rotations
+
+The Training Hub has a dedicated walkthrough: **Private BLE (Apple Devices)**.
+
+## Step 10: Occupancy Estimation
+
+The **Occupancy** view provides building and per-room people counts:
+
+1. Identified (tagged) devices count as 1 person each
+2. Unidentified BLE devices with dwell time >5 minutes are counted with a configurable multiplier
+3. Train the system by entering actual headcounts — the multiplier adjusts over time via EMA learning
+
 ## What's Next?
 
 - **Calibration** — Run the calibration walkthrough (Training Hub → Calibration) for sub-room accuracy
 - **Basic vs Advanced** — Toggle between simplified and full views (top-right toggle)
-- **Training Hub** — Guided walkthroughs for every major feature
-- **Settings** — Customize appearance, scanner offsets, presence thresholds
+- **Training Hub** — 14 animated walkthroughs covering every feature
+- **Settings** — Customize appearance, scanner offsets, presence thresholds, experimental features
+- **History & Traceback** — Review movement history with NVR-style playback on the 3D map
 
 ## Troubleshooting
 
 - **No scanners visible?** Confirm your ESP32 or Bluetooth proxy is connected and showing in HA → Settings → Devices & Services → Bluetooth
 - **No objects?** Wait 30 seconds — the first BLE scan takes a moment. Check the Diagnostics view for errors.
 - **UI not updating?** Hard refresh your browser (Ctrl+F5) to clear cached JavaScript
+- **Private BLE devices show MAC instead of name?** Update to v0.17.3+ — friendly names now display by default
+- **Maps not saving?** Update to v0.17.2+ — a scale save bug was fixed

@@ -2,7 +2,7 @@
 
 ### The most comprehensive BLE room-presence system for Home Assistant
 
-PadSpan™ HA goes far beyond "home or away." It tells you **which room** every Bluetooth device is in — updated every 5 seconds — with interactive floor plans, 3D multi-floor visualizations, a full calibration system, and 21 dedicated views. No other Home Assistant BLE integration comes close.
+PadSpan™ HA goes far beyond "home or away." It tells you **which room** every Bluetooth device is in — updated every 5 seconds — with interactive floor plans, 3D multi-floor visualizations, a full calibration system, and 22 dedicated views. No other Home Assistant BLE integration comes close.
 
 ![3D Stack — multi-floor tracking with live object positions](images/3d-stack-tracking.png)
 
@@ -33,17 +33,27 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 ### Presence Tracking
 - Room-level BLE device tracking (5-second refresh)
 - **Follow mode** — animated room map + movement timeline for any tracked device
-- Multi-device simultaneous tracking with per-device email alerts
+- Multi-device simultaneous tracking with per-device email alerts (60 s rate limit)
 - Kalman-filtered RSSI smoothing (replaces simple moving averages)
 - Home/away detection with HA binary sensor entities
 - Private BLE address resolution (iBeacon UUID + IRK support)
+- **Occupancy estimation** — hybrid people counting with identified + unidentified devices and trainable multiplier
+
+### Device Identity
+- **Stable device identity (padspan_id)** — every physical device gets an immutable ID that survives MAC rotation, iBeacon UUID changes, and firmware updates
+- O(1) identity resolution from any volatile key (MAC, iBeacon, canonical_id)
+- Automatic migration from older object/tag systems
+- Interactive device registry: merge duplicates, add identities, relabel, delete
 
 ### Floor Plans & Maps
 - Upload architectural floor plans (PNG/JPG) with auto-scaling
+- **Two-point measure tool** for precise real-world scale calibration with aspect ratio validation
 - Draw room boundary polygons directly over blueprints
 - Multi-floor **3D isometric visualization** with live object positions
+- **2D flat map mode** with zoom/pan and toggle filters (scanners, tagged, unknown, rooms)
 - Drag-and-place scanner markers with 3-digit radio IDs
 - Auto-detect stale or missing radios on your map
+- Master map alignment for multi-floor coordinate consistency
 
 ### Calibration
 - Walk-around fingerprint collection with a **standalone phone-friendly panel**
@@ -52,8 +62,13 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 - Leave-one-out cross-validation for model quality scoring
 - 3D isometric tune view with draggable receiver markers
 
+### Multi-Floor Intelligence
+- **Floor-transition learning** — adaptive dwell-based velocity gate prevents phantom floor changes
+- Learned cross-floor RSSI attenuation
+- Outdoor penalties (0.30× Gaussian damping) for exterior boundary rooms
+
 ### Scanner Hardware & Management
-- **Tested with 20+ ESP32 boards** — a dozen old ones and 10 ordered new. The antenna matters more than the chip — boards with full-size external antennas consistently outperform chip/PCB antennas for room-level accuracy
+- **Tested with 20+ ESP32 boards** — the antenna matters more than the chip. Boards with full-size external antennas consistently outperform chip/PCB antennas for room-level accuracy
 - Top picks: ESP32-S3 with Ethernet + antenna, ESP32-S3 with WiFi + antenna, ESP32-C3 with antenna
 - Auto-discover BLE scanners from Home Assistant integrations
 - Per-scanner signal quality metrics and coverage analysis
@@ -66,12 +81,22 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 - Full WebSocket API for custom dashboards and automation
 
 ### UI & Experience
-- **21 dedicated views** with Basic and Advanced modes
+- **22 dedicated views** with Basic and Advanced modes
+- **5-step onboarding wizard** with auto-detection and progress tracking
 - Dark forest-green theme designed for always-on displays
-- Built-in **Training Hub** with guided walkthroughs
+- Built-in **Training Hub** with 14 animated walkthroughs + full manual
 - **Sample mode** — fully functional demo with synthetic data, no hardware needed
 - **11 languages**: English, Spanish, French, German, Italian, Portuguese, Dutch, Chinese, Japanese, Korean, Russian
 - Standalone calibration panel optimized for phone use during walk-around collection
+- **NVR-style movement playback** — replay tracked device movement on the 3D map
+
+### Experimental Features (Settings → Features)
+- **Radio Map** — RSSI heatmap overlay using inverse distance weighting
+- **Distortion Map** — k-NN prediction vs reality mismatch visualization
+- **Trackability Rating** — per-device Easy/Medium/Hard scoring
+- **Walk-to-Identify** — discover unknown devices by correlating walking motion
+- **Compass Ring Calibration** — structured 360° RSSI collection
+- **Replay Timeline** — enhanced playback with scoring explainability
 
 ---
 
@@ -82,13 +107,18 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 | Room-level tracking | ✅ | ✅ | ✅ | ✅ |
 | Visual floor plans | ✅ | — | — | — |
 | 3D multi-floor maps | ✅ | — | — | — |
+| 2D flat map + zoom/pan | ✅ | — | — | — |
 | Room boundary editor | ✅ | — | — | — |
 | Fingerprint calibration | ✅ | — | — | — |
-| Training hub | ✅ | — | — | — |
-| Follow mode + alerts | ✅ | — | — | — |
+| Occupancy estimation | ✅ | — | — | — |
+| Stable device identity | ✅ | — | — | — |
+| Training hub (14 walkthroughs) | ✅ | — | — | — |
+| Follow mode + email alerts | ✅ | — | — | — |
+| Onboarding wizard | ✅ | — | — | — |
+| Movement history playback | ✅ | — | — | — |
 | Sample/demo mode | ✅ | — | — | — |
 | Multi-language (11) | ✅ | — | — | — |
-| Dedicated UI views | 21 | Config flow | MQTT config | Config flow |
+| Dedicated UI views | 22 | Config flow | MQTT config | Config flow |
 | HA sensor entities | ✅ | ✅ | ✅ | ✅ |
 | Distance estimation | ✅ | ✅ | — | ✅ |
 | Kalman RSSI filtering | ✅ | — | — | — |
@@ -127,10 +157,25 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 1. Install via HACS and restart HA
 2. Add the PadSpan HA integration
 3. Open the **PadSpan HA** panel in the sidebar
-4. Try **Sample mode** to explore every feature with demo data
-5. Switch to **Live mode** when ready — your BLE scanners are auto-discovered
-6. Upload a floor plan, draw room boundaries, and place your scanners
-7. Start tracking
+4. The **onboarding wizard** guides you through 5 steps: upload a map, set scale, draw rooms, place scanners, calibrate
+5. Try **Sample mode** (top-right toggle) to explore every feature with demo data
+6. Switch to **Live mode** when ready — your BLE scanners are auto-discovered
+7. Tag your devices, upload a floor plan, and start tracking
+
+---
+
+## Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [Getting Started](docs/GETTING_STARTED.md) | First 30 minutes: install, explore, track |
+| [Floor Plan Setup](docs/FLOOR_PLAN_SETUP.md) | Upload, draw rooms, place scanners, set scale |
+| [Troubleshooting](docs/90_TROUBLESHOOTING.md) | Common issues and fixes |
+| [Architecture](docs/00_REPO_LOGIC_OVERVIEW.md) | High-level codebase architecture |
+| [WebSocket API](docs/02_WEBSOCKET_API.md) | API reference for custom integrations |
+| [Changelog](CHANGELOG.md) | Full version history |
+
+The **Training Hub** inside PadSpan has 14 animated walkthroughs covering every feature — from BLE basics to Private BLE/IRK setup.
 
 ---
 
