@@ -1830,6 +1830,8 @@ export function render(ctx){
       const BEACON_CLR = "#fbbf24";
       const _awayTimeoutS2 = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null) ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
       for(const o of followedObjects){
+        // Skip objects positioned on a hidden floor/map
+        if(o.knn_map_id && hiddenIds.has(o.knn_map_id)) continue;
         _renderedObjKeys.add(o.key || o.address || o.entity_id || "");
         const isGhost = o._ghost || o._stale;
         const ageS = typeof o.age_s === "number" ? o.age_s : 0;
@@ -1927,6 +1929,8 @@ export function render(ctx){
           const hasRoom = o.room && o.room !== "unknown" && o.room !== "not_home" && roomIsoPos[o.room];
           // Must have k-NN or a room to be positionable
           if (!hasKnn && !hasRoom) return false;
+          // Skip objects positioned on a hidden floor/map
+          if (o.knn_map_id && hiddenIds.has(o.knn_map_id)) return false;
           // Quiet mode: only show followed or labeled/identified objects
           if (_quietMode && !isFol && !o.user_label && !o.identified) return false;
           // Persistent pins mode: only show followed items
