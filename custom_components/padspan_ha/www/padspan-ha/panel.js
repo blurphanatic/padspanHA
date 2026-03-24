@@ -2365,11 +2365,11 @@ class PadSpanHaApp extends HTMLElement {
       const _hasScale = !!(this.state.model && this.state.model.map_transforms && Object.values(this.state.model.map_transforms).some(t => t && t.reference_measurements && t.reference_measurements.length > 0));
       const _hasCal = !!(this.state.calibration && this.state.calibration.points && this.state.calibration.points.length >= 5);
       const _steps = [
-        { id: "upload",   label: "Upload Floor Plan",  done: _hasMaps,      view: "maps",        hint: "Maps tab \u2192 Upload a floor plan image" },
-        { id: "scale",    label: "Set Scale",           done: _hasScale,     view: "maps",        hint: "Maps tab \u2192 Edit \u2192 Measure tool" },
-        { id: "scanners", label: "Place Scanners",      done: _hasReceivers, view: "calibration", hint: "Calibration \u2192 Tune \u2192 drag scanners to position" },
-        { id: "rooms",    label: "Draw Rooms",          done: _hasRooms,     view: "maps",        hint: "Maps tab \u2192 Edit \u2192 draw room boundaries" },
-        { id: "calibrate",label: "Calibrate",           done: _hasCal,       view: "calibration", hint: "Calibration \u2192 Pin & Listen \u2192 collect 5+ points" },
+        { id: "upload",   label: "Upload Floor Plan",  done: _hasMaps,      view: "maps",        mapsTab: "upload", hint: "Maps \u2192 Upload a floor plan image" },
+        { id: "scale",    label: "Set Scale",           done: _hasScale,     view: "maps",        mapsTab: "edit",   hint: "Maps \u2192 Edit \u2192 Measure tool" },
+        { id: "rooms",    label: "Draw Rooms",          done: _hasRooms,     view: "maps",        mapsTab: "edit",   hint: "Maps \u2192 Edit \u2192 draw room boundaries" },
+        { id: "scanners", label: "Place Scanners",      done: _hasReceivers, view: "calibration", calibTab: "tune",  hint: "Calibration \u2192 Tune \u2192 drag scanners" },
+        { id: "calibrate",label: "Calibrate",           done: _hasCal,       view: "calibration", calibTab: "pin",   hint: "Calibration \u2192 Pin & Listen \u2192 collect 5+ points" },
       ];
       const _completedCount = _steps.filter(s => s.done).length;
       const _allDone = _completedCount === _steps.length;
@@ -2410,7 +2410,15 @@ class PadSpanHaApp extends HTMLElement {
           row.appendChild(el("span",{style:`color:${s.done ? "#52b788" : isNext ? "#5eead4" : "#64748b"};font-weight:${isNext ? "700" : "400"}`}, s.label));
           if (isNext) row.appendChild(el("span",{style:"font-size:10px;color:#94a3b8;margin-left:auto"}, s.hint));
           row.addEventListener("click", () => {
+            // Auto-promote to Advanced if step needs calibration (not in Basic mode)
+            if (s.view === "calibration" && this.state.complexity === "basic") {
+              this.state.complexity = "advanced";
+              try { localStorage.setItem("padspan_complexity", "advanced"); } catch(e) {}
+            }
             this.state.view = s.view;
+            // Route to the correct sub-tab
+            if (s.mapsTab) this.state.mapsTab = s.mapsTab;
+            if (s.calibTab && this.state._calib) this.state._calib.tab = s.calibTab;
             if (this.actions?.renderRooms) this.actions.renderRooms();
             else this._renderCurrentView();
           });

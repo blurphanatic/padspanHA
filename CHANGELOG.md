@@ -4,6 +4,15 @@ All notable changes to PadSpan HA are documented here.
 
 ---
 
+## 0.18.1 — Onboarding Wizard Fix (2026-03-24)
+
+### Fixed
+- **Wizard step order** — reordered to logical sequence: Upload → Set Scale → Draw Rooms → Place Scanners → Calibrate. All map setup steps now run consecutively before calibration, eliminating unnecessary context-switching between views.
+- **Sub-tab routing** — clicking a wizard step now navigates directly to the correct sub-tab (e.g., "Upload Floor Plan" goes to Maps → Upload tab, "Calibrate" goes to Calibration → Pin & Listen tab). Previously all steps landed on the default tab.
+- **Basic mode calibration crash** — clicking "Place Scanners" or "Calibrate" in Basic mode now auto-promotes to Advanced mode so the Calibration view is visible. Previously these steps navigated to an invisible view.
+
+---
+
 ## 0.18.0 — Stable Release (2026-03-24)
 
 ### Documentation
