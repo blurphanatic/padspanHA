@@ -2363,13 +2363,16 @@ class PadSpanHaApp extends HTMLElement {
       const _hasReceivers = _hasMaps && this.state.maps.list.some(m => (m.receivers || []).length > 0);
       const _hasRooms = _hasMaps && this.state.maps.list.some(m => Object.keys(m.room_bounds || {}).length > 0);
       const _hasScale = !!(this.state.model && this.state.model.map_transforms && Object.values(this.state.model.map_transforms).some(t => t && t.reference_measurements && t.reference_measurements.length > 0));
-      const _hasCal = !!(this.state.calibration && this.state.calibration.points && this.state.calibration.points.length >= 5);
+      // Accept any calibration method: Pin & Listen points, Beacon Tune points, or a fitted model
+      const _calPoints = (this.state.calibration && this.state.calibration.points) ? this.state.calibration.points.length : 0;
+      const _hasModel = !!(this.state.calibration && this.state.calibration.model && Object.keys(this.state.calibration.model).length > 0);
+      const _hasCal = _calPoints >= 5 || _hasModel;
       const _steps = [
         { id: "upload",   label: "Upload Floor Plan",  done: _hasMaps,      view: "maps",        mapsTab: "upload", hint: "Maps \u2192 Upload a floor plan image" },
         { id: "scale",    label: "Set Scale",           done: _hasScale,     view: "maps",        mapsTab: "edit",   hint: "Maps \u2192 Edit \u2192 Measure tool" },
         { id: "rooms",    label: "Draw Rooms",          done: _hasRooms,     view: "maps",        mapsTab: "edit",   hint: "Maps \u2192 Edit \u2192 draw room boundaries" },
         { id: "scanners", label: "Place Scanners",      done: _hasReceivers, view: "calibration", calibTab: "tune",  hint: "Calibration \u2192 Tune \u2192 drag scanners" },
-        { id: "calibrate",label: "Calibrate",           done: _hasCal,       view: "calibration", calibTab: "pin",   hint: "Calibration \u2192 Pin & Listen \u2192 collect 5+ points" },
+        { id: "calibrate",label: "Calibrate",           done: _hasCal,       view: "calibration", calibTab: "beacon", hint: "Calibration \u2192 Beacon Tune or Pin & Listen" },
       ];
       const _completedCount = _steps.filter(s => s.done).length;
       const _allDone = _completedCount === _steps.length;
@@ -2387,8 +2390,10 @@ class PadSpanHaApp extends HTMLElement {
         const skipBtn = el("span",{style:"cursor:pointer;font-size:10px;color:#64748b;text-decoration:underline"}, "Skip setup");
         skipBtn.addEventListener("click", () => {
           this.state._onboardingDismissed = true;
-          this.actions.settingsSave({ onboarding_completed: true }).catch(() => {});
+          if (this.state.settings) this.state.settings.onboarding_completed = true;
           bar.remove();
+          try { this.actions.settingsSave({ onboarding_completed: true }).catch(() => {}); } catch(e) {}
+          this._renderCurrentView();
         });
         hdr.appendChild(skipBtn);
         bar.appendChild(hdr);
