@@ -1939,9 +1939,13 @@ function _edit(ctx, map){
         }
         mPanel.appendChild(analysisDiv);
 
+        // Pre-compute dimensions for the button label (same formula as inside the click handler)
+        const _preview_x_m = Math.round((imgW / avgPpm) * 10000) / 10000;
+        const _preview_y_m = Math.round((imgH / avgPpm) * 10000) / 10000;
+
         // Save button — prominent green to make it clear this is the save action
         const applyBtn = el("button",{class:"btn save-pulse",style:"margin-top:12px;width:100%;padding:12px;font-size:15px;background:#1a3a0a;border:2px solid #52b788;color:#86efac;font-weight:800;border-radius:8px;cursor:pointer"},
-          `\ud83d\udcbe  Save Scale: ${avgPpm.toFixed(1)} px/m \u2192 ${scale_x_m.toFixed(1)}m \u00d7 ${scale_y_m.toFixed(1)}m`);
+          `\ud83d\udcbe  Save Scale: ${avgPpm.toFixed(1)} px/m \u2192 ${_preview_x_m.toFixed(1)}m \u00d7 ${_preview_y_m.toFixed(1)}m`);
         applyBtn.addEventListener("click", async () => {
           applyBtn.disabled = true; applyBtn.textContent = "Saving\u2026";
           const ppm = Math.round(avgPpm * 100) / 100;

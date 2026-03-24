@@ -7504,8 +7504,8 @@ async def ws_factory_reset(hass: HomeAssistant, connection, msg) -> None:
             _mdir = maps_obj.maps_dir
         else:
             _mdir = _Path(hass.config.path("www")) / "padspan_ha" / "maps"
-        if _mdir.is_dir():
-            for f in _mdir.iterdir():
+        if await _aio.to_thread(_mdir.is_dir):
+            for f in await _aio.to_thread(list, _mdir.iterdir()):
                 if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
                     try:
                         await _aio.to_thread(f.unlink)
@@ -8371,7 +8371,7 @@ async def ws_occupancy_train(hass: HomeAssistant, connection, msg) -> None:
     if len(training) > 100:
         training = training[-100:]
     _st.data["occupancy_training"] = training
-    await _st.async_save()
+    await _st.store.async_save(_st.data)
 
     connection.send_result(msg["id"], {"ok": True, "observation": observation, "total_observations": len(training)})
 

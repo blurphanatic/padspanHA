@@ -4,6 +4,80 @@ All notable changes to PadSpan HA are documented here.
 
 ---
 
+## 0.17.2 — Bug Fix (2026-03-24)
+
+### Fixed
+- **Map scale save crash** — "Save Scale" button referenced `scale_x_m` / `scale_y_m` before they were defined, causing `ReferenceError` and preventing scale saves (maps.js:1944)
+- **Occupancy training save crash** — `ws_occupancy_train` called `_st.async_save()` which doesn't exist on `SettingsStore`; corrected to `_st.store.async_save(_st.data)` (websocket.py:8374)
+- **Blocking `scandir` in event loop** — factory reset's map-file cleanup used synchronous `iterdir()` / `is_dir()` inside an async handler, triggering HA's blocking-call detector; wrapped in `asyncio.to_thread` (websocket.py:7508)
+- **Onboarding step click crash** — `this.actions.renderRooms()` could fail with `TypeError` if `actions` was undefined during panel init; added optional chaining with fallback (panel.js:2414)
+
+---
+
+## 0.17.0 — Stable Release (2026-03-23)
+
+Major release with 78 commits since last stable (v0.15.25). Introduces the Device Registry identity system, positioning fabric decoupling, multi-floor accuracy learning, occupancy estimation, and an onboarding wizard.
+
+### Device Registry (NEW)
+- **Stable device identity** — every physical device gets an immutable `padspan_id` (format: `ps_<12 hex chars>`) that survives MAC rotation, iBeacon UUID changes, and firmware updates
+- **Identity resolution** — O(1) lookup from any volatile key (MAC, iBeacon, canonical_id) to stable padspan_id
+- **Automatic migration** — existing labeled objects in ObjectStore are auto-migrated to DeviceRegistry on first startup
+- **Label pipeline** — DeviceRegistry is now the primary label source; ObjectStore is a thin fallback
+- **HA entity identity** — sensor and device_tracker entities use padspan_id for stable HA device identity
+- **Frontend management** — Devices view has interactive registry: merge duplicates, add identities, relabel, delete, view identity chains
+- **7 WS commands** — list, migrate, merge, resolve, label_set, add_identity, delete
+- **Health checks** — Device Registry status, Label Pipeline health, dependent store migration progress
+
+### Positioning Fabric (decoupling from maps)
+- **Fabric is the authority** — all spatial data (scanner positions, room geometry, RF barriers, beacon positions) stored in real-world metres in the positioning fabric
+- **Maps are setup tools only** — floor plan images no longer own positioning data, overview map toggle defaults to off
+- **Metre-space coordinates** — all stores use real-world metres with floor_id references
+- **Map transforms** — affine transforms convert between map fracs and metres
+- **Measure tool** — two-point reference distance calibration with aspect ratio validation
+
+### Multi-Floor Accuracy
+- **Floor-transition learning** — adaptive store records floor-to-floor transitions with Welford stats on dwell time
+- **Dwell-based velocity gate** — short dwell (<30s) requires unanimous vote; medium dwell (30-120s) needs supermajority for cross-floor; long dwell (>120s) uses normal threshold
+- **Learned cross-floor attenuation** — Gaussian scorer applies learned RSSI corrections to cross-floor scanners when adaptive floor detection is enabled
+- **Outdoor penalties** — outdoor scanners get 0.30x Gaussian damping; indoor-outdoor transitions require 4x floor stickiness
+
+### Occupancy Estimation
+- **Dedicated Occupancy dashboard** — new sidebar view with building summary, per-room breakdown, training controls, and training history
+- **Hybrid counting** — identified devices count 1:1, unidentified BLE with dwell >5min count with configurable multiplier (default 1.5x)
+- **Training** — enter actual headcount to adjust the multiplier via EMA learning
+
+### Onboarding Wizard
+- **Guided first-run setup** — persistent progress bar detects 5 steps: upload floor plan, set scale, place scanners, draw rooms, calibrate
+- **Auto-detection** — each step auto-completes when its data is detected
+- **Click-to-navigate** — each step links directly to the right view
+- **Skip option** — dismisses permanently via settings
+
+### Calibration & Beacon Tune Fixes
+- **Room polygons no longer block dragging** — `pointer-events: none` on room polygons in both Tune and Beacon Tune
+- **Save-pulse animation** — save button pulses green when there are unsaved changes (dynamically updated after drags)
+- **Beacon sync to maps** — fabric beacons are now synced back to maps store for consistent rendering
+- **Unique beacon IDs** — prevents drag handler from matching wrong beacon when multiple have empty IDs
+- **SVG not rebuilt mid-drag** — `_refreshSVG()` checks `_dragging` flag
+- **Watchdog fix** — no longer force-renders on non-live views (was disrupting calibration mid-drag)
+- **Out-of-bounds beacons filtered** — beacons outside map coordinate range are skipped instead of clamped to edges
+
+### Distance Traveled
+- **Fixed data reading** — was reading `frame.objects` instead of `frame.o` (compact format), producing zero distance for everything
+- **Jitter filtering** — steps <0.5m ignored, same-room capped at 3m, time-gap scaling for downsampled views
+- **Reliability score** — shows what % of position steps passed the jitter filter
+- **Investigate button** — popup showing total steps, good steps, jitter filtered, max step
+- **Stationary references** — mark known-fixed devices as references; their phantom distance becomes a BLE accuracy diagnostic
+- **BLE Accuracy rating** — Excellent/Good/Fair/Poor based on total phantom distance from reference devices
+
+### Other
+- **Donate button** added to README (PayPal)
+- **Traceback** — padspan_id recorded on each frame object for stable history
+- **Movement history** — padspan_id on room transition records
+- **Follow alerts** — padspan_id auto-backfilled on startup
+- **`padspan_id` in HA entity attributes** — visible in developer tools on area sensors and device trackers
+
+---
+
 ## 0.5.91 — Hardware Guide & Cleanup (2026-03-01)
 
 ### Added

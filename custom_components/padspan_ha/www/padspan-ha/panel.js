@@ -2411,7 +2411,8 @@ class PadSpanHaApp extends HTMLElement {
           if (isNext) row.appendChild(el("span",{style:"font-size:10px;color:#94a3b8;margin-left:auto"}, s.hint));
           row.addEventListener("click", () => {
             this.state.view = s.view;
-            this.actions.renderRooms();
+            if (this.actions?.renderRooms) this.actions.renderRooms();
+            else this._renderCurrentView();
           });
           list.appendChild(row);
         }
