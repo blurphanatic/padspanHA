@@ -4,6 +4,30 @@ All notable changes to PadSpan HA are documented here.
 
 ---
 
+## 0.19.0 — Stable Release (2026-03-24)
+
+Consolidates all v0.18.x fixes into a clean stable release.
+
+### Fixed
+- **Version display corrected** — APP_VERSION in panel.js and lights_panel.js was hardcoded at 0.17.1 and never updated. Now all 5 version sources (const.py, build_info.py, manifest.json, panel.js, lights_panel.js) are aligned.
+- **UI freeze from wizard crash** — wizard auto-complete and Skip button called `this.actions.settingsSave` before actions was initialized, crashing `_renderCurrentView` and freezing the entire UI. All `this.actions` references now use optional chaining.
+- **Wizard only shows on Overview** — no longer blocks navigation to other tabs.
+- **Wizard recognizes Beacon Tune calibration** — checks fabric scanner positions, not just Pin & Listen points.
+- **k-NN logging flood** — 652 per-cycle warnings downgraded to DEBUG. Was choking the HA event loop and degrading WebSocket responsiveness.
+- **Indoor devices misplaced outdoors** — outdoor room score damping now applies to all devices unless already confirmed outdoor.
+- **Hidden floors hide objects in 3D overview** — objects on disabled floors no longer render.
+- **Private BLE friendly names** on map, follow, and devices views.
+- **Map scale save crash** fixed.
+- **Occupancy training save crash** fixed.
+- **HACS ZIP structure** — verified flat layout matching v0.17.1.
+
+### Documentation
+- README rewritten for v0.17+ features
+- Getting Started and Floor Plan Setup guides updated
+- New screenshots: Calibration Tune, Traceback Playback, Bluetooth Visualization
+
+---
+
 ## 0.18.2 — Stable Release (2026-03-24)
 
 Consolidates all v0.17.2–v0.18.1 fixes into a clean stable release. Version string now consistent across all three sources (const.py, manifest.json, build_info.py).
