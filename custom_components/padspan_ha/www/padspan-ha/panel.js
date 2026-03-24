@@ -2363,10 +2363,11 @@ class PadSpanHaApp extends HTMLElement {
       const _hasReceivers = _hasMaps && this.state.maps.list.some(m => (m.receivers || []).length > 0);
       const _hasRooms = _hasMaps && this.state.maps.list.some(m => Object.keys(m.room_bounds || {}).length > 0);
       const _hasScale = !!(this.state.model && this.state.model.map_transforms && Object.values(this.state.model.map_transforms).some(t => t && t.reference_measurements && t.reference_measurements.length > 0));
-      // Accept any calibration method: Pin & Listen points, Beacon Tune points, or a fitted model
+      // Accept any calibration method: cal points, fitted model, or positioned scanners in fabric
       const _calPoints = (this.state.calibration && this.state.calibration.points) ? this.state.calibration.points.length : 0;
       const _hasModel = !!(this.state.calibration && this.state.calibration.model && Object.keys(this.state.calibration.model).length > 0);
-      const _hasCal = _calPoints >= 5 || _hasModel;
+      const _hasFabricScanners = !!(this.state.model && this.state.model.scanner_positions_m && Object.keys(this.state.model.scanner_positions_m).length > 0);
+      const _hasCal = _calPoints >= 5 || _hasModel || _hasFabricScanners;
       const _steps = [
         { id: "upload",   label: "Upload Floor Plan",  done: _hasMaps,      view: "maps",        mapsTab: "upload", hint: "Maps \u2192 Upload a floor plan image" },
         { id: "scale",    label: "Set Scale",           done: _hasScale,     view: "maps",        mapsTab: "edit",   hint: "Maps \u2192 Edit \u2192 Measure tool" },
@@ -2382,7 +2383,7 @@ class PadSpanHaApp extends HTMLElement {
         this.actions.settingsSave({ onboarding_completed: true }).catch(() => {});
       }
 
-      if (!_onboardingDone && !_allDone && !this.state._onboardingDismissed) {
+      if (!_onboardingDone && !_allDone && !this.state._onboardingDismissed && this.state.view === "overview") {
         const bar = el("div",{style:"background:#0a1f14;border:1px solid #1a4228;border-radius:8px;padding:10px 14px;margin-bottom:12px"});
         // Header
         const hdr = el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"});
