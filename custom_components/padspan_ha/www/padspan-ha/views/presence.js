@@ -141,27 +141,29 @@ export function render(ctx){
             ctx.actions.showObjectDetail(detailObj);
           });
 
-          return el("div",{class:"item"},[
-            el("div",{style:"flex:1"},[
-              labelEl,
-              rssiStr ? el("span",{class:"muted", style:"margin-left:8px"}, rssiStr) : null,
-            ].filter(Boolean)),
+          return el("div",{class:"item",style:"display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #1e293b;overflow:hidden"},[
+            el("div",{style:"flex:1;min-width:0;overflow:hidden"},[
+              el("div",{style:"display:flex;align-items:center;gap:6px;overflow:hidden"},[
+                (() => { const s = el("span",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;display:inline-block;cursor:pointer"}, label); s.addEventListener("click",()=>{ const detailObj = o || { address: d.addr, name: d.name || d.addr, kind: "ble" }; ctx.actions.showObjectDetail(detailObj); }); return s; })(),
+                rssiStr ? el("span",{class:"muted", style:"white-space:nowrap;font-size:11px"}, rssiStr) : null,
+              ].filter(Boolean)),
+            ]),
             followBtn,
             tagBtn,
           ].filter(Boolean));
         };
 
         const areaName = radioAreas[src];
-        const card = el("div",{class:"card"},[
-          el("div",{class:"row"},[
-            el("div",{style:"flex:1"},[
-              el("div",{class:"h2"}, scannerName),
+        const card = el("div",{class:"card",style:"overflow:hidden"},[
+          el("div",{class:"row",style:"flex-wrap:wrap;gap:4px"},[
+            el("div",{style:"flex:1;min-width:0"},[
+              el("div",{class:"h2",style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, scannerName),
               areaName ? el("div",{class:"muted",style:"font-size:12px;margin-top:2px"}, areaName) : null,
             ].filter(Boolean)),
             el("span",{class:"badge"}, `${tagged.length} tagged`),
             _quietMode ? null : el("span",{class:"badge warn"}, `${untagged.length} untagged`),
           ]),
-          el("div",{class:"muted"}, src),
+          el("div",{class:"muted",style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px"}, src),
           tagged.length ? el("div",{},[
             el("div",{class:"muted",style:"margin:6px 0 2px"},"Tagged"),
             el("div",{class:"list"}, tagged.map(devRow)),
