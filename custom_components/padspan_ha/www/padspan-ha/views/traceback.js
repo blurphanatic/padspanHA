@@ -83,10 +83,17 @@ export function render(ctx) {
       const tf = mapTransforms[m.id];
       if (!tf) continue;
       for (const [room, b] of Object.entries(m.room_bounds || {})) {
-        if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
+        if (!b) continue;
         if (roomIsoPos[room]) continue; // first map wins
-        const cx = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
-        const cy = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
+        let cx, cy;
+        if (b.type === "poly" && Array.isArray(b.points) && b.points.length >= 3) {
+          cx = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
+          cy = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
+        } else if (b.type === "circle" && b.cx != null && b.cy != null) {
+          cx = b.cx; cy = b.cy;
+        } else {
+          continue;
+        }
         const [wx, wy] = tf.mapPt(cx, cy);
         roomIsoPos[room] = iso(wx, wy, tf.z);
         _roomLower[room.toLowerCase()] = room;
@@ -583,7 +590,9 @@ export function render(ctx) {
         const ar = (m.image?.height || 600) / (m.image?.width || 800);
         const arRef = stk.ref_ar || ar, sxAdj = stk.scale_x_adj || 1.0;
         const rot = (stk.rotation || 0) * Math.PI / 180;
-        const bbPt = (px, py) => { const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef; return [(0.5 + ox) + dx * Math.cos(rot) - dy * Math.sin(rot), arRef * (0.5 + oy_) + dx * Math.sin(rot) + dy * Math.cos(rot)]; };
+        const bbPt = (stk._m && stk._m.length === 4)
+          ? (px, py) => { const u = px - 0.5, v = py - 0.5; return [stk._m[0] * u + stk._m[1] * v + 0.5 + ox, arRef * (stk._m[2] * u + stk._m[3] * v + 0.5 + oy_)]; }
+          : (px, py) => { const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef; return [(0.5 + ox) + dx * Math.cos(rot) - dy * Math.sin(rot), arRef * (0.5 + oy_) + dx * Math.sin(rot) + dy * Math.cos(rot)]; };
         for (const [cx2, cy2] of [[0, 0], [1, 0], [1, 1], [0, 1]]) { const [wx, wy] = bbPt(cx2, cy2); x0 = Math.min(x0, wx); y0_ = Math.min(y0_, wy); x1 = Math.max(x1, wx); y1_ = Math.max(y1_, wy); }
       }
       if (!isFinite(x0)) { x0 = 0; y0_ = 0; x1 = 1; y1_ = 0.75; }
@@ -596,7 +605,9 @@ export function render(ctx) {
         const ar = (m.image?.height || 600) / (m.image?.width || 800);
         const arRef = stk.ref_ar || ar, sxAdj = stk.scale_x_adj || 1.0;
         const rotRad = (stk.rotation || 0) * Math.PI / 180;
-        const mapPt = (px, py) => { const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef, rx = dx * Math.cos(rotRad) - dy * Math.sin(rotRad), ry = dx * Math.sin(rotRad) + dy * Math.cos(rotRad); return [(0.5 + ox) + rx, arRef * (0.5 + oy_) + ry]; };
+        const mapPt = (stk._m && stk._m.length === 4)
+          ? (px, py) => { const u = px - 0.5, v = py - 0.5; return [stk._m[0] * u + stk._m[1] * v + 0.5 + ox, arRef * (stk._m[2] * u + stk._m[3] * v + 0.5 + oy_)]; }
+          : (px, py) => { const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef, rx = dx * Math.cos(rotRad) - dy * Math.sin(rotRad), ry = dx * Math.sin(rotRad) + dy * Math.cos(rotRad); return [(0.5 + ox) + rx, arRef * (0.5 + oy_) + ry]; };
         for (const [room, b] of Object.entries(m.room_bounds || {})) {
           if (!b || b.type !== "poly" || !Array.isArray(b.points) || b.points.length < 3) continue;
           const color = roomColorFn(room);
@@ -780,16 +791,26 @@ export function render(ctx) {
       return;
     }
     if (!_staticBase || !_overlayDiv) {
-      // First render: build full SVG with current frame
-      mapDiv.innerHTML = _buildTracebackSVG(tb.frameIdx);
-      // Extract the overlay container for future fast updates
+      // First render: build static base SVG (no overlay), then inject overlay via <g>
+      mapDiv.innerHTML = _buildTracebackSVG(-1);
       _staticBase = true;
-      // Create a dedicated overlay div for subsequent frames
       const svgEl = mapDiv.querySelector("svg");
       if (svgEl) {
         _overlayDiv = document.createElementNS("http://www.w3.org/2000/svg", "g");
         _overlayDiv.setAttribute("id", "tb-overlay");
         svgEl.appendChild(_overlayDiv);
+      }
+      // Immediately populate the overlay with current frame content
+      if (_overlayDiv) {
+        const dynSvg = _buildDynamicOverlay(tb.frameIdx);
+        if (dynSvg) {
+          const tmp = document.createElement("div");
+          tmp.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg">${dynSvg}</svg>`;
+          const tmpSvg = tmp.querySelector("svg");
+          if (tmpSvg) {
+            while (tmpSvg.firstChild) _overlayDiv.appendChild(tmpSvg.firstChild);
+          }
+        }
       }
     } else {
       // Fast path: only rebuild the dynamic overlay (trails + objects)
@@ -960,6 +981,58 @@ export function render(ctx) {
     rangeRow.appendChild(_customBtn);
     ctrlCard.appendChild(rangeRow);
 
+    // Specific date/time pickers
+    const dtRow = document.createElement("div");
+    dtRow.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px";
+    const dtLbl = document.createElement("span");
+    dtLbl.style.cssText = "font-size:12px;color:#94a3b8";
+    dtLbl.textContent = "Custom range:";
+    dtRow.appendChild(dtLbl);
+
+    const _toLocalISO = (ts) => {
+      const d = new Date(ts * 1000);
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+    const _dtStyle = "background:#071008;color:#e2e8f0;border:1px solid #2d6a4f;border-radius:4px;padding:3px 6px;font-size:11px";
+
+    const startInput = document.createElement("input");
+    startInput.type = "datetime-local";
+    startInput.style.cssText = _dtStyle;
+    const now = Date.now() / 1000;
+    startInput.value = _toLocalISO(tb.startTs || (now - tb.rangePreset));
+    dtRow.appendChild(startInput);
+
+    const toSpan = document.createElement("span");
+    toSpan.style.cssText = "font-size:12px;color:#64748b";
+    toSpan.textContent = "to";
+    dtRow.appendChild(toSpan);
+
+    const endInput = document.createElement("input");
+    endInput.type = "datetime-local";
+    endInput.style.cssText = _dtStyle;
+    endInput.value = _toLocalISO(tb.endTs || now);
+    dtRow.appendChild(endInput);
+
+    const dtGoBtn = document.createElement("button");
+    dtGoBtn.className = "btn inline";
+    dtGoBtn.style.cssText = "font-size:11px;padding:3px 12px;color:#fbbf24;border-color:#92400e;font-weight:600";
+    dtGoBtn.textContent = "Load";
+    dtGoBtn.addEventListener("click", async () => {
+      const sVal = startInput.value, eVal = endInput.value;
+      if (!sVal || !eVal) return;
+      _stopPlayback();
+      tb.startTs = new Date(sVal).getTime() / 1000;
+      tb.endTs = new Date(eVal).getTime() / 1000;
+      tb.rangePreset = Math.round(tb.endTs - tb.startTs);
+      await _loadTracebackData();
+      _resetStaticBase();
+      _buildControls();
+      _renderFrame();
+    });
+    dtRow.appendChild(dtGoBtn);
+    ctrlCard.appendChild(dtRow);
+
     // Object filter
     const filterRow = document.createElement("div");
     filterRow.style.cssText = "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px";
@@ -1048,7 +1121,7 @@ export function render(ctx) {
     const stepBackBtn = document.createElement("button");
     stepBackBtn.className = "btn inline";
     stepBackBtn.style.cssText = "font-size:14px;padding:2px 8px;color:#fbbf24";
-    stepBackBtn.innerHTML = "&#9664;";
+    stepBackBtn.innerHTML = "&#124;&#9664;";
     stepBackBtn.title = "Previous frame";
     stepBackBtn.addEventListener("click", () => {
       if (tb.frameIdx > 0) { tb.frameIdx--; _renderFrame(); _updateScrubber(); }
@@ -1073,7 +1146,7 @@ export function render(ctx) {
     const stepFwdBtn = document.createElement("button");
     stepFwdBtn.className = "btn inline";
     stepFwdBtn.style.cssText = "font-size:14px;padding:2px 8px;color:#fbbf24";
-    stepFwdBtn.innerHTML = "&#9654;";
+    stepFwdBtn.innerHTML = "&#9654;&#124;";
     stepFwdBtn.title = "Next frame";
     stepFwdBtn.addEventListener("click", () => {
       if (tb.frameIdx < tb.frames.length - 1) { tb.frameIdx++; _renderFrame(); _updateScrubber(); }
@@ -1187,6 +1260,7 @@ export function render(ctx) {
     focusZ = _isoPos[Math.max(0, Math.min(ctx.state._overviewIsoFocusIdx, _isoPos.length-1))];
     focusLbl.textContent = _getFocusLbl(ctx.state._overviewIsoFocusIdx);
     _rebuildRoomPositions();
+    _resetStaticBase();
     _renderFrame();
   });
   isoCtrlRow.appendChild(focusSlider);
@@ -1210,6 +1284,7 @@ export function render(ctx) {
     _ovFG = ctx.state._overviewFloorGap;
     ovGapLbl.textContent = String(ctx.state._overviewFloorGap);
     _rebuildRoomPositions();
+    _resetStaticBase();
     _renderFrame();
   });
   isoCtrlRow.appendChild(ovGapSlider);
@@ -1233,6 +1308,7 @@ export function render(ctx) {
     _ovHG = ctx.state._overviewHorizGap;
     ovHorizLbl.textContent = String(ctx.state._overviewHorizGap);
     _rebuildRoomPositions();
+    _resetStaticBase();
     _renderFrame();
   });
   isoCtrlRow.appendChild(ovHorizSlider);
@@ -1663,17 +1739,26 @@ export function render(ctx) {
       "Select a time window and click Load to see how far each object has moved."));
 
     // Time window selector + load button
-    const windowRow = el("div",{style:"display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center"});
+    const windowRow = el("div",{style:"display:flex;gap:6px;margin-bottom:4px;flex-wrap:wrap;align-items:center"});
     const windows = [
       {label:"15 min", mins:15}, {label:"1 hour", mins:60}, {label:"4 hours", mins:240},
       {label:"24 hours", mins:1440}, {label:"7 days", mins:10080},
     ];
     if (!ctx.state._distWindow) ctx.state._distWindow = 240;
+    const _distBtns = [];
+    const _activeStyle = "font-size:10px;padding:2px 8px;background:#134e4a;color:#5eead4;border-color:#5eead4;font-weight:700";
+    const _inactiveStyle = "font-size:10px;padding:2px 8px;color:#94a3b8";
+    const _updateDistBtnStyles = () => {
+      for (const {btn: b, mins: m} of _distBtns) {
+        b.style.cssText = ctx.state._distWindow === m ? _activeStyle : _inactiveStyle;
+      }
+    };
     for (const w of windows) {
-      const btn = el("button",{class:"btn inline"+(ctx.state._distWindow===w.mins?" primary":""),
-        style:"font-size:10px;padding:2px 8px"});
+      const btn = el("button",{class:"btn inline"});
+      btn.style.cssText = ctx.state._distWindow === w.mins ? _activeStyle : _inactiveStyle;
       btn.textContent = w.label;
-      btn.addEventListener("click", () => { ctx.state._distWindow = w.mins; _loadDist(); });
+      btn.addEventListener("click", () => { ctx.state._distWindow = w.mins; _updateDistBtnStyles(); _updateDistWindowLbl(); _loadDist(); });
+      _distBtns.push({btn, mins: w.mins});
       windowRow.appendChild(btn);
     }
     // Custom minutes input
@@ -1686,11 +1771,21 @@ export function render(ctx) {
     customBtn.textContent = "Go";
     customBtn.addEventListener("click", () => {
       const v = parseInt(customInput.value);
-      if (v && v > 0) { ctx.state._distWindow = v; _loadDist(); }
+      if (v && v > 0) { ctx.state._distWindow = v; _updateDistBtnStyles(); _updateDistWindowLbl(); _loadDist(); }
     });
     windowRow.appendChild(customInput);
     windowRow.appendChild(customBtn);
     distCard.appendChild(windowRow);
+
+    // Active window label
+    const _distWindowLbl = el("div",{style:"font-size:11px;color:#5eead4;margin-bottom:10px;font-weight:600"});
+    const _updateDistWindowLbl = () => {
+      const mins = ctx.state._distWindow;
+      const preset = windows.find(w => w.mins === mins);
+      _distWindowLbl.textContent = preset ? `Showing: ${preset.label}` : `Showing: ${mins < 60 ? mins + " min" : (mins/60) + " hours"}`;
+    };
+    _updateDistWindowLbl();
+    distCard.appendChild(_distWindowLbl);
 
     // Results container
     const distResults = el("div",{});
