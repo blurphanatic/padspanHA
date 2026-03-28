@@ -1036,43 +1036,46 @@ function _modelTab(ctx, el, cs, calData) {
   summCard.appendChild(statGrid);
   wrap.appendChild(summCard);
 
-  // Per-floor coverage — group maps by floor, show mini-maps within each floor
+  // Per-floor coverage — selector to choose which map to display
   const floorName = (fid) => {
     const f = floors.find(fl => fl.id === fid);
     return f ? f.name : fid || "Default Floor";
   };
-  // Build ordered list: known floor_ids from points, then any maps with points but no floor_id
   const effectiveFloors = floorIds.length ? floorIds : [""];
   for (const fid of effectiveFloors) {
-    // Maps on this floor that have calibration points
     const floorMaps = maps.filter(m => (m.floor_id || "") === fid);
     const floorMapIds = new Set(floorMaps.map(m => m.id));
-    // Also include map_ids from points that aren't in a known map (orphaned)
     const floorPts = pts.filter(p => (p.floor_id || "") === fid);
     floorPts.forEach(p => { if (p.map_id) floorMapIds.add(p.map_id); });
     const midsOnFloor = [...floorMapIds].filter(mid => floorPts.some(p => p.map_id === mid));
 
     if (!midsOnFloor.length) continue;
 
-    // Floor header card
     const floorCard = el("div", { class: "card" });
     const floorPtCount = floorPts.length;
+
+    // Floor header with total points
     floorCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:10px" }, [
       el("div", { style: "font-weight:700;font-size:14px" }, floorName(fid)),
-      el("span", { class: "badge", style: "margin-left:auto" }, `${floorPtCount} pts · ${midsOnFloor.length} map${midsOnFloor.length !== 1 ? "s" : ""}`),
+      el("span", { class: "badge", style: "margin-left:auto" }, `${floorPtCount} pts`),
     ]));
 
-    for (const mid of midsOnFloor) {
+    // Container for the selected map's coverage viz
+    const mapVizContainer = el("div");
+
+    // Render a specific map's coverage into the container
+    const renderMapCoverage = (mid) => {
+      mapVizContainer.innerHTML = "";
       const mapData = maps.find(m => m.id === mid);
       const mapPts  = floorPts.filter(p => p.map_id === mid);
       const grid = _computeCoverage(mapPts, GRID_N);
       const covered = grid.filter(v => v >= 0.5).length;
       const pct = Math.round(covered / (GRID_N * GRID_N) * 100);
 
-      floorCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:6px;margin-top:8px" }, [
-        el("div", { style: "font-weight:600;font-size:12px;color:#94a3b8" }, mapData?.name || mid),
-        el("span", { class: "badge", style: "margin-left:auto;font-size:10px" }, `${mapPts.length} pts`),
-        el("span", { class: pct >= 70 ? "badge" : "badge warn", style: "font-size:10px" }, `${pct}%`),
+      // Stats row
+      mapVizContainer.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:6px" }, [
+        el("span", { class: "badge", style: "font-size:10px" }, `${mapPts.length} pts on this map`),
+        el("span", { class: pct >= 70 ? "badge" : "badge warn", style: "font-size:10px" }, `${pct}% coverage`),
       ]));
 
       if (mapData?.image?.filename) {
@@ -1100,17 +1103,37 @@ function _modelTab(ctx, el, cs, calData) {
           <image href="${imgUrl}" x="0" y="0" width="100" height="${vbH}" preserveAspectRatio="none"/>
           ${gSvg}${dotsSvg}
         </svg>`;
-        floorCard.appendChild(miniDiv);
+        mapVizContainer.appendChild(miniDiv);
       }
 
-      // LOO accuracy for this map
       const mapLoo = model.coverage_by_map?.[mid]?.loo_accuracy;
       if (mapLoo) {
         const mAccM = mapLoo.mean_error_m != null ? mapLoo.mean_error_m : mapLoo.mean_error_m_est;
-        floorCard.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:4px" },
+        mapVizContainer.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:4px" },
           `Cross-validation accuracy: ~${mAccM}m mean · ${mapLoo.max_error_frac.toFixed(3)} frac max`));
       }
+    };
+
+    // Map selector — dropdown if multiple maps, plain label if single
+    if (midsOnFloor.length > 1) {
+      const sel = document.createElement("select");
+      sel.style.cssText = "background:#0a150e;color:#e0e0e0;border:1px solid #1b3526;border-radius:6px;padding:6px 10px;font-size:12px;width:100%;margin-bottom:8px;cursor:pointer";
+      for (const mid of midsOnFloor) {
+        const mapData = maps.find(m => m.id === mid);
+        const opt = document.createElement("option");
+        opt.value = mid;
+        opt.textContent = mapData?.name || mid;
+        sel.appendChild(opt);
+      }
+      sel.addEventListener("change", () => renderMapCoverage(sel.value));
+      floorCard.appendChild(sel);
+    } else {
+      const mapData = maps.find(m => m.id === midsOnFloor[0]);
+      floorCard.appendChild(el("div", { style: "font-weight:600;font-size:12px;color:#94a3b8;margin-bottom:8px" }, mapData?.name || midsOnFloor[0]));
     }
+
+    floorCard.appendChild(mapVizContainer);
+    renderMapCoverage(midsOnFloor[0]);
     wrap.appendChild(floorCard);
   }
 
