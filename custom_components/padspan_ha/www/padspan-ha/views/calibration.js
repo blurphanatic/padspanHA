@@ -1009,7 +1009,8 @@ function _modelTab(ctx, el, cs, calData) {
   }
 
   // Summary stats
-  const mapIds = [...new Set(pts.map(p => p.map_id))];
+  const floors = ctx.state.model?.floors || [];
+  const floorIds = [...new Set(pts.map(p => p.floor_id).filter(Boolean))];
   const scanners = new Set();
   pts.forEach(p => p.scanner_readings?.forEach(r => scanners.add(r.source)));
 
@@ -1022,7 +1023,7 @@ function _modelTab(ctx, el, cs, calData) {
   ]);
   statGrid.appendChild(stat("Calibration Points", pts.length));
   statGrid.appendChild(stat("Scanners Seen", scanners.size));
-  statGrid.appendChild(stat("Maps Calibrated", mapIds.length));
+  statGrid.appendChild(stat("Floors Calibrated", floorIds.length || 1));
 
   const loo = model.loo_accuracy;
   if (loo) {
@@ -1035,57 +1036,82 @@ function _modelTab(ctx, el, cs, calData) {
   summCard.appendChild(statGrid);
   wrap.appendChild(summCard);
 
-  // Per-map coverage mini-maps
-  for (const mid of mapIds) {
-    const mapData = maps.find(m => m.id === mid);
-    const mapPts  = pts.filter(p => p.map_id === mid);
-    const grid = _computeCoverage(mapPts, GRID_N);
-    const covered = grid.filter(v => v >= 0.5).length;
-    const pct = Math.round(covered / (GRID_N * GRID_N) * 100);
+  // Per-floor coverage — group maps by floor, show mini-maps within each floor
+  const floorName = (fid) => {
+    const f = floors.find(fl => fl.id === fid);
+    return f ? f.name : fid || "Default Floor";
+  };
+  // Build ordered list: known floor_ids from points, then any maps with points but no floor_id
+  const effectiveFloors = floorIds.length ? floorIds : [""];
+  for (const fid of effectiveFloors) {
+    // Maps on this floor that have calibration points
+    const floorMaps = maps.filter(m => (m.floor_id || "") === fid);
+    const floorMapIds = new Set(floorMaps.map(m => m.id));
+    // Also include map_ids from points that aren't in a known map (orphaned)
+    const floorPts = pts.filter(p => (p.floor_id || "") === fid);
+    floorPts.forEach(p => { if (p.map_id) floorMapIds.add(p.map_id); });
+    const midsOnFloor = [...floorMapIds].filter(mid => floorPts.some(p => p.map_id === mid));
 
-    const mapCovCard = el("div", { class: "card" });
-    mapCovCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [
-      el("div", { style: "font-weight:700;font-size:13px" }, mapData?.name || mid),
-      el("span", { class: "badge", style: "margin-left:auto" }, `${mapPts.length} pts`),
-      el("span", { class: pct >= 70 ? "badge" : "badge warn" }, `${pct}%`),
+    if (!midsOnFloor.length) continue;
+
+    // Floor header card
+    const floorCard = el("div", { class: "card" });
+    const floorPtCount = floorPts.length;
+    floorCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:10px" }, [
+      el("div", { style: "font-weight:700;font-size:14px" }, floorName(fid)),
+      el("span", { class: "badge", style: "margin-left:auto" }, `${floorPtCount} pts · ${midsOnFloor.length} map${midsOnFloor.length !== 1 ? "s" : ""}`),
     ]));
 
-    if (mapData?.image?.filename) {
-      const ar = (mapData.image.height || 600) / (mapData.image.width || 800);
-      const vbH = ar * 100;
-      const imgUrl = `/local/padspan_ha/maps/${mapData.image.filename}`;
-      const cellW = 100 / GRID_N;
-      const cellH = vbH / GRID_N;
+    for (const mid of midsOnFloor) {
+      const mapData = maps.find(m => m.id === mid);
+      const mapPts  = floorPts.filter(p => p.map_id === mid);
+      const grid = _computeCoverage(mapPts, GRID_N);
+      const covered = grid.filter(v => v >= 0.5).length;
+      const pct = Math.round(covered / (GRID_N * GRID_N) * 100);
 
-      let gSvg = "";
-      for (let cy = 0; cy < GRID_N; cy++) {
-        for (let cx = 0; cx < GRID_N; cx++) {
-          const v = grid[cy * GRID_N + cx];
-          const op = Math.max(0, 0.55 * (1 - v)).toFixed(2);
-          const col = v >= 0.5 ? "#52b788" : v >= 0.2 ? "#f59e0b" : "#dc2626";
-          gSvg += `<rect x="${(cx * cellW).toFixed(1)}" y="${(cy * cellH).toFixed(1)}" width="${cellW.toFixed(1)}" height="${cellH.toFixed(1)}" fill="${col}" opacity="${op}" rx="0.5"/>`;
+      floorCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:6px;margin-top:8px" }, [
+        el("div", { style: "font-weight:600;font-size:12px;color:#94a3b8" }, mapData?.name || mid),
+        el("span", { class: "badge", style: "margin-left:auto;font-size:10px" }, `${mapPts.length} pts`),
+        el("span", { class: pct >= 70 ? "badge" : "badge warn", style: "font-size:10px" }, `${pct}%`),
+      ]));
+
+      if (mapData?.image?.filename) {
+        const ar = (mapData.image.height || 600) / (mapData.image.width || 800);
+        const vbH = ar * 100;
+        const imgUrl = `/local/padspan_ha/maps/${mapData.image.filename}`;
+        const cellW = 100 / GRID_N;
+        const cellH = vbH / GRID_N;
+
+        let gSvg = "";
+        for (let cy = 0; cy < GRID_N; cy++) {
+          for (let cx = 0; cx < GRID_N; cx++) {
+            const v = grid[cy * GRID_N + cx];
+            const op = Math.max(0, 0.55 * (1 - v)).toFixed(2);
+            const col = v >= 0.5 ? "#52b788" : v >= 0.2 ? "#f59e0b" : "#dc2626";
+            gSvg += `<rect x="${(cx * cellW).toFixed(1)}" y="${(cy * cellH).toFixed(1)}" width="${cellW.toFixed(1)}" height="${cellH.toFixed(1)}" fill="${col}" opacity="${op}" rx="0.5"/>`;
+          }
         }
+        const dotsSvg = mapPts.map(p =>
+          `<circle cx="${(p.x_frac * 100).toFixed(1)}" cy="${(p.y_frac * vbH).toFixed(1)}" r="2" fill="#52b788" stroke="white" stroke-width="0.6" opacity="0.9"/>`
+        ).join("");
+
+        const miniDiv = el("div", { style: "border-radius:6px;overflow:hidden;border:1px solid #1b3526;margin-bottom:6px" });
+        miniDiv.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 ${vbH}" preserveAspectRatio="none" style="width:100%;display:block">
+          <image href="${imgUrl}" x="0" y="0" width="100" height="${vbH}" preserveAspectRatio="none"/>
+          ${gSvg}${dotsSvg}
+        </svg>`;
+        floorCard.appendChild(miniDiv);
       }
-      const dotsSvg = mapPts.map(p =>
-        `<circle cx="${(p.x_frac * 100).toFixed(1)}" cy="${(p.y_frac * vbH).toFixed(1)}" r="2" fill="#52b788" stroke="white" stroke-width="0.6" opacity="0.9"/>`
-      ).join("");
 
-      const miniDiv = el("div", { style: "border-radius:6px;overflow:hidden;border:1px solid #1b3526;margin-bottom:8px" });
-      miniDiv.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 ${vbH}" preserveAspectRatio="none" style="width:100%;display:block">
-        <image href="${imgUrl}" x="0" y="0" width="100" height="${vbH}" preserveAspectRatio="none"/>
-        ${gSvg}${dotsSvg}
-      </svg>`;
-      mapCovCard.appendChild(miniDiv);
+      // LOO accuracy for this map
+      const mapLoo = model.coverage_by_map?.[mid]?.loo_accuracy;
+      if (mapLoo) {
+        const mAccM = mapLoo.mean_error_m != null ? mapLoo.mean_error_m : mapLoo.mean_error_m_est;
+        floorCard.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:4px" },
+          `Cross-validation accuracy: ~${mAccM}m mean · ${mapLoo.max_error_frac.toFixed(3)} frac max`));
+      }
     }
-
-    // LOO accuracy for this map
-    const mapLoo = model.coverage_by_map?.[mid]?.loo_accuracy;
-    if (mapLoo) {
-      const mAccM = mapLoo.mean_error_m != null ? mapLoo.mean_error_m : mapLoo.mean_error_m_est;
-      mapCovCard.appendChild(el("div", { style: "font-size:12px;color:#94a3b8" },
-        `Cross-validation accuracy: ~${mAccM}m mean · ${mapLoo.max_error_frac.toFixed(3)} frac max`));
-    }
-    wrap.appendChild(mapCovCard);
+    wrap.appendChild(floorCard);
   }
 
   // Per-scanner path-loss stats
