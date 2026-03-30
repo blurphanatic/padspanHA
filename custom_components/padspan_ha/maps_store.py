@@ -44,6 +44,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import MAPS_STORE_KEY, MAPS_DIR, DEFAULT_FLOOR_ID
+from .safe_store import wrap_store
 
 MAX_MAP_BYTES = 20 * 1024 * 1024  # 20 MB decoded limit — prevents OOM on large uploads
 
@@ -71,7 +72,8 @@ class MapsStore:
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self.store = Store(hass, 1, MAPS_STORE_KEY)
+        self._raw_store = Store(hass, 1, MAPS_STORE_KEY)
+        self.store = wrap_store(self._raw_store, hass, "maps")
         self.maps_dir = Path(hass.config.path("www")) / MAPS_DIR
         self.data = {"maps": []}
 
@@ -108,7 +110,10 @@ class MapsStore:
             m.setdefault("created", _now_iso())
             m.setdefault("updated", m.get("created", _now_iso()))
 
-        await self.store.async_save(self.data)
+        # Only re-save if normalization added missing fields
+        import json
+        if json.dumps(self.data, sort_keys=True) != json.dumps(loaded, sort_keys=True) if loaded else True:
+            await self.store.async_save(self.data)
 
     def list_maps(self) -> list[dict[str, Any]]:
         return list(self.data.get("maps", []))

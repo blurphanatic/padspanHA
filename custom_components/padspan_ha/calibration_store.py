@@ -31,6 +31,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import CALIBRATION_STORE_KEY
+from .safe_store import wrap_store
 from .random_forest import RandomForestLocator
 
 GRID_N = 10           # 10×10 coverage grid per floor map
@@ -65,7 +66,8 @@ class CalibrationStore:
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self.store = Store(hass, 1, CALIBRATION_STORE_KEY)
+        self._raw_store = Store(hass, 1, CALIBRATION_STORE_KEY)
+        self.store = wrap_store(self._raw_store, hass, "calibration")
         self.data = {"points": [], "model": {}}
         self._rf: RandomForestLocator = RandomForestLocator()
         self._model: Any = None  # ModelStore reference (Phase 3, set via set_model_store)

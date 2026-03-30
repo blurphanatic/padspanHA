@@ -12,7 +12,7 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.19.15";
+const APP_VERSION = "0.19.16";
 const BUILD_ID = "20260328T192052Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────

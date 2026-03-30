@@ -99,7 +99,9 @@ class SettingsStore:
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self.store = Store(hass, 1, SETTINGS_STORE_KEY)
+        self._raw_store = Store(hass, 1, SETTINGS_STORE_KEY)
+        from .safe_store import wrap_store
+        self.store = wrap_store(self._raw_store, hass, "settings")
         self.data = dict(DEFAULT_SETTINGS)
 
     async def async_load(self) -> dict[str, Any]:
@@ -113,7 +115,9 @@ class SettingsStore:
             self.data = {**DEFAULT_SETTINGS, **loaded}
         else:
             self.data = dict(DEFAULT_SETTINGS)
-        await self.store.async_save(self.data)
+        # Only re-save if new defaults were added (loaded was missing keys)
+        if not isinstance(loaded, dict) or set(self.data.keys()) != set(loaded.keys()):
+            await self.store.async_save(self.data)
         return self.data
 
     async def async_set(self, **kwargs: Any) -> dict[str, Any]:

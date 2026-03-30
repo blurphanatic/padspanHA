@@ -45,6 +45,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import MODEL_STORE_KEY, DEFAULT_FLOOR_ID
+from .safe_store import wrap_store
 
 
 def _slug(s: str) -> str:
@@ -107,7 +108,8 @@ class ModelStore:
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self.store = Store(hass, 1, MODEL_STORE_KEY)
+        self._raw_store = Store(hass, 1, MODEL_STORE_KEY)
+        self.store = wrap_store(self._raw_store, hass, "model")
         self.data = dict(DEFAULT_DATA)
 
     async def async_setup(self) -> None:
@@ -167,7 +169,11 @@ class ModelStore:
             rm[room] = {"floor_id": floor_id, "color": color}
         self.data["room_meta"] = rm
 
-        await self.store.async_save(self.data)
+        # Only re-save on load if normalization actually changed something
+        # This prevents overwriting fresh saves with stale data on reload
+        import json
+        if json.dumps(self.data, sort_keys=True) != json.dumps(loaded, sort_keys=True) if loaded else True:
+            await self.store.async_save(self.data)
 
     def snapshot(self) -> dict[str, Any]:
         return {
