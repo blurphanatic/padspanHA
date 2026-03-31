@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.19.18";
-const BUILD_ID = "20260331T043229Z";
+const APP_VERSION = "0.19.19";
+const BUILD_ID = "20260331T194632Z";
 const CHANNEL = "stable";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -375,11 +375,15 @@ class PadSpanHaApp extends HTMLElement {
       if(this.state.dataMode === "live" && !this._pollTimer){
         this._startDataPoll();
       }
-      // If content is blank, rebuild
+      // If content is blank, rebuild; otherwise still refresh data (rooms etc.)
       if(this.$content && !this.$content.children.length){
         this._renderNav();
         this._renderCurrentView();
-        this._refreshAll(false);
+      }
+      // Always refresh data on sidebar re-entry to pick up saved rooms/settings
+      if(!this._sidebarRefreshing){
+        this._sidebarRefreshing = true;
+        this._refreshAll(false).finally(()=>{ this._sidebarRefreshing = false; });
       }
     }
   }
@@ -1476,6 +1480,7 @@ class PadSpanHaApp extends HTMLElement {
         mapsUpload: async (payload)=>{ const r = await this._callWS(Object.assign({type:"padspan_ha/maps_upload"}, payload)); await this._getMapsList(); return r; },
         mapsUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         mapsUpdateQuiet: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); },
+        mapsRefreshQuiet: async ()=>{ await this._getMapsList(); },
         fabricSpatialSave: async (payload)=>{ return await this._callWS(Object.assign({type:"padspan_ha/fabric_spatial_batch_save"}, payload)); },
         mapsReplaceImage: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_replace_image"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
         modelUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/model_update"}, payload)); await this._getModel(); this._renderCurrentView(); },

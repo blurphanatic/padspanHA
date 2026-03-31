@@ -3118,6 +3118,11 @@ async def ws_maps_list(hass: HomeAssistant, connection, msg) -> None:
     ms = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
 
     maps = ms.list_maps() if ms else []
+    # Diagnostic: log room_bounds counts per map for persistence debugging
+    for _dm in maps:
+        _rb = _dm.get("room_bounds") or {}
+        if _rb:
+            _LOGGER.debug("maps_list: map %s has %d room_bounds: %s", _dm.get("id","?")[:8], len(_rb), list(_rb.keys()))
     connection.send_result(msg["id"], {"maps": maps})
 
 
@@ -3220,6 +3225,11 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
         except Exception:
             pass
 
+    # Diagnostic: log incoming room_bounds for persistence debugging
+    _incoming_rb = msg.get("room_bounds")
+    if _incoming_rb is not None:
+        _LOGGER.info("maps_update: map %s received %d room_bounds: %s", map_id[:8] if map_id else "?", len(_incoming_rb) if isinstance(_incoming_rb, dict) else -1, list(_incoming_rb.keys()) if isinstance(_incoming_rb, dict) else "not-dict")
+
     try:
         updated = await ms.async_update_map(
             map_id,
@@ -3228,13 +3238,18 @@ async def ws_maps_update(hass: HomeAssistant, connection, msg) -> None:
             calibration=msg.get("calibration"),
             notes=msg.get("notes"),
             floor_id=msg.get("floor_id"),
-            room_bounds=msg.get("room_bounds"),
+            room_bounds=_incoming_rb,
             rf_barriers=msg.get("rf_barriers"),
             stack=msg.get("stack"),
         )
     except KeyError:
         connection.send_error(msg["id"], "not_found", "Map not found")
         return
+
+    # Diagnostic: confirm what was actually saved
+    _saved_rb = updated.get("room_bounds") or {}
+    if _incoming_rb is not None:
+        _LOGGER.info("maps_update: map %s saved %d room_bounds: %s", map_id[:8] if map_id else "?", len(_saved_rb), list(_saved_rb.keys()))
 
     # ── Clear coordinator state for removed beacons ───────────────────────
     # When beacons are removed from beacon tune, their stale coordinator

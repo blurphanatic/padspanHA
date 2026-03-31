@@ -1237,7 +1237,18 @@ function _edit(ctx, map){
           receivers: ctx.state.maps._draftReceivers,
           rf_barriers: ctx.state.maps._draftBarriers || [],
         });
-        ctx.toast("Layout saved \u2714");
+        // Verify save: re-fetch maps from backend and check room_bounds persisted
+        await ctx.actions.mapsRefreshQuiet();
+        const _saved = (ctx.state.maps.list||[]).find(m=>m.id===map.id);
+        const _rbCount = _saved ? Object.keys(_saved.room_bounds||{}).length : 0;
+        const _draftCount = Object.keys(ctx.state.maps._draftRoomBounds||{}).length;
+        console.log("[PadSpan] Save verify: draft rooms=%d, persisted rooms=%d, map_id=%s", _draftCount, _rbCount, map.id);
+        if(_draftCount > 0 && _rbCount === 0){
+          console.error("[PadSpan] room_bounds LOST after save! Draft:", JSON.stringify(ctx.state.maps._draftRoomBounds));
+          ctx.toast("Warning: rooms may not have saved — check logs", true);
+        } else {
+          ctx.toast("Layout saved \u2714");
+        }
       }catch(err){ ctx.toast("Save failed: "+String(err), true); }
       btn.disabled = false; btn.textContent = "\ud83d\udcbe Save Layout"; btn.classList.remove("save-pulse");
   }});
