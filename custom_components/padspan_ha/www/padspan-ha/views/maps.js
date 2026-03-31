@@ -1233,6 +1233,9 @@ function _edit(ctx, map){
           calibration: map.calibration||{},
           notes: map.notes||"",
           floor_id: ctx.state.maps._draftFloorId,
+          room_bounds: ctx.state.maps._draftRoomBounds,
+          receivers: ctx.state.maps._draftReceivers,
+          rf_barriers: ctx.state.maps._draftBarriers || [],
         });
         ctx.toast("Layout saved \u2714");
       }catch(err){ ctx.toast("Save failed: "+String(err), true); }
