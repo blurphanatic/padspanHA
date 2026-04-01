@@ -26,13 +26,13 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 |:-:|:-:|
 | ![9 uploaded floor plans organized by floor](images/maps-library-live.jpg) | ![Bipartite graph showing scanner-device BLE connections with RSSI](images/bluetooth-scanner-graph.jpg) |
 
-| Traceback Playback + Distance Traveled | Calibration Tune (3D) |
+| Traceback Playback + Distance Traveled | Beacon Tune Calibration |
 |:-:|:-:|
-| ![NVR-style playback timeline with per-device distance and reliability](images/traceback-distance.jpg) | ![3D isometric calibration with room polygons and scanner markers](images/calibration-tune-3d.png) |
+| ![NVR-style playback timeline with per-device distance and reliability](images/traceback-distance.jpg) | ![3D beacon tune with floor stack, auto-cal, and live device positions](images/beacon-tune-calibration.jpg) |
 
-| Floor Plan Editor | Training Hub |
+| Sandbox Dashboard | Floor Plan Editor |
 |:-:|:-:|
-| ![Room boundaries on architectural blueprint](images/floor-plan-edit.png) | ![Guided walkthroughs + full sidebar](images/training-hub.png) |
+| ![Experimental playground — RSSI distribution, signal bars, floor towers, signal pulse](images/sandbox-dashboard.jpg) | ![Room boundaries on architectural blueprint](images/floor-plan-edit.png) |
 
 ---
 
