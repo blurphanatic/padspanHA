@@ -4,7 +4,7 @@
 
 PadSpan™ HA goes far beyond "home or away." It tells you **which room** every Bluetooth device is in — updated every 5 seconds — with interactive floor plans, 3D multi-floor visualizations, a full calibration system, and 22 dedicated views. No other Home Assistant BLE integration comes close.
 
-![3D Stack — multi-floor tracking with live object positions](images/3d-stack-tracking.png)
+![3D multi-floor tracking with live RSSI heatmap overlay](images/overview-3d-multifloor.jpg)
 
 ---
 
@@ -18,21 +18,21 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 
 ## Screenshots
 
-| 3D Multi-Floor Tracking | Floor Plan Editor |
+| 3D Multi-Floor Tracking | 3D Heatmap + Signal Overlay |
 |:-:|:-:|
-| ![3D Stack with tracked objects](images/3d-stack-rooms.png) | ![Room boundaries on architectural blueprint](images/floor-plan-edit.png) |
+| ![Live multi-floor isometric view with tracked devices across 3 floors](images/overview-3d-multifloor.jpg) | ![3D overview with RSSI heatmap crosshatch and device positions](images/overview-3d-heatmap.jpg) |
 
-| Maps Library | Training Hub |
+| Maps Library | Scanner-to-Device Graph |
 |:-:|:-:|
-| ![7 uploaded floor plans](images/maps-library.png) | ![Guided walkthroughs + full sidebar](images/training-hub.png) |
+| ![9 uploaded floor plans organized by floor](images/maps-library-live.jpg) | ![Bipartite graph showing scanner-device BLE connections with RSSI](images/bluetooth-scanner-graph.jpg) |
 
-| Calibration Tune (3D Scanner Positioning) | Bluetooth Scanner Visualization |
+| Traceback Playback + Distance Traveled | Calibration Tune (3D) |
 |:-:|:-:|
-| ![3D isometric calibration with room polygons and scanner markers](images/calibration-tune-3d.png) | ![Scanner KPIs and device graph](images/bluetooth-visualization.png) |
+| ![NVR-style playback timeline with per-device distance and reliability](images/traceback-distance.jpg) | ![3D isometric calibration with room polygons and scanner markers](images/calibration-tune-3d.png) |
 
-| Traceback Playback |
-|:-:|
-| ![Movement timeline with distance traveled and 3D replay](images/traceback-playback.png) |
+| Floor Plan Editor | Training Hub |
+|:-:|:-:|
+| ![Room boundaries on architectural blueprint](images/floor-plan-edit.png) | ![Guided walkthroughs + full sidebar](images/training-hub.png) |
 
 ---
 
