@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.19.20";
-const BUILD_ID = "20260402T004600Z";
+const APP_VERSION = "0.19.21";
+const BUILD_ID = "20260402T154223Z";
 const CHANNEL = "stable";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -41,6 +41,7 @@ const VIEWS = {};
 const _VIEW_PATHS = {
   follow:       "./views/follow.js",
   overview:     "./views/overview.js",
+  overviewexperimental: "./views/overview_experimental.js",
   objects:      "./views/objects.js",
   devices:      "./views/devices.js",
   bluetooth:    "./views/bluetooth.js",
@@ -114,6 +115,7 @@ const _viewsPromise = _criticalPromise;
 // at render time based on the current complexity mode (Basic/Advanced/Dev).
 const MENU = [
   ["overview","Overview","mdi:view-dashboard-outline"],
+  ["overviewexperimental","Overview (Preact)","mdi:flask-round-bottom-outline"],
   ["follow","Follow","mdi:crosshairs-gps"],
   ["objects","Objects","mdi:tag-multiple-outline"],
   ["devices","Devices","mdi:devices"],
@@ -139,7 +141,7 @@ const MENU = [
 //   Dev       — everything visible (includes QA, Sandbox, raw Debug, etc.)
 const BASIC_TABS = new Set(["follow", "overview", "maps", "settings", "training"]);
 const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration","traceback","occupancy","health"]);
-const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox"];
+const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox","overviewexperimental"];
 
 // Accent color per tab — used for the sidebar dot, mobile nav, and active highlights
 const MENU_COLORS = {
@@ -166,6 +168,7 @@ const MENU_COLORS = {
   traceback: "#fbbf24",
   qa: "#26c6da",
   sandbox: "#9ccc65",
+  overviewexperimental: "#7c3aed",
 };
 
 
@@ -2291,6 +2294,16 @@ class PadSpanHaApp extends HTMLElement {
       if (typeof this.state._isoUpdateObjects === "function") {
         try { this.state._isoUpdateObjects(); } catch(e) {}
       }
+      this._lastGoodRender = performance.now();
+      return;
+    }
+    // Preact overview: let Preact handle its own diffing — just re-call render()
+    // which diffs efficiently instead of rebuilding the entire DOM.
+    if(fromPoll && this.state.view === "overviewexperimental") {
+      try {
+        const mod = VIEWS["overviewexperimental"];
+        if(mod && mod.render) mod.render(this._ctx());
+      } catch(e) {}
       this._lastGoodRender = performance.now();
       return;
     }
