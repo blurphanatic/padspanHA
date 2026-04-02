@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.19.22";
-const BUILD_ID = "20260402T155755Z";
+const APP_VERSION = "0.19.23";
+const BUILD_ID = "20260402T155929Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -877,17 +877,26 @@ class PadSpanHaApp extends HTMLElement {
       this._updateBadges();
 
       // Re-render views that show live data.
-      // Only views that NEED live data refresh on every poll.
-      // All other views use manual refresh buttons to avoid scroll/DOM disruption.
-      const liveViews = new Set(["overview","follow","monitor"]);
-      // Render with poll guard.  _renderCurrentView(fromPoll=true) skips
-      // re-render when the user is dragging/confirming; fromPoll=false forces
-      // a full rebuild.  Overview ALWAYS uses poll mode because it has its own
-      // lightweight _isoUpdateObjects() path — a full rebuild would cause
-      // flicker + scroll reset on the isometric SVG.
-      const stale = this._lastGoodRender && (performance.now() - this._lastGoodRender > 10_000);
-      const usePollMode = !stale || this.state.view === "overview";
-      if(liveViews.has(this.state.view)) this._renderCurrentView(usePollMode);
+      // Overview uses its own efficient _isoUpdateObjects() path (no full rebuild)
+      // so it can safely update every 5s.  Other live views (follow, monitor) do
+      // a full DOM rebuild which causes flicker — throttle those to every 35s.
+      const _view = this.state.view;
+      const _fastViews = new Set(["overview","overviewexperimental"]);  // efficient partial update
+      const _slowViews = new Set(["follow","monitor"]);                 // full rebuild — throttle
+      const _SLOW_INTERVAL = 35_000;
+
+      if(_fastViews.has(_view)){
+        // Overview: always re-render (uses _isoUpdateObjects or Preact diffing)
+        const stale = this._lastGoodRender && (performance.now() - this._lastGoodRender > 10_000);
+        const usePollMode = !stale || _view === "overview";
+        this._renderCurrentView(usePollMode);
+      } else if(_slowViews.has(_view)){
+        // Follow/Monitor: only re-render every 35s to avoid flicker
+        const sinceLastRender = this._lastGoodRender ? (performance.now() - this._lastGoodRender) : _SLOW_INTERVAL;
+        if(sinceLastRender >= _SLOW_INTERVAL){
+          this._renderCurrentView(true);
+        }
+      }
     } catch(e){
       // Non-fatal — snapshot is preserved from last good fetch.
       // Only re-render if screen might be stale (> 10s since last good render).
