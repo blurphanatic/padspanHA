@@ -199,7 +199,11 @@ The result: a solo project that ships features at a pace that would normally req
 
 If this project saved you time (or you just like knowing which room your cat is in), you can buy me a coffee:
 
-**PayPal:** https://www.paypal.com/ncp/payment/4TJHCC8A2GCJQ
+<form action="https://www.paypal.com/donate" method="post" target="_top">
+<input type="hidden" name="hosted_button_id" value="W489P2RXBMXKW" />
+<input type="image" src="https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
+<img alt="" border="0" src="https://www.paypal.com/en_CA/i/scr/pixel.gif" width="1" height="1" />
+</form>
 
 ---
 
