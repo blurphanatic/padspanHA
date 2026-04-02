@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.19.25";
-const BUILD_ID = "20260402T161454Z";
+const APP_VERSION = "0.19.26";
+const BUILD_ID = "20260402T162414Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -43,7 +43,7 @@ window.__PADSPAN_VIEWS = VIEWS;
 const _VIEW_PATHS = {
   follow:       "./views/follow.js",
   overview:     "./views/overview.js",
-  overviewexperimental: "./views/overview_experimental.js",
+  purelive: "./views/purelive.js",
   objects:      "./views/objects.js",
   devices:      "./views/devices.js",
   bluetooth:    "./views/bluetooth.js",
@@ -117,7 +117,7 @@ const _viewsPromise = _criticalPromise;
 // at render time based on the current complexity mode (Basic/Advanced/Dev).
 const MENU = [
   ["overview","Overview","mdi:view-dashboard-outline"],
-  ["overviewexperimental","Overview (Preact)","mdi:flask-round-bottom-outline"],
+  ["purelive","Pure Live","mdi:lightning-bolt-outline"],
   ["follow","Follow","mdi:crosshairs-gps"],
   ["objects","Objects","mdi:tag-multiple-outline"],
   ["devices","Devices","mdi:devices"],
@@ -143,7 +143,7 @@ const MENU = [
 //   Dev       — everything visible (includes QA, Sandbox, raw Debug, etc.)
 const BASIC_TABS = new Set(["follow", "overview", "maps", "settings", "training"]);
 const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration","traceback","occupancy","health"]);
-const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox","overviewexperimental"];
+const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox","purelive"];
 
 // Accent color per tab — used for the sidebar dot, mobile nav, and active highlights
 const MENU_COLORS = {
@@ -170,7 +170,7 @@ const MENU_COLORS = {
   traceback: "#fbbf24",
   qa: "#26c6da",
   sandbox: "#9ccc65",
-  overviewexperimental: "#7c3aed",
+  purelive: "#7c3aed",
 };
 
 
@@ -383,7 +383,7 @@ class PadSpanHaApp extends HTMLElement {
       // If content is blank, rebuild + refresh (user just navigated back)
       if(this.$content && !this.$content.children.length){
         this._renderNav();
-        this._renderCurrentView();
+        this._scheduleRender();
         if(!this._sidebarRefreshing){
           this._sidebarRefreshing = true;
           this._refreshAll(false).finally(()=>{ this._sidebarRefreshing = false; });
@@ -549,7 +549,7 @@ class PadSpanHaApp extends HTMLElement {
       }
       this._updateBadges();
       this._renderNav();
-      this._renderCurrentView();
+      this._scheduleRender();
     });
 
     this._renderNav();
@@ -563,7 +563,7 @@ class PadSpanHaApp extends HTMLElement {
     // If views are already populated (reconnect after detach), render immediately.
     // Otherwise show a loading placeholder then render once dynamic imports settle.
     if(Object.keys(VIEWS).length > 0){
-      this._renderCurrentView();
+      this._scheduleRender();
       this._startPolling();
       // On reconnect (not first boot), refresh data to recover from stale state
       if(this._booted && this._hass){
@@ -585,7 +585,7 @@ class PadSpanHaApp extends HTMLElement {
         const statusEl = this.$content?.querySelector("#padspan-load-status");
         if(statusEl) statusEl.textContent = "Connecting\u2026";
         this._renderNav();       // rebuild nav after complexity may have been restored
-        this._renderCurrentView();
+        this._scheduleRender();
         this._startPolling();
       });
     }
@@ -688,7 +688,7 @@ class PadSpanHaApp extends HTMLElement {
 
           // 1. Stale shadow DOM references — fix before anything else
           const rebuilt = this._ensureShadowDom();
-          if(rebuilt){ this._renderCurrentView(); return; }
+          if(rebuilt){ this._scheduleRender(); return; }
 
           // 2. Verify $content exists and is live
           if(!this.$content || !this.$content.isConnected){
@@ -704,7 +704,7 @@ class PadSpanHaApp extends HTMLElement {
           if(empty || zeroHeight){
             console.warn("PadSpan watchdog: content blank (empty=%s, zeroH=%s) — forcing render", empty, zeroHeight);
             // Force render: bypass all guards by not passing fromPoll
-            this._renderCurrentView();
+            this._scheduleRender();
             // If still empty after sync render, escalate to full refresh
             if(!this.$content.children.length){
               this._pollInFlight = false;
@@ -717,7 +717,7 @@ class PadSpanHaApp extends HTMLElement {
             if(performance.now() - this._pollStartedAt > 20_000){
               console.warn("PadSpan watchdog: poll stuck for >20s — unsticking");
               this._pollInFlight = false;
-              this._renderCurrentView();
+              this._scheduleRender();
             }
           }
 
@@ -745,7 +745,7 @@ class PadSpanHaApp extends HTMLElement {
             } else {
               // Try a non-poll render first before escalating
               console.warn("PadSpan watchdog: no successful render in 20s — forcing render");
-              this._renderCurrentView();
+              this._scheduleRender();
             }
           }
         } catch(e){
@@ -800,7 +800,7 @@ class PadSpanHaApp extends HTMLElement {
         if(!this.$content) return;
         if(!this.$content.children.length){
           console.warn("PadSpan: user click on blank panel — recovering");
-          this._renderCurrentView();
+          this._scheduleRender();
           this._refreshAll(false);
         }
       };
@@ -808,12 +808,30 @@ class PadSpanHaApp extends HTMLElement {
     }
   }
 
+  // ── Render Scheduler ──────────────────────────────────────────────────────
+  // Batches multiple render requests into a single requestAnimationFrame.
+  // Before this, poll + wakeUp + refreshAll could each trigger a full DOM
+  // rebuild within milliseconds of each other — the user sees 2-3 flashes.
+  // Now they all call _scheduleRender(), which coalesces into ONE render
+  // at the next animation frame (~16ms max delay, imperceptible).
+  _scheduleRender(fromPoll = false) {
+    // If ANY caller in this batch wants a full (non-poll) render, do full
+    if (!fromPoll) this._scheduleFullRebuild = true;
+    if (this._renderRAF) return; // already batched for this frame
+    this._renderRAF = requestAnimationFrame(() => {
+      this._renderRAF = null;
+      const usePollMode = !this._scheduleFullRebuild;
+      this._scheduleFullRebuild = false;
+      this._renderCurrentView(usePollMode);
+    });
+  }
+
   // Unified wake-up handler — called by all recovery triggers
   _wakeUp(source){
     if(!this._hass || !this.isConnected) return;
     this._pollInFlight = false;
     this._ensureShadowDom();
-    this._renderCurrentView();
+    this._scheduleRender();
     this._refreshAll(false);
     if(this.state.dataMode === "live" && !this._pollTimer) this._startDataPoll();
   }
@@ -882,7 +900,7 @@ class PadSpanHaApp extends HTMLElement {
       // so it can safely update every 5s.  Other live views (follow, monitor) do
       // a full DOM rebuild which causes flicker — throttle those to every 35s.
       const _view = this.state.view;
-      const _fastViews = new Set(["overview","overviewexperimental"]);  // efficient partial update
+      const _fastViews = new Set(["overview","purelive"]);  // efficient partial update
       const _slowViews = new Set(["follow","monitor"]);                 // full rebuild — throttle
       const _SLOW_INTERVAL = 35_000;
 
@@ -890,19 +908,19 @@ class PadSpanHaApp extends HTMLElement {
         // Overview: always re-render (uses _isoUpdateObjects or Preact diffing)
         const stale = this._lastGoodRender && (performance.now() - this._lastGoodRender > 10_000);
         const usePollMode = !stale || _view === "overview";
-        this._renderCurrentView(usePollMode);
+        this._scheduleRender(usePollMode);
       } else if(_slowViews.has(_view)){
         // Follow/Monitor: only re-render every 35s to avoid flicker
         const sinceLastRender = this._lastGoodRender ? (performance.now() - this._lastGoodRender) : _SLOW_INTERVAL;
         if(sinceLastRender >= _SLOW_INTERVAL){
-          this._renderCurrentView(true);
+          this._scheduleRender(true);
         }
       }
     } catch(e){
       // Non-fatal — snapshot is preserved from last good fetch.
       // Only re-render if screen might be stale (> 10s since last good render).
       if(!this._lastGoodRender || (performance.now() - this._lastGoodRender > 10_000)){
-        try { this._renderCurrentView(); } catch(e2){}
+        try { this._scheduleRender(); } catch(e2){}
       }
     } finally {
       this._pollInFlight = false;
@@ -970,7 +988,7 @@ class PadSpanHaApp extends HTMLElement {
       this.state.dataMode = (mode === "live") ? "live" : "sample";
       this._updateBadges();
       this._renderNav();
-      this._renderCurrentView();
+      this._scheduleRender();
     } catch (e) {
       // Non-fatal
       this._toast("Settings load failed (will retry on refresh).", true);
@@ -1166,7 +1184,7 @@ class PadSpanHaApp extends HTMLElement {
     this._recomputeDerived();
     try { this.state.timing.lastRefreshMs = Math.round(performance.now() - t0); } catch(e){}
     try { this._updateBadges(); } catch(e){}
-    this._renderCurrentView();
+    this._scheduleRender();
   }
 
   /** Update the desktop topbar status pills and mobile topbar pills to reflect current state. */
@@ -1232,10 +1250,10 @@ class PadSpanHaApp extends HTMLElement {
       this._renderNav();
       // On-demand: if the view module isn't loaded yet, fetch it then render
       if (!VIEWS[id] && _VIEW_PATHS[id]) {
-        this._renderCurrentView(); // shows skeleton placeholder
-        _loadView(id).then(() => this._renderCurrentView());
+        this._scheduleRender(); // shows skeleton placeholder
+        _loadView(id).then(() => this._scheduleRender());
       } else {
-        this._renderCurrentView();
+        this._scheduleRender();
       }
     };
 
@@ -1397,7 +1415,7 @@ class PadSpanHaApp extends HTMLElement {
       // and triggers re-renders as needed. Grouped by domain below.
       actions: {
         // Re-render triggers (views call these after local UI changes)
-        renderRooms: ()=>this._renderCurrentView(),
+        renderRooms: ()=>this._scheduleRender(),
         renderNav: ()=>this._renderNav(),
         // Targeted tag-list re-render — avoids a full view rebuild which would
         // cause infinite loops in the Objects view's search/filter interaction
@@ -1406,7 +1424,7 @@ class PadSpanHaApp extends HTMLElement {
           if(!node) return;
           try { VIEWS.objects?.renderTags?.(this._ctx(), node); } catch (e) { console.error(e); }
         },
-        renderDiag: ()=>this._renderCurrentView(),
+        renderDiag: ()=>this._scheduleRender(),
         // Modal used by Overview/Objects drilldowns
         openModal: (title, bodyNode, subtitle="")=>this._openModal(title, bodyNode, subtitle),
         closeModal: ()=>this._closeModal(),
@@ -1432,13 +1450,13 @@ class PadSpanHaApp extends HTMLElement {
         radioLostSet: async (source, lost)=>await this._callWS({ type:"padspan_ha/radio_lost_set", source, lost }),
         radioDisabledSet: async (source, disabled)=>await this._callWS({ type:"padspan_ha/radio_disabled_set", source, disabled }),
         // radioReset: full reset + re-fetch + re-render (use for user-initiated resets)
-        radioReset: async (source)=>{ const r = await this._callWS({ type:"padspan_ha/radio_reset", source }); await this._getLiveSnapshot(); await this._loadSettings(); this._renderCurrentView(); return r; },
+        radioReset: async (source)=>{ const r = await this._callWS({ type:"padspan_ha/radio_reset", source }); await this._getLiveSnapshot(); await this._loadSettings(); this._scheduleRender(); return r; },
         // radioResetQuiet: WS-only reset with no re-render — use in async UI flows
         // (e.g. calibration) where the caller manages rendering separately
         radioResetQuiet: async (source)=>{ return await this._callWS({ type:"padspan_ha/radio_reset", source }); },
-        refreshSnapshot: async ()=>{ await this._getLiveSnapshot(); this._renderCurrentView(); },
+        refreshSnapshot: async ()=>{ await this._getLiveSnapshot(); this._scheduleRender(); },
         refreshSnapshotQuiet: async ()=>{ await this._getLiveSnapshot(); },
-        clearSessionEvents: ()=>{ this.state._sessionEvents.length = 0; this._renderCurrentView(); },
+        clearSessionEvents: ()=>{ this.state._sessionEvents.length = 0; this._scheduleRender(); },
         followAlertSave: async (payload)=>await this._callWS({ type:"padspan_ha/follow_alert_save", ...payload }),
         followAlertDelete: async (addr)=>{
           await this._callWS({ type:"padspan_ha/follow_alert_delete", addr });
@@ -1477,7 +1495,7 @@ class PadSpanHaApp extends HTMLElement {
             return res;
         },
         refreshAll: async () => { await this._refreshAll(false); },
-        modelRefresh: async () => { await this._getModel(); this._renderCurrentView(); },
+        modelRefresh: async () => { await this._getModel(); this._scheduleRender(); },
 
         // Detail modals
         showObjectDetail: (obj) => this._showObjectDetail(obj),
@@ -1485,25 +1503,25 @@ class PadSpanHaApp extends HTMLElement {
         showScannerDetail: (scanner) => this._showScannerDetail(scanner),
 
         // Mapping suite actions
-        setMapsTab: (t)=>{ this.state.mapsTab=t; if(t==="library") this._getMapsList().then(()=>this._renderCurrentView()).catch(()=>this._renderCurrentView()); else this._renderCurrentView(); },
-        mapsRefresh: async ()=>{ await this._getMapsList(); this._renderCurrentView(); },
-        mapsSetActive: (id)=>{ this.state.activeMapId=id; this._renderCurrentView(); },
-        mapsDelete: async (id)=>{ await this._callWS({ type:"padspan_ha/maps_delete", map_id:id }); await this._getMapsList(); if(this.state.activeMapId===id) this.state.activeMapId=null; this._renderCurrentView(); },
-        mapsDeleteMigrate: async (mapId, targetMapId, extendCanvas=false)=>{ const r = await this._callWS({ type:"padspan_ha/maps_delete_migrate", map_id:mapId, target_map_id:targetMapId, extend_canvas:!!extendCanvas }); await this._getMapsList(); if(this.state.activeMapId===mapId) this.state.activeMapId=null; this._renderCurrentView(); return r; },
+        setMapsTab: (t)=>{ this.state.mapsTab=t; if(t==="library") this._getMapsList().then(()=>this._scheduleRender()).catch(()=>this._scheduleRender()); else this._scheduleRender(); },
+        mapsRefresh: async ()=>{ await this._getMapsList(); this._scheduleRender(); },
+        mapsSetActive: (id)=>{ this.state.activeMapId=id; this._scheduleRender(); },
+        mapsDelete: async (id)=>{ await this._callWS({ type:"padspan_ha/maps_delete", map_id:id }); await this._getMapsList(); if(this.state.activeMapId===id) this.state.activeMapId=null; this._scheduleRender(); },
+        mapsDeleteMigrate: async (mapId, targetMapId, extendCanvas=false)=>{ const r = await this._callWS({ type:"padspan_ha/maps_delete_migrate", map_id:mapId, target_map_id:targetMapId, extend_canvas:!!extendCanvas }); await this._getMapsList(); if(this.state.activeMapId===mapId) this.state.activeMapId=null; this._scheduleRender(); return r; },
         mapsUpload: async (payload)=>{ const r = await this._callWS(Object.assign({type:"padspan_ha/maps_upload"}, payload)); await this._getMapsList(); return r; },
-        mapsUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
+        mapsUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); await this._getMapsList(); this._scheduleRender(); },
         mapsUpdateQuiet: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_update"}, payload)); },
         mapsRefreshQuiet: async ()=>{ await this._getMapsList(); },
         fabricSpatialSave: async (payload)=>{ return await this._callWS(Object.assign({type:"padspan_ha/fabric_spatial_batch_save"}, payload)); },
-        mapsReplaceImage: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_replace_image"}, payload)); await this._getMapsList(); this._renderCurrentView(); },
-        modelUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/model_update"}, payload)); await this._getModel(); this._renderCurrentView(); },
+        mapsReplaceImage: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/maps_replace_image"}, payload)); await this._getMapsList(); this._scheduleRender(); },
+        modelUpdate: async (payload)=>{ await this._callWS(Object.assign({type:"padspan_ha/model_update"}, payload)); await this._getModel(); this._scheduleRender(); },
 
         // Settings actions
         settingsSet: async (payload) => {
           const res = await this._callWS(Object.assign({ type: "padspan_ha/settings_set", data_mode: this.state.dataMode }, payload));
           this.state.settings = res?.settings || this.state.settings;
           this._renderNav();
-          this._renderCurrentView();
+          this._scheduleRender();
           return res;
         },
         scannerOffsetSet: async (source, offset_db) => {
@@ -1543,7 +1561,7 @@ class PadSpanHaApp extends HTMLElement {
           }).catch(()=>{});
           // Also mirror to localStorage as fallback
           try { localStorage.setItem("padspan_followed", JSON.stringify([...this.state.followedAddrs])); } catch(e){}
-          this._renderCurrentView();
+          this._scheduleRender();
         },
       },
       toast: (m, isErr=false)=>this._toast(m, isErr),
@@ -1626,7 +1644,7 @@ class PadSpanHaApp extends HTMLElement {
         this._closeModal();
         this._toast(`Tagged: ${label}`);
         await this._getLiveSnapshot();
-        this._renderCurrentView();
+        this._scheduleRender();
       } catch(e) {
         status.textContent = "Failed to save label. Check HA logs.";
       }
@@ -1639,7 +1657,7 @@ class PadSpanHaApp extends HTMLElement {
         this._closeModal();
         this._toast("Label removed.");
         await this._getLiveSnapshot();
-        this._renderCurrentView();
+        this._scheduleRender();
       } catch(e) {
         status.textContent = "Failed to remove label. Check HA logs.";
       }
@@ -1965,7 +1983,7 @@ class PadSpanHaApp extends HTMLElement {
           this._closeModal();
           this._toast(`Renamed: ${label}`);
           await this._getLiveSnapshot();
-          this._renderCurrentView();
+          this._scheduleRender();
         } catch(e){ renameStatus.textContent = "Failed to save. Check HA logs."; }
       });
       renameInput.addEventListener("keydown",(e)=>{ if(e.key==="Enter") saveRenameBtn.click(); });
@@ -1978,7 +1996,7 @@ class PadSpanHaApp extends HTMLElement {
             this._closeModal();
             this._toast("Label removed.");
             await this._getLiveSnapshot();
-            this._renderCurrentView();
+            this._scheduleRender();
           } catch(e){ renameStatus.textContent = "Failed to remove label."; }
         });
         renameRow.appendChild(untagBtn);
@@ -2043,7 +2061,7 @@ class PadSpanHaApp extends HTMLElement {
         this._closeModal();
         this._toast("Deleted: " + (userLabel || name));
         await this._getLiveSnapshot();
-        this._renderCurrentView();
+        this._scheduleRender();
       });
       actionsRow.appendChild(deleteBtn);
     }
@@ -2194,7 +2212,7 @@ class PadSpanHaApp extends HTMLElement {
         this._closeModal();
         this._toast(scanner.lost ? "Radio restored." : "Radio marked as Lost.");
         await this._getLiveSnapshot();
-        this._renderCurrentView();
+        this._scheduleRender();
       } catch(e) {
         lostBtn.disabled = false;
         this._toast("Failed to update lost status.", true);
@@ -2212,7 +2230,7 @@ class PadSpanHaApp extends HTMLElement {
         this._closeModal();
         this._toast(scanner.disabled ? "Radio re-enabled." : "Radio marked as Disabled.");
         await this._getLiveSnapshot();
-        this._renderCurrentView();
+        this._scheduleRender();
       } catch(e) {
         disabledBtn.disabled = false;
         this._toast("Failed to update disabled status.", true);
@@ -2309,9 +2327,9 @@ class PadSpanHaApp extends HTMLElement {
     }
     // Preact overview: let Preact handle its own diffing — just re-call render()
     // which diffs efficiently instead of rebuilding the entire DOM.
-    if(fromPoll && this.state.view === "overviewexperimental") {
+    if(fromPoll && this.state.view === "purelive") {
       try {
-        const mod = VIEWS["overviewexperimental"];
+        const mod = VIEWS["purelive"];
         if(mod && mod.render) mod.render(this._ctx());
       } catch(e) {}
       this._lastGoodRender = performance.now();
@@ -2422,7 +2440,7 @@ class PadSpanHaApp extends HTMLElement {
           if (this.state.settings) this.state.settings.onboarding_completed = true;
           bar.remove();
           try { this.actions?.settingsSave?.({ onboarding_completed: true })?.catch?.(() => {}); } catch(e) {}
-          this._renderCurrentView();
+          this._scheduleRender();
         });
         hdr.appendChild(skipBtn);
         bar.appendChild(hdr);
@@ -2454,7 +2472,7 @@ class PadSpanHaApp extends HTMLElement {
             if (s.mapsTab) this.state.mapsTab = s.mapsTab;
             if (s.calibTab && this.state._calib) this.state._calib.tab = s.calibTab;
             if (this.actions?.renderRooms) this.actions.renderRooms();
-            else this._renderCurrentView();
+            else this._scheduleRender();
           });
           list.appendChild(row);
         }

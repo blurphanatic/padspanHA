@@ -37,14 +37,14 @@ const fmtAgo = (sec) => {
 };
 
 // ── Experimental Banner ──────────────────────────────────────────────────────
-function ExperimentalBanner() {
+function PureLiveBanner() {
   return html`
     <div style="background:linear-gradient(90deg,rgba(124,58,237,.15),rgba(139,92,246,.08));border:1px solid rgba(124,58,237,.4);border-radius:12px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px">
-      <span style="font-size:20px">⚗️</span>
+      <span style="font-size:20px">⚡</span>
       <div>
-        <div style="font-weight:700;font-size:13px;color:#a78bfa">Experimental Preact View</div>
+        <div style="font-weight:700;font-size:13px;color:#a78bfa">Pure Live</div>
         <div style="font-size:11px;color:#94a3b8;margin-top:2px">
-          Same data, same look — built with Preact for efficient DOM diffing. Compare rendering smoothness with the standard Overview.
+          Zero-flicker dashboard — only changed values update. Built with Preact virtual DOM diffing.
         </div>
       </div>
     </div>
@@ -237,7 +237,7 @@ function CalibrationCard({ liveSnap }) {
 function ModeSubtitle({ dataMode, version }) {
   return html`
     <div style="font-size:11px;color:#64748b;margin-top:4px;margin-bottom:12px">
-      ${dataMode === "live" ? "Live data" : "Sample mode"} · v${version} · Preact renderer
+      ${dataMode === "live" ? "Live data" : "Sample mode"} · v${version}
     </div>
   `;
 }
@@ -379,9 +379,9 @@ function OverviewApp({ ctx }) {
 
   return html`
     <section style="padding:0">
-      <h2 style="margin:0 0 4px 0;font-size:18px;color:#e2e8f0">Overview</h2>
+      <h2 style="margin:0 0 4px 0;font-size:18px;color:#e2e8f0">Pure Live</h2>
       <${ModeSubtitle} dataMode=${dataMode} version=${ctx.state.version} />
-      <${ExperimentalBanner} />
+      <${PureLiveBanner} />
 
       ${isBasic && html`
         <${SummaryBar}
