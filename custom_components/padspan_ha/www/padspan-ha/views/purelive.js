@@ -93,6 +93,25 @@ function injectStyles(root) {
     /* ── Stat value flash on change ───────────────── */
     @keyframes pl-flash{0%{color:#5eead4}100%{color:inherit}}
 
+    /* ── Followed device tracker ──────────────────── */
+    @keyframes pl-tracked-pulse{0%,100%{box-shadow:0 0 6px rgba(251,191,36,.3)}50%{box-shadow:0 0 14px rgba(251,191,36,.5)}}
+    .pl-tracked{display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;padding:4px 0;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+    .pl-tracked::-webkit-scrollbar{display:none}
+    .pl-tracked-chip{flex-shrink:0;display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;
+      border:1px solid rgba(251,191,36,.3);background:rgba(251,191,36,.06);cursor:pointer;
+      animation:pl-tracked-pulse 2.5s ease-in-out infinite;transition:transform .15s}
+    .pl-tracked-chip:hover{transform:scale(1.04);border-color:rgba(251,191,36,.5)}
+
+    /* ── Activity feed ────────────────────────────── */
+    .pl-feed{position:absolute;bottom:10px;left:10px;z-index:5;max-width:280px;display:flex;flex-direction:column;gap:3px;pointer-events:none}
+    .pl-feed-item{font-size:10px;color:#94a3b8;padding:3px 8px;border-radius:6px;
+      background:rgba(10,30,15,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+      border:1px solid rgba(255,255,255,.04);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      animation:pl-feed-in .4s ease-out}
+    @keyframes pl-feed-in{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:translateY(0)}}
+    .pl-feed-item .pl-feed-time{color:#64748b}
+    .pl-feed-item .pl-feed-room{color:#52b788;font-weight:600}
+
     @media(max-width:640px){
       .pl-stats{padding:6px 10px;gap:10px;border-radius:10px}
       .pl-stats-val{font-size:18px}
@@ -463,6 +482,95 @@ function MovementGhosts({ roomTagMap }) {
   `;
 }
 
+// ── Followed Device Tracker ──────────────────────────────────────────────────
+// Shows followed devices as golden pulsing chips with their current room.
+function FollowedTracker({ ctx, snap }) {
+  const followed = ctx.state.followedAddrs;
+  if (!followed || !followed.size) return null;
+
+  const objList = snap?.objects?.list || [];
+  const devices = [];
+  for (const o of objList) {
+    const addr = (o.address || o.entity_id || o.key || "").toUpperCase();
+    if (!addr) continue;
+    const isFollowed = followed.has(addr) ||
+      (o.all_addresses && o.all_addresses.some(a => followed.has(String(a).toUpperCase())));
+    if (!isFollowed) continue;
+    devices.push({
+      key: addr,
+      label: o.user_label || o.private_ble_name || o.name || addr.substring(0, 12),
+      room: o.room || "Unknown",
+      rssi: o.rssi,
+      age: o.age_s,
+    });
+  }
+
+  if (!devices.length) return null;
+
+  return html`
+    <div style="padding:4px 12px;flex-shrink:0;border-top:1px solid rgba(251,191,36,.1);background:rgba(251,191,36,.02)">
+      <div style="font-size:9px;color:#fbbf24;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;font-weight:600">Tracked Devices</div>
+      <div className="pl-tracked">
+        ${devices.map(d => html`
+          <div key=${d.key} className="pl-tracked-chip"
+               onClick=${() => ctx.actions.showObjectDetail?.({address: d.key, key: d.key})}>
+            <span style="font-size:11px;font-weight:700;color:#fbbf24">${d.label}</span>
+            <span style="font-size:10px;color:#94a3b8">in</span>
+            <span style="font-size:11px;font-weight:600;color:#5eead4">${d.room}</span>
+            ${d.rssi != null && html`<span style="font-size:9px;color:#64748b">${d.rssi}dBm</span>`}
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+// ── Activity Feed ────────────────────────────────────────────────────────────
+// Scrolling log of recent room changes, newest at top. Fed by MovementGhosts data.
+let _activityLog = [];  // persistent across renders
+
+function ActivityFeed({ roomTagMap }) {
+  const [feed, setFeed] = useState(_activityLog);
+
+  useEffect(() => {
+    const current = {};
+    for (const [room, eids] of Object.entries(roomTagMap || {})) {
+      for (const eid of (eids || [])) current[eid] = room;
+    }
+    const newEntries = [];
+    const now = new Date();
+    for (const [eid, room] of Object.entries(current)) {
+      const prev = _prevDeviceRooms[eid];
+      // Don't duplicate — MovementGhosts already updates _prevDeviceRooms, so only
+      // capture entries that MovementGhosts would have also detected.
+      // We read from _prevDeviceRooms BEFORE MovementGhosts updates it in the same cycle.
+      // Since both run in the same render, we need to check our own log to avoid dupes.
+      if (prev && prev !== room) {
+        const label = String(eid).substring(0, 14);
+        const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        newEntries.push({ id: `${eid}-${now.getTime()}`, label, from: prev, to: room, time });
+      }
+    }
+    if (newEntries.length) {
+      _activityLog = [...newEntries, ..._activityLog].slice(0, 20);
+      setFeed(_activityLog);
+    }
+  }, [roomTagMap]);
+
+  if (!feed.length) return null;
+
+  return html`
+    <div className="pl-feed">
+      ${feed.slice(0, 6).map(e => html`
+        <div key=${e.id} className="pl-feed-item">
+          <span className="pl-feed-time">${e.time}</span>${" "}
+          ${e.label} → <span className="pl-feed-room">${e.to}</span>
+        </div>
+      `)}
+    </div>
+  `;
+}
+
 // ── Root ─────────────────────────────────────────────────────────────────────
 function App({ ctx }) {
   const mode = ctx.state.dataMode || "sample";
@@ -486,7 +594,9 @@ function App({ ctx }) {
         <${Stats} rooms=${rooms} objects=${objects} radios=${radios.length} loading=${loading} />
         <${Scanners} radios=${radios} ctx=${ctx} />
         <${MovementGhosts} roomTagMap=${rtm} />
+        <${ActivityFeed} roomTagMap=${rtm} />
       <//>
+      <${FollowedTracker} ctx=${ctx} snap=${snap} />
       <${RadioStrip} radios=${radios} ctx=${ctx} />
       <${Ticker} dataMode=${mode} radios=${radios.length} objects=${objects} version=${ctx.state.version} cal=${cal} />
     </div>
