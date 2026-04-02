@@ -224,7 +224,8 @@ export function render(ctx) {
       irkForm.appendChild(el("div", { style: "font-weight:700;margin-bottom:8px;font-size:13px" }, "Add IRK Device"));
       irkForm.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:8px;line-height:1.5" },
         "Paste the IRK from your phone's Companion App (Settings \u2192 Companion App \u2192 Manage Sensors \u2192 BLE Transmitter). "
-        + "Accepts hex (32 chars), base64, or colon-separated format."));
+        + "Accepts hex (32 chars), base64, or colon-separated format. "
+        + "Need to capture IRKs from phones/watches? Use the ESPHome IRK Capture tool: github.com/DerekSeaman/irk-capture"));
 
       const irkInputRow = el("div", { style: "display:flex;gap:6px;align-items:center;flex-wrap:wrap" });
       const irkNameInput = el("input", {
@@ -1953,7 +1954,8 @@ function renderIrkPanel(ctx) {
   addCard.appendChild(el("div", { style: "font-weight:700;font-size:14px;margin-bottom:8px;color:#e2e8f0" }, "Add IRK Device"));
   addCard.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;margin-bottom:10px;line-height:1.5" },
     "Paste the IRK from your phone's settings. Accepts hex (32 chars), base64, colon-separated, or irk:-prefixed format. " +
-    "PadSpan will validate it against live BLE traffic before saving."));
+    "PadSpan will validate it against live BLE traffic before saving. " +
+    "Need to capture IRKs from phones/watches? Use the ESPHome IRK Capture tool: github.com/DerekSeaman/irk-capture"));
 
   const nameInp = el("input", {
     type: "text", placeholder: "Device name (e.g., Garry's Pixel)",
@@ -2442,6 +2444,43 @@ button:
     ]);
   })() : null;
 
+  // ── IRK Capture Tool card ──────────────────────────────────────────────────
+  const irkCaptureCard = el("div", { class: "card", style: "border:1px solid #8b5cf655;background:#0f0a1a" }, [
+    el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px" }, [
+      el("span", { style: "font-weight:700;font-size:14px;color:#8b5cf6" }, "IRK Capture Tool"),
+      el("span", { class: "badge", style: "font-size:10px;background:#8b5cf622;color:#a78bfa" }, "Community Project"),
+    ]),
+    el("div", { class: "muted", style: "font-size:12px;line-height:1.6;max-width:700px;margin-bottom:8px" },
+      "Phones and watches rotate their BLE MAC address every ~15 minutes, making them hard to track. " +
+      "An IRK (Identity Resolving Key) lets PadSpan see through the rotation and track each device by name. " +
+      "This ESPHome package captures IRKs by briefly pairing with a phone or watch \u2014 flash a spare ESP32, pair, copy the IRK, and paste it into PadSpan\u2019s Private BLE section above."
+    ),
+    el("div", { style: "margin-top:4px;display:flex;flex-direction:column;gap:3px" }, [
+      el("div", { style: "font-size:11px;color:#94a3b8;padding-left:12px;position:relative" }, [
+        el("span", { style: "position:absolute;left:0;color:#8b5cf6" }, "\u2022"),
+        document.createTextNode("Supports Apple (heart rate sensor profile) and Android (keyboard profile)"),
+      ]),
+      el("div", { style: "font-size:11px;color:#94a3b8;padding-left:12px;position:relative" }, [
+        el("span", { style: "position:absolute;left:0;color:#8b5cf6" }, "\u2022"),
+        document.createTextNode("Flash any spare ESP32 \u2014 only needed once per device, then reflash back to scanner duty"),
+      ]),
+      el("div", { style: "font-size:11px;color:#94a3b8;padding-left:12px;position:relative" }, [
+        el("span", { style: "position:absolute;left:0;color:#f59e0b" }, "\u26A0"),
+        document.createTextNode("Third-party community project \u2014 not maintained by PadSpan"),
+      ]),
+    ]),
+    (() => {
+      const linkBtn = document.createElement("a");
+      linkBtn.href = "https://github.com/DerekSeaman/irk-capture";
+      linkBtn.target = "_blank";
+      linkBtn.rel = "noopener noreferrer";
+      linkBtn.className = "btn tiny";
+      linkBtn.style.cssText = "font-size:11px;text-decoration:none;display:inline-flex;align-items:center;gap:4px;background:#1a0e2e;border-color:#8b5cf6;color:#a78bfa;margin-top:10px";
+      linkBtn.textContent = "View on GitHub \u2192";
+      return linkBtn;
+    })(),
+  ]);
+
   // ── Chip comparison table ──────────────────────────────────────────────────
   // Auto-expires March 10, 2028 (hardware recs go stale).
   const _chipExpiry = new Date("2028-03-10T00:00:00Z").getTime();
@@ -2586,7 +2625,7 @@ button:
     ]),
   ]);
 
-  const result = el("div", {}, [intro, antennaCard, recCard, chipTable, ...configCards, tips].filter(Boolean));
+  const result = el("div", {}, [intro, antennaCard, recCard, irkCaptureCard, chipTable, ...configCards, tips].filter(Boolean));
   ctx.state._esphomeConfigsDom = result;
   return result;
 }

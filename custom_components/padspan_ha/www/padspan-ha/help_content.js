@@ -433,7 +433,7 @@ export const HELP = {
       "VISUALIZATION — Interactive graph showing how scanners and devices are connected. Node size reflects signal strength. Click any node for details.",
       "MONITOR — Live feed of Bluetooth advertisements. Filter by source scanner or search by MAC address. Shows RSSI, age, and device type.",
       "SCANNERS — Lists all Bluetooth receivers/scanners with their area assignment, online status, and device count. Click a scanner to assign it to a room — this is critical for positioning accuracy.",
-      "PRIVATE BLE — Manages Identity Resolving Keys (IRKs) for tracking Apple/Android devices that rotate their MAC addresses. Without IRKs, these devices appear as constantly-changing random addresses.",
+      "PRIVATE BLE — Manages Identity Resolving Keys (IRKs) for tracking Apple/Android devices that rotate their MAC addresses. Without IRKs, these devices appear as constantly-changing random addresses. To capture IRKs from phones and watches, see the ESPHome IRK Capture tool: https://github.com/DerekSeaman/irk-capture — flash a spare ESP32, pair briefly with each device, copy the IRK, and paste it here. PadSpan resolves all rotating MACs back to a stable identity automatically.",
     ],
   },
 
