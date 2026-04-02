@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.19.35";
-const BUILD_ID = "20260402T192243Z";
+const APP_VERSION = "0.19.36";
+const BUILD_ID = "20260402T192423Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -2335,10 +2335,10 @@ class PadSpanHaApp extends HTMLElement {
       this._lastGoodRender = performance.now();
       return;
     }
-    // Skip re-renders when the user is actively interacting with an input.
-    // This prevents destroying input fields mid-typing on ANY render trigger
-    // (poll, wakeUp, data refresh, etc.) — not just poll renders.
-    {
+    // Skip POLL re-renders when the user is actively interacting.
+    // Only applies to fromPoll=true — explicit renders (tab clicks, actions)
+    // must always go through immediately.
+    if(fromPoll){
       try {
         const active = (this.shadowRoot || this).querySelector(":focus");
         if(active){
