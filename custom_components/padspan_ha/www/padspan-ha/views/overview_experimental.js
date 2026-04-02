@@ -17,8 +17,8 @@
 // ── Preact + htm (vendored locally — no CDN, no build step) ──────────────────
 // Preact 10.25.4 + htm 3.1.1 — total ~16KB unminified, ~5KB over the wire.
 // Files live in ../lib/ — zero external dependencies.
-import { h, render as preactRender, html } from "../lib/preact-bundle.mjs";
-import { useState, useEffect, useRef, useCallback } from "../lib/preact-bundle.mjs";
+import { h, render as preactRender, html } from "../lib/preact-bundle.js";
+import { useState, useEffect, useRef, useCallback } from "../lib/preact-bundle.js";
 
 // ── Utility functions ────────────────────────────────────────────────────────
 const fmtNum = (n) => {

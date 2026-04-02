@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.19.23";
-const BUILD_ID = "20260402T155929Z";
+const APP_VERSION = "0.19.24";
+const BUILD_ID = "20260402T161050Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -378,15 +378,14 @@ class PadSpanHaApp extends HTMLElement {
       if(this.state.dataMode === "live" && !this._pollTimer){
         this._startDataPoll();
       }
-      // If content is blank, rebuild; otherwise still refresh data (rooms etc.)
+      // If content is blank, rebuild + refresh (user just navigated back)
       if(this.$content && !this.$content.children.length){
         this._renderNav();
         this._renderCurrentView();
-      }
-      // Always refresh data on sidebar re-entry to pick up saved rooms/settings
-      if(!this._sidebarRefreshing){
-        this._sidebarRefreshing = true;
-        this._refreshAll(false).finally(()=>{ this._sidebarRefreshing = false; });
+        if(!this._sidebarRefreshing){
+          this._sidebarRefreshing = true;
+          this._refreshAll(false).finally(()=>{ this._sidebarRefreshing = false; });
+        }
       }
     }
   }
