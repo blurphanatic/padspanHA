@@ -839,6 +839,7 @@ function _haEntities(ctx, el){
   wrap.appendChild(_haEntityAudit(ctx, el));
   wrap.appendChild(_haEntityLibrary(ctx, el));
   wrap.appendChild(_haMqttSection(ctx, el, settings));
+  wrap.appendChild(_haEspresenseSection(ctx, el, settings));
   return wrap;
 }
 
@@ -1533,6 +1534,70 @@ function _haMqttSection(ctx, el, settings){
           message: >-
             Alice's phone arrived in {{ trigger.payload }}`,
     }));
+  }
+
+  return card;
+}
+
+/**
+ * ESPresense MQTT Ingestion section — subscribe to ESPresense MQTT topics
+ * to receive BLE data from ESPresense scanner nodes. Required when HA has
+ * no Bluetooth adapter/integration installed.
+ */
+function _haEspresenseSection(ctx, el, settings){
+  const card = el("div",{class:"card",style:"border-color:#8b5cf6"});
+
+  const header = el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:6px"});
+  header.appendChild(el("span",{style:"font-weight:700;font-size:14px"},"ESPresense MQTT"));
+  header.appendChild(el("span",{style:"font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid #8b5cf6;color:#8b5cf6"},"Beta"));
+  card.appendChild(header);
+
+  card.appendChild(el("div",{style:"font-size:12px;color:#94a3b8;line-height:1.5;margin-bottom:10px"},
+    "Subscribe to ESPresense MQTT topics to receive BLE scanner data. Enable this if your ESP32 nodes run ESPresense firmware and publish to MQTT. Requires HA's MQTT integration to be configured."
+  ));
+
+  // Enable toggle
+  const chk = el("input",{type:"checkbox"});
+  chk.checked = settings.espresense_mqtt_enabled === true;
+  chk.addEventListener("change", async()=>{
+    try {
+      await ctx.actions.settingsSet({espresense_mqtt_enabled: chk.checked});
+      ctx.toast(chk.checked ? "ESPresense MQTT enabled — scanners should appear within 10 seconds." : "ESPresense MQTT disabled.");
+      ctx.actions.renderRooms();
+    } catch(e){ ctx.toast("Failed: "+String(e), true); chk.checked = !chk.checked; }
+  });
+  card.appendChild(el("label",{style:"display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;margin-bottom:10px"},[
+    chk, el("span",{},"Enable ESPresense MQTT ingestion"),
+  ]));
+
+  if(settings.espresense_mqtt_enabled){
+    card.appendChild(el("div",{style:"font-size:12px;color:#8b5cf6;margin-bottom:8px"},"ESPresense MQTT is active. Your ESPresense nodes should appear as scanners in the Bluetooth and Overview views."));
+
+    // Topic prefix
+    const prefixRow = el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:10px"});
+    prefixRow.appendChild(el("span",{style:"font-size:12px;color:#94a3b8;white-space:nowrap"},"Topic prefix:"));
+    const prefixInput = el("input",{type:"text",value:settings.espresense_topic_prefix||"espresense",placeholder:"espresense"});
+    prefixInput.style.cssText = "background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:12px;width:180px";
+    const prefixSave = el("button",{class:"btn inline",style:"font-size:11px;padding:3px 10px"});
+    prefixSave.textContent = "Save";
+    prefixSave.addEventListener("click", async()=>{
+      const v = prefixInput.value.trim().replace(/#|\+/g,"").replace(/^\/|\/$/g,"");
+      if(!v){ ctx.toast("Prefix cannot be empty", true); return; }
+      prefixSave.disabled = true;
+      try {
+        await ctx.actions.settingsSet({espresense_topic_prefix: v});
+        ctx.toast("Topic prefix saved. Restart HA or toggle ESPresense off/on to apply.");
+        prefixSave.textContent = "Saved \u2714";
+        setTimeout(()=>{ prefixSave.textContent = "Save"; prefixSave.disabled = false; }, 2000);
+      } catch(e){ ctx.toast("Failed: "+String(e), true); prefixSave.disabled = false; }
+    });
+    prefixRow.appendChild(prefixInput);
+    prefixRow.appendChild(prefixSave);
+    card.appendChild(prefixRow);
+
+    card.appendChild(el("div",{style:"font-size:11px;color:#64748b;padding:6px 8px;background:#0f0a1a;border:1px solid #2d1b4e;border-radius:6px"},
+      "Topics: " + (settings.espresense_topic_prefix||"espresense") + "/devices/# \u2022 " + (settings.espresense_topic_prefix||"espresense") + "/rooms/#"
+    ));
   }
 
   return card;
