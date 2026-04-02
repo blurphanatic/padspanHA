@@ -325,7 +325,32 @@ function MapViewport({ children }) {
 }
 
 // ── Iso Map Bridge ───────────────────────────────────────────────────────────
-// Keeps ALL overview controls (floor slider, spacing, etc.) — no stripping.
+// Keeps map controls (floor/spacing sliders, buttons) but hides the overview's
+// room list panel (duplicates Pure Live's own overlays).
+
+function _cleanupMapElement(map) {
+  // The map element (from renderIsoFloorStack) contains:
+  //   ctrlRow — floor/spacing/L-R sliders + buttons → KEEP
+  //   isoOverlayCtrl — heatmap sliders → KEEP
+  //   isoWrap (position:relative) — SVG + tooltip → KEEP
+  //   roomListPanel — table of rooms → HIDE (Pure Live has its own)
+  //
+  // Room list panel is typically the last child, and is a div containing a <table>
+  // or a .muted message. Hide it by checking for table content or muted class.
+  for (const child of [...map.children]) {
+    const css = child.style?.cssText || "";
+    // Keep the iso wrapper (position:relative)
+    if (css.includes("position") && css.includes("relative")) continue;
+    // Keep control rows (display:flex with sliders/buttons)
+    if (css.includes("display") && css.includes("flex") && child.querySelector("input[type='range']")) continue;
+    // Keep overlay controls (heatmap sliders bar)
+    if (child.querySelector && child.querySelector("input[type='range']")) continue;
+    // Hide the room list panel (contains table or muted text)
+    if (child.querySelector && (child.querySelector("table") || child.querySelector(".muted"))) {
+      child.style.display = "none";
+    }
+  }
+}
 
 function IsoMap({ ctx }) {
   const ref = useRef(null);
@@ -348,7 +373,7 @@ function IsoMap({ ctx }) {
       const map = section.querySelector("[data-padspan-map]");
       if (!map) return;
 
-      // Keep everything — controls, SVG, room list. No stripping.
+      _cleanupMapElement(map);
       _mapNode = map;
       ref.current.innerHTML = "";
       ref.current.appendChild(map);
@@ -358,6 +383,32 @@ function IsoMap({ ctx }) {
   });
 
   return html`<div ref=${ref}></div>`;
+}
+
+// ── Radio List (bottom strip) ────────────────────────────────────────────────
+function RadioStrip({ radios, ctx }) {
+  if (!radios.length) return null;
+  return html`
+    <div style="display:flex;gap:8px;padding:6px 12px;overflow-x:auto;background:rgba(10,21,14,.5);border-top:1px solid rgba(82,183,136,.1);flex-shrink:0;-webkit-overflow-scrolling:touch">
+      ${radios.map(r => {
+        const sid = ctx.helpers.radioShortId ? ctx.helpers.radioShortId(r.source || "") : "?";
+        const online = r.scanning !== false;
+        const area = r.area || r.area_name || "";
+        const devs = r.device_count ?? 0;
+        const color = online ? "#52b788" : "#f87171";
+        return html`
+          <div key=${r.source} style="flex-shrink:0;display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);cursor:pointer;font-size:11px"
+               title="${r.source}"
+               onClick=${() => ctx.actions.showScannerDetail?.(r)}>
+            <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></span>
+            <span style="font-weight:700;color:${color}">${sid}</span>
+            ${area && html`<span style="color:#94a3b8">${area}</span>`}
+            <span style="color:#64748b">${devs} dev</span>
+          </div>
+        `;
+      })}
+    </div>
+  `;
 }
 
 // ── Root ─────────────────────────────────────────────────────────────────────
@@ -383,6 +434,7 @@ function App({ ctx }) {
         <${Stats} rooms=${rooms} objects=${objects} radios=${radios.length} loading=${loading} />
         <${Scanners} radios=${radios} ctx=${ctx} />
       <//>
+      <${RadioStrip} radios=${radios} ctx=${ctx} />
       <${Ticker} dataMode=${mode} radios=${radios.length} objects=${objects} version=${ctx.state.version} cal=${cal} />
     </div>
   `;
