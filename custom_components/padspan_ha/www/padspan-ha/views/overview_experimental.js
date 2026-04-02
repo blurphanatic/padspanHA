@@ -14,13 +14,11 @@
  *   - Same ctx.actions / ctx.state API — drop-in replacement pattern
  */
 
-// ── Preact + htm via CDN (no build step) ─────────────────────────────────────
-// Total: ~4KB gzipped.  Pinned versions for reproducibility.
-import { h, render as preactRender } from "https://esm.sh/preact@10.25.4?bundle";
-import { useState, useEffect, useRef, useCallback } from "https://esm.sh/preact@10.25.4/hooks?bundle";
-import htm from "https://esm.sh/htm@3.1.1?bundle";
-
-const html = htm.bind(h);
+// ── Preact + htm (vendored locally — no CDN, no build step) ──────────────────
+// Preact 10.25.4 + htm 3.1.1 — total ~16KB unminified, ~5KB over the wire.
+// Files live in ../lib/ — zero external dependencies.
+import { h, render as preactRender, html } from "../lib/preact-bundle.mjs";
+import { useState, useEffect, useRef, useCallback } from "../lib/preact-bundle.mjs";
 
 // ── Utility functions ────────────────────────────────────────────────────────
 const fmtNum = (n) => {
