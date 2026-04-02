@@ -4,12 +4,16 @@
 /**
  * Pure Live — zero-flicker immersive dashboard
  *
- * Simple layout: full-width isometric map with floating glass stat pills
+ * Full isometric map with pan/zoom controls, floating glass stat overlays,
  * and a status ticker. Built with Preact for efficient DOM diffing.
+ * Map supports: scroll-to-zoom, pinch-to-zoom, click-drag pan, double-tap reset.
  */
 
 import { h, render as preactRender, html } from "../lib/preact-bundle.js";
 import { useState, useEffect, useRef, useMemo } from "../lib/preact-bundle.js";
+
+// ── Persistent state ─────────────────────────────────────────────────────────
+let _mapNode = null;
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
 const STYLES_ID = "purelive-styles";
@@ -20,10 +24,21 @@ function injectStyles(root) {
   s.textContent = `
     .pl-root{display:flex;flex-direction:column;min-height:calc(100vh - 140px);background:#050d08}
 
-    /* Map takes all available space */
-    .pl-map{flex:1;position:relative;overflow:auto;background:#071008;border-radius:8px}
+    /* Map viewport — clips the pannable/zoomable content */
+    .pl-viewport{flex:1;position:relative;overflow:hidden;background:#071008;border-radius:8px;cursor:grab;touch-action:none}
+    .pl-viewport:active{cursor:grabbing}
+    .pl-viewport-inner{transform-origin:0 0;will-change:transform}
 
-    /* Floating stats — absolutely positioned over the map */
+    /* Zoom controls */
+    .pl-zoom{position:absolute;bottom:12px;right:12px;z-index:6;display:flex;flex-direction:column;gap:4px}
+    .pl-zoom button{width:36px;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.1);
+      background:rgba(10,30,15,.6);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+      color:#e2e8f0;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;
+      transition:background .15s}
+    .pl-zoom button:hover{background:rgba(82,183,136,.2)}
+    .pl-zoom button:active{transform:scale(.92)}
+
+    /* Floating stats */
     .pl-stats{position:absolute;top:10px;left:10px;z-index:5;display:flex;gap:16px;
       background:rgba(10,30,15,.6);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
       border:1px solid rgba(255,255,255,.07);border-radius:14px;padding:8px 16px;
@@ -32,7 +47,7 @@ function injectStyles(root) {
     .pl-stats-val{font-size:22px;font-weight:800;line-height:1.1}
     .pl-stats-lbl{font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-top:1px}
 
-    /* Scanners — top right */
+    /* Scanners */
     .pl-scanners{position:absolute;top:10px;right:10px;z-index:5;display:flex;gap:6px;
       background:rgba(10,30,15,.5);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
       border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:6px 10px;
@@ -54,12 +69,19 @@ function injectStyles(root) {
     @keyframes pl-poll{0%{width:0}100%{width:100%}}
     .pl-poll{height:2px;background:linear-gradient(90deg,#52b788,#5eead4);border-radius:1px;animation:pl-poll 5s linear infinite}
 
+    /* Zoom level indicator */
+    .pl-zoom-level{position:absolute;bottom:12px;left:12px;z-index:6;font-size:10px;color:#64748b;
+      background:rgba(10,30,15,.5);padding:2px 8px;border-radius:6px;pointer-events:none;
+      transition:opacity .3s;opacity:0}
+    .pl-zoom-level.visible{opacity:1}
+
     @media(max-width:640px){
       .pl-stats{padding:6px 10px;gap:10px;border-radius:10px}
       .pl-stats-val{font-size:18px}
       .pl-scanners{padding:4px 6px;gap:4px}
       .pl-ticker{flex-wrap:wrap;gap:8px;justify-content:center}
       .pl-ticker>div:first-child{width:100%;order:-1}
+      .pl-zoom button{width:32px;height:32px;font-size:16px}
     }
   `;
   root.appendChild(s);
@@ -149,45 +171,184 @@ function Ticker({ dataMode, radios, objects, version, cal }) {
   `;
 }
 
+// ── Pan/Zoom Map Viewport ────────────────────────────────────────────────────
+// Wraps the iso map with mouse drag-to-pan, scroll-to-zoom, pinch-to-zoom,
+// and double-click/double-tap to reset.
+
+function MapViewport({ children }) {
+  const viewportRef = useRef(null);
+  const innerRef = useRef(null);
+  const stateRef = useRef({ scale: 1, tx: 0, ty: 0, dragging: false, startX: 0, startY: 0, startTx: 0, startTy: 0, pinchDist: 0, pinchScale: 1 });
+  const [zoomPct, setZoomPct] = useState(100);
+  const [showZoom, setShowZoom] = useState(false);
+  const zoomTimerRef = useRef(null);
+
+  const MIN_SCALE = 0.3;
+  const MAX_SCALE = 5;
+
+  const applyTransform = () => {
+    const s = stateRef.current;
+    if (innerRef.current) {
+      innerRef.current.style.transform = `translate(${s.tx}px, ${s.ty}px) scale(${s.scale})`;
+    }
+    setZoomPct(Math.round(s.scale * 100));
+    setShowZoom(true);
+    clearTimeout(zoomTimerRef.current);
+    zoomTimerRef.current = setTimeout(() => setShowZoom(false), 1500);
+  };
+
+  const zoomAt = (cx, cy, factor) => {
+    const s = stateRef.current;
+    const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, s.scale * factor));
+    const ratio = newScale / s.scale;
+    s.tx = cx - ratio * (cx - s.tx);
+    s.ty = cy - ratio * (cy - s.ty);
+    s.scale = newScale;
+    applyTransform();
+  };
+
+  const resetView = () => {
+    const s = stateRef.current;
+    s.scale = 1; s.tx = 0; s.ty = 0;
+    applyTransform();
+  };
+
+  useEffect(() => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+
+    // Mouse wheel zoom
+    const onWheel = (e) => {
+      e.preventDefault();
+      const rect = vp.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.12 : 0.89;
+      zoomAt(cx, cy, factor);
+    };
+
+    // Mouse drag pan
+    const onMouseDown = (e) => {
+      if (e.button !== 0) return;
+      // Don't start pan if clicking on a button, input, or interactive element
+      if (e.target.closest("button,input,select,a,[data-tip],[data-obj-key],[data-scanner-src]")) return;
+      const s = stateRef.current;
+      s.dragging = true; s.startX = e.clientX; s.startY = e.clientY; s.startTx = s.tx; s.startTy = s.ty;
+    };
+    const onMouseMove = (e) => {
+      const s = stateRef.current;
+      if (!s.dragging) return;
+      s.tx = s.startTx + (e.clientX - s.startX);
+      s.ty = s.startTy + (e.clientY - s.startY);
+      applyTransform();
+    };
+    const onMouseUp = () => { stateRef.current.dragging = false; };
+
+    // Touch: pinch zoom + drag pan
+    const onTouchStart = (e) => {
+      const s = stateRef.current;
+      if (e.touches.length === 1) {
+        if (e.target.closest("button,input,select,a,[data-tip],[data-obj-key],[data-scanner-src]")) return;
+        s.dragging = true; s.startX = e.touches[0].clientX; s.startY = e.touches[0].clientY; s.startTx = s.tx; s.startTy = s.ty;
+      } else if (e.touches.length === 2) {
+        s.dragging = false;
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        s.pinchDist = Math.sqrt(dx * dx + dy * dy);
+        s.pinchScale = s.scale;
+      }
+    };
+    const onTouchMove = (e) => {
+      e.preventDefault();
+      const s = stateRef.current;
+      if (e.touches.length === 1 && s.dragging) {
+        s.tx = s.startTx + (e.touches[0].clientX - s.startX);
+        s.ty = s.startTy + (e.touches[0].clientY - s.startY);
+        applyTransform();
+      } else if (e.touches.length === 2 && s.pinchDist > 0) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, s.pinchScale * (dist / s.pinchDist)));
+        const rect = vp.getBoundingClientRect();
+        const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+        const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+        const ratio = newScale / s.scale;
+        s.tx = cx - ratio * (cx - s.tx);
+        s.ty = cy - ratio * (cy - s.ty);
+        s.scale = newScale;
+        applyTransform();
+      }
+    };
+    const onTouchEnd = () => { stateRef.current.dragging = false; stateRef.current.pinchDist = 0; };
+
+    // Double-click/tap to reset
+    const onDblClick = (e) => {
+      if (e.target.closest("button,input,select,a")) return;
+      resetView();
+    };
+
+    vp.addEventListener("wheel", onWheel, { passive: false });
+    vp.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    vp.addEventListener("touchstart", onTouchStart, { passive: false });
+    vp.addEventListener("touchmove", onTouchMove, { passive: false });
+    vp.addEventListener("touchend", onTouchEnd);
+    vp.addEventListener("dblclick", onDblClick);
+
+    return () => {
+      vp.removeEventListener("wheel", onWheel);
+      vp.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      vp.removeEventListener("touchstart", onTouchStart);
+      vp.removeEventListener("touchmove", onTouchMove);
+      vp.removeEventListener("touchend", onTouchEnd);
+      vp.removeEventListener("dblclick", onDblClick);
+    };
+  }, []);
+
+  return html`
+    <div className="pl-viewport" ref=${viewportRef}>
+      <div className="pl-viewport-inner" ref=${innerRef}>
+        ${children}
+      </div>
+      <div className="pl-zoom">
+        <button onClick=${() => { const r = viewportRef.current?.getBoundingClientRect(); if(r) zoomAt(r.width/2, r.height/2, 1.3); }} title="Zoom in">+</button>
+        <button onClick=${() => { const r = viewportRef.current?.getBoundingClientRect(); if(r) zoomAt(r.width/2, r.height/2, 0.77); }} title="Zoom out">−</button>
+        <button onClick=${resetView} title="Reset view" style="font-size:13px">⌂</button>
+      </div>
+      <div className="pl-zoom-level ${showZoom ? "visible" : ""}">${zoomPct}%</div>
+    </div>
+  `;
+}
+
 // ── Iso Map Bridge ───────────────────────────────────────────────────────────
-let _mapNode = null;
+// Keeps ALL overview controls (floor slider, spacing, etc.) — no stripping.
 
 function IsoMap({ ctx }) {
   const ref = useRef(null);
 
   useEffect(() => {
     if (!ref.current) return;
-
-    // Already mounted and connected — nothing to do
     if (_mapNode && _mapNode.isConnected && _mapNode.parentNode === ref.current) return;
-
-    // Was detached — re-attach
     if (_mapNode && !_mapNode.isConnected) {
       ref.current.innerHTML = "";
       ref.current.appendChild(_mapNode);
       return;
     }
 
-    // Build fresh from overview module
     const ov = window.__PADSPAN_VIEWS?.overview;
     if (!ov) return;
 
     try {
       const section = ov.render(ctx);
       if (!section) return;
-
-      // Find the tagged map element
       const map = section.querySelector("[data-padspan-map]");
       if (!map) return;
 
-      // Strip overview controls — keep only the SVG wrapper
-      for (const child of [...map.children]) {
-        const css = child.style?.cssText || "";
-        // The iso wrapper has position:relative and contains the SVG
-        if (css.includes("position") && css.includes("relative")) continue;
-        child.style.display = "none";
-      }
-
+      // Keep everything — controls, SVG, room list. No stripping.
       _mapNode = map;
       ref.current.innerHTML = "";
       ref.current.appendChild(map);
@@ -217,11 +378,11 @@ function App({ ctx }) {
 
   return html`
     <div className="pl-root">
-      <div className="pl-map">
+      <${MapViewport}>
         <${IsoMap} ctx=${ctx} />
         <${Stats} rooms=${rooms} objects=${objects} radios=${radios.length} loading=${loading} />
         <${Scanners} radios=${radios} ctx=${ctx} />
-      </div>
+      <//>
       <${Ticker} dataMode=${mode} radios=${radios.length} objects=${objects} version=${ctx.state.version} cal=${cal} />
     </div>
   `;
