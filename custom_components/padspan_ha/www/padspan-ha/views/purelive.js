@@ -244,17 +244,11 @@ function ModeSubtitle({ dataMode, version }) {
 
 // ── Iso Map Bridge ───────────────────────────────────────────────────────────
 // Renders the vanilla JS isometric floor stack inside a Preact-managed ref.
-// The map is built once by overview.js's render(), then the DOM node is moved
-// into this component's container.  Preact manages everything else; the map
-// is imperatively managed for now (Phase C will port it to Preact SVG).
-//
-// On 5-second poll updates, ctx.state._isoUpdateObjects() is called by
-// panel.js — this swaps only the object dots inside the existing SVG,
-// so the map never flickers.
+// overview.js tags the map element with data-padspan-map="true".
+// We call overview.render(ctx) once, find that element, and mount it here.
+// On poll updates, ctx.state._isoUpdateObjects() handles efficient dot swaps.
 
-/** Persistent ref for the map DOM node — survives Preact re-renders */
 let _mapNode = null;
-let _mapNodeCtxId = null;  // track which ctx produced it
 
 function IsoMap({ ctx }) {
   const containerRef = useRef(null);
@@ -262,85 +256,45 @@ function IsoMap({ ctx }) {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Build the map using the standard overview module's render function.
-    // We call it once, extract the map element, and keep it.
-    // The overview.render(ctx) returns a <section> with children:
-    //   [companionCard?, mapEl?, grid(.grid)]
-    // The map is everything that isn't .grid and isn't the companion card.
+    // If map node exists and is already in our container, nothing to do
+    if (_mapNode && _mapNode.isConnected && _mapNode.parentNode === containerRef.current) return;
+
+    // If map node exists but was detached, re-attach it
+    if (_mapNode && !_mapNode.isConnected) {
+      containerRef.current.innerHTML = "";
+      containerRef.current.appendChild(_mapNode);
+      return;
+    }
+
+    // Build fresh: call overview.render(ctx) and extract the tagged map element
+    const ovMod = window.__PADSPAN_VIEWS?.overview;
+    if (!ovMod) {
+      console.warn("[PadSpan Pure Live] Overview module not loaded yet");
+      return;
+    }
+
     try {
-      // Only rebuild if we don't have a map node yet or it was detached
-      if (!_mapNode || !_mapNode.isConnected) {
-        // Get the overview module (already loaded by panel.js)
-        const ovMod = window.__PADSPAN_VIEWS?.overview;
-        if (!ovMod) {
-          // Fallback: try dynamic import
-          import("./overview.js").then(m => {
-            window.__PADSPAN_VIEWS = window.__PADSPAN_VIEWS || {};
-            window.__PADSPAN_VIEWS.overview = m;
-            // Re-render to pick it up
-            if (containerRef.current && !_mapNode) {
-              _buildMap(m, ctx, containerRef.current);
-            }
-          }).catch(() => {});
-          return;
-        }
-        _buildMap(ovMod, ctx, containerRef.current);
-      } else if (_mapNode && containerRef.current && _mapNode.parentNode !== containerRef.current) {
-        // Map exists but isn't in our container — re-attach it
+      const section = ovMod.render(ctx);
+      if (!section) return;
+
+      // Find the tagged map element
+      const mapEl = section.querySelector("[data-padspan-map]");
+      if (mapEl) {
+        _mapNode = mapEl;
         containerRef.current.innerHTML = "";
-        containerRef.current.appendChild(_mapNode);
+        containerRef.current.appendChild(mapEl);
+      } else {
+        // Fallback: mount the entire overview section (includes map + KPIs)
+        _mapNode = section;
+        containerRef.current.innerHTML = "";
+        containerRef.current.appendChild(section);
       }
     } catch (e) {
-      console.warn("[PadSpan Preact] IsoMap bridge error:", e);
+      console.warn("[PadSpan Pure Live] Map build failed:", e);
     }
   });
 
   return html`<div ref=${containerRef} style="min-height:200px"></div>`;
-}
-
-function _buildMap(ovMod, ctx, container) {
-  try {
-    // Render the full overview to get the map element
-    const section = ovMod.render(ctx);
-    if (!section) return;
-
-    // Find the map element — it's the child that isn't .grid and contains
-    // either an SVG, the iso controls, or the room grid
-    let mapEl = null;
-    for (const child of section.children) {
-      // Skip the KPI grid
-      if (child.classList?.contains("grid")) continue;
-      // Skip companion card (has specific data attribute or small height)
-      if (child.querySelector?.("[data-companion]")) continue;
-      // The map element typically contains the iso SVG wrapper or room grid
-      if (child.querySelector?.("svg") || child.querySelector?.("[style*='overflow:auto']") ||
-          child.querySelector?.("input[type='range']") || child.className === "card") {
-        mapEl = child;
-        break;
-      }
-    }
-
-    // If we couldn't find it specifically, take the largest child (the map is always the biggest)
-    if (!mapEl) {
-      let maxH = 0;
-      for (const child of section.children) {
-        if (child.classList?.contains("grid")) continue;
-        // Use the element itself as the candidate
-        if (child.children?.length > maxH) {
-          maxH = child.children.length;
-          mapEl = child;
-        }
-      }
-    }
-
-    if (mapEl) {
-      _mapNode = mapEl;
-      container.innerHTML = "";
-      container.appendChild(mapEl);
-    }
-  } catch (e) {
-    console.warn("[PadSpan Preact] Map build failed:", e);
-  }
 }
 
 // ── Root App Component ───────────────────────────────────────────────────────

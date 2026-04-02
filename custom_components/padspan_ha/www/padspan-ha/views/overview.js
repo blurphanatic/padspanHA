@@ -2762,6 +2762,7 @@ export function render(ctx){
 
   // Always try iso floor stack first; falls back to sample floor plan or room grid if no maps
   const mapEl = renderIsoFloorStack();
+  if (mapEl) mapEl.setAttribute("data-padspan-map", "true");
 
   // ---------- Basic mode layout ----------
   if(isBasic){
