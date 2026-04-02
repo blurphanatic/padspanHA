@@ -56,8 +56,10 @@ function injectStyles(root) {
     .pl-stat-lbl{font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
 
     /* ── Layout ────────────────────────────────────────────── */
-    .pl-root{position:relative;min-height:calc(100vh - 120px);display:flex;flex-direction:column;background:#050d08}
-    .pl-map-area{flex:1;position:relative;overflow:hidden;border-radius:12px;margin:0 0 4px 0}
+    .pl-root{position:relative;height:calc(100vh - 120px);display:flex;flex-direction:column;background:#050d08;overflow:hidden}
+    .pl-map-area{flex:1;position:relative;overflow:hidden;border-radius:0;margin:0}
+    .pl-map-area>div{height:100%}
+    .pl-map-area>div>*{height:100%}
     .pl-overlay-top{position:absolute;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;z-index:5}
     .pl-overlay-top>*{pointer-events:auto}
     .pl-overlay-bottom{position:absolute;bottom:48px;left:12px;right:12px;z-index:5;pointer-events:none}
@@ -71,7 +73,7 @@ function injectStyles(root) {
   root.appendChild(s);
 }
 
-// ── Odometer Component ───────────────────────────────────────────────────────
+// ── Components ───────────────────────────────────────────────────────────────
 function Odometer({ value, size = "28px", color }) {
   const str = String(value ?? 0);
   const digits = str.split("");
@@ -221,7 +223,30 @@ function StatusTicker({ dataMode, radiosCount, objectsTotal, version, calStatus 
 }
 
 // ── Iso Map Bridge ───────────────────────────────────────────────────────────
+// Extracts ONLY the SVG map from overview.js, stripping all vanilla controls
+// (sliders, buttons, room list) since Pure Live has its own overlays.
 let _mapNode = null;
+
+function _stripOverviewControls(el) {
+  // The overview map element structure:
+  //   outer (data-padspan-map)
+  //     ├─ ctrlRow (flex row with sliders/buttons) — HIDE
+  //     ├─ isoOverlayCtrl (heatmap sliders) — HIDE
+  //     ├─ isoWrap (position:relative wrapper)
+  //     │    ├─ isoDiv (overflow:auto, contains SVG) — KEEP
+  //     │    └─ isoTipEl (hover tooltip) — KEEP
+  //     └─ roomListPanel (table) — HIDE
+  //
+  // Hide everything that isn't the map wrapper (isoWrap).
+  // We identify isoWrap by it having position:relative style.
+  for (const child of [...el.children]) {
+    const style = child.style?.cssText || "";
+    // Keep the iso wrapper (has position:relative and contains the SVG)
+    if (style.includes("position") && style.includes("relative")) continue;
+    // Hide everything else (controls, room list, etc.)
+    child.style.display = "none";
+  }
+}
 
 function IsoMap({ ctx }) {
   const containerRef = useRef(null);
@@ -243,13 +268,10 @@ function IsoMap({ ctx }) {
       if (!section) return;
       const mapEl = section.querySelector("[data-padspan-map]");
       if (mapEl) {
+        _stripOverviewControls(mapEl);
         _mapNode = mapEl;
         containerRef.current.innerHTML = "";
         containerRef.current.appendChild(mapEl);
-      } else {
-        _mapNode = section;
-        containerRef.current.innerHTML = "";
-        containerRef.current.appendChild(section);
       }
     } catch (e) {
       console.warn("[PadSpan Pure Live] Map build failed:", e);
@@ -282,11 +304,9 @@ function PureLiveApp({ ctx }) {
 
   return html`
     <div className="pl-root">
-      <!-- Full-bleed map area -->
       <div className="pl-map-area">
         <${IsoMap} ctx=${ctx} />
 
-        <!-- Floating overlays on top of the map -->
         <div className="pl-overlay-top">
           <${StatsOverlay}
             roomsCount=${roomsCount}
@@ -297,13 +317,11 @@ function PureLiveApp({ ctx }) {
           <${ScannersOverlay} radios=${radios} ctx=${ctx} />
         </div>
 
-        <!-- Room pills at the bottom of the map -->
         <div className="pl-overlay-bottom">
           <${RoomStrip} roomTagMap=${roomTagMap} ctx=${ctx} />
         </div>
       </div>
 
-      <!-- Status ticker bar -->
       <${StatusTicker}
         dataMode=${dataMode}
         radiosCount=${radiosCount}
