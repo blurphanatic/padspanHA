@@ -330,6 +330,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         except Exception as err:
             _LOGGER.debug("Bluetooth live setup skipped: %s", err)
 
+        # ESPresense MQTT ingestion (off by default)
+        try:
+            _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if _st and _st.data.get("espresense_mqtt_enabled"):
+                from .espresense_mqtt import async_setup_espresense_mqtt
+                _prefix = _st.data.get("espresense_topic_prefix", "espresense")
+                await async_setup_espresense_mqtt(hass, _prefix)
+                _LOGGER.info("ESPresense MQTT ingestion started (prefix: %s)", _prefix)
+        except Exception as err:
+            _LOGGER.debug("ESPresense MQTT setup skipped: %s", err)
+
     hass.async_create_task(_background_init())
 
     async def _set_map(call: ServiceCall) -> None:
@@ -496,6 +507,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         tag_int = hass.data.get(DOMAIN, {}).pop(DATA_TAG_INTEGRATION, None)
         if tag_int:
             tag_int.unload()
+    except Exception:
+        pass
+
+    # Stop ESPresense MQTT subscriber
+    try:
+        from .const import DATA_ESPRESENSE_MQTT
+        esp = hass.data.get(DOMAIN, {}).pop(DATA_ESPRESENSE_MQTT, None)
+        if esp:
+            await esp.async_stop()
     except Exception:
         pass
 

@@ -54,6 +54,7 @@ from .const import (
     OBJECT_STORE_KEY, MAPS_STORE_KEY, MODEL_STORE_KEY,
     ALERTS_STORE_KEY, MOVEMENT_STORE_KEY,
     DATA_TRACEBACK, TRACEBACK_STORE_KEY,
+    DATA_ESPRESENSE_MQTT,
 )
 from .calibration_store import CalibrationStore
 from .build_info import BUILD_ID, BUILD_VERSION
@@ -460,6 +461,20 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception as e:
         snapshot["ble"] = {"radios": [], "advertisements": [], "diag": {"ok": False, "errors": ["ble_snapshot_error"]}}
 
+
+    # --- ESPresense MQTT (merge into BLE snapshot if enabled) ---
+    try:
+        esp_mqtt = hass.data.get(DOMAIN, {}).get(DATA_ESPRESENSE_MQTT)
+        if esp_mqtt is not None:
+            esp_snap = esp_mqtt.get_snapshot(max_age_s=_ble_age if "_ble_age" in dir() else 900)
+            ble = snapshot.setdefault("ble", {"radios": [], "advertisements": [], "diag": {}})
+            ble["radios"].extend(esp_snap.get("radios", []))
+            ble["advertisements"].extend(esp_snap.get("advertisements", []))
+            ble["diag"]["espresense"] = esp_snap.get("diag", {})
+            # Re-sort merged advertisements by age
+            ble["advertisements"].sort(key=lambda x: x.get("age_s", 1e9))
+    except Exception:
+        pass
 
     # --- Areas (rooms) ---
     area_by_id: dict[str, str] = {}
@@ -2536,6 +2551,9 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("ha_entity_distance_enabled"): bool,
         vol.Optional("ha_entity_scanner_distance_enabled"): bool,
         vol.Optional("mqtt_publish_enabled"): bool,
+        vol.Optional("espresense_mqtt_enabled"): bool,
+        vol.Optional("espresense_topic_prefix"): str,
+        vol.Optional("espresense_room_map"): dict,
         vol.Optional("lights_panel_enabled"): bool,
         vol.Optional("bermuda_ignore"): bool,
         vol.Optional("tags_room_events_enabled"): bool,
@@ -2663,7 +2681,8 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["advanced_extra_tabs"] = [t for t in msg["advanced_extra_tabs"] if t in valid]
         for key in ("ha_entity_tracker_enabled", "ha_entity_area_enabled",
                     "ha_entity_distance_enabled", "ha_entity_scanner_distance_enabled",
-                    "mqtt_publish_enabled", "lights_panel_enabled", "bermuda_ignore",
+                    "mqtt_publish_enabled", "espresense_mqtt_enabled",
+                    "lights_panel_enabled", "bermuda_ignore",
                     "tags_room_events_enabled", "tags_nfc_identify_enabled",
                     "tags_phone_autolink_enabled", "quiet_mode",
                     "overview_2d_mode", "beacon_profiling_enabled",
@@ -2686,7 +2705,29 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["distance_stationary_devices"] = [str(x) for x in raw] if isinstance(raw, list) else []
         if "onboarding_completed" in msg:
             payload["onboarding_completed"] = bool(msg["onboarding_completed"])
+        if "espresense_topic_prefix" in msg:
+            _raw_prefix = str(msg["espresense_topic_prefix"]).strip().strip("/").replace("#", "").replace("+", "")
+            if _raw_prefix:
+                payload["espresense_topic_prefix"] = _raw_prefix
+        if "espresense_room_map" in msg:
+            _raw_rm = msg["espresense_room_map"]
+            payload["espresense_room_map"] = {str(k): str(v) for k, v in _raw_rm.items()} if isinstance(_raw_rm, dict) else {}
         await st.async_set(**payload)
+
+        # ── Dynamic ESPresense MQTT toggle ───────────────────────────────────
+        if "espresense_mqtt_enabled" in msg:
+            try:
+                if bool(msg["espresense_mqtt_enabled"]):
+                    _prefix = st.data.get("espresense_topic_prefix", "espresense")
+                    from .espresense_mqtt import async_setup_espresense_mqtt
+                    hass.async_create_task(async_setup_espresense_mqtt(hass, _prefix))
+                else:
+                    _esp = hass.data.get(DOMAIN, {}).pop(DATA_ESPRESENSE_MQTT, None)
+                    if _esp:
+                        hass.async_create_task(_esp.async_stop())
+            except Exception:
+                pass
+
         # ── Toggle existing PadSpan entities in HA registry ──────────────────
         _entity_keys = {
             "ha_entity_tracker_enabled": "__tracker",

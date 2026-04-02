@@ -19,7 +19,7 @@ Organisation:
 
 DOMAIN = "padspan_ha"
 NAME = "PadSpan HA"
-VERSION = "0.19.28"
+VERSION = "0.19.29"
 
 # ── Config-flow option keys ───────────────────────────────────────────────────
 CONF_ENABLE_CLOUD = "enable_cloud"
@@ -59,6 +59,7 @@ DATA_TRACEBACK = "traceback"
 DATA_TAG_INTEGRATION = "tag_integration"
 DATA_FABRIC = "fabric"                       # positioning fabric (Phase 1 decoupling)
 DATA_DEVICE_REGISTRY = "device_registry"     # stable device identity registry
+DATA_ESPRESENSE_MQTT = "espresense_mqtt"     # ESPresense MQTT ingestion module
 
 # ── HA Storage file keys (.storage/<key>) ─────────────────────────────────────
 SETTINGS_STORE_KEY = "padspan_ha.settings"
