@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.19.36";
-const BUILD_ID = "20260402T192423Z";
+const APP_VERSION = "0.19.37";
+const BUILD_ID = "20260402T193212Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -809,20 +809,20 @@ class PadSpanHaApp extends HTMLElement {
   }
 
   // ── Render Scheduler ──────────────────────────────────────────────────────
-  // Batches multiple render requests into a single requestAnimationFrame.
-  // Before this, poll + wakeUp + refreshAll could each trigger a full DOM
-  // rebuild within milliseconds of each other — the user sees 2-3 flashes.
-  // Now they all call _scheduleRender(), which coalesces into ONE render
-  // at the next animation frame (~16ms max delay, imperceptible).
+  // User-triggered renders (tab clicks, actions): execute IMMEDIATELY.
+  // Background renders (poll, wakeUp, refreshAll): batch via rAF to prevent
+  // multiple DOM rebuilds within the same frame.
   _scheduleRender(fromPoll = false) {
-    // If ANY caller in this batch wants a full (non-poll) render, do full
-    if (!fromPoll) this._scheduleFullRebuild = true;
-    if (this._renderRAF) return; // already batched for this frame
+    if (!fromPoll) {
+      // User action — render immediately, no delay
+      this._renderCurrentView(false);
+      return;
+    }
+    // Background/poll — batch via requestAnimationFrame
+    if (this._renderRAF) return; // already batched
     this._renderRAF = requestAnimationFrame(() => {
       this._renderRAF = null;
-      const usePollMode = !this._scheduleFullRebuild;
-      this._scheduleFullRebuild = false;
-      this._renderCurrentView(usePollMode);
+      this._renderCurrentView(true);
     });
   }
 
