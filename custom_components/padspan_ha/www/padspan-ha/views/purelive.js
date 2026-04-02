@@ -14,6 +14,7 @@ import { useState, useEffect, useRef, useMemo } from "../lib/preact-bundle.js";
 
 // ── Persistent state ─────────────────────────────────────────────────────────
 let _mapNode = null;
+let _prevDeviceRooms = {};  // {eid: room} for movement ghost detection
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
 const STYLES_ID = "purelive-styles";
@@ -74,6 +75,23 @@ function injectStyles(root) {
       background:rgba(10,30,15,.5);padding:2px 8px;border-radius:6px;pointer-events:none;
       transition:opacity .3s;opacity:0}
     .pl-zoom-level.visible{opacity:1}
+
+    /* ── Scanner sonar pulse ───────────────────────── */
+    @keyframes pl-sonar-ring{0%{transform:scale(.6);opacity:.5}100%{transform:scale(2.2);opacity:0}}
+    .pl-sonar{position:relative;display:inline-block}
+    .pl-sonar::before,.pl-sonar::after{content:'';position:absolute;inset:-3px;border-radius:50%;border:1.5px solid var(--sonar-color,#52b788);animation:pl-sonar-ring 2.5s ease-out infinite;pointer-events:none}
+    .pl-sonar::after{animation-delay:1.2s}
+    .pl-sonar.offline::before,.pl-sonar.offline::after{animation-play-state:paused;opacity:.2}
+
+    /* ── Staggered bump on data change ────────────── */
+    @keyframes pl-bump{0%{filter:brightness(1)}30%{filter:brightness(1.4)}100%{filter:brightness(1)}}
+
+    /* ── Device movement ghost ────────────────────── */
+    @keyframes pl-ghost-fly{0%{opacity:.8;transform:translateX(0)}100%{opacity:0;transform:translateX(40px) scale(.7)}}
+    .pl-ghost{animation:pl-ghost-fly .8s ease-out forwards;pointer-events:none;font-size:10px;color:#5eead4;white-space:nowrap;padding:2px 8px;border-radius:6px;background:rgba(82,183,136,.1);border:1px solid rgba(82,183,136,.2)}
+
+    /* ── Stat value flash on change ───────────────── */
+    @keyframes pl-flash{0%{color:#5eead4}100%{color:inherit}}
 
     @media(max-width:640px){
       .pl-stats{padding:6px 10px;gap:10px;border-radius:10px}
@@ -139,7 +157,9 @@ function Scanners({ radios, ctx }) {
                onClick=${() => ctx.actions.showScannerDetail?.(r)}>
             <div className="pl-scanner-id" style="color:${online ? "#52b788" : "#f87171"}">${sid}</div>
             <div className="pl-scanner-cnt">${r.device_count ?? 0}</div>
-            <div className="pl-scanner-dot" style="background:${online ? "#52b788" : "#f87171"}"></div>
+            <div className="pl-sonar ${online ? "" : "offline"}" style="--sonar-color:${online ? "#52b788" : "#f87171"}">
+              <div className="pl-scanner-dot" style="background:${online ? "#52b788" : "#f87171"}"></div>
+            </div>
           </div>
         `;
       })}
@@ -400,13 +420,45 @@ function RadioStrip({ radios, ctx }) {
           <div key=${r.source} style="flex-shrink:0;display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);cursor:pointer;font-size:11px"
                title="${r.source}"
                onClick=${() => ctx.actions.showScannerDetail?.(r)}>
-            <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></span>
+            <span className="pl-sonar ${online ? "" : "offline"}" style="--sonar-color:${color};width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></span>
             <span style="font-weight:700;color:${color}">${sid}</span>
             ${area && html`<span style="color:#94a3b8">${area}</span>`}
             <span style="color:#64748b">${devs} dev</span>
           </div>
         `;
       })}
+    </div>
+  `;
+}
+
+// ── Movement Ghosts ──────────────────────────────────────────────────────────
+// Shows a brief animated label when a device moves between rooms.
+function MovementGhosts({ roomTagMap }) {
+  const [ghosts, setGhosts] = useState([]);
+
+  useEffect(() => {
+    const current = {};
+    for (const [room, eids] of Object.entries(roomTagMap || {})) {
+      for (const eid of (eids || [])) current[eid] = room;
+    }
+    const newG = [];
+    for (const [eid, room] of Object.entries(current)) {
+      const prev = _prevDeviceRooms[eid];
+      if (prev && prev !== room) {
+        newG.push({ id: `${eid}-${Date.now()}`, label: String(eid).substring(0, 14), from: prev, to: room });
+      }
+    }
+    _prevDeviceRooms = current;
+    if (newG.length) {
+      setGhosts(g => [...g, ...newG].slice(-8));
+      setTimeout(() => setGhosts(g => g.filter(x => !newG.find(n => n.id === x.id))), 900);
+    }
+  }, [roomTagMap]);
+
+  if (!ghosts.length) return null;
+  return html`
+    <div style="position:absolute;top:50px;left:10px;z-index:7;display:flex;flex-direction:column;gap:4px;pointer-events:none">
+      ${ghosts.map(g => html`<div key=${g.id} className="pl-ghost">${g.label} → ${g.to}</div>`)}
     </div>
   `;
 }
@@ -433,6 +485,7 @@ function App({ ctx }) {
         <${IsoMap} ctx=${ctx} />
         <${Stats} rooms=${rooms} objects=${objects} radios=${radios.length} loading=${loading} />
         <${Scanners} radios=${radios} ctx=${ctx} />
+        <${MovementGhosts} roomTagMap=${rtm} />
       <//>
       <${RadioStrip} radios=${radios} ctx=${ctx} />
       <${Ticker} dataMode=${mode} radios=${radios.length} objects=${objects} version=${ctx.state.version} cal=${cal} />
