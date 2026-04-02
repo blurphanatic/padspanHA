@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.19.24";
-const BUILD_ID = "20260402T161050Z";
+const APP_VERSION = "0.19.25";
+const BUILD_ID = "20260402T161454Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -36,6 +36,8 @@ const CHANNEL = "beta";
 let SAMPLE_SNAPSHOT = null;
 let HELP = {};
 const VIEWS = {};
+// Expose VIEWS globally so the Preact bridge can access loaded view modules
+window.__PADSPAN_VIEWS = VIEWS;
 
 // Map of view id → module path for on-demand loading
 const _VIEW_PATHS = {

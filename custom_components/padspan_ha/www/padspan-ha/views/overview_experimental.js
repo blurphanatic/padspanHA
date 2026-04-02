@@ -242,26 +242,105 @@ function ModeSubtitle({ dataMode, version }) {
   `;
 }
 
-// ── Map Placeholder ──────────────────────────────────────────────────────────
-// Phase B: will embed the isometric floor stack here.
-// For now, shows a placeholder with a note about the rendering approach.
-function MapPlaceholder({ ctx }) {
-  const mapCount = (ctx.state.maps?.list || []).length;
-  return html`
-    <div className="card" style="min-height:200px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;border:1px dashed #2d5a3d">
-      <div style="font-size:36px;opacity:.4">🗺️</div>
-      <div style="color:#94a3b8;font-size:13px;text-align:center">
-        3D Isometric Map — Phase B
-        <div style="font-size:11px;margin-top:4px">
-          ${mapCount} floor plan${mapCount !== 1 ? "s" : ""} loaded.
-          The iso map will render here with Preact-managed SVG diffing.
-        </div>
-      </div>
-      <button className="btn inline" style="font-size:11px" onClick=${() => { ctx.state.view = "overview"; ctx.actions.renderCurrentView(); }}>
-        Switch to standard Overview to see the map
-      </button>
-    </div>
-  `;
+// ── Iso Map Bridge ───────────────────────────────────────────────────────────
+// Renders the vanilla JS isometric floor stack inside a Preact-managed ref.
+// The map is built once by overview.js's render(), then the DOM node is moved
+// into this component's container.  Preact manages everything else; the map
+// is imperatively managed for now (Phase C will port it to Preact SVG).
+//
+// On 5-second poll updates, ctx.state._isoUpdateObjects() is called by
+// panel.js — this swaps only the object dots inside the existing SVG,
+// so the map never flickers.
+
+/** Persistent ref for the map DOM node — survives Preact re-renders */
+let _mapNode = null;
+let _mapNodeCtxId = null;  // track which ctx produced it
+
+function IsoMap({ ctx }) {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    // Build the map using the standard overview module's render function.
+    // We call it once, extract the map element, and keep it.
+    // The overview.render(ctx) returns a <section> with children:
+    //   [companionCard?, mapEl?, grid(.grid)]
+    // The map is everything that isn't .grid and isn't the companion card.
+    try {
+      // Only rebuild if we don't have a map node yet or it was detached
+      if (!_mapNode || !_mapNode.isConnected) {
+        // Get the overview module (already loaded by panel.js)
+        const ovMod = window.__PADSPAN_VIEWS?.overview;
+        if (!ovMod) {
+          // Fallback: try dynamic import
+          import("./overview.js").then(m => {
+            window.__PADSPAN_VIEWS = window.__PADSPAN_VIEWS || {};
+            window.__PADSPAN_VIEWS.overview = m;
+            // Re-render to pick it up
+            if (containerRef.current && !_mapNode) {
+              _buildMap(m, ctx, containerRef.current);
+            }
+          }).catch(() => {});
+          return;
+        }
+        _buildMap(ovMod, ctx, containerRef.current);
+      } else if (_mapNode && containerRef.current && _mapNode.parentNode !== containerRef.current) {
+        // Map exists but isn't in our container — re-attach it
+        containerRef.current.innerHTML = "";
+        containerRef.current.appendChild(_mapNode);
+      }
+    } catch (e) {
+      console.warn("[PadSpan Preact] IsoMap bridge error:", e);
+    }
+  });
+
+  return html`<div ref=${containerRef} style="min-height:200px"></div>`;
+}
+
+function _buildMap(ovMod, ctx, container) {
+  try {
+    // Render the full overview to get the map element
+    const section = ovMod.render(ctx);
+    if (!section) return;
+
+    // Find the map element — it's the child that isn't .grid and contains
+    // either an SVG, the iso controls, or the room grid
+    let mapEl = null;
+    for (const child of section.children) {
+      // Skip the KPI grid
+      if (child.classList?.contains("grid")) continue;
+      // Skip companion card (has specific data attribute or small height)
+      if (child.querySelector?.("[data-companion]")) continue;
+      // The map element typically contains the iso SVG wrapper or room grid
+      if (child.querySelector?.("svg") || child.querySelector?.("[style*='overflow:auto']") ||
+          child.querySelector?.("input[type='range']") || child.className === "card") {
+        mapEl = child;
+        break;
+      }
+    }
+
+    // If we couldn't find it specifically, take the largest child (the map is always the biggest)
+    if (!mapEl) {
+      let maxH = 0;
+      for (const child of section.children) {
+        if (child.classList?.contains("grid")) continue;
+        // Use the element itself as the candidate
+        if (child.children?.length > maxH) {
+          maxH = child.children.length;
+          mapEl = child;
+        }
+      }
+    }
+
+    if (mapEl) {
+      _mapNode = mapEl;
+      container.innerHTML = "";
+      container.appendChild(mapEl);
+    }
+  } catch (e) {
+    console.warn("[PadSpan Preact] Map build failed:", e);
+  }
 }
 
 // ── Root App Component ───────────────────────────────────────────────────────
@@ -315,7 +394,7 @@ function OverviewApp({ ctx }) {
         />
       `}
 
-      <${MapPlaceholder} ctx=${ctx} />
+      <${IsoMap} ctx=${ctx} />
 
       ${!isBasic && html`
         <div className="grid" style="margin-top:16px">
