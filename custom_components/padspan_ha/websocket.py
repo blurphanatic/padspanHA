@@ -210,6 +210,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_device_registry_label_set)
     websocket_api.async_register_command(hass, ws_device_registry_add_identity)
     websocket_api.async_register_command(hass, ws_device_registry_delete)
+    websocket_api.async_register_command(hass, ws_espresense_companion_import)
     _ensure_log_handler()
     _LOGGER.debug("PadSpan HA websocket commands registered")
 
@@ -2554,6 +2555,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("espresense_mqtt_enabled"): bool,
         vol.Optional("espresense_topic_prefix"): str,
         vol.Optional("espresense_room_map"): dict,
+        vol.Optional("espresense_companion_url"): str,
         vol.Optional("lights_panel_enabled"): bool,
         vol.Optional("bermuda_ignore"): bool,
         vol.Optional("tags_room_events_enabled"): bool,
@@ -2705,6 +2707,9 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["distance_stationary_devices"] = [str(x) for x in raw] if isinstance(raw, list) else []
         if "onboarding_completed" in msg:
             payload["onboarding_completed"] = bool(msg["onboarding_completed"])
+        if "espresense_companion_url" in msg:
+            _url = str(msg["espresense_companion_url"]).strip().rstrip("/")
+            payload["espresense_companion_url"] = _url
         if "espresense_topic_prefix" in msg:
             _raw_prefix = str(msg["espresense_topic_prefix"]).strip().strip("/").replace("#", "").replace("+", "")
             if _raw_prefix:
@@ -9277,3 +9282,235 @@ async def ws_device_registry_delete(hass: HomeAssistant, connection, msg) -> Non
         return
     await dev_reg.async_delete(pid)
     connection.send_result(msg["id"], {"ok": True, "padspan_id": pid})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ESPresense Companion Import
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/espresense_companion_import"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_espresense_companion_import(hass: HomeAssistant, connection, msg) -> None:
+    """Import floors, rooms, and scanner positions from ESPresense Companion.
+
+    Reads from the Companion REST API (GET /api/state/config), parses the
+    response, and writes to PadSpan's ModelStore (room_geometry_m,
+    scanner_positions_m, room_meta, floors).  Merge-only — never deletes
+    existing PadSpan data.
+    """
+    import aiohttp
+
+    _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    if not _st:
+        connection.send_error(msg["id"], "no_settings", "Settings not loaded")
+        return
+
+    url = (_st.data.get("espresense_companion_url") or "").strip().rstrip("/")
+    if not url:
+        connection.send_error(msg["id"], "no_url",
+                              "ESPresense Companion URL not configured. Set it in Manage → ESPresense MQTT.")
+        return
+
+    # ── Fetch config from Companion REST API ─────────────────────────────
+    api_url = f"{url}/api/state/config"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    connection.send_error(msg["id"], "http_error",
+                                          f"Companion returned HTTP {resp.status} from {api_url}")
+                    return
+                data = await resp.json()
+    except aiohttp.ClientError as e:
+        connection.send_error(msg["id"], "connect_failed",
+                              f"Cannot reach ESPresense Companion at {api_url}: {e}")
+        return
+    except Exception as e:
+        connection.send_error(msg["id"], "fetch_error", f"Failed to fetch config: {e}")
+        return
+
+    if not isinstance(data, dict):
+        connection.send_error(msg["id"], "bad_data", "Unexpected response format from Companion")
+        return
+
+    # ── Parse and import ─────────────────────────────────────────────────
+    mdl = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    if not mdl:
+        connection.send_error(msg["id"], "no_model", "ModelStore not loaded")
+        return
+
+    stats = {"floors": 0, "rooms": 0, "scanners": 0, "skipped": 0}
+
+    # ── Floors ───────────────────────────────────────────────────────────
+    floors_raw = data.get("floors") or []
+    if not isinstance(floors_raw, list):
+        floors_raw = []
+
+    existing_floors = {f.get("id"): f for f in (mdl.data.get("floors") or [])}
+
+    for fl in floors_raw:
+        if not isinstance(fl, dict):
+            continue
+        fl_name = str(fl.get("name") or fl.get("id") or "").strip()
+        fl_id = str(fl.get("id") or fl_name).strip().lower().replace(" ", "_")
+        if not fl_id:
+            stats["skipped"] += 1
+            continue
+
+        # Add floor if not already present
+        if fl_id not in existing_floors:
+            floors_list = mdl.data.setdefault("floors", [])
+            # Derive z_level from bounds if available
+            bounds = fl.get("bounds") or []
+            z_level = 0
+            if isinstance(bounds, list) and len(bounds) >= 2:
+                try:
+                    z_level = int(round(float(bounds[0][2]) if len(bounds[0]) > 2 else 0))
+                except Exception:
+                    pass
+            floors_list.append({"id": fl_id, "name": fl_name, "level": z_level})
+            existing_floors[fl_id] = floors_list[-1]
+            stats["floors"] += 1
+
+        # ── Rooms (nested under floor) ───────────────────────────────────
+        rooms_raw = fl.get("rooms") or []
+        if not isinstance(rooms_raw, list):
+            continue
+
+        room_meta = mdl.data.setdefault("room_meta", {})
+        geometry = mdl.data.setdefault("room_geometry_m", {})
+
+        for rm in rooms_raw:
+            if not isinstance(rm, dict):
+                continue
+            rm_name = str(rm.get("name") or "").strip()
+            if not rm_name:
+                stats["skipped"] += 1
+                continue
+
+            # Room meta
+            if rm_name not in room_meta:
+                room_meta[rm_name] = {"floor_id": fl_id}
+                color = rm.get("color")
+                if color:
+                    room_meta[rm_name]["color"] = str(color)
+
+            # Room geometry (polygon in metres — direct match)
+            points = rm.get("points") or []
+            if isinstance(points, list) and len(points) >= 3:
+                try:
+                    pts_m = [[round(float(p[0]), 3), round(float(p[1]), 3)]
+                             for p in points if isinstance(p, (list, tuple)) and len(p) >= 2]
+                    if len(pts_m) >= 3:
+                        geometry[rm_name] = {
+                            "type": "poly",
+                            "floor_id": fl_id,
+                            "origin": "espresense_import",
+                            "points_m": pts_m,
+                        }
+                        stats["rooms"] += 1
+                except Exception:
+                    stats["skipped"] += 1
+
+    # ── Nodes (scanner positions) ────────────────────────────────────────
+    nodes_raw = data.get("nodes") or []
+    if not isinstance(nodes_raw, list):
+        nodes_raw = []
+
+    positions = mdl.data.setdefault("scanner_positions_m", {})
+    scanners = mdl.data.setdefault("scanners", {})
+
+    for nd in nodes_raw:
+        if not isinstance(nd, dict):
+            continue
+        nd_name = str(nd.get("name") or nd.get("id") or "").strip()
+        nd_id = str(nd.get("id") or nd_name).strip().lower().replace(" ", "_")
+        if not nd_name or not nd_id:
+            stats["skipped"] += 1
+            continue
+
+        # Enabled check
+        if nd.get("enabled") is False:
+            stats["skipped"] += 1
+            continue
+
+        # Position [x, y, z] in metres
+        point = nd.get("point") or []
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            stats["skipped"] += 1
+            continue
+
+        try:
+            x_m = round(float(point[0]), 3)
+            y_m = round(float(point[1]), 3)
+            z_m = round(float(point[2]), 3) if len(point) > 2 else 2.4
+        except (ValueError, TypeError):
+            stats["skipped"] += 1
+            continue
+
+        # Determine floor from node's floor assignment or z coordinate
+        nd_floors = nd.get("floors") or []
+        fl_id = nd_floors[0] if isinstance(nd_floors, list) and nd_floors else DEFAULT_FLOOR_ID
+
+        # Determine room from node position (check which room polygon contains the point)
+        room = ""
+        for rm_name, geo in (mdl.data.get("room_geometry_m") or {}).items():
+            if geo.get("floor_id") != fl_id or geo.get("type") != "poly":
+                continue
+            pts = geo.get("points_m") or []
+            if _point_in_polygon(x_m, y_m, pts):
+                room = rm_name
+                break
+
+        # Use ESPresense source naming (matches MQTT topic espresense/rooms/{id})
+        source = f"espresense_{nd_id}"
+
+        positions[source] = {
+            "x_m": x_m,
+            "y_m": y_m,
+            "z_m": z_m,
+            "floor_id": fl_id,
+            "origin": "espresense_import",
+        }
+
+        # Also add to scanners dict for auto-sync
+        if source not in scanners or scanners[source].get("source_type") != "manual":
+            scanners[source] = {
+                "room": room or nd_name,
+                "floor_id": fl_id,
+                "source_type": "espresense_import",
+            }
+
+        stats["scanners"] += 1
+
+    # ── Save ─────────────────────────────────────────────────────────────
+    await mdl.store.async_save(mdl.data)
+
+    _LOGGER.info(
+        "ESPresense Companion import: %d floors, %d rooms, %d scanners (%d skipped) from %s",
+        stats["floors"], stats["rooms"], stats["scanners"], stats["skipped"], url,
+    )
+
+    connection.send_result(msg["id"], {
+        "ok": True,
+        **stats,
+        "source": url,
+    })
+
+
+def _point_in_polygon(x: float, y: float, polygon: list) -> bool:
+    """Ray-casting point-in-polygon test for [x,y] coordinate lists."""
+    n = len(polygon)
+    if n < 3:
+        return False
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = float(polygon[i][0]), float(polygon[i][1])
+        xj, yj = float(polygon[j][0]), float(polygon[j][1])
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside

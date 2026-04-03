@@ -66,6 +66,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "espresense_mqtt_enabled": False,
     "espresense_topic_prefix": "espresense",
     "espresense_room_map": {},              # {"espresense_room": "HA Area Name"}
+    # ESPresense Companion import (standalone .NET app / HA add-on)
+    "espresense_companion_url": "",         # e.g. "http://espresense:8267" — empty = disabled
     # Lights sidebar panel (off by default — requires HA restart to take effect)
     "lights_panel_enabled": False,
     "bermuda_ignore": False,  # experimental: ignore all Bermuda integration data

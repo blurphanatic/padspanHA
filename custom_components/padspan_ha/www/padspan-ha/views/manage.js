@@ -1600,6 +1600,62 @@ function _haEspresenseSection(ctx, el, settings){
     ));
   }
 
+  // ── Companion Import ──────────────────────────────────────────────────
+  card.appendChild(el("div",{style:"margin-top:14px;padding-top:12px;border-top:1px solid #2d1b4e"}));
+  card.appendChild(el("div",{style:"font-weight:700;font-size:13px;color:#a78bfa;margin-bottom:4px"}, "Import from ESPresense Companion"));
+  card.appendChild(el("div",{style:"font-size:11px;color:#94a3b8;line-height:1.5;margin-bottom:8px"},
+    "Import floor layouts, room boundaries, and scanner/node positions from ESPresense Companion. " +
+    "Coordinates are in metres — PadSpan imports them directly into its positioning fabric. " +
+    "This is a merge — existing PadSpan data is preserved."
+  ));
+
+  const urlRow = el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap"});
+  urlRow.appendChild(el("span",{style:"font-size:12px;color:#94a3b8;white-space:nowrap"}, "Companion URL:"));
+  const urlInput = el("input",{type:"text",value:settings.espresense_companion_url||"",placeholder:"http://espresense:8267"});
+  urlInput.style.cssText = "background:#0a150e;border:1px solid #2d5a3d;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:12px;width:240px";
+  const urlSave = el("button",{class:"btn inline",style:"font-size:11px;padding:3px 10px"});
+  urlSave.textContent = "Save URL";
+  urlSave.addEventListener("click", async()=>{
+    const v = urlInput.value.trim().replace(/\/$/,"");
+    urlSave.disabled = true;
+    try {
+      await ctx.actions.settingsSet({espresense_companion_url: v});
+      ctx.toast(v ? "Companion URL saved." : "Companion URL cleared.");
+      urlSave.textContent = "Saved \u2714";
+      setTimeout(()=>{ urlSave.textContent = "Save URL"; urlSave.disabled = false; }, 2000);
+    } catch(e){ ctx.toast("Failed: "+String(e), true); urlSave.disabled = false; }
+  });
+  urlRow.appendChild(urlInput);
+  urlRow.appendChild(urlSave);
+  card.appendChild(urlRow);
+
+  // Import button (only enabled when URL is configured)
+  const importStatus = el("div",{style:"font-size:11px;color:#94a3b8;margin-top:6px"});
+  const importBtn = el("button",{class:"btn inline",style:"font-size:12px;padding:4px 14px;border-color:#8b5cf6;color:#a78bfa"});
+  importBtn.textContent = "\u2B07 Import Now";
+  if(!settings.espresense_companion_url){
+    importBtn.disabled = true;
+    importBtn.title = "Save a Companion URL first";
+  }
+  importBtn.addEventListener("click", async()=>{
+    importBtn.disabled = true; importBtn.textContent = "Importing\u2026";
+    importStatus.textContent = "";
+    importStatus.style.color = "#94a3b8";
+    try {
+      const r = await ctx.actions.wsCall("padspan_ha/espresense_companion_import", {});
+      importStatus.style.color = "#52b788";
+      importStatus.textContent = "\u2714 Imported: " + (r.floors||0) + " floors, " + (r.rooms||0) + " rooms, " + (r.scanners||0) + " scanners" + (r.skipped ? " (" + r.skipped + " skipped)" : "");
+      ctx.toast("ESPresense Companion import complete!");
+    } catch(e){
+      importStatus.style.color = "#f87171";
+      importStatus.textContent = "\u2718 " + (e.message||String(e));
+      ctx.toast("Import failed: " + (e.message||e), true);
+    }
+    importBtn.disabled = false; importBtn.textContent = "\u2B07 Import Now";
+  });
+  card.appendChild(importBtn);
+  card.appendChild(importStatus);
+
   return card;
 }
 
