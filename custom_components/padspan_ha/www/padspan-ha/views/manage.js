@@ -1602,7 +1602,10 @@ function _haEspresenseSection(ctx, el, settings){
 
   // ── Companion Import ──────────────────────────────────────────────────
   card.appendChild(el("div",{style:"margin-top:14px;padding-top:12px;border-top:1px solid #2d1b4e"}));
-  card.appendChild(el("div",{style:"font-weight:700;font-size:13px;color:#a78bfa;margin-bottom:4px"}, "Import from ESPresense Companion"));
+  card.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
+    el("span",{style:"font-weight:700;font-size:13px;color:#a78bfa"}, "Import from ESPresense Companion"),
+    ctx.helpers.helpBtn("manage_espresense_import"),
+  ]));
   card.appendChild(el("div",{style:"font-size:11px;color:#94a3b8;line-height:1.5;margin-bottom:8px"},
     "Import floor layouts, room boundaries, and scanner/node positions from ESPresense Companion. " +
     "Coordinates are in metres — PadSpan imports them directly into its positioning fabric. " +
