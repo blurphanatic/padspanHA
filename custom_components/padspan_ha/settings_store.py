@@ -68,6 +68,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "espresense_room_map": {},              # {"espresense_room": "HA Area Name"}
     # ESPresense Companion import (standalone .NET app / HA add-on)
     "espresense_companion_url": "",         # e.g. "http://espresense:8267" — empty = disabled
+    # Aggressive BLE reseed for Shelly/passive proxies (off by default)
+    # When enabled, reseeds from HA discovered-service-info every 5s instead of 30s.
+    # Helps with HA 2026.4+ where habluetooth dedup suppresses repeat callbacks.
+    "aggressive_ble_reseed": False,
     # Lights sidebar panel (off by default — requires HA restart to take effect)
     "lights_panel_enabled": False,
     "bermuda_ignore": False,  # experimental: ignore all Bermuda integration data

@@ -839,8 +839,50 @@ function _haEntities(ctx, el){
   wrap.appendChild(_haEntityAudit(ctx, el));
   wrap.appendChild(_haEntityLibrary(ctx, el));
   wrap.appendChild(_haMqttSection(ctx, el, settings));
+  wrap.appendChild(_haBleReseedSection(ctx, el, settings));
   wrap.appendChild(_haEspresenseSection(ctx, el, settings));
   return wrap;
+}
+
+/**
+ * Aggressive BLE Reseed toggle — for Shelly and passive BLE proxies.
+ * When enabled, reseeds from HA's discovered-service-info API every 5s
+ * instead of 30s. Helps with HA 2026.4+ where habluetooth dedup
+ * suppresses repeat callbacks from passive proxies.
+ */
+function _haBleReseedSection(ctx, el, settings){
+  const card = el("div",{class:"card",style:"border-color:#26c6da"});
+
+  const header = el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:6px"});
+  header.appendChild(el("span",{style:"font-weight:700;font-size:14px"},"BLE Proxy Compatibility"));
+  header.appendChild(el("span",{style:"font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid #26c6da;color:#26c6da"},"HA 2026.4+"));
+  card.appendChild(header);
+
+  card.appendChild(el("div",{style:"font-size:12px;color:#94a3b8;line-height:1.5;margin-bottom:10px"},
+    "Enable this if Shelly BLE proxies or other passive Bluetooth relay scanners aren't showing RSSI values during calibration. " +
+    "This increases the BLE data reseed frequency from every 30 seconds to every 5 seconds, working around a deduplication change in HA 2026.4."
+  ));
+
+  const chk = el("input",{type:"checkbox"});
+  chk.checked = settings.aggressive_ble_reseed === true;
+  chk.addEventListener("change", async()=>{
+    try {
+      await ctx.actions.settingsSet({aggressive_ble_reseed: chk.checked});
+      ctx.toast(chk.checked ? "Aggressive BLE reseed enabled (5s cycle)." : "BLE reseed set to normal (30s cycle).");
+      ctx.actions.renderRooms();
+    } catch(e){ ctx.toast("Failed: "+String(e), true); chk.checked = !chk.checked; }
+  });
+  card.appendChild(el("label",{style:"display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px"},[
+    chk, el("span",{},"Enable aggressive BLE reseed (5s) for passive proxy scanners"),
+  ]));
+
+  if(settings.aggressive_ble_reseed){
+    card.appendChild(el("div",{style:"font-size:11px;color:#26c6da;margin-top:6px"},
+      "Active — reseeding from HA Bluetooth discovery every 5 seconds. This uses slightly more CPU but ensures Shelly and passive scanner data stays fresh."
+    ));
+  }
+
+  return card;
 }
 
 /** Static intro card explaining the four entity types PadSpan creates. */

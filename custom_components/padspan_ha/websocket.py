@@ -2556,6 +2556,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("espresense_topic_prefix"): str,
         vol.Optional("espresense_room_map"): dict,
         vol.Optional("espresense_companion_url"): str,
+        vol.Optional("aggressive_ble_reseed"): bool,
         vol.Optional("lights_panel_enabled"): bool,
         vol.Optional("bermuda_ignore"): bool,
         vol.Optional("tags_room_events_enabled"): bool,
@@ -2683,7 +2684,7 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["advanced_extra_tabs"] = [t for t in msg["advanced_extra_tabs"] if t in valid]
         for key in ("ha_entity_tracker_enabled", "ha_entity_area_enabled",
                     "ha_entity_distance_enabled", "ha_entity_scanner_distance_enabled",
-                    "mqtt_publish_enabled", "espresense_mqtt_enabled",
+                    "mqtt_publish_enabled", "espresense_mqtt_enabled", "aggressive_ble_reseed",
                     "lights_panel_enabled", "bermuda_ignore",
                     "tags_room_events_enabled", "tags_nfc_identify_enabled",
                     "tags_phone_autolink_enabled", "quiet_mode",
