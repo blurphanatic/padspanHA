@@ -1591,7 +1591,7 @@ function _haEspresenseSection(ctx, el, settings){
 
   const header = el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:6px"});
   header.appendChild(el("span",{style:"font-weight:700;font-size:14px"},"ESPresense MQTT"));
-  header.appendChild(el("span",{style:"font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid #8b5cf6;color:#8b5cf6"},"Beta"));
+  header.appendChild(el("span",{style:"font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid #8b5cf6;color:#8b5cf6"},"Experimental"));
   card.appendChild(header);
 
   card.appendChild(el("div",{style:"font-size:12px;color:#94a3b8;line-height:1.5;margin-bottom:10px"},
@@ -1646,6 +1646,7 @@ function _haEspresenseSection(ctx, el, settings){
   card.appendChild(el("div",{style:"margin-top:14px;padding-top:12px;border-top:1px solid #2d1b4e"}));
   card.appendChild(el("div",{style:"display:flex;align-items:center;gap:8px;margin-bottom:4px"},[
     el("span",{style:"font-weight:700;font-size:13px;color:#a78bfa"}, "Import from ESPresense Companion"),
+    el("span",{style:"font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid #8b5cf6;color:#8b5cf6"},"Experimental"),
     ctx.helpers.helpBtn("manage_espresense_import"),
   ]));
   card.appendChild(el("div",{style:"font-size:11px;color:#94a3b8;line-height:1.5;margin-bottom:8px"},
