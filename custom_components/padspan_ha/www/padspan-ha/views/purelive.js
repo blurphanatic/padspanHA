@@ -30,8 +30,8 @@ function injectStyles(root) {
     .pl-viewport:active{cursor:grabbing}
     .pl-viewport-inner{transform-origin:0 0;will-change:transform}
 
-    /* Zoom controls */
-    .pl-zoom{position:absolute;bottom:12px;right:12px;z-index:6;display:flex;flex-direction:column;gap:4px}
+    /* Zoom controls — inside viewport, above the controls bar */
+    .pl-zoom{position:absolute;bottom:52px;right:12px;z-index:6;display:flex;flex-direction:column;gap:4px}
     .pl-zoom button{width:36px;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.1);
       background:rgba(10,30,15,.6);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
       color:#e2e8f0;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;
@@ -71,10 +71,21 @@ function injectStyles(root) {
     .pl-poll{height:2px;background:linear-gradient(90deg,#52b788,#5eead4);border-radius:1px;animation:pl-poll 5s linear infinite}
 
     /* Zoom level indicator */
-    .pl-zoom-level{position:absolute;bottom:12px;left:12px;z-index:6;font-size:10px;color:#64748b;
+    .pl-zoom-level{position:absolute;bottom:52px;left:12px;z-index:6;font-size:10px;color:#64748b;
       background:rgba(10,30,15,.5);padding:2px 8px;border-radius:6px;pointer-events:none;
       transition:opacity .3s;opacity:0}
     .pl-zoom-level.visible{opacity:1}
+
+    /* Map controls bar */
+    .pl-controls{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);z-index:7;
+      background:rgba(10,30,15,.75);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:6px 14px;
+      box-shadow:0 4px 16px rgba(0,0,0,.3);cursor:pointer;display:flex;align-items:center;gap:10px;
+      transition:all .2s}
+    .pl-controls:hover{border-color:rgba(82,183,136,.2)}
+    .pl-controls.expanded{cursor:default;padding:8px 14px;max-width:calc(100% - 120px)}
+    .pl-controls input[type="range"]{height:4px;cursor:pointer}
+    .pl-controls button{transition:background .15s,border-color .15s}
 
     /* ── Scanner sonar pulse ───────────────────────── */
     @keyframes pl-sonar-ring{0%{transform:scale(.6);opacity:.5}100%{transform:scale(2.2);opacity:0}}
@@ -123,6 +134,8 @@ function injectStyles(root) {
       .pl-zoom button{width:32px;height:32px;font-size:16px}
       .pl-zoom{bottom:56px;right:6px}
       .pl-feed{bottom:56px;left:6px;max-width:200px}
+      .pl-controls{bottom:6px;max-width:calc(100% - 24px);font-size:9px}
+      .pl-controls.expanded{padding:6px 10px}
     }
   `;
   root.appendChild(s);
@@ -368,8 +381,8 @@ function MapViewport({ children }) {
 }
 
 // ── Iso Map Bridge ───────────────────────────────────────────────────────────
-// Keeps map controls (floor/spacing sliders, buttons) but hides the overview's
-// room list panel (duplicates Pure Live's own overlays).
+// Embeds the overview's 3D isometric SVG.  All overview controls are hidden;
+// Pure Live provides its own compact control bar (MapControls component).
 
 function _cleanupMapElement(map) {
   // The overview map element (from renderIsoFloorStack) contains these children:
@@ -421,6 +434,156 @@ function IsoMap({ ctx }) {
 
   return html`<div ref=${ref}></div>`;
 }
+
+// ── Map Controls (compact floating bar) ──────────────────────────────────────
+// Pure Live's own control bar — modifies ctx.state and forces a map rebuild.
+// Compact single-row design that sits at the bottom of the map viewport.
+
+function MapControls({ ctx }) {
+  const settings = ctx.state.settings || {};
+  const floors = ctx.state.model?.floors || [];
+
+  // Floor focus — read from same state the overview uses
+  const [focusIdx, setFocusIdx] = useState(ctx.state._overviewIsoFocusIdx ?? settings.overview_iso_focus ?? 0);
+  const [gap, setGap] = useState(ctx.state._overviewFloorGap ?? settings.overview_iso_floor_gap ?? 150);
+  const [lr, setLr] = useState(ctx.state._overviewHorizGap ?? settings.overview_iso_horiz_gap ?? 0);
+  const [expanded, setExpanded] = useState(false);
+
+  // Compute floor label from focus index
+  const maps = (ctx.state.maps?.list) || [];
+  const sortedLevels = [...new Set(maps.map(m => m.stack?.z_level ?? 0))].sort((a, b) => a - b);
+  // Build positions: all → l0 → l0+l1 → l1 → ...
+  const positions = useMemo(() => {
+    const p = [null];
+    for (let i = 0; i < sortedLevels.length; i++) {
+      p.push(sortedLevels[i]);
+      if (i < sortedLevels.length - 1) p.push([sortedLevels[i], sortedLevels[i + 1]]);
+    }
+    return p;
+  }, [sortedLevels.join(",")]);
+
+  const maxIdx = positions.length - 1;
+  const getFocusLabel = (idx) => {
+    const pos = positions[Math.max(0, Math.min(idx, maxIdx))];
+    if (pos === null) return "All";
+    const zArr = Array.isArray(pos) ? pos : [pos];
+    return zArr.map(z => {
+      const f = floors.find(x => x.level === z);
+      return f ? (f.name || `L${z}`) : `L${z}`;
+    }).join("+");
+  };
+
+  const rebuild = () => {
+    _mapNode = null; // force full rebuild on next render
+    ctx.actions.renderRooms();
+  };
+
+  const onFocus = (e) => {
+    const v = parseInt(e.target.value, 10);
+    setFocusIdx(v);
+    ctx.state._overviewIsoFocusIdx = v;
+    rebuild();
+  };
+  const onGap = (e) => {
+    const v = parseInt(e.target.value, 10);
+    setGap(v);
+    ctx.state._overviewFloorGap = v;
+    rebuild();
+  };
+  const onLr = (e) => {
+    const v = parseInt(e.target.value, 10);
+    setLr(v);
+    ctx.state._overviewHorizGap = v;
+    rebuild();
+  };
+
+  const save = async () => {
+    try {
+      await ctx.actions.settingsSet({
+        overview_iso_floor_gap: gap,
+        overview_iso_horiz_gap: lr,
+        overview_iso_focus: focusIdx,
+      });
+    } catch (e) { /* silent */ }
+  };
+
+  // Toggle buttons for walls, persistent pins, heatmap, distortion
+  const [walls, setWalls] = useState(!!ctx.state._overviewShowWalls);
+  const [pins, setPins] = useState(!!ctx.state._overviewPersistentPins);
+  const [heat, setHeat] = useState(!!ctx.state._overviewShowHeatmap);
+  const [dist, setDist] = useState(!!ctx.state._overviewShowDistortion);
+
+  const toggleWalls = () => { const v = !walls; setWalls(v); ctx.state._overviewShowWalls = v; rebuild(); };
+  const togglePins = () => { const v = !pins; setPins(v); ctx.state._overviewPersistentPins = v; rebuild(); };
+  const toggleHeat = () => {
+    const v = !heat; setHeat(v); ctx.state._overviewShowHeatmap = v;
+    if (v) { setDist(false); ctx.state._overviewShowDistortion = false; }
+    rebuild();
+  };
+  const toggleDist = () => {
+    const v = !dist; setDist(v); ctx.state._overviewShowDistortion = v;
+    if (v) { setHeat(false); ctx.state._overviewShowHeatmap = false; }
+    rebuild();
+  };
+
+  const btnStyle = (on, onColor = "#52b788", onBg = "rgba(82,183,136,.15)") =>
+    `padding:2px 8px;font-size:10px;border-radius:6px;border:1px solid ${on ? onColor + "80" : "rgba(255,255,255,.1)"};` +
+    `background:${on ? onBg : "transparent"};color:${on ? onColor : "#64748b"};cursor:pointer;white-space:nowrap`;
+
+  if (!expanded) {
+    return html`
+      <div className="pl-controls" onClick=${() => setExpanded(true)}>
+        <span style="font-size:10px;color:#94a3b8;cursor:pointer">Controls</span>
+        <span style="font-size:10px;color:#64748b">${getFocusLabel(focusIdx)}</span>
+      </div>
+    `;
+  }
+
+  return html`
+    <div className="pl-controls expanded">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:10px;color:#94a3b8;white-space:nowrap">Floor:</span>
+        <input type="range" min="0" max=${maxIdx} value=${focusIdx} onInput=${onFocus}
+               style="width:80px;accent-color:#52b788" />
+        <span style="font-size:10px;color:#5eead4;min-width:40px">${getFocusLabel(focusIdx)}</span>
+
+        ${sortedLevels.length > 1 && html`<${_Fragment}>
+          <span style="font-size:10px;color:#94a3b8;white-space:nowrap">Gap:</span>
+          <input type="range" min="60" max="340" step="10" value=${gap} onInput=${onGap}
+                 style="width:60px;accent-color:#52b788" />
+          <span style="font-size:10px;color:#94a3b8;white-space:nowrap">L/R:</span>
+          <input type="range" min="-120" max="120" step="10" value=${lr} onInput=${onLr}
+                 style="width:60px;accent-color:#52b788" />
+        </${_Fragment}>`}
+
+        <button style=${btnStyle(walls, "#a5b4fc", "rgba(99,102,241,.15)")} onClick=${toggleWalls}>
+          Walls${walls ? " ON" : ""}
+        </button>
+        <button style=${btnStyle(pins, "#fca5a5", "rgba(239,68,68,.12)")} onClick=${togglePins}>
+          Pins${pins ? " ON" : ""}
+        </button>
+        ${!!(settings.radio_map_enabled) && html`
+          <button style=${btnStyle(heat, "#d8b4fe", "rgba(168,85,247,.15)")} onClick=${toggleHeat}>
+            Heat${heat ? " ON" : ""}
+          </button>
+        `}
+        ${!!(settings.distortion_map_enabled) && html`
+          <button style=${btnStyle(dist, "#fdba74", "rgba(249,115,22,.15)")} onClick=${toggleDist}>
+            Warp${dist ? " ON" : ""}
+          </button>
+        `}
+
+        <button style="padding:2px 8px;font-size:10px;border-radius:6px;border:1px solid rgba(82,183,136,.3);background:transparent;color:#52b788;cursor:pointer"
+                onClick=${save}>Save</button>
+        <button style="padding:2px 8px;font-size:10px;border-radius:6px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#64748b;cursor:pointer"
+                onClick=${() => setExpanded(false)}>Collapse</button>
+      </div>
+    </div>
+  `;
+}
+
+// Preact Fragment shim (htm doesn't have <> shorthand)
+const _Fragment = ({ children }) => children;
 
 // ── Radio List (bottom strip) ────────────────────────────────────────────────
 function RadioStrip({ radios, ctx }) {
@@ -595,6 +758,7 @@ function App({ ctx }) {
         <${Scanners} radios=${radios} ctx=${ctx} />
         <${MovementGhosts} roomTagMap=${rtm} />
         <${ActivityFeed} roomTagMap=${rtm} />
+        <${MapControls} ctx=${ctx} />
       </div>
       <${FollowedTracker} ctx=${ctx} snap=${snap} />
       <${RadioStrip} radios=${radios} ctx=${ctx} />
