@@ -93,7 +93,7 @@ export function render(ctx){
     const scanners = Object.keys(scannerDevices).sort();
 
     if(scanners.length){
-      const scannerCards = el("div",{class:"grid"});
+      const scannerCards = el("div",{style:"columns:220px auto;column-gap:10px"});
 
       for(const src of scanners){
         const sid = _sid(src);
@@ -154,7 +154,7 @@ export function render(ctx){
         };
 
         const areaName = radioAreas[src];
-        const card = el("div",{class:"card",style:"overflow:hidden"},[
+        const card = el("div",{class:"card",style:"overflow:hidden;break-inside:avoid;margin-bottom:10px"},[
           el("div",{class:"row",style:"flex-wrap:wrap;gap:4px"},[
             el("div",{style:"flex:1;min-width:0"},[
               el("div",{class:"h2",style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, scannerName),
