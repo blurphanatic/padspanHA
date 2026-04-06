@@ -1942,10 +1942,12 @@ function renderIrkPanel(ctx) {
     el("div", { style: `font-size:22px;font-weight:700;color:${color || "#52b788"}` }, String(num)),
     el("div", { style: "font-size:11px;color:#94a3b8;margin-top:2px" }, label),
   ]);
+  const _resolverSummary = (snap?.objects?.summary?.resolver) || {};
+  const _actualResolved = _resolverSummary.resolved || 0;
   kpiRow.appendChild(kpi(devices.length, "IRKs Registered", devices.length > 0 ? "#22c55e" : "#f59e0b"));
   kpiRow.appendChild(kpi(rpaCount, "Rotating MACs", rpaCount > 0 ? "#60a5fa" : "#334155"));
-  kpiRow.appendChild(kpi(st.irk_count || devices.length, "Resolved", "#22c55e"));
-  kpiRow.appendChild(kpi(Math.max(0, rpaCount - (st.irk_count || devices.length)), "Unresolved RPAs", "#f59e0b"));
+  kpiRow.appendChild(kpi(_actualResolved, "Resolved", _actualResolved > 0 ? "#22c55e" : "#f59e0b"));
+  kpiRow.appendChild(kpi(Math.max(0, rpaCount - _actualResolved), "Unresolved RPAs", "#f59e0b"));
   kpiRow.appendChild(kpi(totalBle, "Total BLE MACs", "#94a3b8"));
   wrap.appendChild(kpiRow);
 

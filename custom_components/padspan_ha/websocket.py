@@ -1071,8 +1071,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         canonical_by_addr: dict[str, dict[str, Any]] = {}   # addr → {canonical_id, name, kind}
         ibeacon_groups: dict[str, dict[str, Any]] = {}       # "ibeacon:uuid:major:minor" → merged group
         ibeacon_addrs: set[str] = set()                      # MAC addresses absorbed into an iBeacon group
-        _resolver_diag: dict[str, Any] = {"irk_devices": 0, "resolved": 0, "ibeacon_groups": 0, "rpa_count": 0, "errors": []}
+        _resolver_diag: dict[str, Any] = {"irk_devices": 0, "resolved": 0, "ibeacon_groups": 0, "rpa_count": 0, "crypto_ok": True, "errors": []}
         try:
+            from .private_ble_resolver import crypto_available as _crypto_avail
+            _resolver_diag["crypto_ok"] = _crypto_avail()
             resolver = await _get_ble_resolver(hass)
             _resolver_diag["irk_devices"] = resolver.device_count
             _resolver_diag["rpa_count"] = resolver.count_rpas(ble_by_addr.keys())

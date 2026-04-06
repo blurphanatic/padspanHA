@@ -312,6 +312,7 @@ class PrivateBLEResolver:
             "source_info": getattr(self, "_source_info", []),
             "has_private_ble_integration": has_integration,
             "mobile_apps": mobile_apps,
+            "crypto_available": crypto_available(),
         }
 
     # ── iBeacon ───────────────────────────────────────────────────────────────
@@ -392,6 +393,9 @@ def _is_rpa(address: str) -> bool:
         return False
 
 
+_crypto_ok: bool | None = None  # None = untested, True/False after first attempt
+
+
 def _address_matches_irk(address: str, irk: bytes) -> bool:
     """
     Check if a BLE RPA was generated from the given IRK.
@@ -407,6 +411,8 @@ def _address_matches_irk(address: str, irk: bytes) -> bool:
     Tries FOUR byte order permutations to handle LE/BE ambiguity across
     iOS, Android, HA storage, Apple Keychain, and nRF Connect exports.
     """
+    global _crypto_ok  # noqa: PLW0603
+
     try:
         import binascii  # noqa: PLC0415
         from cryptography.hazmat.primitives.ciphers import (  # noqa: PLC0415
@@ -437,10 +443,51 @@ def _address_matches_irk(address: str, irk: bytes) -> bool:
                 continue
             tested.add(candidate)
             if _test(candidate):
+                if _crypto_ok is None:
+                    _crypto_ok = True
                 return True
 
+        if _crypto_ok is None:
+            _crypto_ok = True  # crypto works even though no match
         return False
-    except Exception:
+    except ImportError as exc:
+        if _crypto_ok is None:
+            _crypto_ok = False
+            _LOGGER.error(
+                "IRK resolution DISABLED — missing Python cryptography library: %s. "
+                "Install 'cryptography' package or the Private BLE Device integration.",
+                exc,
+            )
+        return False
+    except Exception as exc:
+        if _crypto_ok is not False:
+            _crypto_ok = False
+            _LOGGER.error(
+                "IRK resolution FAILED — AES crypto error: %s. "
+                "Private BLE devices will NOT be resolved until this is fixed.",
+                exc,
+            )
+        return False
+
+
+def crypto_available() -> bool:
+    """Return whether the cryptography library is available for IRK resolution."""
+    global _crypto_ok  # noqa: PLW0603
+    if _crypto_ok is not None:
+        return _crypto_ok
+    try:
+        from cryptography.hazmat.primitives.ciphers import (  # noqa: PLC0415,F401
+            Cipher, algorithms, modes,
+        )
+        from cryptography.hazmat.backends import default_backend  # noqa: PLC0415,F401
+        _crypto_ok = True
+        return True
+    except ImportError:
+        _crypto_ok = False
+        _LOGGER.error(
+            "IRK resolution DISABLED — 'cryptography' Python package not available. "
+            "Private BLE device tracking will not work."
+        )
         return False
 
 
