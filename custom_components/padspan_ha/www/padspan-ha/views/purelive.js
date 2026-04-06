@@ -113,12 +113,16 @@ function injectStyles(root) {
     .pl-feed-item .pl-feed-room{color:#52b788;font-weight:600}
 
     @media(max-width:640px){
-      .pl-stats{padding:6px 10px;gap:10px;border-radius:10px}
+      .pl-stats{padding:6px 10px;gap:10px;border-radius:10px;top:6px;left:6px}
       .pl-stats-val{font-size:18px}
-      .pl-scanners{padding:4px 6px;gap:4px}
+      .pl-scanners{top:auto;bottom:56px;right:6px;left:auto;padding:4px 6px;gap:4px;
+        max-width:calc(100vw - 60px);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+      .pl-scanners::-webkit-scrollbar{display:none}
       .pl-ticker{flex-wrap:wrap;gap:8px;justify-content:center}
       .pl-ticker>div:first-child{width:100%;order:-1}
       .pl-zoom button{width:32px;height:32px;font-size:16px}
+      .pl-zoom{bottom:56px;right:6px}
+      .pl-feed{bottom:56px;left:6px;max-width:200px}
     }
   `;
   root.appendChild(s);
@@ -368,26 +372,20 @@ function MapViewport({ children }) {
 // room list panel (duplicates Pure Live's own overlays).
 
 function _cleanupMapElement(map) {
-  // The map element (from renderIsoFloorStack) contains:
-  //   ctrlRow — floor/spacing/L-R sliders + buttons → KEEP
-  //   isoOverlayCtrl — heatmap sliders → KEEP
-  //   isoWrap (position:relative) — SVG + tooltip → KEEP
-  //   roomListPanel — table of rooms → HIDE (Pure Live has its own)
+  // The overview map element (from renderIsoFloorStack) contains these children:
+  //   ctrlRow        — floor/spacing/L-R sliders + toggle buttons (display:flex)
+  //   isoOverlayCtrl — heatmap gain/contrast/warp sliders (display:flex or none)
+  //   isoWrap        — the SVG canvas (position:relative)
+  //   roomListPanel  — room table
   //
-  // Room list panel is typically the last child, and is a div containing a <table>
-  // or a .muted message. Hide it by checking for table content or muted class.
+  // In Pure Live we ONLY keep the SVG canvas (isoWrap).  Everything else either
+  // overlaps with Pure Live's own floating overlays or is redundant.
   for (const child of [...map.children]) {
     const css = child.style?.cssText || "";
-    // Keep the iso wrapper (position:relative)
+    // Keep the iso wrapper (position:relative) — this holds the SVG
     if (css.includes("position") && css.includes("relative")) continue;
-    // Keep control rows (display:flex with sliders/buttons)
-    if (css.includes("display") && css.includes("flex") && child.querySelector("input[type='range']")) continue;
-    // Keep overlay controls (heatmap sliders bar)
-    if (child.querySelector && child.querySelector("input[type='range']")) continue;
-    // Hide the room list panel (contains table or muted text)
-    if (child.querySelector && (child.querySelector("table") || child.querySelector(".muted"))) {
-      child.style.display = "none";
-    }
+    // Hide everything else: control rows, overlay sliders, room list
+    child.style.display = "none";
   }
 }
 
