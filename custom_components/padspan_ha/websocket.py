@@ -150,6 +150,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_calibration_compute_model)
     websocket_api.async_register_command(hass, ws_calibration_retrain_rf)
     websocket_api.async_register_command(hass, ws_calibration_swap_radio)
+    websocket_api.async_register_command(hass, ws_calibration_relearn_radio)
     websocket_api.async_register_command(hass, ws_calibration_beacon_profiles)
     websocket_api.async_register_command(hass, ws_calibration_health_check)
     websocket_api.async_register_command(hass, ws_movement_history_get)
@@ -4696,6 +4697,96 @@ async def ws_calibration_swap_radio(hass: HomeAssistant, connection, msg) -> Non
         "ok": True,
         "old_source": old_source,
         "new_source": new_source,
+        "updated_readings": updated_readings,
+    })
+
+
+@websocket_api.websocket_command(
+    {
+        "type": "padspan_ha/calibration_relearn_radio",
+        vol.Required("source"): str,
+        vol.Required("gain_db"): vol.Coerce(float),
+    }
+)
+@websocket_api.async_response
+async def ws_calibration_relearn_radio(hass: HomeAssistant, connection, msg) -> None:
+    """Shift stored RSSI readings for a scanner after an antenna upgrade/downgrade.
+
+    When hardware changes (e.g. new antenna), the RSSI values in calibration
+    data become invalid.  Instead of recollecting every point, the user provides
+    the dB gain difference and we adjust all stored samples:
+      new_rssi = old_rssi + gain_db   (positive = upgrade, negative = downgrade)
+    Then recompute mean/std per reading and rebuild the model.
+    """
+    source = str(msg.get("source") or "").strip()
+    gain_db = float(msg.get("gain_db", 0.0))
+
+    if not source:
+        connection.send_error(msg["id"], "invalid_source", "source is required")
+        return
+    if gain_db == 0.0:
+        connection.send_error(msg["id"], "invalid_gain", "gain_db must be non-zero")
+        return
+    if not -30.0 <= gain_db <= 30.0:
+        connection.send_error(msg["id"], "invalid_gain", "gain_db must be between -30 and +30")
+        return
+
+    cal = await _get_cal_store(hass)
+    updated_readings = 0
+    updated_points = 0
+
+    for pt in cal.data.get("points", []):
+        point_touched = False
+        for sr in pt.get("scanner_readings", []):
+            if sr.get("source") != source:
+                continue
+            # Shift every raw RSSI sample
+            samples = sr.get("rssi_samples", [])
+            if samples:
+                sr["rssi_samples"] = [round(s + gain_db, 1) for s in samples]
+            # Recompute mean and std from shifted samples
+            shifted = sr["rssi_samples"] if samples else []
+            if shifted:
+                sr["mean_rssi"] = round(sum(shifted) / len(shifted), 2)
+                if len(shifted) >= 2:
+                    m = sr["mean_rssi"]
+                    sr["std_rssi"] = round(
+                        (sum((v - m) ** 2 for v in shifted) / len(shifted)) ** 0.5, 2
+                    )
+            elif "mean_rssi" in sr:
+                # No raw samples stored — shift the mean directly
+                sr["mean_rssi"] = round(sr["mean_rssi"] + gain_db, 2)
+            updated_readings += 1
+            point_touched = True
+        if point_touched:
+            updated_points += 1
+
+    if updated_readings == 0:
+        connection.send_error(
+            msg["id"], "no_data",
+            f"No calibration readings found for scanner '{source}'"
+        )
+        return
+
+    # Persist shifted data
+    await cal.store.async_save(cal.data)
+
+    # Rebuild the model with the adjusted readings
+    try:
+        maps_data = None
+        ms = hass.data.get(DOMAIN, {}).get("maps")
+        if ms:
+            maps_data = ms.data if hasattr(ms, "data") else ms
+        cal.compute_model(maps_data=maps_data)
+        await cal.store.async_save(cal.data)
+    except Exception as e:
+        _LOGGER.warning("PadSpan HA relearn model recompute failed: %s", e)
+
+    connection.send_result(msg["id"], {
+        "ok": True,
+        "source": source,
+        "gain_db": gain_db,
+        "updated_points": updated_points,
         "updated_readings": updated_readings,
     })
 

@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.19.45";
-const BUILD_ID = "20260404T171954Z";
+const APP_VERSION = "0.19.46";
+const BUILD_ID = "20260406T201156Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -1539,6 +1539,11 @@ class PadSpanHaApp extends HTMLElement {
         objectEvict: async (key) => await this._callWS({ type: "padspan_ha/object_evict", key }),
         calibrationComputeModel: async () => await this._callWS({ type: "padspan_ha/calibration_compute_model" }),
         calibrationSwapRadio: async (old_source, new_source) => await this._callWS({ type: "padspan_ha/calibration_swap_radio", old_source, new_source }),
+        calibrationRelearnRadio: async (source, gain_db) => {
+          const res = await this._callWS({ type: "padspan_ha/calibration_relearn_radio", source, gain_db });
+          await this._getLiveSnapshot();
+          return res;
+        },
         calibrationHealthCheck: async () => await this._callWS({ type: "padspan_ha/calibration_health_check" }),
         wsCall: async (type, data={}) => await this._callWS({ type, ...data }),
         // ── Followed Beacons ──────────────────────────────────────────────

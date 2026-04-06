@@ -469,6 +469,90 @@ function _scannerMap(ctx, el, haFloors){
     wrap.appendChild(swapCard);
   }
 
+  // ── Relearn Radio card ──────────────────────────────────────────────────────
+  // Adjust calibration data after antenna upgrade/downgrade — shifts all stored
+  // RSSI readings for a scanner by a user-provided dB gain.
+  if(calSources.size >= 1){
+    const relearnCard = el("div",{class:"card",style:"padding:10px"});
+    relearnCard.appendChild(el("div",{style:"font-weight:700;font-size:12px;margin-bottom:4px"},"Relearn Radio"));
+    relearnCard.appendChild(el("div",{style:"font-size:10px;color:#78909c;margin-bottom:8px;line-height:1.5"},
+      "Adjust calibration after an antenna upgrade or downgrade. Shifts all stored RSSI readings for the selected scanner by the dB gain you specify."));
+
+    const radioName = (src) => {
+      const r = radios.find(r=>r.source===src);
+      return r ? (r.area_name||r.area||r.name||src) : src;
+    };
+    const rlSorted = [...calSources].sort((a,b)=>radioName(a).localeCompare(radioName(b)));
+
+    const rlRow = el("div",{style:"display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;margin-bottom:8px"});
+    const rlSel = document.createElement("select");
+    rlSel.style.cssText = "font-size:11px;width:100%";
+    rlSel.appendChild((() => { const o = document.createElement("option"); o.value=""; o.textContent="— select scanner —"; return o; })());
+    for(const src of rlSorted){
+      const o = document.createElement("option"); o.value=src; o.textContent=radioName(src); rlSel.appendChild(o);
+    }
+
+    const rlGainWrap = el("div",{style:"display:flex;align-items:center;gap:4px"});
+    const rlGainInput = document.createElement("input");
+    rlGainInput.type = "number"; rlGainInput.min = "-30"; rlGainInput.max = "30"; rlGainInput.step = "1"; rlGainInput.value = "3";
+    rlGainInput.style.cssText = "width:48px;text-align:center;background:#0a150e;border:1px solid #2d5a3d;border-radius:4px;color:#e2e8f0;padding:2px 4px;font-size:11px";
+    rlGainInput.title = "Positive = antenna upgrade (stronger signal); Negative = downgrade (weaker)";
+    rlGainWrap.appendChild(rlGainInput);
+    rlGainWrap.appendChild(el("span",{style:"font-size:10px;color:#78909c"},"dB"));
+
+    rlRow.appendChild(rlSel);
+    rlRow.appendChild(rlGainWrap);
+    relearnCard.appendChild(rlRow);
+
+    const rlHint = el("div",{style:"font-size:9px;color:#94a3b8;margin-bottom:8px"},
+      "Positive = upgrade (e.g. +3 dB for better antenna). Negative = downgrade.");
+
+    // Summary line
+    const rlSummary = el("div",{style:"font-size:10px;color:#78909c;margin-bottom:8px;min-height:14px"});
+    const updateRlSummary = () => {
+      if(!rlSel.value){ rlSummary.textContent = ""; return; }
+      const pts = (calData.points||[]).filter(pt =>
+        (pt.scanner_readings||[]).some(sr=>sr.source===rlSel.value)
+      ).length;
+      const g = parseFloat(rlGainInput.value) || 0;
+      rlSummary.textContent = pts > 0
+        ? `Will shift ${pts} calibration point${pts!==1?"s":""} by ${g > 0 ? "+" : ""}${g} dB. Model will be recomputed.`
+        : `No calibration data found for this scanner.`;
+      rlSummary.style.color = pts > 0 ? "#38bdf8" : "#78909c";
+    };
+    rlSel.addEventListener("change", updateRlSummary);
+    rlGainInput.addEventListener("input", updateRlSummary);
+    relearnCard.appendChild(rlHint);
+    relearnCard.appendChild(rlSummary);
+
+    // Apply button
+    const rlBtnWrap = el("div");
+    const makeRlBtn = () => {
+      const btn = el("button",{class:"btn inline",style:"font-size:11px;width:100%"},"Relearn");
+      btn.addEventListener("click", async () => {
+        const source = rlSel.value;
+        const gain = Math.max(-30, Math.min(30, parseFloat(rlGainInput.value) || 0));
+        if(!source){ ctx.toast("Select a scanner first.", true); return; }
+        if(gain === 0){ ctx.toast("Gain must be non-zero.", true); return; }
+        btn.disabled = true; btn.textContent = "Relearning…";
+        try {
+          const res = await ctx.actions.calibrationRelearnRadio(source, gain);
+          ctx.state.calibration = null;
+          ctx.toast(`Relearned ${radioName(source)}: ${gain > 0 ? "+" : ""}${gain} dB — ${res.updated_points} point${res.updated_points!==1?"s":""} updated.`);
+          ctx.actions.renderRooms();
+        } catch(e){
+          ctx.toast("Relearn failed: " + String(e), true);
+          rlBtnWrap.innerHTML = "";
+          rlBtnWrap.appendChild(makeRlBtn());
+        }
+      });
+      return btn;
+    };
+    rlBtnWrap.appendChild(makeRlBtn());
+    relearnCard.appendChild(rlBtnWrap);
+    wrap.appendChild(relearnCard);
+  }
+
   // Reload button
   wrap.appendChild(el("div",{style:"text-align:center"},[
     el("button",{class:"btn inline",style:"font-size:11px",

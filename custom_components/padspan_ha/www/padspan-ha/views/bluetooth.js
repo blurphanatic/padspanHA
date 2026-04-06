@@ -561,6 +561,71 @@ function renderScanners(ctx, radios, sources, adsAll) {
     };
     makeResetBtn();
 
+    // Relearn button — shift stored RSSI readings after antenna upgrade/downgrade.
+    // Two-step flow: click → dB gain input + confirm; applies shift to all calibration data.
+    const relearnWrap = document.createElement("div");
+    relearnWrap.style.cssText = "display:flex;align-items:center;gap:4px;margin-top:3px";
+    const makeRelearnBtn = () => {
+      relearnWrap.innerHTML = "";
+      const rb = document.createElement("button");
+      rb.className = "btn tiny";
+      rb.style.cssText = "font-size:10px;padding:1px 8px;color:#38bdf8;border-color:#38bdf840";
+      rb.textContent = "Relearn";
+      rb.title = "Adjust calibration data after antenna upgrade/downgrade — shifts stored RSSI by a dB gain";
+      rb.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        relearnWrap.innerHTML = "";
+        const lbl = document.createElement("span");
+        lbl.style.cssText = "font-size:10px;color:#38bdf8";
+        lbl.textContent = "dB gain:";
+        const inp = document.createElement("input");
+        inp.type = "number"; inp.min = "-30"; inp.max = "30"; inp.step = "1"; inp.value = "3";
+        inp.style.cssText = "width:48px;text-align:center;background:#0a150e;border:1px solid #2d5a3d;border-radius:4px;color:#e2e8f0;padding:2px 4px;font-size:11px";
+        inp.title = "Positive = antenna upgrade (stronger signal); Negative = downgrade (weaker)";
+        const helpTxt = document.createElement("span");
+        helpTxt.style.cssText = "font-size:9px;color:#94a3b8";
+        helpTxt.textContent = "+ upgrade / − downgrade";
+        const applyBtn = document.createElement("button");
+        applyBtn.className = "btn tiny";
+        applyBtn.style.cssText = "font-size:10px;padding:1px 8px;background:#0c4a6e;border-color:#38bdf8;color:#7dd3fc";
+        applyBtn.textContent = "Apply";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "btn tiny";
+        cancelBtn.style.cssText = "font-size:10px;padding:1px 8px;color:#94a3b8;border-color:#94a3b840";
+        cancelBtn.textContent = "Cancel";
+        applyBtn.addEventListener("click", async (ev2) => {
+          ev2.stopPropagation();
+          const gain = Math.max(-30, Math.min(30, parseFloat(inp.value) || 0));
+          if (gain === 0) { ctx.toast("Gain must be non-zero", true); return; }
+          relearnWrap.innerHTML = "";
+          const spin = document.createElement("span");
+          spin.style.cssText = "font-size:10px;color:#94a3b8";
+          spin.textContent = "Relearning…";
+          relearnWrap.appendChild(spin);
+          try {
+            const res = await ctx.actions.calibrationRelearnRadio(src, gain);
+            ctx.toast(`Relearned ${name || src}: ${gain > 0 ? "+" : ""}${gain} dB — ${res.updated_points} point(s) updated`);
+            makeRelearnBtn();
+            ctx.actions.renderRooms();
+          } catch (e) {
+            ctx.toast("Relearn failed: " + String(e), true);
+            makeRelearnBtn();
+          }
+        });
+        cancelBtn.addEventListener("click", (ev2) => {
+          ev2.stopPropagation();
+          makeRelearnBtn();
+        });
+        relearnWrap.appendChild(lbl);
+        relearnWrap.appendChild(inp);
+        relearnWrap.appendChild(helpTxt);
+        relearnWrap.appendChild(applyBtn);
+        relearnWrap.appendChild(cancelBtn);
+      });
+      relearnWrap.appendChild(rb);
+    };
+    makeRelearnBtn();
+
     // Scanner health badge (Phase 3: per-scanner reliability)
     const _sh = (snap && snap.scanner_health && snap.scanner_health[src]) || null;
     let healthBadge = null;
@@ -588,7 +653,7 @@ function renderScanners(ctx, radios, sources, adsAll) {
     const subRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px" }, subParts);
 
     const div = el("div", { class: "bt-scanner-row" + (r.lost || r.disabled ? " warn" : "") }, [
-      el("div", { class: "bt-scanner-main" }, [ nameRow, subRow, healthBadge, offsetRow, resetWrap ].filter(Boolean)),
+      el("div", { class: "bt-scanner-main" }, [ nameRow, subRow, healthBadge, offsetRow, relearnWrap, resetWrap ].filter(Boolean)),
       el("div", { class: "bt-scanner-meta" }, meta.join(" • ") || "—"),
     ]);
     if(r.lost || r.disabled) div.style.opacity = "0.7";
