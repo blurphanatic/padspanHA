@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.19.51";
-const BUILD_ID = "20260406T221949Z";
+const APP_VERSION = "0.19.52";
+const BUILD_ID = "20260406T222836Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -119,7 +119,6 @@ const MENU = [
   ["overview","Overview","mdi:view-dashboard-outline"],
   ["purelive","Pure Live","mdi:lightning-bolt-outline"],
   ["follow","Follow","mdi:crosshairs-gps"],
-  ["objects","Objects","mdi:tag-multiple-outline"],
   ["devices","Devices","mdi:devices"],
   ["bluetooth","Bluetooth","mdi:bluetooth"],
   ["presence","Presence","mdi:map-marker-radius-outline"],
@@ -143,7 +142,7 @@ const MENU = [
 //   Dev       — everything visible (includes QA, Sandbox, raw Debug, etc.)
 const BASIC_TABS = new Set(["follow", "overview", "maps", "settings", "training"]);
 const ADVANCED_DEFAULT = new Set(["follow","overview","maps","settings","training","manage","calibration","traceback","occupancy","health"]);
-const DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox","purelive"];
+const DEV_ONLY_TABS = ["devices","bluetooth","presence","monitor","qa","sandbox","purelive"];
 
 // Accent color per tab — used for the sidebar dot, mobile nav, and active highlights
 const MENU_COLORS = {

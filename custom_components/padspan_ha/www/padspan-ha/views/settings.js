@@ -2124,8 +2124,8 @@ function _settingsFeatures(ctx, el){
 }
 
 // ── UI Structure tab ──────────────────────────────────────────────────────────
-const _DEV_ONLY_TABS = ["objects","devices","bluetooth","presence","monitor","qa","sandbox"];
-const _TAB_LABELS = {objects:"Objects",devices:"Devices",bluetooth:"Bluetooth",presence:"Presence",monitor:"Monitor",qa:"QA",sandbox:"Sandbox"};
+const _DEV_ONLY_TABS = ["devices","bluetooth","presence","monitor","qa","sandbox"];
+const _TAB_LABELS = {devices:"Devices",bluetooth:"Bluetooth",presence:"Presence",monitor:"Monitor",qa:"QA",sandbox:"Sandbox"};
 
 function _settingsUI(ctx, el){
   const wrap = el("div",{});

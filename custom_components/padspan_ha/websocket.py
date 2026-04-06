@@ -2681,7 +2681,7 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         if "signal_loss_linger_s" in msg:
             payload["signal_loss_linger_s"] = max(10, min(300, int(msg["signal_loss_linger_s"])))
         if "advanced_extra_tabs" in msg:
-            valid = {"objects","devices","bluetooth","presence","monitor","qa","sandbox"}
+            valid = {"devices","bluetooth","presence","monitor","qa","sandbox"}
             payload["advanced_extra_tabs"] = [t for t in msg["advanced_extra_tabs"] if t in valid]
         for key in ("ha_entity_tracker_enabled", "ha_entity_area_enabled",
                     "ha_entity_distance_enabled", "ha_entity_scanner_distance_enabled",
