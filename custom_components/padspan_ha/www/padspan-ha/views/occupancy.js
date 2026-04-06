@@ -19,7 +19,7 @@ export function render(ctx) {
       el("div", { style: "font-weight:700;font-size:16px;color:#5eead4" }, "Occupancy Dashboard"),
     ]),
     el("div", { style: "font-size:12px;color:#94a3b8;margin-top:2px" },
-      "Estimated building and per-room occupancy from BLE device counting."),
+      "Estimated occupancy from BLE device counting with RSSI co-location clustering. Devices carried together are grouped into clusters."),
   ]));
 
   // Container for async content
@@ -52,17 +52,23 @@ async function _loadOccupancy(ctx, el, container) {
         el("div", { style: "font-size:13px;color:#94a3b8;margin-top:2px" },
           `${res.total_estimate === 1 ? "person" : "people"} estimated in building`),
         el("div", { style: "font-size:11px;color:#64748b;margin-top:4px" },
-          `Range: ${res.total_low}\u2013${res.total_high} \u00b7 Confidence: ${res.confidence} \u00b7 Multiplier: ${res.multiplier}x`),
+          `Range: ${res.total_low}\u2013${res.total_high} \u00b7 Confidence: ${res.confidence} \u00b7 Multiplier: ${res.multiplier}x` +
+          (res.clusters != null ? ` \u00b7 ${res.clusters} cluster${res.clusters !== 1 ? "s" : ""}` : "")),
       ]),
     ]));
 
     // KPIs
-    summary.appendChild(el("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-top:12px" }, [
+    summary.appendChild(el("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;margin-top:12px" }, [
       _kpi(el, String(res.identified), "Identified", "#52b788"),
       _kpi(el, String(res.unidentified), "Unidentified", "#f59e0b"),
+      _kpi(el, String(res.clusters ?? res.unidentified), "Clusters", "#a78bfa"),
       _kpi(el, String(res.excluded), "Excluded", "#64748b"),
       _kpi(el, String(res.total_devices || 0), "Total BLE", "#5eead4"),
     ]));
+    if (res.clusters != null && res.clusters < res.unidentified) {
+      summary.appendChild(el("div", { style: "font-size:10px;color:#a78bfa;margin-top:6px" },
+        `Co-location clustering grouped ${res.unidentified} unidentified devices into ${res.clusters} cluster${res.clusters !== 1 ? "s" : ""} (threshold: ${res.cluster_threshold || 8} dBm). Each cluster \u2248 one person.`));
+    }
     container.appendChild(summary);
 
     // ── Per-room breakdown ───────────────────────────────────────────────
@@ -72,8 +78,8 @@ async function _loadOccupancy(ctx, el, container) {
       roomCard.appendChild(el("div", { style: "font-weight:700;font-size:13px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px" },
         "Per-Room Breakdown"));
 
-      const grid = el("div", { style: "display:grid;grid-template-columns:1fr auto auto auto;gap:6px 12px;font-size:12px;align-items:center" });
-      for (const h of ["Room", "Identified", "Unidentified", "Estimate"]) {
+      const grid = el("div", { style: "display:grid;grid-template-columns:1fr auto auto auto auto;gap:6px 12px;font-size:12px;align-items:center" });
+      for (const h of ["Room", "Identified", "Unidentified", "Clusters", "Estimate"]) {
         grid.appendChild(el("div", { style: "font-weight:600;color:#64748b;font-size:10px;text-transform:uppercase" }, h));
       }
 
@@ -82,10 +88,12 @@ async function _loadOccupancy(ctx, el, container) {
         const est = r.estimate || 0;
         const color = est > 3 ? "#52b788" : est > 1 ? "#5eead4" : est > 0 ? "#94a3b8" : "#334155";
         const roomColor = ctx.helpers.roomColor ? ctx.helpers.roomColor(r.room) : color;
+        const clust = r.clusters ?? r.unidentified;
 
         grid.appendChild(el("div", { style: `color:${roomColor};font-weight:600` }, r.room || "Unknown"));
         grid.appendChild(el("div", { style: "text-align:right;color:#52b788;font-weight:600;font-family:monospace" }, String(r.identified || 0)));
         grid.appendChild(el("div", { style: "text-align:right;color:#f59e0b;font-family:monospace" }, String(r.unidentified || 0)));
+        grid.appendChild(el("div", { style: "text-align:right;color:#a78bfa;font-family:monospace" }, String(clust)));
         grid.appendChild(el("div", { style: `text-align:right;color:${color};font-weight:700;font-family:monospace;font-size:14px` }, String(est)));
       }
       roomCard.appendChild(grid);
@@ -98,6 +106,42 @@ async function _loadOccupancy(ctx, el, container) {
       }
       container.appendChild(roomCard);
     }
+
+    // ── Tuning ─────────────────────────────────────────────────────────
+    const tuneCard = el("div", { class: "card", style: "margin-bottom:12px" });
+    tuneCard.appendChild(el("div", { style: "font-weight:700;font-size:13px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px" },
+      "Clustering Tuning"));
+    tuneCard.appendChild(el("div", { style: "font-size:11px;color:#64748b;margin-bottom:10px" },
+      "Lower threshold = stricter grouping (fewer clusters, lower count). Higher = looser (more clusters, higher count)."));
+
+    const threshRow = el("div", { style: "display:flex;align-items:center;gap:8px" });
+    const threshVal = res.cluster_threshold || 8;
+    const threshSlider = document.createElement("input");
+    threshSlider.type = "range"; threshSlider.min = "2"; threshSlider.max = "20"; threshSlider.step = "1";
+    threshSlider.value = String(threshVal);
+    threshSlider.style.cssText = "width:160px;accent-color:#a78bfa";
+    const threshLbl = el("span", { style: "font-size:12px;color:#a78bfa;min-width:80px" }, `Threshold: ${threshVal} dBm`);
+    threshSlider.addEventListener("input", () => {
+      threshLbl.textContent = `Threshold: ${threshSlider.value} dBm`;
+    });
+    const threshSaveBtn = el("button", { class: "btn", style: "padding:4px 12px;font-size:11px" }, "Save & Refresh");
+    threshSaveBtn.addEventListener("click", async () => {
+      const v = parseFloat(threshSlider.value) || 8;
+      threshSaveBtn.disabled = true; threshSaveBtn.textContent = "Saving\u2026";
+      try {
+        await ctx.actions.settingsSet({ occupancy_cluster_threshold: v });
+        ctx.toast(`Cluster threshold set to ${v} dBm`);
+        _loadOccupancy(ctx, el, container);
+      } catch (e) {
+        ctx.toast("Failed: " + (e.message || e), true);
+        threshSaveBtn.disabled = false; threshSaveBtn.textContent = "Save & Refresh";
+      }
+    });
+    threshRow.appendChild(threshLbl);
+    threshRow.appendChild(threshSlider);
+    threshRow.appendChild(threshSaveBtn);
+    tuneCard.appendChild(threshRow);
+    container.appendChild(tuneCard);
 
     // ── Training ─────────────────────────────────────────────────────────
     const trainCard = el("div", { class: "card", style: "margin-bottom:12px" });

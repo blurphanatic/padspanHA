@@ -2719,6 +2719,13 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         if "espresense_room_map" in msg:
             _raw_rm = msg["espresense_room_map"]
             payload["espresense_room_map"] = {str(k): str(v) for k, v in _raw_rm.items()} if isinstance(_raw_rm, dict) else {}
+        # ── Occupancy estimation controls ──────────────────────────────────
+        if "occupancy_multiplier" in msg:
+            payload["occupancy_multiplier"] = max(0.5, min(10.0, float(msg["occupancy_multiplier"])))
+        if "occupancy_dwell_min" in msg:
+            payload["occupancy_dwell_min"] = max(0.0, min(60.0, float(msg["occupancy_dwell_min"])))
+        if "occupancy_cluster_threshold" in msg:
+            payload["occupancy_cluster_threshold"] = max(2.0, min(30.0, float(msg["occupancy_cluster_threshold"])))
         await st.async_set(**payload)
 
         # ── Dynamic ESPresense MQTT toggle ───────────────────────────────────
@@ -8402,14 +8409,115 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
             dev["excluded"] = True
             excluded_count += 1
 
+    # Phase 3b: RSSI co-location clustering
+    # Devices carried by the same person share nearly identical RSSI fingerprints
+    # across all scanners (they're physically together).  Group unidentified devices
+    # in the same room into clusters using pairwise RSSI-vector distance.
+    # Each cluster ≈ one person, so we count clusters instead of raw devices.
+
+    # Build RSSI fingerprint per device: {addr → {source → best_rssi}}
+    _dev_fp: dict[str, dict[str, float]] = {}
+    for ad in ads:
+        addr = str(ad.get("address") or "").upper()
+        if addr not in devices or devices[addr]["excluded"]:
+            continue
+        src = str(ad.get("source") or "")
+        rssi = ad.get("rssi")
+        if not src or rssi is None:
+            continue
+        rssi_f = float(rssi)
+        if addr not in _dev_fp:
+            _dev_fp[addr] = {}
+        # Keep strongest RSSI per scanner
+        if src not in _dev_fp[addr] or rssi_f > _dev_fp[addr][src]:
+            _dev_fp[addr][src] = rssi_f
+
+    # Also add fingerprints from identified objects (presence coordinator data)
+    for key, obj in pc_data.items():
+        if not isinstance(obj, dict):
+            continue
+        addr = str(obj.get("address") or key).upper()
+        if addr not in devices or devices[addr]["excluded"]:
+            continue
+        # Sources come from the ad stream already processed above
+        # No extra action needed — pc objects also appear in ads
+
+    def _fp_distance(fp1: dict, fp2: dict) -> float:
+        """Euclidean distance between two RSSI fingerprint vectors.
+
+        Only considers scanners present in both fingerprints.
+        Missing scanners are penalised with a 20 dBm gap.
+        """
+        shared = set(fp1.keys()) & set(fp2.keys())
+        all_srcs = set(fp1.keys()) | set(fp2.keys())
+        if not all_srcs:
+            return 999.0
+        sum_sq = 0.0
+        for s in shared:
+            diff = fp1[s] - fp2[s]
+            sum_sq += diff * diff
+        # Penalise unshared scanners (device seen by one scanner but not the other
+        # means they are likely in different spots)
+        missing = len(all_srcs) - len(shared)
+        sum_sq += missing * (20.0 ** 2)
+        return (sum_sq / max(len(all_srcs), 1)) ** 0.5
+
+    # Group unidentified devices by room, then cluster within each room
+    _room_unident: dict[str, list[str]] = {}  # room → [addr, ...]
+    for addr, dev in devices.items():
+        if dev["excluded"] or dev["is_identified"]:
+            continue
+        room = dev["room"] or "Unknown"
+        _room_unident.setdefault(room, []).append(addr)
+
+    # Simple greedy agglomerative clustering: merge closest pair until all
+    # pairs exceed threshold.  Threshold = 8 dBm RMS difference (devices
+    # carried together typically differ by <5 dBm).
+    CLUSTER_THRESH = float(_sd.get("occupancy_cluster_threshold", 8.0))
+    _cluster_count: dict[str, int] = {}  # room → number of clusters
+    _cluster_map: dict[str, int] = {}    # addr → cluster_id (for UI)
+
+    for room, addrs in _room_unident.items():
+        fps = [(a, _dev_fp.get(a, {})) for a in addrs]
+        # Assign each device to its own cluster initially
+        clusters: list[list[int]] = [[i] for i in range(len(fps))]
+        # Iteratively merge closest pair
+        changed = True
+        while changed and len(clusters) > 1:
+            changed = False
+            best_dist = CLUSTER_THRESH
+            best_i = -1
+            best_j = -1
+            for ci in range(len(clusters)):
+                for cj in range(ci + 1, len(clusters)):
+                    # Average-linkage distance between clusters
+                    dists = []
+                    for ai in clusters[ci]:
+                        for aj in clusters[cj]:
+                            dists.append(_fp_distance(fps[ai][1], fps[aj][1]))
+                    avg = sum(dists) / len(dists) if dists else 999.0
+                    if avg < best_dist:
+                        best_dist = avg
+                        best_i = ci
+                        best_j = cj
+            if best_i >= 0:
+                clusters[best_i].extend(clusters[best_j])
+                clusters.pop(best_j)
+                changed = True
+        _cluster_count[room] = len(clusters)
+        # Record cluster assignment for UI
+        for cid, members in enumerate(clusters):
+            for idx in members:
+                _cluster_map[fps[idx][0]] = cid
+
     # Phase 4: Compute per-room occupancy
-    room_data: dict[str, dict] = {}  # room → {identified, unidentified, estimate_low, estimate_high, estimate}
+    room_data: dict[str, dict] = {}  # room → {identified, unidentified, clusters, estimate_low, estimate_high, estimate}
     for addr, dev in devices.items():
         if dev["excluded"]:
             continue
         room = dev["room"] or "Unknown"
         if room not in room_data:
-            room_data[room] = {"identified": 0, "unidentified": 0, "devices": []}
+            room_data[room] = {"identified": 0, "unidentified": 0, "clusters": 0, "devices": []}
         if dev["is_identified"]:
             room_data[room]["identified"] += 1
         else:
@@ -8419,19 +8527,32 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
             "label": dev["label"],
             "kind": dev["kind"],
             "is_identified": dev["is_identified"],
+            "cluster": _cluster_map.get(addr),
         })
 
+    # Assign cluster counts
+    for room, rd in room_data.items():
+        rd["clusters"] = _cluster_count.get(room, rd["unidentified"])
+
     # Compute estimates per room
+    # New formula: identified count 1:1, unidentified uses cluster count
+    # (each cluster ≈ one person's devices grouped together).
+    # The multiplier now applies to clusters, not raw device count.
     rooms_result = []
     total_identified = 0
     total_unidentified = 0
     total_estimate = 0
+    total_clusters = 0
     for room, rd in sorted(room_data.items()):
         ident = rd["identified"]
         unident = rd["unidentified"]
-        est = ident + round(unident / multiplier)
-        est_low = ident + max(0, round(unident / (multiplier * 1.5)))
-        est_high = ident + round(unident / max(0.5, multiplier * 0.7))
+        clust = rd["clusters"]
+        total_clusters += clust
+        # Primary estimate: identified + clusters (each cluster ≈ 1 person)
+        # Apply multiplier to clusters for fine-tuning (trained value converges to 1.0)
+        est = ident + max(0, round(clust / multiplier))
+        est_low = ident + max(0, round(clust / (multiplier * 1.5)))
+        est_high = ident + round(clust / max(0.5, multiplier * 0.7))
         total_identified += ident
         total_unidentified += unident
         total_estimate += est
@@ -8439,6 +8560,7 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
             "room": room,
             "identified": ident,
             "unidentified": unident,
+            "clusters": clust,
             "estimate": est,
             "estimate_low": est_low,
             "estimate_high": est_high,
@@ -8467,8 +8589,10 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
         "rooms": rooms_result,
         "identified": total_identified,
         "unidentified": total_unidentified,
+        "clusters": total_clusters,
         "excluded": excluded_count,
         "multiplier": multiplier,
+        "cluster_threshold": CLUSTER_THRESH,
         "dwell_min": dwell_min,
         "training_count": len(training),
     })
