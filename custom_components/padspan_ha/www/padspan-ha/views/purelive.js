@@ -26,7 +26,7 @@ function injectStyles(root) {
     .pl-root{display:flex;flex-direction:column;min-height:calc(100vh - 140px);background:#050d08}
 
     /* Map viewport — clips the pannable/zoomable content */
-    .pl-viewport{flex:1;position:relative;overflow:hidden;background:#071008;border-radius:8px;cursor:grab;touch-action:none}
+    .pl-viewport{position:absolute;inset:0;overflow:hidden;background:#071008;border-radius:8px;cursor:grab;touch-action:none}
     .pl-viewport:active{cursor:grabbing}
     .pl-viewport-inner{transform-origin:0 0;will-change:transform}
 
@@ -587,13 +587,15 @@ function App({ ctx }) {
 
   return html`
     <div className="pl-root">
-      <${MapViewport}>
-        <${IsoMap} ctx=${ctx} />
+      <div style="flex:1;position:relative;min-height:0">
+        <${MapViewport}>
+          <${IsoMap} ctx=${ctx} />
+        <//>
         <${Stats} rooms=${rooms} objects=${objects} radios=${radios.length} loading=${loading} />
         <${Scanners} radios=${radios} ctx=${ctx} />
         <${MovementGhosts} roomTagMap=${rtm} />
         <${ActivityFeed} roomTagMap=${rtm} />
-      <//>
+      </div>
       <${FollowedTracker} ctx=${ctx} snap=${snap} />
       <${RadioStrip} radios=${radios} ctx=${ctx} />
       <${Ticker} dataMode=${mode} radios=${radios.length} objects=${objects} version=${ctx.state.version} cal=${cal} />
