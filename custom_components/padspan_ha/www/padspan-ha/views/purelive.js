@@ -23,7 +23,7 @@ function injectStyles(root) {
   const s = document.createElement("style");
   s.id = STYLES_ID;
   s.textContent = `
-    .pl-root{display:flex;flex-direction:column;height:calc(100vh - 140px);background:#050d08;overflow:hidden}
+    .pl-root{display:flex;flex-direction:column;height:calc(100vh - 56px);background:#050d08;overflow:hidden}
 
     /* Map viewport — clips the pannable/zoomable content */
     .pl-viewport{position:absolute;inset:0;overflow:hidden;background:#071008;border-radius:8px;cursor:grab;touch-action:none}
@@ -847,7 +847,7 @@ let _container = null;
 export function render(ctx) {
   if (!_container || !_container.isConnected) {
     _container = document.createElement("div");
-    _container.style.cssText = "margin:-14px -14px -80px;";
+    _container.style.cssText = "margin:-16px -16px -80px;";
   }
 
   const root = _container.getRootNode?.();
