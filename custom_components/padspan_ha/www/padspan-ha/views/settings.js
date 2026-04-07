@@ -50,13 +50,14 @@ export function render(ctx){
       "Configure how PadSpan looks and behaves. Set room colours that carry across the Overview map, Follow tracker, and all visualisations. " +
       "Manage floors and areas (sourced from HA). Assign scanners to rooms so the system knows where each Bluetooth radio is physically located."],
     ["scannermap", "Scanner Map",
-      "Estimates where each Bluetooth scanner is physically positioned on your floor plans, based on calibration data. " +
-      "When you collect calibration fingerprints (Calibration tab), each scanner records RSSI values at known locations. " +
-      "This tab uses signal-weighted centroids to triangulate each scanner's likely position on the map — " +
-      "stronger average RSSI from a calibration point means the scanner is closer to that point. " +
-      "Confidence increases with more calibration points. Use this to verify scanner placement before relying on positioning. " +
-      "Also includes the Replace Scanner tool (swap calibration data when a physical device is replaced) and " +
-      "the Relearn Radio tool (shift RSSI readings after an antenna upgrade/downgrade)."],
+      "Shows where PadSpan thinks each of your Bluetooth scanners is physically located on the floor plan. " +
+      "The numbered dots are estimated positions based on your calibration data — when you collected fingerprints " +
+      "at known spots, each scanner recorded signal strength. Louder signal = scanner is closer to that spot. " +
+      "PadSpan combines all these readings to triangulate where the scanner must be sitting. " +
+      "The percentage is confidence (more calibration points = more accurate). " +
+      "If a dot is in the wrong place, collect more calibration points near that scanner to fix it. " +
+      "This tab also has Replace Scanner (swap calibration data when hardware is replaced) and " +
+      "Relearn Radio (adjust readings after antenna upgrade/downgrade)."],
     ["presence", "Presence",
       "Controls how PadSpan determines which room a device is in and when it's considered 'away'. " +
       "Room change delay prevents flicker when a device is near a boundary between rooms. " +
@@ -258,9 +259,15 @@ function _scannerMap(ctx, el, haFloors){
 
   // Intro card
   wrap.appendChild(el("div",{class:"card",style:"border-color:#52b788;padding:10px"},[
-    el("div",{style:"font-weight:700;font-size:13px;margin-bottom:4px;color:#52b788"},"Scanner Position Estimates"),
-    el("div",{style:"font-size:11px;color:#78909c;line-height:1.5"},
-      "Signal-weighted centroid from calibration fingerprints. Every scanner that heard any point on a map is listed. Confidence rises with more points."),
+    el("div",{style:"font-weight:700;font-size:13px;margin-bottom:4px;color:#52b788"},"Where PadSpan Thinks Your Scanners Are"),
+    el("div",{style:"font-size:11px;color:#94a3b8;line-height:1.6"},
+      "Each numbered dot shows where PadSpan estimates a Bluetooth scanner is physically located on your floor plan. " +
+      "These positions are calculated from your calibration data \u2014 when you collected fingerprints at known locations, " +
+      "each scanner recorded how strong the signal was. Scanners that heard a calibration point loudly are estimated to be " +
+      "closer to it; scanners that heard it faintly are estimated to be further away. " +
+      "The percentage next to each scanner is the confidence in that estimate (more calibration points = higher confidence). " +
+      "If a scanner appears in the wrong place, it means the calibration data is giving conflicting signals \u2014 " +
+      "collecting more calibration points near that scanner will improve accuracy."),
   ]));
 
   if(!calData.points || calData.points.length === 0){
