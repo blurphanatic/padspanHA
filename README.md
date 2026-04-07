@@ -30,9 +30,13 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 |:-:|:-:|
 | ![NVR-style playback timeline with per-device distance and reliability](images/traceback-distance.jpg) | ![3D beacon tune with floor stack, auto-cal, and live device positions](images/beacon-tune-calibration.jpg) |
 
-| Sandbox Dashboard | Floor Plan Editor |
+| Pure Live — Immersive Dashboard | Traceback — Movement Playback |
 |:-:|:-:|
-| ![Experimental playground — RSSI distribution, signal bars, floor towers, signal pulse](images/sandbox-dashboard.jpg) | ![Room boundaries on architectural blueprint](images/floor-plan-edit.png) |
+| ![Full-screen 3D map with pan/zoom, floating stats, scanner sonar, and tracked device strip](images/purelive-immersive.png) | ![NVR-style replay with 3D map, timeline scrubber, and distance travelled per device](images/traceback-playback-3d.png) |
+
+| Sandbox Developer Tools | Floor Plan Editor |
+|:-:|:-:|
+| ![Experimental playground — state inspector, floor towers, live signal bars, raw snapshot](images/sandbox-developer.png) | ![Room boundaries on architectural blueprint](images/floor-plan-edit.png) |
 
 ---
 
@@ -45,7 +49,7 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 - Kalman-filtered RSSI smoothing (replaces simple moving averages)
 - Home/away detection with HA binary sensor entities
 - Private BLE address resolution (iBeacon UUID + IRK support)
-- **Occupancy estimation** — hybrid people counting with identified + unidentified devices and trainable multiplier
+- **Occupancy estimation** — hybrid people counting combining BLE devices, HA person entities, occupancy/motion sensors, and WiFi client counts with a trainable multiplier and RSSI co-location clustering
 
 ### Device Identity
 - **Stable device identity (padspan_id)** — every physical device gets an immutable ID that survives MAC rotation, iBeacon UUID changes, and firmware updates
@@ -89,6 +93,7 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 - Full WebSocket API for custom dashboards and automation
 
 ### UI & Experience
+- **Pure Live mode** — immersive full-screen 3D dashboard with pan/zoom, floating glass overlays, and collapsible info panels
 - **22 dedicated views** with Basic and Advanced modes
 - **5-step onboarding wizard** with auto-detection and progress tracking
 - Dark forest-green theme designed for always-on displays
