@@ -477,7 +477,18 @@ function _cleanupMapElement(map) {
   for (const child of [...map.children]) {
     const css = child.style?.cssText || "";
     // Keep the iso wrapper (position:relative) — this holds the SVG
-    if (css.includes("position") && css.includes("relative")) continue;
+    if (css.includes("position") && css.includes("relative")) {
+      // Remove overflow clipping so the full multi-floor SVG is visible
+      // when zoomed out in Pure Live's pan/zoom viewport.
+      // The overview uses overflow:auto to add scrollbars; Pure Live doesn't need that.
+      for (const inner of child.children) {
+        if (inner.style?.overflow) inner.style.overflow = "visible";
+      }
+      // Also remove max-height from the SVG itself
+      const svg = child.querySelector("svg");
+      if (svg) svg.style.maxHeight = "none";
+      continue;
+    }
     // Hide everything else: control rows, overlay sliders, room list
     child.style.display = "none";
   }
