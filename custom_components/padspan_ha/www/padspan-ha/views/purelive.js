@@ -23,7 +23,7 @@ function injectStyles(root) {
   const s = document.createElement("style");
   s.id = STYLES_ID;
   s.textContent = `
-    .pl-root{display:flex;flex-direction:column;min-height:calc(100vh - 140px);background:#050d08}
+    .pl-root{display:flex;flex-direction:column;height:calc(100vh - 140px);background:#050d08;overflow:hidden}
 
     /* Map viewport — clips the pannable/zoomable content */
     .pl-viewport{position:absolute;inset:0;overflow:hidden;background:#071008;border-radius:8px;cursor:grab;touch-action:none}
@@ -87,6 +87,13 @@ function injectStyles(root) {
     .pl-controls input[type="range"]{height:4px;cursor:pointer}
     .pl-controls button{transition:background .15s,border-color .15s}
 
+    /* Info toggle — small button to show/hide bottom panels */
+    .pl-info-toggle{position:absolute;bottom:10px;left:12px;z-index:7;width:28px;height:28px;border-radius:8px;
+      border:1px solid rgba(255,255,255,.08);background:rgba(10,30,15,.6);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+      color:#94a3b8;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+      transition:background .15s,color .15s}
+    .pl-info-toggle:hover{background:rgba(82,183,136,.15);color:#e2e8f0}
+
     /* ── Scanner sonar pulse ───────────────────────── */
     @keyframes pl-sonar-ring{0%{transform:scale(.6);opacity:.5}100%{transform:scale(2.2);opacity:0}}
     .pl-sonar{position:relative;display:inline-block}
@@ -134,8 +141,9 @@ function injectStyles(root) {
       .pl-zoom button{width:32px;height:32px;font-size:16px}
       .pl-zoom{bottom:56px;right:6px}
       .pl-feed{bottom:56px;left:6px;max-width:200px}
-      .pl-controls{bottom:6px;max-width:calc(100% - 24px);font-size:9px}
+      .pl-controls{bottom:6px;max-width:calc(100% - 60px);font-size:9px}
       .pl-controls.expanded{padding:6px 10px}
+      .pl-info-toggle{bottom:6px;left:6px;width:24px;height:24px;font-size:11px}
     }
   `;
   root.appendChild(s);
@@ -784,12 +792,23 @@ function ActivityFeed({ roomTagMap }) {
   `;
 }
 
+// ── Info Toggle Button ────────────────────────────────────────────────────────
+function InfoToggle({ visible, onToggle }) {
+  return html`
+    <button className="pl-info-toggle" onClick=${onToggle}
+            title=${visible ? "Hide info panels" : "Show info panels"}>
+      ${visible ? "\u25BC" : "\u2139"}
+    </button>
+  `;
+}
+
 // ── Root ─────────────────────────────────────────────────────────────────────
 function App({ ctx }) {
   const mode = ctx.state.dataMode || "sample";
   const snap = ctx.state.live?.snapshot || null;
   const loading = mode === "live" && !snap;
   const quiet = !!(ctx.state.settings?.quiet_mode);
+  const [infoVisible, setInfoVisible] = useState(false);
 
   const rtm = loading ? {} : (ctx.state.roomTagMap || {});
   const rooms = Object.keys(rtm).length;
@@ -811,10 +830,13 @@ function App({ ctx }) {
         <${MovementGhosts} roomTagMap=${rtm} />
         <${ActivityFeed} roomTagMap=${rtm} />
         <${MapControls} ctx=${ctx} />
+        <${InfoToggle} visible=${infoVisible} onToggle=${() => setInfoVisible(v => !v)} />
       </div>
-      <${FollowedTracker} ctx=${ctx} snap=${snap} />
-      <${RadioStrip} radios=${radios} ctx=${ctx} />
-      <${Ticker} dataMode=${mode} radios=${radios.length} objects=${objects} version=${ctx.state.version} cal=${cal} />
+      ${infoVisible && html`<${_Fragment}>
+        <${FollowedTracker} ctx=${ctx} snap=${snap} />
+        <${RadioStrip} radios=${radios} ctx=${ctx} />
+        <${Ticker} dataMode=${mode} radios=${radios.length} objects=${objects} version=${ctx.state.version} cal=${cal} />
+      </${_Fragment}>`}
     </div>
   `;
 }
@@ -825,7 +847,7 @@ let _container = null;
 export function render(ctx) {
   if (!_container || !_container.isConnected) {
     _container = document.createElement("div");
-    _container.style.cssText = "margin:-14px;";
+    _container.style.cssText = "margin:-14px -14px -80px;";
   }
 
   const root = _container.getRootNode?.();
