@@ -3544,8 +3544,9 @@ export function render(ctx){
     }
   }
   // ── Occupancy Estimator card (clickable, compact) ──────────────────────
+  let occCard;
   {
-    const occCard = el("div",{class:"card",style:"cursor:pointer;border-color:#5eead433;transition:border-color 0.2s;padding:8px 12px"});
+    occCard = el("div",{class:"card",style:"cursor:pointer;border-color:#5eead433;transition:border-color 0.2s;padding:8px 12px"});
     occCard.addEventListener("mouseenter",()=>{occCard.style.borderColor="#5eead4";});
     occCard.addEventListener("mouseleave",()=>{occCard.style.borderColor="#5eead433";});
     const occContent = el("div",{style:"display:flex;align-items:center;gap:8px"});
