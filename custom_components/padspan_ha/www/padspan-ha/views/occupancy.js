@@ -69,6 +69,60 @@ async function _loadOccupancy(ctx, el, container) {
       summary.appendChild(el("div", { style: "font-size:10px;color:#a78bfa;margin-top:6px" },
         `Co-location clustering grouped ${res.unidentified} unidentified devices into ${res.clusters} cluster${res.clusters !== 1 ? "s" : ""} (threshold: ${res.cluster_threshold || 8} dBm). Each cluster \u2248 one person.`));
     }
+
+    // ── Hybrid signals card ─────────────────────────────────────────────
+    const hy = res.hybrid || {};
+    const hasSomeHybrid = (hy.persons_home || hy.presence_sensors_active || hy.motion_sensors_active || hy.wifi_clients);
+    if (hasSomeHybrid || res.ble_estimate != null) {
+      const hybridCard = el("div", { style: "margin-top:10px;padding:10px;background:rgba(94,234,212,.04);border:1px solid rgba(94,234,212,.15);border-radius:8px" });
+
+      const bleEst = res.ble_estimate ?? res.total_estimate;
+      const boosted = res.total_estimate > bleEst;
+
+      hybridCard.appendChild(el("div", { style: "font-weight:700;font-size:12px;color:#5eead4;margin-bottom:6px" },
+        boosted ? `Hybrid estimate: ${res.total_estimate} (raised from BLE-only ${bleEst})` : `Hybrid signals active`));
+
+      const sigGrid = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:11px" });
+
+      // Persons home
+      const pColor = hy.persons_home > 0 ? "#52b788" : "#475569";
+      sigGrid.appendChild(el("div", { style: `color:${pColor}` }, `Persons home: ${hy.persons_home || 0}`));
+      sigGrid.appendChild(el("div", { style: "color:#94a3b8" },
+        (hy.person_names || []).length ? (hy.person_names || []).join(", ") : "no person.* entities"));
+
+      // Presence sensors
+      const prColor = hy.presence_sensors_active > 0 ? "#60a5fa" : "#475569";
+      sigGrid.appendChild(el("div", { style: `color:${prColor}` }, `Occupancy sensors: ${hy.presence_sensors_active || 0} active`));
+      sigGrid.appendChild(el("div", { style: "color:#94a3b8" },
+        (hy.presence_rooms || []).length ? (hy.presence_rooms || []).join(", ") : "none active"));
+
+      // Motion
+      const moColor = hy.motion_sensors_active > 0 ? "#fbbf24" : "#475569";
+      sigGrid.appendChild(el("div", { style: `color:${moColor}` }, `Motion sensors: ${hy.motion_sensors_active || 0} active`));
+      sigGrid.appendChild(el("div", { style: "color:#94a3b8" },
+        (hy.motion_rooms || []).length ? (hy.motion_rooms || []).join(", ") : "none active"));
+
+      // WiFi clients
+      const wfColor = hy.wifi_clients > 0 ? "#a78bfa" : "#475569";
+      sigGrid.appendChild(el("div", { style: `color:${wfColor}` }, `WiFi clients: ${hy.wifi_clients || 0}`));
+      sigGrid.appendChild(el("div", { style: "color:#94a3b8" },
+        hy.wifi_source ? hy.wifi_source.replace("sensor.", "") : "no router integration"));
+
+      // BLE-only for reference
+      sigGrid.appendChild(el("div", { style: "color:#64748b" }, `BLE-only estimate: ${bleEst}`));
+      sigGrid.appendChild(el("div", { style: "color:#64748b" }, `${res.identified || 0} identified + ${res.clusters ?? res.unidentified ?? 0} clusters`));
+
+      hybridCard.appendChild(sigGrid);
+
+      if (!hasSomeHybrid) {
+        hybridCard.appendChild(el("div", { style: "font-size:10px;color:#f59e0b;margin-top:6px" },
+          "No hybrid signals found. For better accuracy, set up person.* entities (HA Companion GPS), " +
+          "occupancy sensors (mmWave/radar like LD2410 or Aqara FP2), " +
+          "or a router integration (UniFi, Fritz!Box) for WiFi client counts."));
+      }
+
+      summary.appendChild(hybridCard);
+    }
     container.appendChild(summary);
 
     // ── Per-room breakdown ───────────────────────────────────────────────
@@ -109,6 +163,28 @@ async function _loadOccupancy(ctx, el, container) {
 
     // ── Tuning ─────────────────────────────────────────────────────────
     const tuneCard = el("div", { class: "card", style: "margin-bottom:12px" });
+
+    // Hybrid toggle
+    const hybridOn = res.hybrid_enabled !== false;
+    const hybridRow = el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #1b3526" });
+    const hybridCb = document.createElement("input");
+    hybridCb.type = "checkbox"; hybridCb.checked = hybridOn;
+    hybridCb.style.cssText = "accent-color:#5eead4;width:16px;height:16px";
+    hybridCb.addEventListener("change", async () => {
+      try {
+        await ctx.actions.settingsSet({ occupancy_hybrid_enabled: hybridCb.checked });
+        ctx.toast(hybridCb.checked ? "Hybrid counting enabled" : "Hybrid counting disabled \u2014 BLE only");
+        _loadOccupancy(ctx, el, container);
+      } catch (e) { ctx.toast("Failed: " + (e.message || e), true); }
+    });
+    hybridRow.appendChild(hybridCb);
+    hybridRow.appendChild(el("div", {}, [
+      el("span", { style: "font-weight:600;font-size:12px;color:#5eead4" }, "Hybrid counting"),
+      el("span", { style: "font-size:11px;color:#94a3b8;margin-left:6px" },
+        "\u2014 combine BLE with person entities, occupancy sensors, WiFi clients"),
+    ]));
+    tuneCard.appendChild(hybridRow);
+
     tuneCard.appendChild(el("div", { style: "font-weight:700;font-size:13px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px" },
       "Clustering Tuning"));
     tuneCard.appendChild(el("div", { style: "font-size:11px;color:#64748b;margin-bottom:10px" },

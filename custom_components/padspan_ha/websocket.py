@@ -2728,6 +2728,8 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["occupancy_dwell_min"] = max(0.0, min(60.0, float(msg["occupancy_dwell_min"])))
         if "occupancy_cluster_threshold" in msg:
             payload["occupancy_cluster_threshold"] = max(2.0, min(30.0, float(msg["occupancy_cluster_threshold"])))
+        if "occupancy_hybrid_enabled" in msg:
+            payload["occupancy_hybrid_enabled"] = bool(msg["occupancy_hybrid_enabled"])
         await st.async_set(**payload)
 
         # ── Dynamic ESPresense MQTT toggle ───────────────────────────────────
@@ -8569,19 +8571,166 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
             "devices": rd["devices"],
         })
 
-    # Overall confidence
+    # ── Phase 5: Hybrid signals from HA ─────────────────────────────────────
+    _hybrid_enabled = bool(_sd.get("occupancy_hybrid_enabled", True))
+    # BLE alone misses people whose phones don't advertise. Supplement with:
+    #   1. person.* entities (home/away from GPS + WiFi + BLE)
+    #   2. binary_sensor.*_occupancy / *_presence (mmWave / radar)
+    #   3. binary_sensor.*_motion (PIR / motion sensors)
+    #   4. WiFi connected client counts (router integrations)
+
+    hybrid_signals: dict[str, Any] = {
+        "persons_home": 0, "person_names": [],
+        "presence_sensors_active": 0, "presence_rooms": [],
+        "motion_sensors_active": 0, "motion_rooms": [],
+        "wifi_clients": 0, "wifi_source": "",
+    }
+
+    # 1. person.* entities — who is "home"?
+    if _hybrid_enabled:
+        try:
+            for state in hass.states.async_all("person"):
+                if state.state == "home":
+                    hybrid_signals["persons_home"] += 1
+                    name = state.attributes.get("friendly_name") or state.entity_id
+                    hybrid_signals["person_names"].append(name)
+        except Exception:
+            pass
+
+    # 2. binary_sensor occupancy/presence — room-level presence (mmWave, radar)
+    # 3. binary_sensor motion — recent movement
+    if _hybrid_enabled:
+        try:
+            _area_registry = None
+            try:
+                from homeassistant.helpers import area_registry as _ar_mod
+                _area_registry = _ar_mod.async_get(hass)
+            except Exception:
+                pass
+
+            _entity_registry = None
+            try:
+                from homeassistant.helpers import entity_registry as _er_mod
+                _entity_registry = _er_mod.async_get(hass)
+            except Exception:
+                pass
+
+            for state in hass.states.async_all("binary_sensor"):
+                eid = state.entity_id or ""
+                eid_lower = eid.lower()
+                is_occupancy = any(k in eid_lower for k in ("occupancy", "presence", "mmwave", "ld2410", "fp2", "human"))
+                is_motion = "motion" in eid_lower and not is_occupancy
+
+                if not is_occupancy and not is_motion:
+                    continue
+                if state.state != "on":
+                    continue
+
+                # Try to find the room/area for this sensor
+                sensor_room = ""
+                if _entity_registry and _area_registry:
+                    try:
+                        entry = _entity_registry.async_get(eid)
+                        area_id = entry.area_id if entry else None
+                        if not area_id and entry and entry.device_id:
+                            from homeassistant.helpers import device_registry as _dr_mod
+                            _dr = _dr_mod.async_get(hass)
+                            dev = _dr.async_get(entry.device_id)
+                            area_id = dev.area_id if dev else None
+                        if area_id:
+                            area = _area_registry.async_get_area(area_id)
+                            sensor_room = area.name if area else ""
+                    except Exception:
+                        pass
+
+                if is_occupancy:
+                    hybrid_signals["presence_sensors_active"] += 1
+                    if sensor_room and sensor_room not in hybrid_signals["presence_rooms"]:
+                        hybrid_signals["presence_rooms"].append(sensor_room)
+                elif is_motion:
+                    hybrid_signals["motion_sensors_active"] += 1
+                    if sensor_room and sensor_room not in hybrid_signals["motion_rooms"]:
+                        hybrid_signals["motion_rooms"].append(sensor_room)
+        except Exception:
+            pass
+
+    # 4. WiFi connected clients — router integrations expose client counts
+    if _hybrid_enabled:
+        try:
+            for state in hass.states.async_all("sensor"):
+                eid = state.entity_id or ""
+                eid_lower = eid.lower()
+                if any(k in eid_lower for k in ("connected_client", "num_client", "wifi_client",
+                                                 "connected_device", "wlan_client", "active_client")):
+                    try:
+                        val = int(float(state.state))
+                        if val > hybrid_signals["wifi_clients"]:
+                            hybrid_signals["wifi_clients"] = val
+                            hybrid_signals["wifi_source"] = eid
+                    except (ValueError, TypeError):
+                        pass
+        except Exception:
+            pass
+
+    # ── Phase 6: Fuse signals into final estimate ─────────────────────────
+    # BLE estimate is the base. Hybrid signals provide a FLOOR — if other
+    # signals indicate more people, raise the estimate to match.
+    #
+    # Logic:
+    #   - persons_home is a hard floor (HA knows who's home via GPS+WiFi)
+    #   - presence_sensors_active rooms: at least 1 person per active room
+    #   - wifi_clients: roughly 1 person per 2 WiFi devices (phones + laptops)
+    #   - motion_rooms: weak signal, at least 1 person per active room
+
+    ble_estimate = total_estimate
+    hybrid_floor = 0
+
+    if _hybrid_enabled:
+        # Person entities — most reliable signal for residents
+        hybrid_floor = max(hybrid_floor, hybrid_signals["persons_home"])
+
+        # Presence/occupancy sensors — at least 1 person per room with active sensor
+        hybrid_floor = max(hybrid_floor, hybrid_signals["presence_sensors_active"])
+
+        # WiFi clients — rough proxy, ~2 devices per person
+        if hybrid_signals["wifi_clients"] > 0:
+            wifi_est = max(1, round(hybrid_signals["wifi_clients"] / 2))
+            hybrid_floor = max(hybrid_floor, wifi_est)
+
+        # Motion — weaker signal, use as minimum if we have no other data
+        if hybrid_floor == 0 and hybrid_signals["motion_sensors_active"] > 0:
+            hybrid_floor = hybrid_signals["motion_sensors_active"]
+
+    # Apply: raise BLE estimate to the hybrid floor if higher
+    if hybrid_floor > total_estimate:
+        total_estimate = hybrid_floor
+        # Also raise the room-level estimates proportionally if possible
+        # Distribute the extra people into rooms with presence/motion sensors
+        extra = hybrid_floor - ble_estimate
+        if extra > 0:
+            # Add to rooms with active presence sensors first
+            _boosted_rooms = set(hybrid_signals.get("presence_rooms", []) + hybrid_signals.get("motion_rooms", []))
+            for r in rooms_result:
+                if extra <= 0:
+                    break
+                if r["room"] in _boosted_rooms and r["estimate"] == 0:
+                    r["estimate"] = 1
+                    extra -= 1
+
+    # Overall confidence — improves with hybrid data
     total_devices = total_identified + total_unidentified
-    if total_devices == 0:
+    hybrid_boost = min(hybrid_signals["persons_home"], 3) + min(hybrid_signals["presence_sensors_active"], 2)
+    if total_devices == 0 and hybrid_boost == 0:
         confidence = "low"
-    elif total_identified / max(total_devices, 1) > 0.8:
+    elif hybrid_boost >= 3 or total_identified / max(total_devices, 1) > 0.8:
         confidence = "high"
-    elif total_identified / max(total_devices, 1) > 0.4:
+    elif hybrid_boost >= 1 or total_identified / max(total_devices, 1) > 0.4:
         confidence = "medium"
     else:
         confidence = "low"
 
-    total_low = sum(r["estimate_low"] for r in rooms_result)
-    total_high = sum(r["estimate_high"] for r in rooms_result)
+    total_low = max(hybrid_signals["persons_home"], sum(r["estimate_low"] for r in rooms_result))
+    total_high = max(total_estimate, sum(r["estimate_high"] for r in rooms_result))
 
     connection.send_result(msg["id"], {
         "total_estimate": total_estimate,
@@ -8597,6 +8746,9 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
         "cluster_threshold": CLUSTER_THRESH,
         "dwell_min": dwell_min,
         "training_count": len(training),
+        "ble_estimate": ble_estimate,
+        "hybrid_enabled": _hybrid_enabled,
+        "hybrid": hybrid_signals,
     })
 
 
