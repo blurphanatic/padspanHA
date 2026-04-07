@@ -425,7 +425,7 @@ export function render(ctx) {
 
   let body = null;
   if (ctx.state.btTab === "irk_panel") {
-    body = renderIrkPanel(ctx);
+    body = renderIrkPanel(ctx, snap);
     const out = el("div", { id: "bluetooth" }, [header, privateBleCard, diagCard, bleDiagCard, tabs, body]);
     return out;
   } else if (ctx.state.btTab === "scanners") {
@@ -1910,22 +1910,27 @@ text_sensor:
 // Provides: device table, add/validate/auto-detect, unresolved RPAs, companion
 // app status, and diagnostics.
 
-function renderIrkPanel(ctx) {
+function renderIrkPanel(ctx, snap) {
   const { el, esc } = ctx.helpers;
   const wrap = el("div", { style: "margin-top:12px" });
 
   // ── Lazy-load status on first render ──
-  if (!ctx.state._irkPanelStatus) {
+  if (!ctx.state._irkPanelStatus && !ctx.state._irkPanelLoading) {
     ctx.state._irkPanelLoading = true;
     ctx.actions.wsCall("padspan_ha/private_ble_status").then(res => {
-      ctx.state._irkPanelStatus = res;
+      ctx.state._irkPanelStatus = res || {};
       ctx.state._irkPanelLoading = false;
       ctx.actions.renderRooms();
-    }).catch(() => { ctx.state._irkPanelLoading = false; });
+    }).catch((e) => {
+      console.warn("[IRK Manager] Failed to load status:", e);
+      ctx.state._irkPanelStatus = { _error: String(e) };
+      ctx.state._irkPanelLoading = false;
+      ctx.actions.renderRooms();
+    });
   }
 
-  if (ctx.state._irkPanelLoading && !ctx.state._irkPanelStatus) {
-    wrap.appendChild(el("div", { class: "muted", style: "padding:20px" }, "Loading IRK status…"));
+  if (ctx.state._irkPanelLoading) {
+    wrap.appendChild(el("div", { class: "muted", style: "padding:20px" }, "Loading IRK status\u2026"));
     return wrap;
   }
 
@@ -2221,6 +2226,7 @@ function renderIrkPanel(ctx) {
   const refreshBtn = el("button", { class: "btn", style: "margin-bottom:12px" }, "Refresh Status");
   refreshBtn.addEventListener("click", () => {
     ctx.state._irkPanelStatus = null;
+    ctx.state._irkPanelLoading = false;
     ctx.actions.renderRooms();
   });
   wrap.appendChild(refreshBtn);
