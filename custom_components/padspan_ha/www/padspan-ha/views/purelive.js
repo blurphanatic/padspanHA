@@ -227,6 +227,53 @@ function Ticker({ dataMode, radios, objects, version, cal }) {
   `;
 }
 
+// ── SVG counter-scaling ──────────────────────────────────────────────────────
+// When the viewport is zoomed, SVG text and small circles scale with it, making
+// labels and dots balloon until they obscure the map.  This function stores each
+// element's original size on first call, then applies inverse scaling so they
+// remain the same visual size regardless of zoom level.
+//
+// Only targets <text> (room names, scanner labels, object labels) and small
+// <circle> elements (scanner dots, object dots, layer index dots are excluded
+// by radius threshold).
+
+const _COUNTER_SCALE_ATTR = "_plOrig";
+
+function _counterScaleSVG(container, scale) {
+  const svg = container.querySelector("svg");
+  if (!svg) return;
+  const inv = 1 / scale;
+
+  // Text elements: counter-scale via transform around their own position
+  for (const txt of svg.querySelectorAll("text")) {
+    const x = parseFloat(txt.getAttribute("x")) || 0;
+    const y = parseFloat(txt.getAttribute("y")) || 0;
+    // transform: translate to origin, scale inversely, translate back
+    txt.setAttribute("transform", `translate(${x},${y}) scale(${inv}) translate(${-x},${-y})`);
+  }
+
+  // Small circles (r < 10): counter-scale radius so dots don't bloat.
+  // Skip large circles (floor index badges r=15, coverage rings, etc.)
+  for (const c of svg.querySelectorAll("circle")) {
+    const origR = c[_COUNTER_SCALE_ATTR];
+    const r = origR != null ? origR : parseFloat(c.getAttribute("r")) || 0;
+    if (origR == null) c[_COUNTER_SCALE_ATTR] = r; // stash original
+    if (r > 0 && r < 10) {
+      c.setAttribute("r", String(Math.max(1, r * inv)));
+    }
+  }
+
+  // Stroke widths on polylines/polygons: keep consistent line weight
+  for (const el of svg.querySelectorAll("polygon, polyline")) {
+    const origSW = el[_COUNTER_SCALE_ATTR];
+    const sw = origSW != null ? origSW : parseFloat(el.getAttribute("stroke-width")) || 0;
+    if (origSW == null) el[_COUNTER_SCALE_ATTR] = sw;
+    if (sw > 0) {
+      el.setAttribute("stroke-width", String(Math.max(0.3, sw * inv)));
+    }
+  }
+}
+
 // ── Pan/Zoom Map Viewport ────────────────────────────────────────────────────
 // Wraps the iso map with mouse drag-to-pan, scroll-to-zoom, pinch-to-zoom,
 // and double-click/double-tap to reset.
@@ -246,6 +293,11 @@ function MapViewport({ children }) {
     const s = stateRef.current;
     if (innerRef.current) {
       innerRef.current.style.transform = `translate(${s.tx}px, ${s.ty}px) scale(${s.scale})`;
+      // Counter-scale SVG text and circles so labels and dots stay the same
+      // visual size at any zoom level.  Without this, zooming in makes room
+      // names, scanner labels, and dots bloat until they obscure the detail
+      // you zoomed in to see.
+      _counterScaleSVG(innerRef.current, s.scale);
     }
     setZoomPct(Math.round(s.scale * 100));
     setShowZoom(true);
