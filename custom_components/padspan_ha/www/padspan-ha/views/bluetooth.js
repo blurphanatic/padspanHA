@@ -643,18 +643,42 @@ function renderScanners(ctx, radios, sources, adsAll) {
     }
 
     const subParts = [
-      r.area_name ? el("span", { class: "pill", style: "font-size:10px" }, r.area_name) : el("span", { class: "muted", style: "font-size:10px" }, "no room"),
-      el("div", { class: "bt-scanner-src", style: "font-size:10px" }, src || "—"),
+      r.area_name ? el("span", { class: "pill", style: "font-size:10px" }, r.area_name) : null,
       r.ip ? el("span", { class: "muted", style: "font-family:monospace;font-size:10px" }, r.ip) : null,
       r.ssid ? el("span", { class: "muted", style: "font-size:10px" }, r.ssid) : null,
-      (!r.ssid && r.connection_type) ? el("span", { class: "muted", style: "font-size:10px" }, r.connection_type) : null,
-      r.wifi_signal != null ? el("span", { class: "muted", style: "font-size:10px" }, `WiFi ${r.wifi_signal} dBm`) : null,
+      r.wifi_signal != null ? el("span", { class: "muted", style: "font-size:10px" }, `${r.wifi_signal}dBm`) : null,
     ].filter(Boolean);
-    const subRow = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px" }, subParts);
+
+    // Compact controls row: offset + relearn + reset on ONE line
+    const ctrlRow = el("div", { style: "display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap" }, [
+      // Offset inline
+      el("span", { class: "muted", style: "font-size:10px" }, "Offset:"),
+      offsetInput,
+      offsetSaveBtn,
+      currentOffset !== 0 ? el("span", { style: "font-size:9px;color:#52b788" }, `${currentOffset > 0 ? "+" : ""}${currentOffset}`) : null,
+      // Relearn + Reset as compact buttons on same line
+      relearnWrap,
+      resetWrap,
+    ].filter(Boolean));
+    // Remove margin-top from relearn/reset since they're inline now
+    relearnWrap.style.cssText = "display:flex;align-items:center;gap:4px";
+    resetWrap.style.cssText = "display:flex;align-items:center;gap:4px";
 
     const div = el("div", { class: "bt-scanner-row" + (r.lost || r.disabled ? " warn" : "") }, [
-      el("div", { class: "bt-scanner-main" }, [ nameRow, subRow, healthBadge, offsetRow, relearnWrap, resetWrap ].filter(Boolean)),
-      el("div", { class: "bt-scanner-meta" }, meta.join(" • ") || "—"),
+      el("div", { class: "bt-scanner-main", style: "min-width:0" }, [
+        // Line 1: name + status + room + meta (all inline)
+        el("div", { style: "display:flex;align-items:center;gap:6px;flex-wrap:wrap" }, [
+          ...nameRow.childNodes,
+          ...subParts,
+          el("span", { class: "muted", style: "font-size:10px" }, meta.join(" \u00b7 ") || ""),
+        ].filter(Boolean)),
+        // Line 2: source ID (mono, small)
+        el("div", { style: "font-size:9px;color:#475569;font-family:monospace;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, src || ""),
+        // Line 3 (optional): health badge
+        healthBadge,
+        // Line 4: all controls on one row
+        ctrlRow,
+      ].filter(Boolean)),
     ]);
     if(r.lost || r.disabled) div.style.opacity = "0.7";
     div.style.cursor = "pointer";
