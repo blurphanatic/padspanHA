@@ -312,7 +312,7 @@ def validate_zip():
 
 # ───────────────────────── Git operations ────────────────────────────
 
-def git_commit_tag_push(version, tag):
+def git_commit_tag_push(version, tag, message=None):
     """Stage all integration files + static files, commit, tag, push."""
 
     # Auto-discover all files under custom_components/padspan_ha/
@@ -325,7 +325,10 @@ def git_commit_tag_push(version, tag):
     all_files = STATIC_FILES + discovered
     files = " ".join(f'"{p}"' for p in all_files)
     run_ok(f"git add {files}")
-    run_ok(f'git commit -m "chore: bump version to {tag}"')
+    commit_msg = message or f"release {tag}"
+    # Escape double quotes in message for shell safety
+    safe_msg = commit_msg.replace('"', '\\"')
+    run_ok(f'git commit -m "{safe_msg}"')
     run_ok(f"git tag {tag}")
 
     # Push with retry — GitHub occasionally returns HTTP 500
@@ -352,7 +355,7 @@ def git_commit_tag_push(version, tag):
 
 # ───────────────────────── GitHub release ────────────────────────────
 
-def create_github_release(tag, channel):
+def create_github_release(tag, channel, message=None):
     """
     Create a GitHub release and upload the zip asset.
 
@@ -363,8 +366,10 @@ def create_github_release(tag, channel):
     """
     is_prerelease = channel != "stable"
     channel_label = "BETA" if is_prerelease else "STABLE"
+    summary = message or f"Release {tag}"
     notes = (
         f"## PadSpan HA {tag} ({channel_label})\n\n"
+        f"{summary}\n\n"
         "### Install / Update\n"
         "Install or update via HACS using this repository as a custom repository."
     )
@@ -427,8 +432,21 @@ def create_github_release(tag, channel):
 # ───────────────────────── Main ──────────────────────────────────────
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    flags = [a for a in sys.argv[1:] if a.startswith("--")]
+    # Parse -m "message" flag for commit/release description
+    argv = sys.argv[1:]
+    message = None
+    filtered = []
+    i = 0
+    while i < len(argv):
+        if argv[i] in ("-m", "--message") and i + 1 < len(argv):
+            message = argv[i + 1]
+            i += 2
+        else:
+            filtered.append(argv[i])
+            i += 1
+
+    args = [a for a in filtered if not a.startswith("--")]
+    flags = [a for a in filtered if a.startswith("--")]
 
     if len(args) != 1:
         print(__doc__)
@@ -454,10 +472,10 @@ def main():
     validate_zip()
 
     print("\nCommitting, tagging, pushing...")
-    git_commit_tag_push(version, tag)
+    git_commit_tag_push(version, tag, message)
 
     print("\nCreating GitHub release...")
-    create_github_release(tag, channel)
+    create_github_release(tag, channel, message)
 
     print(f"\n=== Done! {tag} ({channel}) is live on GitHub. ===\n")
 
