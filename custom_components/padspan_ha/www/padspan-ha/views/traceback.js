@@ -1831,14 +1831,25 @@ export function render(ctx) {
           return;
         }
 
-        // Compute distances with jitter filtering
-        // Jitter causes stationary objects to accumulate fake distance from
-        // k-NN position noise (~0.2-1m per poll). We filter:
-        //   - Steps < 0.5m are ignored (sub-metre jitter)
-        //   - Steps where room doesn't change are capped at 3m (same-room noise)
-        //   - Steps > 50m are ignored (teleport/tracking error)
-        //   - Time-gap scaling: require larger steps when frames are far apart
+        // Compute distances with velocity-based stillness detection.
+        //
+        // k-NN position noise (~0.2-1m per poll) causes stationary objects to
+        // accumulate phantom distance.  The old approach (flat 0.5m threshold)
+        // missed accumulated micro-jitter.  New approach:
+        //
+        //   1. Track a rolling window of recent step sizes (last 5 frames)
+        //   2. If the median step is < 0.8m AND room hasn't changed → device
+        //      is "still" → ignore ALL steps in this window (noise floor)
+        //   3. Same-room cap lowered to 2m (was 3m) to reject boundary bounce
+        //   4. Time-gap scaling: large gaps require proportionally larger steps
+        //   5. Steps > 30m are teleport errors (was 50m)
+        //
+        // This means a TV jittering ±0.3m every poll accumulates 0m, while a
+        // person walking 1.5m per poll accumulates correctly.
+
         const _stationarySet = new Set((ctx.state.settings?.distance_stationary_devices || []).map(s => String(s).toUpperCase()));
+        const STILL_WINDOW = 5;    // frames to assess stillness
+        const STILL_MEDIAN = 0.8;  // m — median step below this = stationary
         const objDist = {};
         let prevTs = 0;
         for (const frame of frames) {
@@ -1848,7 +1859,7 @@ export function render(ctx) {
           for (const o of (frame.o || [])) {
             if (!o.k) continue;
             const _isRef = _stationarySet.has(String(o.k).toUpperCase());
-            if (!objDist[o.k]) objDist[o.k] = {dist_m:0, transitions:0, lastPos:null, lastRoom:null, lastTs:0, label:o.n||o.k, steps:0, jitter_steps:0, max_step:0, isRef: _isRef};
+            if (!objDist[o.k]) objDist[o.k] = {dist_m:0, transitions:0, lastPos:null, lastRoom:null, lastTs:0, label:o.n||o.k, steps:0, jitter_steps:0, max_step:0, isRef: _isRef, _recentSteps: []};
             let pos = null;
             if (o.x!=null && o.y!=null && o.m) pos = _toMetres(o.x, o.y, o.m);
             if (!pos && o.r) pos = _centroid(o.r);
@@ -1857,17 +1868,32 @@ export function render(ctx) {
               const dx=pos[0]-od.lastPos[0], dy=pos[1]-od.lastPos[1];
               const step=Math.sqrt(dx*dx+dy*dy);
               od.steps++;
-              // Minimum step: 0.5m (below is jitter noise)
-              // Time-gap scaling: if >60s between frames, require proportionally larger step
-              const minStep = dt > 60 ? Math.min(2.0, 0.5 + (dt - 60) * 0.01) : 0.5;
-              // Same-room cap: if room unchanged, max credible step is 3m
+
               const sameRoom = o.r && o.r === od.lastRoom;
-              const maxStep = sameRoom ? 3.0 : 50.0;
-              if (step >= minStep && step <= maxStep) {
-                od.dist_m += step;
-                od.max_step = Math.max(od.max_step, step);
-              } else {
+
+              // Push to rolling window
+              od._recentSteps.push(step);
+              if (od._recentSteps.length > STILL_WINDOW) od._recentSteps.shift();
+
+              // Stillness detection: if median of recent steps is below threshold
+              // AND room hasn't changed, device is stationary → skip step
+              const _sorted = [...od._recentSteps].sort((a,b) => a-b);
+              const _median = _sorted[Math.floor(_sorted.length / 2)] || 0;
+              const isStill = sameRoom && _sorted.length >= 3 && _median < STILL_MEDIAN;
+
+              if (isStill) {
                 od.jitter_steps++;
+              } else {
+                // Time-gap scaling: require larger step for larger gaps
+                const minStep = dt > 60 ? Math.min(2.0, 0.5 + (dt - 60) * 0.01) : 0.5;
+                // Same-room cap: max credible step in one room
+                const maxStep = sameRoom ? 2.0 : 30.0;
+                if (step >= minStep && step <= maxStep) {
+                  od.dist_m += step;
+                  od.max_step = Math.max(od.max_step, step);
+                } else {
+                  od.jitter_steps++;
+                }
               }
             }
             if (o.r && od.lastRoom && o.r !== od.lastRoom) od.transitions++;

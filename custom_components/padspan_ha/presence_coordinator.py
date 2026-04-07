@@ -1258,8 +1258,21 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _prev_fl = (self._knn_position.get(key) or {}).get("floor_id", "")
                     _new_fl = _knn.get("floor_id", "")
                     _conf = float(_knn.get("confidence", 0.0))
-                    _alpha = 0.15 + 0.35 * min(_conf, 1.0)
+                    _base_alpha = 0.15 + 0.35 * min(_conf, 1.0)
                     if _prev is not None and _prev_fl == _new_fl:
+                        # Velocity-aware alpha: if the raw position is very close
+                        # to the smoothed position (< 0.8m), the device is likely
+                        # stationary and the difference is k-NN jitter.  Use a
+                        # much lower alpha (0.03) to prevent noise accumulation.
+                        _dx = _raw_x - _prev[0]
+                        _dy = _raw_y - _prev[1]
+                        _raw_dist = (_dx * _dx + _dy * _dy) ** 0.5
+                        if _raw_dist < 0.8:
+                            _alpha = 0.03  # near-stationary: heavy damping
+                        elif _raw_dist < 1.5:
+                            _alpha = _base_alpha * 0.5  # slow movement: moderate damping
+                        else:
+                            _alpha = _base_alpha  # real movement: normal tracking
                         _sx = _prev[0] + _alpha * (_raw_x - _prev[0])
                         _sy = _prev[1] + _alpha * (_raw_y - _prev[1])
                     else:
