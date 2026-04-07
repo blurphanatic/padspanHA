@@ -93,7 +93,7 @@ export function render(ctx){
     const scanners = Object.keys(scannerDevices).sort();
 
     if(scanners.length){
-      const scannerCards = el("div",{style:"columns:220px auto;column-gap:10px"});
+      const scannerCards = el("div",{style:"display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-items:start"});
 
       for(const src of scanners){
         const sid = _sid(src);
@@ -144,7 +144,7 @@ export function render(ctx){
           return el("div",{class:"item",style:"display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #1e293b;overflow:hidden"},[
             el("div",{style:"flex:1;min-width:0;overflow:hidden"},[
               el("div",{style:"display:flex;align-items:center;gap:6px;overflow:hidden"},[
-                (() => { const s = el("span",{style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;display:inline-block;cursor:pointer"}, label); s.addEventListener("click",()=>{ const detailObj = o || { address: d.addr, name: d.name || d.addr, kind: "ble" }; ctx.actions.showObjectDetail(detailObj); }); return s; })(),
+                (() => { const s = el("span",{style:"cursor:pointer;font-size:12px"}, label); s.addEventListener("click",()=>{ const detailObj = o || { address: d.addr, name: d.name || d.addr, kind: "ble" }; ctx.actions.showObjectDetail(detailObj); }); return s; })(),
                 rssiStr ? el("span",{class:"muted", style:"white-space:nowrap;font-size:11px"}, rssiStr) : null,
               ].filter(Boolean)),
             ]),
@@ -154,7 +154,7 @@ export function render(ctx){
         };
 
         const areaName = radioAreas[src];
-        const card = el("div",{class:"card",style:"overflow:hidden;break-inside:avoid;margin-bottom:10px"},[
+        const card = el("div",{class:"card",style:"overflow:hidden"},[
           el("div",{class:"row",style:"flex-wrap:wrap;gap:4px"},[
             el("div",{style:"flex:1;min-width:0"},[
               el("div",{class:"h2",style:"overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}, scannerName),
