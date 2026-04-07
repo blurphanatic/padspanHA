@@ -252,27 +252,48 @@ function _counterScaleSVG(container, scale) {
   if (!svg) return;
   const inv = 1 / scale;
 
-  // Text elements: counter-scale via transform around their own position
-  for (const txt of svg.querySelectorAll("text")) {
-    const x = parseFloat(txt.getAttribute("x")) || 0;
-    const y = parseFloat(txt.getAttribute("y")) || 0;
-    // transform: translate to origin, scale inversely, translate back
-    txt.setAttribute("transform", `translate(${x},${y}) scale(${inv}) translate(${-x},${-y})`);
-  }
+  // Counter-scale ALL visual elements inside data-obj-key and data-scanner-src
+  // groups (beacons, objects, scanners) + standalone text.  These are the
+  // interactive/informational elements that should stay fixed-size on zoom.
+  // Floor slab polygons and room boundary polygons are NOT touched — they
+  // represent the map geometry and SHOULD scale with zoom.
 
-  // Small circles (r < 10): counter-scale radius so dots don't bloat.
-  // Skip large circles (floor index badges r=15, coverage rings, etc.)
-  for (const c of svg.querySelectorAll("circle")) {
-    const origR = c[_COUNTER_SCALE_ATTR];
-    const r = origR != null ? origR : parseFloat(c.getAttribute("r")) || 0;
-    if (origR == null) c[_COUNTER_SCALE_ATTR] = r; // stash original
-    if (r > 0 && r < 10) {
-      c.setAttribute("r", String(Math.max(1, r * inv)));
+  // 1. Every <g> with data-obj-key or data-scanner-src: apply inverse scale
+  //    around the group's centroid so the whole beacon/scanner marker stays
+  //    constant size.
+  for (const g of svg.querySelectorAll("[data-obj-key],[data-scanner-src]")) {
+    // Find the primary circle to use as anchor point
+    const anchor = g.querySelector("circle");
+    if (anchor) {
+      const cx = parseFloat(anchor.getAttribute("cx")) || 0;
+      const cy = parseFloat(anchor.getAttribute("cy")) || 0;
+      g.setAttribute("transform", `translate(${cx},${cy}) scale(${inv}) translate(${-cx},${-cy})`);
     }
   }
 
-  // Stroke widths on polylines/polygons: keep consistent line weight
+  // 2. Standalone text NOT inside a data-obj/scanner group (room names, floor labels)
+  for (const txt of svg.querySelectorAll("text")) {
+    if (txt.closest("[data-obj-key],[data-scanner-src]")) continue; // handled above
+    const x = parseFloat(txt.getAttribute("x")) || 0;
+    const y = parseFloat(txt.getAttribute("y")) || 0;
+    txt.setAttribute("transform", `translate(${x},${y}) scale(${inv}) translate(${-x},${-y})`);
+  }
+
+  // 3. Floor index badges (large circles at slab corners, r=15) — counter-scale
+  for (const c of svg.querySelectorAll("circle")) {
+    if (c.closest("[data-obj-key],[data-scanner-src]")) continue; // handled above
+    const origR = c[_COUNTER_SCALE_ATTR];
+    const r = origR != null ? origR : parseFloat(c.getAttribute("r")) || 0;
+    if (origR == null) c[_COUNTER_SCALE_ATTR] = r;
+    if (r >= 15) {
+      // Floor index badge — counter-scale
+      c.setAttribute("r", String(Math.max(8, r * inv)));
+    }
+  }
+
+  // 4. Stroke widths on room polygons and barriers — keep thin at any zoom
   for (const el of svg.querySelectorAll("polygon, polyline")) {
+    if (el.closest("[data-obj-key],[data-scanner-src]")) continue;
     const origSW = el[_COUNTER_SCALE_ATTR];
     const sw = origSW != null ? origSW : parseFloat(el.getAttribute("stroke-width")) || 0;
     if (origSW == null) el[_COUNTER_SCALE_ATTR] = sw;
