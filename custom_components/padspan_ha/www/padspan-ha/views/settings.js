@@ -44,12 +44,65 @@ export function render(ctx){
   const activeTab = ctx.state._settingsTab;
   const setTab = (t) => { ctx.state._settingsTab = t; ctx.actions.renderRooms(); };
 
-  const tabBar = el("div",{class:"tabs", style:"margin-bottom:14px;flex-wrap:wrap;gap:4px"});
-  for(const [id, label] of [["appearance","Appearance"],["scannermap","Scanner Map"],["presence","Presence"],["features","Features"],["ui","UI Structure"]]){
-    tabBar.appendChild(el("button",{
+  // Tab definitions with help descriptions
+  const _tabDefs = [
+    ["appearance", "Appearance",
+      "Configure how PadSpan looks and behaves. Set room colours that carry across the Overview map, Follow tracker, and all visualisations. " +
+      "Manage floors and areas (sourced from HA). Assign scanners to rooms so the system knows where each Bluetooth radio is physically located."],
+    ["scannermap", "Scanner Map",
+      "Estimates where each Bluetooth scanner is physically positioned on your floor plans, based on calibration data. " +
+      "When you collect calibration fingerprints (Calibration tab), each scanner records RSSI values at known locations. " +
+      "This tab uses signal-weighted centroids to triangulate each scanner's likely position on the map — " +
+      "stronger average RSSI from a calibration point means the scanner is closer to that point. " +
+      "Confidence increases with more calibration points. Use this to verify scanner placement before relying on positioning. " +
+      "Also includes the Replace Scanner tool (swap calibration data when a physical device is replaced) and " +
+      "the Relearn Radio tool (shift RSSI readings after an antenna upgrade/downgrade)."],
+    ["presence", "Presence",
+      "Controls how PadSpan determines which room a device is in and when it's considered 'away'. " +
+      "Room change delay prevents flicker when a device is near a boundary between rooms. " +
+      "Away timeout sets how long a device must be unseen before it's marked as gone. " +
+      "Quiet mode hides the flood of unidentified BLE advertisements so only your named/followed devices are shown. " +
+      "Path-loss and Kalman filter parameters fine-tune the distance estimation from raw RSSI values."],
+    ["features", "Features",
+      "Experimental capabilities under active development. Each toggle enables a specific feature: " +
+      "Trackability Rating scores how reliably each device can be tracked. " +
+      "Walk-to-Identify discovers unknown devices by correlating signal changes with your movement. " +
+      "Radio Map overlays signal heatmaps on the 3D iso view. " +
+      "Distortion Map visualises where the RF model diverges from reality. " +
+      "Adaptive Learning lets the system continuously improve from live positioning data."],
+    ["ui", "UI Structure",
+      "Choose which tabs appear in the sidebar when using Advanced mode. " +
+      "All tabs are always visible in Development mode regardless of these settings. " +
+      "Use this to show only the views you need — for example, enable Devices and Bluetooth for installers, " +
+      "or keep it minimal with just Follow and Overview for end users."],
+  ];
+
+  const tabBar = el("div",{class:"tabs", style:"margin-bottom:14px;flex-wrap:wrap;gap:4px;align-items:center"});
+  for(const [id, label, helpText] of _tabDefs){
+    const tabWrap = el("div",{style:"display:inline-flex;align-items:center;gap:0"});
+    tabWrap.appendChild(el("button",{
       class:"tab" + (activeTab===id ? " active" : ""),
       onclick:()=>setTab(id),
     }, label));
+    // Help ? button
+    const helpDot = el("button",{style:
+      "width:16px;height:16px;border-radius:50%;border:1px solid #334155;background:transparent;" +
+      "color:#64748b;font-size:10px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;" +
+      "justify-content:center;margin-left:2px;transition:color .15s,border-color .15s;flex-shrink:0"}, "?");
+    helpDot.title = helpText;
+    helpDot.addEventListener("mouseenter",()=>{helpDot.style.color="#52b788";helpDot.style.borderColor="#52b788";});
+    helpDot.addEventListener("mouseleave",()=>{helpDot.style.color="#64748b";helpDot.style.borderColor="#334155";});
+    helpDot.addEventListener("click",(e)=>{
+      e.stopPropagation();
+      // Show as a modal for full readability
+      const body = el("div",{style:"max-width:460px"},[
+        el("div",{style:"font-weight:700;font-size:14px;color:#52b788;margin-bottom:8px"}, label),
+        el("div",{style:"font-size:13px;color:#cbd5e1;line-height:1.6"}, helpText),
+      ]);
+      ctx.actions.openModal(`Settings: ${label}`, body, "Help");
+    });
+    tabWrap.appendChild(helpDot);
+    tabBar.appendChild(tabWrap);
   }
   root.appendChild(tabBar);
 
