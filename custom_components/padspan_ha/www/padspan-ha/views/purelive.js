@@ -23,15 +23,15 @@ function injectStyles(root) {
   const s = document.createElement("style");
   s.id = STYLES_ID;
   s.textContent = `
-    .pl-root{display:flex;flex-direction:column;height:calc(100vh - 56px);background:#050d08;overflow:hidden}
+    .pl-root{display:flex;flex-direction:column;min-height:calc(100vh - 140px);background:#050d08}
 
     /* Map viewport — clips the pannable/zoomable content */
-    .pl-viewport{position:absolute;inset:0;overflow:hidden;background:#071008;border-radius:8px;cursor:grab;touch-action:none}
+    .pl-viewport{flex:1;position:relative;overflow:hidden;background:#071008;border-radius:8px;cursor:grab;touch-action:none}
     .pl-viewport:active{cursor:grabbing}
     .pl-viewport-inner{transform-origin:0 0;will-change:transform}
 
-    /* Zoom controls — inside viewport, above the controls bar */
-    .pl-zoom{position:absolute;bottom:52px;right:12px;z-index:6;display:flex;flex-direction:column;gap:4px}
+    /* Zoom controls */
+    .pl-zoom{position:absolute;bottom:12px;right:12px;z-index:6;display:flex;flex-direction:column;gap:4px}
     .pl-zoom button{width:36px;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.1);
       background:rgba(10,30,15,.6);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
       color:#e2e8f0;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;
@@ -71,31 +71,10 @@ function injectStyles(root) {
     .pl-poll{height:2px;background:linear-gradient(90deg,#52b788,#5eead4);border-radius:1px;animation:pl-poll 5s linear infinite}
 
     /* Zoom level indicator */
-    .pl-zoom-level{position:absolute;bottom:52px;left:12px;z-index:6;font-size:10px;color:#64748b;
+    .pl-zoom-level{position:absolute;bottom:12px;left:12px;z-index:6;font-size:10px;color:#64748b;
       background:rgba(10,30,15,.5);padding:2px 8px;border-radius:6px;pointer-events:none;
       transition:opacity .3s;opacity:0}
     .pl-zoom-level.visible{opacity:1}
-
-    /* Map controls bar */
-    .pl-controls{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);z-index:7;
-      background:rgba(10,30,15,.75);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-      border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:6px 14px;
-      box-shadow:0 4px 16px rgba(0,0,0,.3);cursor:pointer;display:flex;align-items:center;gap:10px;
-      transition:all .2s}
-    .pl-controls:hover{border-color:rgba(82,183,136,.2)}
-    .pl-controls.expanded{cursor:default;padding:8px 14px;max-width:calc(100% - 120px)}
-    .pl-controls input[type="range"]{height:4px;cursor:pointer}
-    .pl-controls button{transition:background .15s,border-color .15s}
-
-    /* Override overview SVG constraints inside Pure Live */
-    .pl-map-wrap svg{max-height:none !important}
-
-    /* Info toggle — small button to show/hide bottom panels */
-    .pl-info-toggle{position:absolute;bottom:10px;left:12px;z-index:7;width:28px;height:28px;border-radius:8px;
-      border:1px solid rgba(255,255,255,.08);background:rgba(10,30,15,.6);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-      color:#94a3b8;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;
-      transition:background .15s,color .15s}
-    .pl-info-toggle:hover{background:rgba(82,183,136,.15);color:#e2e8f0}
 
     /* ── Scanner sonar pulse ───────────────────────── */
     @keyframes pl-sonar-ring{0%{transform:scale(.6);opacity:.5}100%{transform:scale(2.2);opacity:0}}
@@ -133,20 +112,19 @@ function injectStyles(root) {
     .pl-feed-item .pl-feed-time{color:#64748b}
     .pl-feed-item .pl-feed-room{color:#52b788;font-weight:600}
 
+    /* Info toggle — show/hide bottom panels */
+    .pl-info-toggle{position:absolute;bottom:10px;left:12px;z-index:7;width:28px;height:28px;border-radius:8px;
+      border:1px solid rgba(255,255,255,.08);background:rgba(10,30,15,.6);backdrop-filter:blur(10px);
+      color:#94a3b8;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+    .pl-info-toggle:hover{background:rgba(82,183,136,.15);color:#e2e8f0}
+
     @media(max-width:640px){
-      .pl-stats{padding:6px 10px;gap:10px;border-radius:10px;top:6px;left:6px}
+      .pl-stats{padding:6px 10px;gap:10px;border-radius:10px}
       .pl-stats-val{font-size:18px}
-      .pl-scanners{top:auto;bottom:56px;right:6px;left:auto;padding:4px 6px;gap:4px;
-        max-width:calc(100vw - 60px);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
-      .pl-scanners::-webkit-scrollbar{display:none}
+      .pl-scanners{padding:4px 6px;gap:4px}
       .pl-ticker{flex-wrap:wrap;gap:8px;justify-content:center}
       .pl-ticker>div:first-child{width:100%;order:-1}
       .pl-zoom button{width:32px;height:32px;font-size:16px}
-      .pl-zoom{bottom:56px;right:6px}
-      .pl-feed{bottom:56px;left:6px;max-width:200px}
-      .pl-controls{bottom:6px;max-width:calc(100% - 60px);font-size:9px}
-      .pl-controls.expanded{padding:6px 10px}
-      .pl-info-toggle{bottom:6px;left:6px;width:24px;height:24px;font-size:11px}
     }
   `;
   root.appendChild(s);
@@ -238,74 +216,6 @@ function Ticker({ dataMode, radios, objects, version, cal }) {
   `;
 }
 
-// ── SVG counter-scaling ──────────────────────────────────────────────────────
-// When the viewport is zoomed, SVG text and small circles scale with it, making
-// labels and dots balloon until they obscure the map.  This function stores each
-// element's original size on first call, then applies inverse scaling so they
-// remain the same visual size regardless of zoom level.
-//
-// Only targets <text> (room names, scanner labels, object labels) and small
-// <circle> elements (scanner dots, object dots, layer index dots are excluded
-// by radius threshold).
-
-const _COUNTER_SCALE_ATTR = "_plOrig";
-
-function _counterScaleSVG(container, scale) {
-  const svg = container.querySelector("svg");
-  if (!svg) return;
-  const inv = 1 / scale;
-
-  // Counter-scale ALL visual elements inside data-obj-key and data-scanner-src
-  // groups (beacons, objects, scanners) + standalone text.  These are the
-  // interactive/informational elements that should stay fixed-size on zoom.
-  // Floor slab polygons and room boundary polygons are NOT touched — they
-  // represent the map geometry and SHOULD scale with zoom.
-
-  // 1. Every <g> with data-obj-key or data-scanner-src: apply inverse scale
-  //    around the group's centroid so the whole beacon/scanner marker stays
-  //    constant size.
-  for (const g of svg.querySelectorAll("[data-obj-key],[data-scanner-src]")) {
-    // Find the primary circle to use as anchor point
-    const anchor = g.querySelector("circle");
-    if (anchor) {
-      const cx = parseFloat(anchor.getAttribute("cx")) || 0;
-      const cy = parseFloat(anchor.getAttribute("cy")) || 0;
-      g.setAttribute("transform", `translate(${cx},${cy}) scale(${inv}) translate(${-cx},${-cy})`);
-    }
-  }
-
-  // 2. Standalone text NOT inside a data-obj/scanner group (room names, floor labels)
-  for (const txt of svg.querySelectorAll("text")) {
-    if (txt.closest("[data-obj-key],[data-scanner-src]")) continue; // handled above
-    const x = parseFloat(txt.getAttribute("x")) || 0;
-    const y = parseFloat(txt.getAttribute("y")) || 0;
-    txt.setAttribute("transform", `translate(${x},${y}) scale(${inv}) translate(${-x},${-y})`);
-  }
-
-  // 3. Floor index badges (large circles at slab corners, r=15) — counter-scale
-  for (const c of svg.querySelectorAll("circle")) {
-    if (c.closest("[data-obj-key],[data-scanner-src]")) continue; // handled above
-    const origR = c[_COUNTER_SCALE_ATTR];
-    const r = origR != null ? origR : parseFloat(c.getAttribute("r")) || 0;
-    if (origR == null) c[_COUNTER_SCALE_ATTR] = r;
-    if (r >= 15) {
-      // Floor index badge — counter-scale
-      c.setAttribute("r", String(Math.max(8, r * inv)));
-    }
-  }
-
-  // 4. Stroke widths on room polygons and barriers — keep thin at any zoom
-  for (const el of svg.querySelectorAll("polygon, polyline")) {
-    if (el.closest("[data-obj-key],[data-scanner-src]")) continue;
-    const origSW = el[_COUNTER_SCALE_ATTR];
-    const sw = origSW != null ? origSW : parseFloat(el.getAttribute("stroke-width")) || 0;
-    if (origSW == null) el[_COUNTER_SCALE_ATTR] = sw;
-    if (sw > 0) {
-      el.setAttribute("stroke-width", String(Math.max(0.3, sw * inv)));
-    }
-  }
-}
-
 // ── Pan/Zoom Map Viewport ────────────────────────────────────────────────────
 // Wraps the iso map with mouse drag-to-pan, scroll-to-zoom, pinch-to-zoom,
 // and double-click/double-tap to reset.
@@ -325,11 +235,6 @@ function MapViewport({ children }) {
     const s = stateRef.current;
     if (innerRef.current) {
       innerRef.current.style.transform = `translate(${s.tx}px, ${s.ty}px) scale(${s.scale})`;
-      // Counter-scale SVG text and circles so labels and dots stay the same
-      // visual size at any zoom level.  Without this, zooming in makes room
-      // names, scanner labels, and dots bloat until they obscure the detail
-      // you zoomed in to see.
-      _counterScaleSVG(innerRef.current, s.scale);
     }
     setZoomPct(Math.round(s.scale * 100));
     setShowZoom(true);
@@ -465,25 +370,20 @@ function MapViewport({ children }) {
 }
 
 // ── Iso Map Bridge ───────────────────────────────────────────────────────────
-// Embeds the overview's 3D isometric SVG.  All overview controls are hidden;
-// Pure Live provides its own compact control bar (MapControls component).
+// Keeps map controls (floor/spacing sliders, buttons) but hides the overview's
+// room list panel (duplicates Pure Live's own overlays).
 
 function _cleanupMapElement(map) {
-  // The overview map element (outer) has children:
-  //   ctrlRow, isoOverlayCtrl, isoWrap (position:relative), roomListPanel
-  //
-  // Hide everything except isoWrap. Add pl-map-wrap class so CSS can
-  // override the SVG max-height. Do NOT touch overflow, padding, or width
-  // on any inner elements — that breaks the SVG layout.
-
+  // The overview map element has: ctrlRow, isoOverlayCtrl, isoWrap, roomListPanel.
+  // Keep ONLY the isoWrap (position:relative) which contains the SVG.
+  // Hide everything else — controls overlap with Pure Live's own overlays,
+  // and the room list is redundant.
+  // IMPORTANT: do NOT modify any styles on isoWrap or its children — the SVG
+  // layout depends on the overview's original overflow/padding/width settings.
   for (const child of [...map.children]) {
     const css = child.style?.cssText || "";
-    if (css.includes("position") && css.includes("relative")) {
-      // This is isoWrap — keep it, just add the class for CSS overrides
-      child.classList.add("pl-map-wrap");
-    } else {
-      child.style.display = "none";
-    }
+    if (css.includes("position") && css.includes("relative")) continue;
+    child.style.display = "none";
   }
 }
 
@@ -519,156 +419,6 @@ function IsoMap({ ctx }) {
 
   return html`<div ref=${ref}></div>`;
 }
-
-// ── Map Controls (compact floating bar) ──────────────────────────────────────
-// Pure Live's own control bar — modifies ctx.state and forces a map rebuild.
-// Compact single-row design that sits at the bottom of the map viewport.
-
-function MapControls({ ctx }) {
-  const settings = ctx.state.settings || {};
-  const floors = ctx.state.model?.floors || [];
-
-  // Floor focus — read from same state the overview uses
-  const [focusIdx, setFocusIdx] = useState(ctx.state._overviewIsoFocusIdx ?? settings.overview_iso_focus ?? 0);
-  const [gap, setGap] = useState(ctx.state._overviewFloorGap ?? settings.overview_iso_floor_gap ?? 150);
-  const [lr, setLr] = useState(ctx.state._overviewHorizGap ?? settings.overview_iso_horiz_gap ?? 0);
-  const [expanded, setExpanded] = useState(false);
-
-  // Compute floor label from focus index
-  const maps = (ctx.state.maps?.list) || [];
-  const sortedLevels = [...new Set(maps.map(m => m.stack?.z_level ?? 0))].sort((a, b) => a - b);
-  // Build positions: all → l0 → l0+l1 → l1 → ...
-  const positions = useMemo(() => {
-    const p = [null];
-    for (let i = 0; i < sortedLevels.length; i++) {
-      p.push(sortedLevels[i]);
-      if (i < sortedLevels.length - 1) p.push([sortedLevels[i], sortedLevels[i + 1]]);
-    }
-    return p;
-  }, [sortedLevels.join(",")]);
-
-  const maxIdx = positions.length - 1;
-  const getFocusLabel = (idx) => {
-    const pos = positions[Math.max(0, Math.min(idx, maxIdx))];
-    if (pos === null) return "All";
-    const zArr = Array.isArray(pos) ? pos : [pos];
-    return zArr.map(z => {
-      const f = floors.find(x => x.level === z);
-      return f ? (f.name || `L${z}`) : `L${z}`;
-    }).join("+");
-  };
-
-  const rebuild = () => {
-    _mapNode = null; // force full rebuild on next render
-    ctx.actions.renderRooms();
-  };
-
-  const onFocus = (e) => {
-    const v = parseInt(e.target.value, 10);
-    setFocusIdx(v);
-    ctx.state._overviewIsoFocusIdx = v;
-    rebuild();
-  };
-  const onGap = (e) => {
-    const v = parseInt(e.target.value, 10);
-    setGap(v);
-    ctx.state._overviewFloorGap = v;
-    rebuild();
-  };
-  const onLr = (e) => {
-    const v = parseInt(e.target.value, 10);
-    setLr(v);
-    ctx.state._overviewHorizGap = v;
-    rebuild();
-  };
-
-  const save = async () => {
-    try {
-      await ctx.actions.settingsSet({
-        overview_iso_floor_gap: gap,
-        overview_iso_horiz_gap: lr,
-        overview_iso_focus: focusIdx,
-      });
-    } catch (e) { /* silent */ }
-  };
-
-  // Toggle buttons for walls, persistent pins, heatmap, distortion
-  const [walls, setWalls] = useState(!!ctx.state._overviewShowWalls);
-  const [pins, setPins] = useState(!!ctx.state._overviewPersistentPins);
-  const [heat, setHeat] = useState(!!ctx.state._overviewShowHeatmap);
-  const [dist, setDist] = useState(!!ctx.state._overviewShowDistortion);
-
-  const toggleWalls = () => { const v = !walls; setWalls(v); ctx.state._overviewShowWalls = v; rebuild(); };
-  const togglePins = () => { const v = !pins; setPins(v); ctx.state._overviewPersistentPins = v; rebuild(); };
-  const toggleHeat = () => {
-    const v = !heat; setHeat(v); ctx.state._overviewShowHeatmap = v;
-    if (v) { setDist(false); ctx.state._overviewShowDistortion = false; }
-    rebuild();
-  };
-  const toggleDist = () => {
-    const v = !dist; setDist(v); ctx.state._overviewShowDistortion = v;
-    if (v) { setHeat(false); ctx.state._overviewShowHeatmap = false; }
-    rebuild();
-  };
-
-  const btnStyle = (on, onColor = "#52b788", onBg = "rgba(82,183,136,.15)") =>
-    `padding:2px 8px;font-size:10px;border-radius:6px;border:1px solid ${on ? onColor + "80" : "rgba(255,255,255,.1)"};` +
-    `background:${on ? onBg : "transparent"};color:${on ? onColor : "#64748b"};cursor:pointer;white-space:nowrap`;
-
-  if (!expanded) {
-    return html`
-      <div className="pl-controls" onClick=${() => setExpanded(true)}>
-        <span style="font-size:10px;color:#94a3b8;cursor:pointer">Controls</span>
-        <span style="font-size:10px;color:#64748b">${getFocusLabel(focusIdx)}</span>
-      </div>
-    `;
-  }
-
-  return html`
-    <div className="pl-controls expanded">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="font-size:10px;color:#94a3b8;white-space:nowrap">Floor:</span>
-        <input type="range" min="0" max=${maxIdx} value=${focusIdx} onInput=${onFocus}
-               style="width:80px;accent-color:#52b788" />
-        <span style="font-size:10px;color:#5eead4;min-width:40px">${getFocusLabel(focusIdx)}</span>
-
-        ${sortedLevels.length > 1 && html`<${_Fragment}>
-          <span style="font-size:10px;color:#94a3b8;white-space:nowrap">Gap:</span>
-          <input type="range" min="60" max="340" step="10" value=${gap} onInput=${onGap}
-                 style="width:60px;accent-color:#52b788" />
-          <span style="font-size:10px;color:#94a3b8;white-space:nowrap">L/R:</span>
-          <input type="range" min="-120" max="120" step="10" value=${lr} onInput=${onLr}
-                 style="width:60px;accent-color:#52b788" />
-        </${_Fragment}>`}
-
-        <button style=${btnStyle(walls, "#a5b4fc", "rgba(99,102,241,.15)")} onClick=${toggleWalls}>
-          Walls${walls ? " ON" : ""}
-        </button>
-        <button style=${btnStyle(pins, "#fca5a5", "rgba(239,68,68,.12)")} onClick=${togglePins}>
-          Pins${pins ? " ON" : ""}
-        </button>
-        ${!!(settings.radio_map_enabled) && html`
-          <button style=${btnStyle(heat, "#d8b4fe", "rgba(168,85,247,.15)")} onClick=${toggleHeat}>
-            Heat${heat ? " ON" : ""}
-          </button>
-        `}
-        ${!!(settings.distortion_map_enabled) && html`
-          <button style=${btnStyle(dist, "#fdba74", "rgba(249,115,22,.15)")} onClick=${toggleDist}>
-            Warp${dist ? " ON" : ""}
-          </button>
-        `}
-
-        <button style="padding:2px 8px;font-size:10px;border-radius:6px;border:1px solid rgba(82,183,136,.3);background:transparent;color:#52b788;cursor:pointer"
-                onClick=${save}>Save</button>
-        <button style="padding:2px 8px;font-size:10px;border-radius:6px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#64748b;cursor:pointer"
-                onClick=${() => setExpanded(false)}>Collapse</button>
-      </div>
-    </div>
-  `;
-}
-
-// Preact Fragment shim (htm doesn't have <> shorthand)
-const _Fragment = ({ children }) => children;
 
 // ── Radio List (bottom strip) ────────────────────────────────────────────────
 function RadioStrip({ radios, ctx }) {
@@ -817,16 +567,6 @@ function ActivityFeed({ roomTagMap }) {
   `;
 }
 
-// ── Info Toggle Button ────────────────────────────────────────────────────────
-function InfoToggle({ visible, onToggle }) {
-  return html`
-    <button className="pl-info-toggle" onClick=${onToggle}
-            title=${visible ? "Hide info panels" : "Show info panels"}>
-      ${visible ? "\u25BC" : "\u2139"}
-    </button>
-  `;
-}
-
 // ── Root ─────────────────────────────────────────────────────────────────────
 function App({ ctx }) {
   const mode = ctx.state.dataMode || "sample";
@@ -846,22 +586,23 @@ function App({ ctx }) {
 
   return html`
     <div className="pl-root">
-      <div style="flex:1;position:relative;min-height:0">
-        <${MapViewport}>
-          <${IsoMap} ctx=${ctx} />
-        <//>
+      <${MapViewport}>
+        <${IsoMap} ctx=${ctx} />
         <${Stats} rooms=${rooms} objects=${objects} radios=${radios.length} loading=${loading} />
         <${Scanners} radios=${radios} ctx=${ctx} />
         <${MovementGhosts} roomTagMap=${rtm} />
         <${ActivityFeed} roomTagMap=${rtm} />
-        <${MapControls} ctx=${ctx} />
-        <${InfoToggle} visible=${infoVisible} onToggle=${() => setInfoVisible(v => !v)} />
-      </div>
-      ${infoVisible && html`<${_Fragment}>
+        <button className="pl-info-toggle"
+                title=${infoVisible ? "Hide info panels" : "Show info panels"}
+                onClick=${() => setInfoVisible(v => !v)}>
+          ${infoVisible ? "\u25BC" : "\u2139"}
+        </button>
+      <//>
+      ${infoVisible && html`
         <${FollowedTracker} ctx=${ctx} snap=${snap} />
         <${RadioStrip} radios=${radios} ctx=${ctx} />
         <${Ticker} dataMode=${mode} radios=${radios.length} objects=${objects} version=${ctx.state.version} cal=${cal} />
-      </${_Fragment}>`}
+      `}
     </div>
   `;
 }
@@ -872,7 +613,7 @@ let _container = null;
 export function render(ctx) {
   if (!_container || !_container.isConnected) {
     _container = document.createElement("div");
-    _container.style.cssText = "margin:-16px -16px -80px;";
+    _container.style.cssText = "margin:-14px;";
   }
 
   const root = _container.getRootNode?.();
