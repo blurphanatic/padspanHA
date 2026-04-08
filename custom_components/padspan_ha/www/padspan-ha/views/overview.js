@@ -2263,11 +2263,11 @@ export function render(ctx){
 
     const roomToggleBtn = document.createElement("button");
     roomToggleBtn.className = "btn inline";
-    roomToggleBtn.style.cssText = "margin-left:auto";
-    roomToggleBtn.textContent = ctx.state._overviewShowRoomList ? "☰ Hide Room List" : "☰ Room List";
+    roomToggleBtn.style.cssText = "padding:1px 6px;font-size:10px";
+    roomToggleBtn.textContent = ctx.state._overviewShowRoomList ? "Rooms \u25BC" : "Rooms";
     roomToggleBtn.addEventListener("click", ()=>{
       ctx.state._overviewShowRoomList = !ctx.state._overviewShowRoomList;
-      roomToggleBtn.textContent = ctx.state._overviewShowRoomList ? "☰ Hide Room List" : "☰ Room List";
+      roomToggleBtn.textContent = ctx.state._overviewShowRoomList ? "Rooms \u25BC" : "Rooms";
       roomListPanel.style.display = ctx.state._overviewShowRoomList ? "block" : "none";
     });
 
@@ -2304,33 +2304,37 @@ export function render(ctx){
     });
 
     const ctrlRow = document.createElement("div");
-    ctrlRow.style.cssText = "display:flex;align-items:center;gap:10px;flex-wrap:wrap";
+    ctrlRow.style.cssText = "display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px";
     const floorLbl = document.createElement("span");
-    floorLbl.style.cssText = "font-size:12px;color:#94a3b8";
+    floorLbl.style.cssText = "color:#94a3b8";
     floorLbl.textContent = "Floor:";
     ctrlRow.appendChild(floorLbl);
+    focusSlider.style.cssText = "width:90px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
+    focusLbl.style.cssText = "color:#94a3b8;min-width:60px;display:inline-block";
     ctrlRow.appendChild(focusSlider);
     ctrlRow.appendChild(focusLbl);
     // Spacing
     const ovSpacingLbl = document.createElement("span");
-    ovSpacingLbl.style.cssText = "font-size:12px;color:#94a3b8;margin-left:8px";
-    ovSpacingLbl.textContent = "Spacing:";
+    ovSpacingLbl.style.cssText = "color:#94a3b8;margin-left:4px";
+    ovSpacingLbl.textContent = "Gap:";
     ctrlRow.appendChild(ovSpacingLbl);
+    ovGapSlider.style.cssText = "width:70px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
     ctrlRow.appendChild(ovGapSlider);
     ctrlRow.appendChild(ovGapLbl);
     // L/R
     const ovLRLbl = document.createElement("span");
-    ovLRLbl.style.cssText = "font-size:12px;color:#94a3b8;margin-left:8px";
+    ovLRLbl.style.cssText = "color:#94a3b8;margin-left:4px";
     ovLRLbl.textContent = "L/R:";
     ctrlRow.appendChild(ovLRLbl);
+    ovHorizSlider.style.cssText = "width:70px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
     ctrlRow.appendChild(ovHorizSlider);
     ctrlRow.appendChild(ovHorizLbl);
     // Save button — persists all three slider values to settings store
     const ovSaveLbl = document.createElement("span");
-    ovSaveLbl.style.cssText = "font-size:11px;color:#94a3b8;min-width:50px";
+    ovSaveLbl.style.cssText = "color:#94a3b8;min-width:40px";
     const ovSaveBtn = document.createElement("button");
     ovSaveBtn.className = "btn inline";
-    ovSaveBtn.style.cssText = "padding:2px 10px;font-size:12px";
+    ovSaveBtn.style.cssText = "padding:1px 6px;font-size:10px";
     ovSaveBtn.title = "Save these slider positions so the view reopens with the same layout";
     ovSaveBtn.textContent = "Save";
     ovSaveBtn.addEventListener("click", async ()=>{
@@ -2348,7 +2352,7 @@ export function render(ctx){
     });
     const ovResetBtn = document.createElement("button");
     ovResetBtn.className = "btn inline";
-    ovResetBtn.style.cssText = "padding:2px 10px;font-size:12px";
+    ovResetBtn.style.cssText = "padding:1px 6px;font-size:10px";
     ovResetBtn.title = "Reset sliders to default values and clear the saved layout";
     ovResetBtn.textContent = "Reset";
     ovResetBtn.addEventListener("click", async ()=>{
@@ -2375,16 +2379,13 @@ export function render(ctx){
 
     const ovPersistentBtn = document.createElement("button");
     ovPersistentBtn.className = "btn inline";
-    ovPersistentBtn.style.cssText = ctx.state._overviewPersistentPins
-      ? "background:#7f1d1d;border-color:#ef4444;color:#fca5a5;font-weight:700"
-      : "color:#94a3b8";
-    ovPersistentBtn.textContent = ctx.state._overviewPersistentPins ? "⊕ Persistent ON" : "⊕ Persistent";
+    const _pinStyle = (on) => `padding:1px 6px;font-size:10px;${on ? "background:#7f1d1d;border-color:#ef4444;color:#fca5a5;font-weight:700" : "color:#94a3b8"}`;
+    ovPersistentBtn.style.cssText = _pinStyle(ctx.state._overviewPersistentPins);
+    ovPersistentBtn.textContent = ctx.state._overviewPersistentPins ? "Pins ON" : "Pins";
     ovPersistentBtn.addEventListener("click", ()=>{
       ctx.state._overviewPersistentPins = !ctx.state._overviewPersistentPins;
-      ovPersistentBtn.style.cssText = ctx.state._overviewPersistentPins
-        ? "background:#7f1d1d;border-color:#ef4444;color:#fca5a5;font-weight:700"
-        : "color:#94a3b8";
-      ovPersistentBtn.textContent = ctx.state._overviewPersistentPins ? "⊕ Persistent ON" : "⊕ Persistent";
+      ovPersistentBtn.style.cssText = _pinStyle(ctx.state._overviewPersistentPins);
+      ovPersistentBtn.textContent = ctx.state._overviewPersistentPins ? "Pins ON" : "Pins";
       _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx));
       // Persist to settings so it survives reboots
       ctx.actions.settingsSet({ overview_persistent_pins: ctx.state._overviewPersistentPins });
@@ -2393,35 +2394,32 @@ export function render(ctx){
 
     const ovWallsBtn = document.createElement("button");
     ovWallsBtn.className = "btn inline";
-    ovWallsBtn.style.cssText = ctx.state._overviewShowWalls
-      ? "background:#1a1a2e;border-color:#6366f1;color:#a5b4fc;font-weight:700"
-      : "color:#94a3b8";
-    ovWallsBtn.textContent = ctx.state._overviewShowWalls ? "⊞ Walls ON" : "⊞ Walls";
+    const _wallStyle = (on) => `padding:1px 6px;font-size:10px;${on ? "background:#1a1a2e;border-color:#6366f1;color:#a5b4fc;font-weight:700" : "color:#94a3b8"}`;
+    ovWallsBtn.style.cssText = _wallStyle(ctx.state._overviewShowWalls);
+    ovWallsBtn.textContent = ctx.state._overviewShowWalls ? "Walls ON" : "Walls";
     ovWallsBtn.addEventListener("click", ()=>{
       ctx.state._overviewShowWalls = !ctx.state._overviewShowWalls;
-      ovWallsBtn.style.cssText = ctx.state._overviewShowWalls
-        ? "background:#1a1a2e;border-color:#6366f1;color:#a5b4fc;font-weight:700"
-        : "color:#94a3b8";
-      ovWallsBtn.textContent = ctx.state._overviewShowWalls ? "⊞ Walls ON" : "⊞ Walls";
+      ovWallsBtn.style.cssText = _wallStyle(ctx.state._overviewShowWalls);
+      ovWallsBtn.textContent = ctx.state._overviewShowWalls ? "Walls ON" : "Walls";
       _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx));
       ctx.actions.settingsSet({ overview_show_walls: ctx.state._overviewShowWalls });
     });
     ctrlRow.appendChild(ovWallsBtn);
 
     // ── Radio Map + Distortion toggles (mutually exclusive) ────────────────
-    const _heatStyle = (on) => on ? "background:#2d1b4e;border-color:#a855f7;color:#d8b4fe;font-weight:700" : "color:#94a3b8";
-    const _distStyle = (on) => on ? "background:#431407;border-color:#f97316;color:#fdba74;font-weight:700" : "color:#94a3b8";
+    const _heatStyle = (on) => `padding:1px 6px;font-size:10px;${on ? "background:#2d1b4e;border-color:#a855f7;color:#d8b4fe;font-weight:700" : "color:#94a3b8"}`;
+    const _distStyle = (on) => `padding:1px 6px;font-size:10px;${on ? "background:#431407;border-color:#f97316;color:#fdba74;font-weight:700" : "color:#94a3b8"}`;
     let _ovHeatBtn = null, _ovDistBtn = null;
     let _isoOverlayCtrl = null; // slider bar — toggled by _syncOverlayBtns
 
     const _syncOverlayBtns = () => {
       if (_ovHeatBtn) {
         _ovHeatBtn.style.cssText = _heatStyle(ctx.state._overviewShowHeatmap);
-        _ovHeatBtn.textContent = ctx.state._overviewShowHeatmap ? "\u25A3 Heatmap ON" : "\u25A3 Heatmap";
+        _ovHeatBtn.textContent = ctx.state._overviewShowHeatmap ? "Heat ON" : "Heat";
       }
       if (_ovDistBtn) {
         _ovDistBtn.style.cssText = _distStyle(ctx.state._overviewShowDistortion);
-        _ovDistBtn.textContent = ctx.state._overviewShowDistortion ? "\u2192 Distortion ON" : "\u2192 Distortion";
+        _ovDistBtn.textContent = ctx.state._overviewShowDistortion ? "Warp ON" : "Warp";
       }
       // Show/hide the slider control bar based on active overlay
       if (_isoOverlayCtrl) {
@@ -2435,7 +2433,7 @@ export function render(ctx){
       _ovHeatBtn = document.createElement("button");
       _ovHeatBtn.className = "btn inline";
       _ovHeatBtn.style.cssText = _heatStyle(ctx.state._overviewShowHeatmap);
-      _ovHeatBtn.textContent = ctx.state._overviewShowHeatmap ? "\u25A3 Heatmap ON" : "\u25A3 Heatmap";
+      _ovHeatBtn.textContent = ctx.state._overviewShowHeatmap ? "Heat ON" : "Heat";
       _ovHeatBtn.addEventListener("click", () => {
         ctx.state._overviewShowHeatmap = !ctx.state._overviewShowHeatmap;
         if (ctx.state._overviewShowHeatmap) ctx.state._overviewShowDistortion = false; // mutual exclusion
