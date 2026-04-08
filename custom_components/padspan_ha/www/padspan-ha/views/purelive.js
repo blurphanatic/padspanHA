@@ -87,9 +87,13 @@ function injectStyles(root) {
     .pl-controls input[type="range"]{height:4px;cursor:pointer}
     .pl-controls button{transition:background .15s,border-color .15s}
 
-    /* Override overview SVG constraints inside Pure Live */
-    .pl-map-wrap svg{max-height:none !important}
-    .pl-map-wrap>div{overflow:visible !important;padding:0 !important}
+    /* Override overview SVG constraints inside Pure Live.
+       The SVG uses width="100%" which shrinks when the viewport transform
+       scales down, clipping left/right.  Fix: force fixed pixel width
+       matching the SVG viewBox (W=760) and remove max-height. */
+    .pl-map-wrap{min-width:760px}
+    .pl-map-wrap svg{max-height:none !important;width:760px !important}
+    .pl-map-wrap>div{overflow:visible !important;padding:0 !important;min-width:760px !important}
 
     /* Info toggle — small button to show/hide bottom panels */
     .pl-info-toggle{position:absolute;bottom:10px;left:12px;z-index:7;width:28px;height:28px;border-radius:8px;
