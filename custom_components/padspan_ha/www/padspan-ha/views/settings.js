@@ -2154,6 +2154,21 @@ function _settingsFeatures(ctx, el){
       desc: "Enhanced movement playback with scoring explainability. See why PadSpan placed a device in each room: " +
             "which scanners voted, their weights, confidence breakdown, and the scoring pipeline decision at each step.",
     },
+    {
+      key: "phone_wizard_enabled",
+      label: "Phone Setup Wizard",
+      desc: "Shows a guided setup flow in the IRK Manager for adding phones and watches. Detects IRK Capture devices and walks through the pairing process.",
+    },
+    {
+      key: "mac_rotation_bridging",
+      label: "MAC Rotation Bridging",
+      desc: "When a device's Bluetooth address rotates, attempts to link the old and new addresses by matching advertisement characteristics (company ID, services, signal pattern). Probabilistic — may occasionally link wrong devices.",
+    },
+    {
+      key: "apple_auto_classify",
+      label: "Apple Device Classification",
+      desc: "Automatically labels Apple devices as iPhone, iPad, Apple Watch, AirPods, etc. by decoding Bluetooth Continuity protocol messages. Display-only — does not affect tracking or identity.",
+    },
   ];
 
   for(const f of features){

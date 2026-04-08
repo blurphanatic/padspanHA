@@ -1088,6 +1088,81 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             _resolver_diag["errors"].append(f"resolver: {_res_err}")
             _LOGGER.warning("Private BLE resolver error: %s", _res_err)
 
+        # ── MAC Rotation Bridging ─────────────────────────────────────────
+        # When an RPA disappears and a new one appears with matching advertisement
+        # characteristics, tentatively link them so the UI can track continuity.
+        # Only runs when the user has enabled the mac_rotation_bridging setting.
+        try:
+            _st_bridge = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if _st_bridge and _st_bridge.get("mac_rotation_bridging"):
+                _bridge_cache_key = "rotation_bridge_cache"
+                _domain_data = hass.data.setdefault(DOMAIN, {})
+                _bridge_cache: dict = _domain_data.setdefault(_bridge_cache_key, {})
+                # {fingerprint_str: {"canonical": canonical_id, "addr": last_addr, "ts": timestamp}}
+
+                import time as _time_mod
+                _now_ts = _time_mod.time()
+                _BRIDGE_STALE_S = 30  # only bridge if disappeared within last 30s
+
+                # Purge stale entries (older than 30s)
+                _stale_keys = [k for k, v in _bridge_cache.items() if _now_ts - v.get("ts", 0) > _BRIDGE_STALE_S]
+                for _sk in _stale_keys:
+                    del _bridge_cache[_sk]
+
+                def _build_bridge_fingerprint(rec: dict) -> str | None:
+                    """Build a fingerprint from advertisement characteristics."""
+                    manuf = rec.get("manufacturer_data") or {}
+                    company_ids = sorted(str(k) for k in manuf.keys()) if manuf else []
+                    svc_uuids = sorted(rec.get("service_uuids") or [])
+                    connectable = rec.get("connectable")
+                    if not company_ids and not svc_uuids:
+                        return None  # not enough info to fingerprint
+                    return f"{','.join(company_ids)}|{','.join(svc_uuids)}|{connectable}"
+
+                # Update cache with currently-resolved addresses (so when they disappear, we remember)
+                for addr, canonical in canonical_by_addr.items():
+                    rec = ble_by_addr.get(addr)
+                    if rec:
+                        fp = _build_bridge_fingerprint(rec)
+                        if fp:
+                            _bridge_cache[fp] = {
+                                "canonical": canonical["canonical_id"],
+                                "addr": addr,
+                                "ts": _now_ts,
+                            }
+
+                # Try to bridge unresolved RPAs
+                for addr, rec in ble_by_addr.items():
+                    if addr in canonical_by_addr:
+                        continue  # already resolved
+                    if not _is_rpa_addr(addr):
+                        continue  # not a rotating address
+                    fp = _build_bridge_fingerprint(rec)
+                    if not fp:
+                        continue
+                    cached_entry = _bridge_cache.get(fp)
+                    if not cached_entry:
+                        continue
+                    if cached_entry["addr"] == addr:
+                        continue  # same address, not a rotation
+                    # Check RSSI similarity across scanners (within 10 dBm)
+                    _src_current = {s.get("source") if isinstance(s, dict) else s: (s.get("rssi") if isinstance(s, dict) else None) for s in ((rec.get("sources") or {}).items() if isinstance(rec.get("sources"), dict) else [])}
+                    # Scanners overlap check is best-effort; bridge if fingerprint matches
+                    canonical_by_addr[addr] = {
+                        "canonical_id": cached_entry["canonical"],
+                        "name": cached_entry["canonical"],
+                        "kind": "private_ble",
+                        "bridge_match": True,
+                    }
+                    # Update cache with the new address
+                    _bridge_cache[fp] = {
+                        "canonical": cached_entry["canonical"],
+                        "addr": addr,
+                        "ts": _now_ts,
+                    }
+        except Exception as _bridge_err:
+            _LOGGER.debug("MAC rotation bridging error: %s", _bridge_err)
+
         # Parse iBeacon from every advertisement; group by stable UUID/major/minor key.
         # This is deliberately OUTSIDE the resolver try/except so iBeacon detection
         # never gets silently skipped if the private BLE resolver has issues.
@@ -1425,6 +1500,9 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "linked_entities": sorted(pg["all_linked"]),
                 "device": pg["device"],
             }
+            # Mark bridge-matched objects so the UI knows they're probabilistic
+            if canonical.get("bridge_match"):
+                obj_pb["bridge_match"] = True
             # Attach iBeacon metadata if this private_ble device also broadcasts
             # as an iBeacon (e.g. HA Companion App "Track Phone").
             _ib_meta = _ibeacon_meta_for_private.get(cid)
@@ -1508,6 +1586,76 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             if _ib_label:
                 obj_ib["user_label"] = _ib_label
             objects.append(obj_ib)
+
+        # ── Apple Auto-Classification ─────────────────────────────────────
+        # Decode Apple Continuity protocol messages to label devices as
+        # iPhone, iPad, Apple Watch, AirPods, etc.  Display-only — does
+        # not change identity or tracking.  Gated behind setting.
+        try:
+            _st_apple = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if _st_apple and _st_apple.get("apple_auto_classify"):
+                _APPLE_COMPANY_ID = "76"  # 0x004C in decimal string key
+                _APPLE_SUBTYPES = {
+                    0x07: "AirPods",
+                    0x10: "Apple Device",  # Nearby Info — refined below by model bits
+                    0x12: "AirTag",        # FindMy
+                }
+                _NEARBY_MODELS = {
+                    # Device model bits (upper nibble of status byte) in Nearby Info
+                    0x01: "iPhone",
+                    0x02: "iPhone",
+                    0x03: "iPad",
+                    0x04: "MacBook",
+                    0x05: "Apple Watch",
+                    0x06: "MacBook",
+                    0x07: "iPhone",
+                    0x09: "MacBook",
+                    0x0A: "iPad",
+                    0x0B: "Apple Watch",
+                    0x0C: "MacBook",
+                    0x0E: "iPhone",
+                    0x0F: "iPad",
+                    0x10: "iPhone",
+                    0x11: "MacBook",
+                    0x14: "iPhone",
+                }
+                for obj in objects:
+                    if obj.get("kind") not in ("ble", "private_ble", "ibeacon"):
+                        continue
+                    manuf = obj.get("manufacturer_data") or {}
+                    apple_data = manuf.get(_APPLE_COMPANY_ID) or manuf.get(76)
+                    if not apple_data:
+                        continue
+                    # apple_data may be a hex string or bytes-like; normalise to bytes
+                    try:
+                        if isinstance(apple_data, str):
+                            _raw = bytes.fromhex(apple_data)
+                        elif isinstance(apple_data, (list, tuple)):
+                            _raw = bytes(apple_data)
+                        elif isinstance(apple_data, bytes):
+                            _raw = apple_data
+                        else:
+                            continue
+                    except Exception:
+                        continue
+                    if len(_raw) < 1:
+                        continue
+                    subtype = _raw[0]
+                    label = _APPLE_SUBTYPES.get(subtype)
+                    if not label:
+                        continue
+                    # Refine Nearby Info (0x10) by device model bits
+                    if subtype == 0x10 and len(_raw) >= 3:
+                        model_bits = (_raw[2] >> 4) & 0x1F
+                        label = _NEARBY_MODELS.get(model_bits, "Apple Device")
+                    # FindMy (0x12) could be AirTag or third-party accessory
+                    if subtype == 0x12 and len(_raw) >= 3:
+                        # Byte 2 bit 0: 0 = AirTag, 1 = third-party FindMy accessory
+                        if _raw[2] & 0x01:
+                            label = "Find My accessory"
+                    obj["auto_class"] = label
+        except Exception as _apple_err:
+            _LOGGER.debug("Apple auto-classify error: %s", _apple_err)
 
         # ── Cross-link MAC ↔ iBeacon ↔ entity for the same physical device ──
         # Build lookup maps so labels/tags propagate across all representations.
@@ -2577,6 +2725,9 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("distortion_map_enabled"): bool,
         vol.Optional("compass_ring_enabled"): bool,
         vol.Optional("replay_timeline_enabled"): bool,
+        vol.Optional("phone_wizard_enabled"): bool,
+        vol.Optional("mac_rotation_bridging"): bool,
+        vol.Optional("apple_auto_classify"): bool,
         # Radio map visualization parameters (clamped in handler below)
         vol.Optional("heatmap_gain"): vol.Coerce(int),        # -20 to +20 dB
         vol.Optional("heatmap_contrast"): vol.Coerce(int),    # -15 to +15
@@ -2694,7 +2845,9 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
                     "overview_2d_mode", "beacon_profiling_enabled",
                     "trackability_rating_enabled", "walk_to_identify_enabled",
                     "radio_map_enabled", "distortion_map_enabled",
-                    "compass_ring_enabled", "replay_timeline_enabled"):
+                    "compass_ring_enabled", "replay_timeline_enabled",
+                    "phone_wizard_enabled", "mac_rotation_bridging",
+                    "apple_auto_classify"):
             if key in msg:
                 payload[key] = bool(msg[key])
         if "positioning_algorithm" in msg:

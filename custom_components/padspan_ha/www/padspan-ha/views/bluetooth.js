@@ -2190,6 +2190,86 @@ function renderIrkPanel(ctx, snap) {
   addCard.appendChild(addMsg);
   wrap.appendChild(addCard);
 
+  // ── Phone Setup Wizard ──
+  // Guided setup flow for adding phones. Only shows when phone_wizard_enabled setting is on.
+  const _wizSettings = ctx.state.settings || {};
+  if (_wizSettings.phone_wizard_enabled) {
+    const wizCard = el("div", { class: "card", style: "margin-bottom:12px;border:1px solid #1a4228;background:#0f1a12" });
+    wizCard.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:10px" }, [
+      el("div", { style: "font-weight:700;font-size:15px;color:#52b788" }, "Quick Setup: Track Your Phone"),
+      el("span", { style: "font-size:9px;padding:1px 6px;border-radius:3px;background:rgba(245,158,11,.15);color:#f59e0b;font-weight:600;text-transform:uppercase" }, "wizard"),
+    ]));
+
+    // Path A — IRK Capture ESP32
+    const pathA = el("div", { style: "margin-bottom:14px;padding:10px;background:rgba(0,0,0,.2);border-radius:6px" });
+    pathA.appendChild(el("div", { style: "font-weight:700;font-size:13px;color:#60a5fa;margin-bottom:6px" }, "I have an IRK Capture ESP32"));
+    pathA.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;line-height:1.5;margin-bottom:8px" },
+      "If you have DerekSeaman's irk-capture flashed on an ESP32, PadSpan can auto-detect the captured IRK."));
+    const wizScanBtn = el("button", { class: "btn inline", style: "color:#60a5fa;border-color:#1e4976" }, "Scan for IRK Capture devices");
+    const wizScanMsg = el("div", { style: "font-size:11px;margin-top:6px;min-height:16px" });
+    wizScanBtn.addEventListener("click", async () => {
+      wizScanBtn.disabled = true; wizScanBtn.textContent = "Scanning...";
+      wizScanMsg.textContent = ""; wizScanMsg.style.color = "#94a3b8";
+      try {
+        const res = await ctx.actions.wsCall("padspan_ha/irk_auto_detect", {});
+        const found = res.found || [];
+        if (found.length === 0) {
+          wizScanMsg.style.color = "#fbbf24";
+          wizScanMsg.textContent = "No IRK Capture devices found. Make sure the ESP32 is powered on and has captured a pairing.";
+        } else {
+          wizScanMsg.style.color = "#4ade80";
+          const newOnes = found.filter(f => !f.already_registered);
+          const verified = found.filter(f => f.verified);
+          wizScanMsg.textContent = `Found ${found.length} IRK${found.length !== 1 ? "s" : ""}: ${newOnes.length} new, ${verified.length} verified.`;
+          for (const f of found) {
+            if (!f.already_registered && f.verified) {
+              try {
+                await ctx.actions.wsCall("padspan_ha/irk_add", { name: f.name || "Auto-detected", irk_hex: f.irk_hex });
+              } catch(_e) {}
+            }
+          }
+          if (newOnes.some(f => f.verified)) {
+            wizScanMsg.textContent += " Verified IRKs saved automatically.";
+            ctx.state._irkPanelStatus = null;
+            setTimeout(() => ctx.actions.renderRooms(), 500);
+          }
+        }
+      } catch(e) {
+        wizScanMsg.style.color = "#f87171";
+        wizScanMsg.textContent = e.message || "Scan failed";
+      }
+      wizScanBtn.disabled = false; wizScanBtn.textContent = "Scan for IRK Capture devices";
+    });
+    pathA.appendChild(wizScanBtn);
+    pathA.appendChild(wizScanMsg);
+    wizCard.appendChild(pathA);
+
+    // Path B — Android
+    const pathB = el("div", { style: "margin-bottom:14px;padding:10px;background:rgba(0,0,0,.2);border-radius:6px" });
+    pathB.appendChild(el("div", { style: "font-weight:700;font-size:13px;color:#4ade80;margin-bottom:6px" }, "I have an Android phone"));
+    pathB.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;line-height:1.5" },
+      "The easiest way to track an Android phone: Install the HA Companion App \u2192 Settings \u2192 Manage Sensors \u2192 BLE Transmitter \u2192 Enable. " +
+      "Your phone will broadcast an iBeacon signal that PadSpan tracks automatically. No IRK needed."));
+    wizCard.appendChild(pathB);
+
+    // Path C — iPhone
+    const pathC = el("div", { style: "padding:10px;background:rgba(0,0,0,.2);border-radius:6px" });
+    pathC.appendChild(el("div", { style: "font-weight:700;font-size:13px;color:#fbbf24;margin-bottom:6px" }, "I have an iPhone"));
+    pathC.appendChild(el("div", { style: "font-size:12px;color:#94a3b8;line-height:1.5;margin-bottom:6px" },
+      "For iPhone tracking you need the IRK (Identity Resolving Key). The easiest method is the IRK Capture ESP32 tool. " +
+      "Alternative: if you have a Mac, extract the IRK from Keychain Access."));
+    const irkLink = el("a", {
+      href: "https://github.com/DerekSeaman/irk-capture",
+      target: "_blank",
+      rel: "noopener noreferrer",
+      style: "font-size:12px;color:#60a5fa;text-decoration:underline",
+    }, "github.com/DerekSeaman/irk-capture");
+    pathC.appendChild(irkLink);
+    wizCard.appendChild(pathC);
+
+    wrap.appendChild(wizCard);
+  }
+
   // ── Companion App IRK Status ──
   if (mobileApps.length || devices.some(d => d.source === "mobile_app")) {
     const compCard = el("div", { class: "card", style: "margin-bottom:12px" });
