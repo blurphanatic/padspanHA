@@ -112,11 +112,22 @@ function injectStyles(root) {
     .pl-feed-item .pl-feed-time{color:#64748b}
     .pl-feed-item .pl-feed-room{color:#52b788;font-weight:600}
 
+    /* Map area wrapper — contains viewport + overlays */
+    .pl-map-area{flex:1;position:relative;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+
     /* Info toggle — show/hide bottom panels */
     .pl-info-toggle{position:absolute;bottom:10px;left:12px;z-index:7;width:28px;height:28px;border-radius:8px;
       border:1px solid rgba(255,255,255,.08);background:rgba(10,30,15,.6);backdrop-filter:blur(10px);
       color:#94a3b8;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center}
     .pl-info-toggle:hover{background:rgba(82,183,136,.15);color:#e2e8f0}
+
+    /* Compact controls bar */
+    .pl-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 10px;
+      background:rgba(10,21,14,.8);border-top:1px solid rgba(82,183,136,.1);flex-shrink:0;font-size:10px;color:#94a3b8}
+    .pl-controls input[type="range"]{height:4px;cursor:pointer}
+    .pl-controls button{padding:1px 6px;font-size:10px;border-radius:4px;border:1px solid rgba(255,255,255,.1);
+      background:transparent;color:#64748b;cursor:pointer}
+    .pl-controls button.on{border-color:rgba(82,183,136,.4);color:#52b788;background:rgba(82,183,136,.1)}
 
     @media(max-width:640px){
       .pl-stats{padding:6px 10px;gap:10px;border-radius:10px}
@@ -567,6 +578,44 @@ function ActivityFeed({ roomTagMap }) {
   `;
 }
 
+// ── Map Controls Bar ─────────────────────────────────────────────────────────
+function MapControls({ ctx }) {
+  const settings = ctx.state.settings || {};
+  const [focusIdx, setFocusIdx] = useState(ctx.state._overviewIsoFocusIdx ?? 0);
+  const [gap, setGap] = useState(ctx.state._overviewFloorGap ?? 150);
+  const [walls, setWalls] = useState(!!ctx.state._overviewShowWalls);
+  const [pins, setPins] = useState(!!ctx.state._overviewPersistentPins);
+  const [heat, setHeat] = useState(!!ctx.state._overviewShowHeatmap);
+
+  const rebuild = () => { _mapNode = null; ctx.actions.renderRooms(); };
+
+  return html`
+    <div className="pl-controls">
+      <span>Floor:</span>
+      <input type="range" min="0" max="10" value=${focusIdx}
+             style="width:70px;accent-color:#52b788"
+             onInput=${e => { const v=+e.target.value; setFocusIdx(v); ctx.state._overviewIsoFocusIdx=v; rebuild(); }} />
+      <span>Gap:</span>
+      <input type="range" min="60" max="340" step="10" value=${gap}
+             style="width:60px;accent-color:#52b788"
+             onInput=${e => { const v=+e.target.value; setGap(v); ctx.state._overviewFloorGap=v; rebuild(); }} />
+      <button className=${walls?"on":""} onClick=${()=>{const v=!walls;setWalls(v);ctx.state._overviewShowWalls=v;rebuild();}}>
+        Walls
+      </button>
+      <button className=${pins?"on":""} onClick=${()=>{const v=!pins;setPins(v);ctx.state._overviewPersistentPins=v;rebuild();}}>
+        Pins
+      </button>
+      ${!!(settings.radio_map_enabled) && html`
+        <button className=${heat?"on":""} onClick=${()=>{
+          const v=!heat;setHeat(v);ctx.state._overviewShowHeatmap=v;
+          if(v)ctx.state._overviewShowDistortion=false;rebuild();}}>
+          Heat
+        </button>
+      `}
+    </div>
+  `;
+}
+
 // ── Root ─────────────────────────────────────────────────────────────────────
 function App({ ctx }) {
   const mode = ctx.state.dataMode || "sample";
@@ -586,8 +635,10 @@ function App({ ctx }) {
 
   return html`
     <div className="pl-root">
-      <${MapViewport}>
-        <${IsoMap} ctx=${ctx} />
+      <div className="pl-map-area">
+        <${MapViewport}>
+          <${IsoMap} ctx=${ctx} />
+        <//>
         <${Stats} rooms=${rooms} objects=${objects} radios=${radios.length} loading=${loading} />
         <${Scanners} radios=${radios} ctx=${ctx} />
         <${MovementGhosts} roomTagMap=${rtm} />
@@ -597,7 +648,8 @@ function App({ ctx }) {
                 onClick=${() => setInfoVisible(v => !v)}>
           ${infoVisible ? "\u25BC" : "\u2139"}
         </button>
-      <//>
+      </div>
+      <${MapControls} ctx=${ctx} />
       ${infoVisible && html`
         <${FollowedTracker} ctx=${ctx} snap=${snap} />
         <${RadioStrip} radios=${radios} ctx=${ctx} />
