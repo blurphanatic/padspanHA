@@ -87,6 +87,10 @@ function injectStyles(root) {
     .pl-controls input[type="range"]{height:4px;cursor:pointer}
     .pl-controls button{transition:background .15s,border-color .15s}
 
+    /* Override overview SVG constraints inside Pure Live */
+    .pl-map-wrap svg{max-height:none !important}
+    .pl-map-wrap>div{overflow:visible !important;padding:0 !important}
+
     /* Info toggle — small button to show/hide bottom panels */
     .pl-info-toggle{position:absolute;bottom:10px;left:12px;z-index:7;width:28px;height:28px;border-radius:8px;
       border:1px solid rgba(255,255,255,.08);background:rgba(10,30,15,.6);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
@@ -467,31 +471,37 @@ function MapViewport({ children }) {
 
 function _cleanupMapElement(map) {
   // The overview map element (from renderIsoFloorStack) contains these children:
-  //   ctrlRow        — floor/spacing/L-R sliders + toggle buttons (display:flex)
-  //   isoOverlayCtrl — heatmap gain/contrast/warp sliders (display:flex or none)
-  //   isoWrap        — the SVG canvas (position:relative)
-  //   roomListPanel  — room table
+  //   ctrlRow        — floor/spacing/L-R sliders + toggle buttons
+  //   isoOverlayCtrl — heatmap gain/contrast/warp sliders
+  //   isoWrap        — the SVG canvas (position:relative) containing isoDiv + tooltip
+  //   roomListPanel  — room table / map listing
   //
-  // In Pure Live we ONLY keep the SVG canvas (isoWrap).  Everything else either
-  // overlaps with Pure Live's own floating overlays or is redundant.
+  // In Pure Live we ONLY keep the SVG inside isoWrap. Everything else is hidden.
+  // The SVG is built DEFERRED (rAF) so we can't modify it directly — use CSS class.
+  let foundWrap = false;
   for (const child of [...map.children]) {
     const css = child.style?.cssText || "";
-    // Keep the iso wrapper (position:relative) — this holds the SVG
-    if (css.includes("position") && css.includes("relative")) {
-      // Remove overflow clipping so the full multi-floor SVG is visible
-      // when zoomed out in Pure Live's pan/zoom viewport.
-      // The overview uses overflow:auto to add scrollbars; Pure Live doesn't need that.
+    if (css.includes("position") && css.includes("relative") && !foundWrap) {
+      foundWrap = true;
+      child.classList.add("pl-map-wrap");
+      // Strip padding/margin from the wrapper itself
+      child.style.marginTop = "0";
+      // Fix inner containers: remove overflow clipping and padding
       for (const inner of child.children) {
-        if (inner.style?.overflow) inner.style.overflow = "visible";
+        if (inner.style) {
+          inner.style.overflow = "visible";
+          inner.style.padding = "0";
+          inner.style.background = "transparent";
+          inner.style.borderRadius = "0";
+        }
       }
-      // Also remove max-height from the SVG itself
-      const svg = child.querySelector("svg");
-      if (svg) svg.style.maxHeight = "none";
       continue;
     }
-    // Hide everything else: control rows, overlay sliders, room list
+    // Hide EVERYTHING else — controls, overlays, room list, map listing
     child.style.display = "none";
   }
+  // Also hide the outer wrapper's margin/padding that wastes space
+  map.style.marginBottom = "0";
 }
 
 function IsoMap({ ctx }) {
