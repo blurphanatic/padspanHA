@@ -22,9 +22,9 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.19.87";
-const BUILD_ID = "20260408T200715Z";
-const CHANNEL = "stable";
+const APP_VERSION = "0.19.88";
+const BUILD_ID = "20260408T201940Z";
+const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
 // Two-phase loading for fast first paint:

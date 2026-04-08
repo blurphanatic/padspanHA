@@ -227,6 +227,55 @@ function Ticker({ dataMode, radios, objects, version, cal }) {
   `;
 }
 
+// ── SVG counter-scaling ──────────────────────────────────────────────────────
+// When the viewport is zoomed, SVG text and circles scale with it, making
+// labels and dots balloon until they obscure the map.  This applies inverse
+// scaling so they remain the same visual size regardless of zoom level.
+
+const _COUNTER_SCALE_ATTR = "_plOrig";
+
+function _counterScaleSVG(container, scale) {
+  const svg = container.querySelector("svg");
+  if (!svg) return;
+  const inv = 1 / scale;
+
+  // 1. Beacon/object groups and scanner groups: inverse-scale the whole group
+  for (const g of svg.querySelectorAll("[data-obj-key],[data-scanner-src]")) {
+    const anchor = g.querySelector("circle");
+    if (anchor) {
+      const cx = parseFloat(anchor.getAttribute("cx")) || 0;
+      const cy = parseFloat(anchor.getAttribute("cy")) || 0;
+      g.setAttribute("transform", `translate(${cx},${cy}) scale(${inv}) translate(${-cx},${-cy})`);
+    }
+  }
+
+  // 2. Standalone text (room names, floor labels) — not inside obj/scanner groups
+  for (const txt of svg.querySelectorAll("text")) {
+    if (txt.closest("[data-obj-key],[data-scanner-src]")) continue;
+    const x = parseFloat(txt.getAttribute("x")) || 0;
+    const y = parseFloat(txt.getAttribute("y")) || 0;
+    txt.setAttribute("transform", `translate(${x},${y}) scale(${inv}) translate(${-x},${-y})`);
+  }
+
+  // 3. Floor index badges (r>=15)
+  for (const c of svg.querySelectorAll("circle")) {
+    if (c.closest("[data-obj-key],[data-scanner-src]")) continue;
+    const origR = c[_COUNTER_SCALE_ATTR];
+    const r = origR != null ? origR : parseFloat(c.getAttribute("r")) || 0;
+    if (origR == null) c[_COUNTER_SCALE_ATTR] = r;
+    if (r >= 15) c.setAttribute("r", String(Math.max(8, r * inv)));
+  }
+
+  // 4. Stroke widths on room polygons and barriers
+  for (const el of svg.querySelectorAll("polygon, polyline")) {
+    if (el.closest("[data-obj-key],[data-scanner-src]")) continue;
+    const origSW = el[_COUNTER_SCALE_ATTR];
+    const sw = origSW != null ? origSW : parseFloat(el.getAttribute("stroke-width")) || 0;
+    if (origSW == null) el[_COUNTER_SCALE_ATTR] = sw;
+    if (sw > 0) el.setAttribute("stroke-width", String(Math.max(0.3, sw * inv)));
+  }
+}
+
 // ── Pan/Zoom Map Viewport ────────────────────────────────────────────────────
 // Wraps the iso map with mouse drag-to-pan, scroll-to-zoom, pinch-to-zoom,
 // and double-click/double-tap to reset.
@@ -246,6 +295,7 @@ function MapViewport({ children }) {
     const s = stateRef.current;
     if (innerRef.current) {
       innerRef.current.style.transform = `translate(${s.tx}px, ${s.ty}px) scale(${s.scale})`;
+      _counterScaleSVG(innerRef.current, s.scale);
     }
     setZoomPct(Math.round(s.scale * 100));
     setShowZoom(true);
