@@ -1611,12 +1611,17 @@ export function render(ctx){
 
     const buildIsoSVG = (focusZ)=>{
       const slabWZ = 18/_ovFG;
-      // Dynamic viewBox: expand upward so high floors aren't clipped when spacing is large
+      // Dynamic viewBox: expand to fit all floors.
+      // Vertical: expand upward for tall floor stacks.
+      // Horizontal: expand rightward for L/R offset on upper floors + labels.
       const maxIsoZ = sortedIsoLevels.length ? sortedIsoLevels[sortedIsoLevels.length-1] : 0;
       const viewY   = Math.min(0, CY - maxIsoZ*_ovFG - 50);   // 50 px top padding
+      const horizExtra = Math.abs(maxIsoZ * _ovHG) + 60;       // 60 px padding for labels
+      const viewX   = _ovHG < 0 ? Math.floor(_ovHG * maxIsoZ) - 30 : -30;
+      const viewW   = W + horizExtra + 60;  // extra breathing room on both sides
       const HTOTAL  = BASE_H + LEGEND_H - viewY;
-      let s = `<svg viewBox="0 ${viewY} ${W} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
-      s += `<rect x="0" y="${viewY}" width="${W}" height="${HTOTAL}" fill="#071008"/>`;
+      let s = `<svg viewBox="${viewX} ${viewY} ${viewW} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
+      s += `<rect x="${viewX}" y="${viewY}" width="${viewW}" height="${HTOTAL}" fill="#071008"/>`;
 
       // Floor surface patterns — defined once per level, referenced by fill="url(#...)"
       s += `<defs>`;
