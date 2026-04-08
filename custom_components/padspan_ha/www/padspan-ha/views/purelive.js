@@ -385,19 +385,26 @@ function MapViewport({ children }) {
 // room list panel (duplicates Pure Live's own overlays).
 
 function _cleanupMapElement(map) {
-  // The overview map element has: ctrlRow, isoOverlayCtrl, isoWrap, roomListPanel.
-  // Keep ONLY the isoWrap (position:relative) which contains the SVG.
-  // Hide everything else — controls overlap with Pure Live's own overlays,
-  // and the room list is redundant.
-  // IMPORTANT: do NOT modify any styles on isoWrap or its children — the SVG
-  // layout depends on the overview's original overflow/padding/width settings.
+  // The overview map element has various children depending on 2D/3D mode.
+  // Keep ONLY the child that contains the SVG canvas (identified by
+  // position:relative style). Hide ALL other children unconditionally —
+  // controls, map selectors, filter bars, room lists, file name labels.
+  // IMPORTANT: do NOT modify any styles on the kept child or its contents.
+  let kept = null;
   for (const child of [...map.children]) {
     const css = child.style?.cssText || "";
-    if (css.includes("position") && css.includes("relative")) continue;
-    child.style.display = "none";
+    if (!kept && css.includes("position") && css.includes("relative")) {
+      kept = child;
+    } else {
+      child.style.display = "none";
+    }
   }
-  // Remove outer wrapper margin that creates dead space below the map
+  // If no position:relative child found (shouldn't happen), keep last child as fallback
+  if (!kept && map.children.length) {
+    map.lastElementChild.style.display = "";
+  }
   map.style.marginBottom = "0";
+  map.style.padding = "0";
 }
 
 function IsoMap({ ctx }) {
