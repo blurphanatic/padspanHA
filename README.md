@@ -48,6 +48,7 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 - Multi-device simultaneous tracking with per-device email alerts (60 s rate limit)
 - Kalman-filtered RSSI smoothing (replaces simple moving averages)
 - Home/away detection with HA binary sensor entities
+- **Phone & watch tracking** — guided setup wizard with [irk-capture](https://github.com/DerekSeaman/irk-capture) integration, HA Companion App iBeacon for Android, and IRK resolution for Apple devices
 - Private BLE address resolution (iBeacon UUID + IRK support)
 - **Occupancy estimation** — hybrid people counting combining BLE devices, HA person entities, occupancy/motion sensors, and WiFi client counts with a trainable multiplier and RSSI co-location clustering
 
@@ -79,6 +80,24 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 - Learned cross-floor RSSI attenuation
 - Outdoor penalties (0.30× Gaussian damping) for exterior boundary rooms
 
+### Phone & Watch Tracking
+
+Tracking phones is the hardest problem in BLE presence — they rotate their Bluetooth address every ~15 minutes specifically to prevent tracking. PadSpan offers multiple paths depending on your device:
+
+| Device | Easiest Method | What You Need |
+|--------|---------------|---------------|
+| **Android phone** | HA Companion App iBeacon | Install app, enable BLE Transmitter. Done. |
+| **iPhone / iPad** | IRK via [irk-capture](https://github.com/DerekSeaman/irk-capture) | Spare ESP32, flash irk-capture, pair once, paste IRK |
+| **Apple Watch** | IRK via irk-capture | Same as iPhone — pair watch to irk-capture ESP32 |
+| **AirTag / SmartTag** | Automatic (iBeacon) | Just works — PadSpan groups rotating MACs by UUID |
+| **AirPods** | Apple auto-classification | Detected automatically when feature enabled |
+
+The **Phone Setup Wizard** (experimental) guides you through each path with step-by-step instructions. If you have an irk-capture ESP32 on your network, PadSpan auto-detects captured IRKs — no manual hex pasting.
+
+For devices where you can't get an IRK, the experimental **MAC Rotation Bridging** feature matches advertisement patterns across address rotations to maintain tracking continuity.
+
+> **Acknowledgement:** The IRK extraction workflow is built on [Derek Seaman's irk-capture](https://github.com/DerekSeaman/irk-capture) — an ingenious ESP32 tool that emulates BLE peripherals to extract Identity Resolving Keys during pairing. It's what makes practical phone tracking in Home Assistant possible without rooting devices or owning a Mac.
+
 ### Scanner Hardware & Management
 - **Tested with 20+ ESP32 boards** — the antenna matters more than the chip. Boards with full-size external antennas consistently outperform chip/PCB antennas for room-level accuracy
 - Top picks: ESP32-S3 with Ethernet + antenna, ESP32-S3 with WiFi + antenna, ESP32-C3 with antenna
@@ -104,6 +123,9 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 - **NVR-style movement playback** — replay tracked device movement on the 3D map
 
 ### Experimental Features (Settings → Features)
+- **Phone Setup Wizard** — guided flow for tracking phones and watches. Auto-detects [irk-capture](https://github.com/DerekSeaman/irk-capture) ESP32 devices on your network and walks through IRK extraction step by step. Also shows the easy Android path (HA Companion App iBeacon) and Apple IRK options. Credit to [Derek Seaman](https://github.com/DerekSeaman) for the excellent irk-capture tool that makes IRK extraction practical for everyone.
+- **MAC Rotation Bridging** — when a phone's Bluetooth address rotates (every ~15 min), PadSpan matches advertisement characteristics (company ID, services, signal pattern) to tentatively link old and new addresses. Bridges the tracking gap without requiring an IRK. Probabilistic — may occasionally link wrong devices.
+- **Apple Device Classification** — automatically labels Apple devices as iPhone, iPad, Apple Watch, AirPods, or AirTag by decoding Bluetooth Continuity protocol messages. Display-only — does not affect tracking or identity.
 - **Radio Map** — RSSI heatmap overlay using inverse distance weighting
 - **Distortion Map** — k-NN prediction vs reality mismatch visualization
 - **Trackability Rating** — per-device Easy/Medium/Hard scoring
@@ -115,15 +137,19 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 
 ## How It Compares
 
-| Feature | PadSpan HA | Bermuda | Room Assistant | ESPresense Companion |
-|:--------|:----------:|:-------:|:--------------:|:--------------------:|
+| Feature | PadSpan HA | Bermuda | Room Assistant | ESPresense |
+|:--------|:----------:|:-------:|:--------------:|:----------:|
 | Room-level tracking | ✅ | ✅ | ✅ | ✅ |
+| Phone tracking wizard | ✅ | — | — | — |
+| IRK capture integration | ✅ | — | — | ✅ |
+| MAC rotation bridging | ✅ | — | — | — |
+| Apple device auto-classify | ✅ | — | — | ✅ |
 | Visual floor plans | ✅ | — | — | — |
 | 3D multi-floor maps | ✅ | — | — | — |
 | 2D flat map + zoom/pan | ✅ | — | — | — |
 | Room boundary editor | ✅ | — | — | — |
 | Fingerprint calibration | ✅ | — | — | — |
-| Occupancy estimation | ✅ | — | — | — |
+| Hybrid occupancy counting | ✅ | — | — | — |
 | Stable device identity | ✅ | — | — | — |
 | Training hub (14 walkthroughs) | ✅ | — | — | — |
 | Follow mode + email alerts | ✅ | — | — | — |
@@ -131,10 +157,11 @@ It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA
 | Movement history playback | ✅ | — | — | — |
 | Sample/demo mode | ✅ | — | — | — |
 | Multi-language (11) | ✅ | — | — | — |
-| Dedicated UI views | 22 | Config flow | MQTT config | Config flow |
+| Dedicated UI views | 22 | Config flow | MQTT config | Web UI |
 | HA sensor entities | ✅ | ✅ | ✅ | ✅ |
 | Distance estimation | ✅ | ✅ | — | ✅ |
 | Kalman RSSI filtering | ✅ | — | — | — |
+| Works with ESPHome proxies | ✅ | ✅ | — | ✗ (own firmware) |
 
 ---
 
