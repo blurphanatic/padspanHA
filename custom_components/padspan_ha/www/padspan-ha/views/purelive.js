@@ -396,6 +396,8 @@ function _cleanupMapElement(map) {
     if (css.includes("position") && css.includes("relative")) continue;
     child.style.display = "none";
   }
+  // Remove outer wrapper margin that creates dead space below the map
+  map.style.marginBottom = "0";
 }
 
 function IsoMap({ ctx }) {
