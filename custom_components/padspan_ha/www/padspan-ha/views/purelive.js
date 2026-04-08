@@ -628,9 +628,11 @@ function MapControls({ ctx }) {
   const settings = ctx.state.settings || {};
   const [focusIdx, setFocusIdx] = useState(ctx.state._overviewIsoFocusIdx ?? 0);
   const [gap, setGap] = useState(ctx.state._overviewFloorGap ?? 150);
+  const [lr, setLr] = useState(ctx.state._overviewHorizGap ?? 0);
   const [walls, setWalls] = useState(!!ctx.state._overviewShowWalls);
   const [pins, setPins] = useState(!!ctx.state._overviewPersistentPins);
   const [heat, setHeat] = useState(!!ctx.state._overviewShowHeatmap);
+  const [dist, setDist] = useState(!!ctx.state._overviewShowDistortion);
 
   const rebuild = () => { _mapNode = null; ctx.actions.renderRooms(); };
 
@@ -644,6 +646,10 @@ function MapControls({ ctx }) {
       <input type="range" min="60" max="340" step="10" value=${gap}
              style="width:60px;accent-color:#52b788"
              onInput=${e => { const v=+e.target.value; setGap(v); ctx.state._overviewFloorGap=v; rebuild(); }} />
+      <span>L/R:</span>
+      <input type="range" min="-120" max="120" step="10" value=${lr}
+             style="width:50px;accent-color:#52b788"
+             onInput=${e => { const v=+e.target.value; setLr(v); ctx.state._overviewHorizGap=v; rebuild(); }} />
       <button className=${walls?"on":""} onClick=${()=>{const v=!walls;setWalls(v);ctx.state._overviewShowWalls=v;rebuild();}}>
         Walls
       </button>
@@ -653,10 +659,22 @@ function MapControls({ ctx }) {
       ${!!(settings.radio_map_enabled) && html`
         <button className=${heat?"on":""} onClick=${()=>{
           const v=!heat;setHeat(v);ctx.state._overviewShowHeatmap=v;
-          if(v)ctx.state._overviewShowDistortion=false;rebuild();}}>
+          if(v){setDist(false);ctx.state._overviewShowDistortion=false;}rebuild();}}>
           Heat
         </button>
       `}
+      ${!!(settings.distortion_map_enabled) && html`
+        <button className=${dist?"on":""} onClick=${()=>{
+          const v=!dist;setDist(v);ctx.state._overviewShowDistortion=v;
+          if(v){setHeat(false);ctx.state._overviewShowHeatmap=false;}rebuild();}}>
+          Warp
+        </button>
+      `}
+      <button onClick=${async()=>{
+        try{await ctx.actions.settingsSet({
+          overview_iso_floor_gap:gap,overview_iso_horiz_gap:lr,overview_iso_focus:focusIdx
+        });}catch(e){}
+      }} style="color:#52b788;border-color:#2d6a4f">Save</button>
     </div>
   `;
 }
