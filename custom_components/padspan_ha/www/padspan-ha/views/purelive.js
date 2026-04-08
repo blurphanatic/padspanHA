@@ -470,43 +470,36 @@ function MapViewport({ children }) {
 // Pure Live provides its own compact control bar (MapControls component).
 
 function _cleanupMapElement(map) {
-  // The overview map element contains: ctrlRow, isoOverlayCtrl, isoWrap, roomListPanel.
-  // Pure Live only needs the SVG canvas. Strip EVERYTHING else by keeping only the
-  // child whose style contains "position" + "relative" (isoWrap), and hide the rest.
-  // Then flatten: remove overflow/padding from inner containers so the SVG can
-  // breathe freely in the pan/zoom viewport.
+  // The overview map element (outer) contains:
+  //   ctrlRow, isoOverlayCtrl, isoWrap (position:relative), roomListPanel
   //
-  // The SVG itself is built DEFERRED (rAF), so we use a CSS class to override
-  // its max-height once it appears.
+  // isoWrap contains: isoDiv (overflow:auto, the SVG scroll container) + isoTipEl
+  //
+  // Pure Live only needs isoWrap → isoDiv → SVG.  Hide everything else.
+  // Only touch DIRECT children of map and DIRECT children of isoWrap — never
+  // recurse deeper or we'll break the SVG content itself.
 
-  // Nuclear approach: hide all children, then show only the iso wrapper
-  for (const child of [...map.children]) {
-    child.style.display = "none";
-  }
-
-  // Find the iso wrapper (position:relative) and restore it
   for (const child of [...map.children]) {
     const css = child.style?.cssText || "";
     if (css.includes("position") && css.includes("relative")) {
-      child.style.display = "";
+      // This is isoWrap — keep it, but fix its direct children only
       child.style.marginTop = "0";
       child.classList.add("pl-map-wrap");
-      // Flatten all inner containers
-      for (const inner of child.querySelectorAll("*")) {
+      for (const inner of [...child.children]) {
         if (inner.style) {
-          if (inner.style.overflow === "auto" || inner.style.overflow === "hidden") {
-            inner.style.overflow = "visible";
-          }
-          if (inner.style.padding) inner.style.padding = "0";
-          if (inner.style.background) inner.style.background = "transparent";
-          if (inner.style.borderRadius) inner.style.borderRadius = "0";
+          // isoDiv has overflow:auto — change to visible
+          if (inner.style.overflow) inner.style.overflow = "visible";
+          // Remove padding that adds dead space
+          inner.style.padding = "0";
         }
       }
-      break; // only one iso wrapper
+    } else {
+      // Hide everything that isn't the SVG wrapper
+      child.style.display = "none";
     }
   }
-
-  map.style.cssText = "margin:0;padding:0";
+  map.style.margin = "0";
+  map.style.padding = "0";
 }
 
 function IsoMap({ ctx }) {
