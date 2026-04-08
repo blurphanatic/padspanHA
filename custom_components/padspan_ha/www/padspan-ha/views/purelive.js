@@ -87,13 +87,8 @@ function injectStyles(root) {
     .pl-controls input[type="range"]{height:4px;cursor:pointer}
     .pl-controls button{transition:background .15s,border-color .15s}
 
-    /* Override overview SVG constraints inside Pure Live.
-       The SVG uses width="100%" which shrinks when the viewport transform
-       scales down, clipping left/right.  Fix: force fixed pixel width
-       matching the SVG viewBox (W=760) and remove max-height. */
-    .pl-map-wrap{min-width:760px}
-    .pl-map-wrap svg{max-height:none !important;width:760px !important}
-    .pl-map-wrap>div{overflow:visible !important;padding:0 !important;min-width:760px !important}
+    /* Override overview SVG constraints inside Pure Live */
+    .pl-map-wrap svg{max-height:none !important}
 
     /* Info toggle — small button to show/hide bottom panels */
     .pl-info-toggle{position:absolute;bottom:10px;left:12px;z-index:7;width:28px;height:28px;border-radius:8px;
@@ -474,36 +469,22 @@ function MapViewport({ children }) {
 // Pure Live provides its own compact control bar (MapControls component).
 
 function _cleanupMapElement(map) {
-  // The overview map element (outer) contains:
+  // The overview map element (outer) has children:
   //   ctrlRow, isoOverlayCtrl, isoWrap (position:relative), roomListPanel
   //
-  // isoWrap contains: isoDiv (overflow:auto, the SVG scroll container) + isoTipEl
-  //
-  // Pure Live only needs isoWrap → isoDiv → SVG.  Hide everything else.
-  // Only touch DIRECT children of map and DIRECT children of isoWrap — never
-  // recurse deeper or we'll break the SVG content itself.
+  // Hide everything except isoWrap. Add pl-map-wrap class so CSS can
+  // override the SVG max-height. Do NOT touch overflow, padding, or width
+  // on any inner elements — that breaks the SVG layout.
 
   for (const child of [...map.children]) {
     const css = child.style?.cssText || "";
     if (css.includes("position") && css.includes("relative")) {
-      // This is isoWrap — keep it, but fix its direct children only
-      child.style.marginTop = "0";
+      // This is isoWrap — keep it, just add the class for CSS overrides
       child.classList.add("pl-map-wrap");
-      for (const inner of [...child.children]) {
-        if (inner.style) {
-          // isoDiv has overflow:auto — change to visible
-          if (inner.style.overflow) inner.style.overflow = "visible";
-          // Remove padding that adds dead space
-          inner.style.padding = "0";
-        }
-      }
     } else {
-      // Hide everything that isn't the SVG wrapper
       child.style.display = "none";
     }
   }
-  map.style.margin = "0";
-  map.style.padding = "0";
 }
 
 function IsoMap({ ctx }) {
