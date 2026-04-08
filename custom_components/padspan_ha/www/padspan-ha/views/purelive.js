@@ -633,8 +633,17 @@ function MapControls({ ctx }) {
   const [pins, setPins] = useState(!!ctx.state._overviewPersistentPins);
   const [heat, setHeat] = useState(!!ctx.state._overviewShowHeatmap);
   const [dist, setDist] = useState(!!ctx.state._overviewShowDistortion);
+  const [expanded, setExpanded] = useState(false);
 
   const rebuild = () => { _mapNode = null; ctx.actions.renderRooms(); };
+
+  if (!expanded) {
+    return html`
+      <div className="pl-controls" onClick=${() => setExpanded(true)} style="cursor:pointer;justify-content:center">
+        <span style="color:#94a3b8">Controls</span>
+      </div>
+    `;
+  }
 
   return html`
     <div className="pl-controls">
@@ -675,6 +684,7 @@ function MapControls({ ctx }) {
           overview_iso_floor_gap:gap,overview_iso_horiz_gap:lr,overview_iso_focus:focusIdx
         });}catch(e){}
       }} style="color:#52b788;border-color:#2d6a4f">Save</button>
+      <button onClick=${() => setExpanded(false)} style="color:#64748b">Collapse</button>
     </div>
   `;
 }
