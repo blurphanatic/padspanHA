@@ -470,38 +470,43 @@ function MapViewport({ children }) {
 // Pure Live provides its own compact control bar (MapControls component).
 
 function _cleanupMapElement(map) {
-  // The overview map element (from renderIsoFloorStack) contains these children:
-  //   ctrlRow        — floor/spacing/L-R sliders + toggle buttons
-  //   isoOverlayCtrl — heatmap gain/contrast/warp sliders
-  //   isoWrap        — the SVG canvas (position:relative) containing isoDiv + tooltip
-  //   roomListPanel  — room table / map listing
+  // The overview map element contains: ctrlRow, isoOverlayCtrl, isoWrap, roomListPanel.
+  // Pure Live only needs the SVG canvas. Strip EVERYTHING else by keeping only the
+  // child whose style contains "position" + "relative" (isoWrap), and hide the rest.
+  // Then flatten: remove overflow/padding from inner containers so the SVG can
+  // breathe freely in the pan/zoom viewport.
   //
-  // In Pure Live we ONLY keep the SVG inside isoWrap. Everything else is hidden.
-  // The SVG is built DEFERRED (rAF) so we can't modify it directly — use CSS class.
-  let foundWrap = false;
+  // The SVG itself is built DEFERRED (rAF), so we use a CSS class to override
+  // its max-height once it appears.
+
+  // Nuclear approach: hide all children, then show only the iso wrapper
   for (const child of [...map.children]) {
-    const css = child.style?.cssText || "";
-    if (css.includes("position") && css.includes("relative") && !foundWrap) {
-      foundWrap = true;
-      child.classList.add("pl-map-wrap");
-      // Strip padding/margin from the wrapper itself
-      child.style.marginTop = "0";
-      // Fix inner containers: remove overflow clipping and padding
-      for (const inner of child.children) {
-        if (inner.style) {
-          inner.style.overflow = "visible";
-          inner.style.padding = "0";
-          inner.style.background = "transparent";
-          inner.style.borderRadius = "0";
-        }
-      }
-      continue;
-    }
-    // Hide EVERYTHING else — controls, overlays, room list, map listing
     child.style.display = "none";
   }
-  // Also hide the outer wrapper's margin/padding that wastes space
-  map.style.marginBottom = "0";
+
+  // Find the iso wrapper (position:relative) and restore it
+  for (const child of [...map.children]) {
+    const css = child.style?.cssText || "";
+    if (css.includes("position") && css.includes("relative")) {
+      child.style.display = "";
+      child.style.marginTop = "0";
+      child.classList.add("pl-map-wrap");
+      // Flatten all inner containers
+      for (const inner of child.querySelectorAll("*")) {
+        if (inner.style) {
+          if (inner.style.overflow === "auto" || inner.style.overflow === "hidden") {
+            inner.style.overflow = "visible";
+          }
+          if (inner.style.padding) inner.style.padding = "0";
+          if (inner.style.background) inner.style.background = "transparent";
+          if (inner.style.borderRadius) inner.style.borderRadius = "0";
+        }
+      }
+      break; // only one iso wrapper
+    }
+  }
+
+  map.style.cssText = "margin:0;padding:0";
 }
 
 function IsoMap({ ctx }) {
