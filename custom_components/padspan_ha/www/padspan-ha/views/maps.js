@@ -1777,8 +1777,34 @@ function _edit(ctx, map){
           `This room already has a boundary on "${_roomPlacedOn[_selRoom]}". Drawing it here will create a duplicate.`));
       }
 
+      // "Enclose" button — auto-generate RF barriers along all edges of this room's polygon
+      const encloseBtn = el("button",{class:"btn inline", style:"color:#f59e0b;border-color:#92400e",
+        title:"Add weak RF barriers (3 dB) along every edge of this room's boundary polygon — models thin interior walls",
+        onclick:()=>{
+        const r2 = ctx.state.maps._selectedRoom;
+        if(!r2){ ctx.toast("Choose a room first.", true); return; }
+        const poly = ctx.state.maps._draftRoomBounds && ctx.state.maps._draftRoomBounds[r2];
+        if(!poly || poly.type !== "poly" || !poly.points || poly.points.length < 3){
+          ctx.toast("Draw the room boundary first, then enclose.", true); return;
+        }
+        const pts = poly.points;
+        let added = 0;
+        for(let i = 0; i < pts.length; i++){
+          const a = pts[i], b = pts[(i + 1) % pts.length];
+          ctx.state.maps._draftBarriers.push({
+            name: `${r2} wall ${i + 1}`,
+            material: "custom",
+            attenuation_dbm: 3,
+            points: [[clamp01(a[0]), clamp01(a[1])], [clamp01(b[0]), clamp01(b[1])]],
+          });
+          added++;
+        }
+        ctx.toast(`Added ${added} wall segment${added!==1?"s":""} around ${r2} at 3 dB`);
+        renderAll(); renderTools();
+      }}, "Enclose (3dB walls)");
+
       right.appendChild(el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;margin-top:8px"},[
-        startBtn, undoPt, finishBtn, clearBtn
+        startBtn, undoPt, finishBtn, clearBtn, encloseBtn,
       ]));
 
       const r = ctx.state.maps._selectedRoom;
