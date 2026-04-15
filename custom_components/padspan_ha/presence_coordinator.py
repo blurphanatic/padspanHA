@@ -1092,6 +1092,22 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else:
                     candidate = _best_room
 
+        # ── Debug: log scoring details for labelled devices ─────────────────
+        # This lets us see exactly why a device is in the wrong room.
+        _obj_label = (self._known_objs.get(key) or {}).get("user_label")
+        if _obj_label and room_scores:
+            _top3 = sorted(room_scores.items(), key=lambda x: -x[1])[:5]
+            _ema_top = sorted(ema.items(), key=lambda x: -x[1])[:5] if ema else []
+            _src_rooms = {s: source_to_area.get(s, "?") for s, _ in _ema_top}
+            _LOGGER.info(
+                "SCORING [%s] label=%s | confirmed=%s → candidate=%s | "
+                "scores: %s | ema(top5): %s | src→room: %s",
+                key[:30], _obj_label, _cur_confirmed, candidate,
+                ", ".join(f"{r}={s:.3f}" for r, s in _top3),
+                ", ".join(f"{s[:20]}={r:.0f}" for s, r in _ema_top),
+                ", ".join(f"{s[:15]}→{r}" for s, r in _src_rooms.items()),
+            )
+
         # ── Adaptive tie-break ────────────────────────────────────────────────
         # Adaptive learning is consulted ONLY as a tie-breaker when the
         # Gaussian scorer can't decide (candidate == current because margin
