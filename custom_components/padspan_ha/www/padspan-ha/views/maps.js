@@ -81,7 +81,7 @@ export function render(ctx){
   const body = el("div",{},[
     activeTab==="library" ? _library(ctx, maps, activeId, helpBtn, isBasic) :
     activeTab==="upload" ? _upload(ctx, helpBtn, isBasic) :
-    activeTab==="edit" ? _edit(ctx, active) :
+    activeTab==="edit" ? _edit(ctx, active, maps) :
     activeTab==="stack" ? _stack(ctx, maps, helpBtn) :
     activeTab==="lights" ? _lightsTab(ctx, maps, active) :
     activeTab==="export" ? _export(ctx, active, maps) :
@@ -1068,7 +1068,7 @@ async function _preparePngFromUrl(imgUrl, maxDim, crop=null){
 // Draft state is kept on ctx.state.maps._draft* so edits survive tab switches
 // within the same session. Changes are only persisted on explicit "Save Layout".
 // Also includes Trim Image and Rotate Image sub-panels.
-function _edit(ctx, map){
+function _edit(ctx, map, allMaps){
   const { el, roomColor } = ctx.helpers;
   const card = el("div",{class:"card"});
 
@@ -1153,18 +1153,30 @@ function _edit(ctx, map){
     return true;
   });
 
+  // Map selector — switch between maps directly from the Edit tab
+  const mapSel = document.createElement("select");
+  mapSel.className = "select";
+  for(const m of (allMaps || [])){
+    const o = document.createElement("option");
+    o.value = m.id;
+    o.textContent = m.name || m.id;
+    if(m.id === map.id) o.selected = true;
+    mapSel.appendChild(o);
+  }
+  mapSel.onchange = ()=>{ ctx.actions.mapsSetActive(mapSel.value); };
+
   const titleBtns = el("div",{style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end"},[
+    el("div",{class:"muted", style:"font-size:12px"},"Map:"),
+    mapSel,
     el("div",{class:"muted", style:"font-size:12px"},"Floor:"),
     _floorSelect(floors, mapFloorId, async (fid)=>{
       ctx.state.maps._draftFloorId = fid;
-      // If selected room is no longer eligible, clear it
       if(ctx.state.maps._selectedRoom && !eligibleRooms.includes(ctx.state.maps._selectedRoom)){
         ctx.state.maps._selectedRoom = "";
         ctx.state.maps._drawing = null;
       }
       ctx.actions.renderRooms();
     }),
-    el("button",{class:"btn inline", onclick:()=>{ ctx.actions.mapsSetActive(map.id); ctx.actions.setMapsTab('library'); }}, "Back"),
   ]);
   const title = el("div",{style:"display:flex;justify-content:space-between;align-items:center;gap:10px"},[
     el("div",{},[
