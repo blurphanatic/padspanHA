@@ -998,218 +998,123 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     room_scores[_room] = _score
 
             if room_scores:
-                # ── Outdoor room damping ──────────────────────────────────
-                # Always penalize outdoor room scores unless the device is
-                # already confirmed outdoor. Outdoor scanners pick up BLE at
-                # long range but should almost never claim indoor devices.
-                # Previously this only fired when device was confirmed indoor,
-                # which meant unconfirmed devices got no outdoor penalty.
-                _cur_room_od = self._confirmed_room.get(key)
-                _cur_floor_od = _room_to_floor.get(_cur_room_od, "") if _cur_room_od else ""
-                _cur_is_outdoor = _cur_floor_od == OUTSIDE_FLOOR_ID
-                if not _cur_is_outdoor:
-                    for _rname in list(room_scores):
-                        _rf = _room_to_floor.get(_rname, "")
-                        if _rf == OUTSIDE_FLOOR_ID:
-                            room_scores[_rname] *= _OUTDOOR_SCORE_DAMPING
-
-                # ── Isolated scanner damping ──────────────────────────────
-                # Scanners that are the only one on their floor get damped
-                # unless they have a decisively strong signal. Prevents
-                # isolated outdoor/basement scanners from dominating.
+                # ── Per-scanner score adjustments (folded into scoring) ────
+                # Outdoor and isolated-scanner penalties are applied as score
+                # weights rather than separate post-hoc multiplication layers.
+                _cur_confirmed = self._confirmed_room.get(key)
+                _cur_floor_id = _room_to_floor.get(_cur_confirmed, "") if _cur_confirmed else ""
+                _cur_is_outdoor = _cur_floor_id == OUTSIDE_FLOOR_ID
                 for _rname in list(room_scores):
                     _rf = _room_to_floor.get(_rname, "")
+                    # Outdoor damping: unless device is already outdoor
+                    if not _cur_is_outdoor and _rf == OUTSIDE_FLOOR_ID:
+                        room_scores[_rname] *= _OUTDOOR_SCORE_DAMPING
+                    # Isolated scanner damping: single scanner on its floor
                     if _rf and _scanners_per_floor.get(_rf, 0) <= 1:
-                        # Check if any scanner for this room has strong RSSI
-                        _has_strong = False
-                        for _src3, _rssi3 in ema.items():
-                            if source_to_area.get(_src3) == _rname and _rssi3 > _ISOLATED_SCANNER_STRONG_DBM:
-                                _has_strong = True
-                                break
+                        _has_strong = any(
+                            source_to_area.get(s) == _rname and r > _ISOLATED_SCANNER_STRONG_DBM
+                            for s, r in ema.items()
+                        )
                         if not _has_strong:
                             room_scores[_rname] *= _ISOLATED_SCANNER_DAMPING
 
-                # ── Room adjacency prior (Phase 2) ──────────────────────
-                # Multiply each room's score by a transition probability
-                # based on centroid distance from the current room.
-                # Adjacent rooms keep full weight; distant rooms are
-                # penalized via a sigmoid, making it much harder for RF
-                # noise to teleport a device across the building.
-                _cur_adj = self._confirmed_room.get(key)
-                if _cur_adj:
-                    # Try centroid-based adjacency first (map data available)
-                    _fabric_adj = _model.adjacency() if _model else {}
-                    _c_cur = self._room_centroids.get(_cur_adj)
-                    for _rname in list(room_scores):
-                        if _rname == _cur_adj:
-                            continue  # current room keeps full score
-                        if _c_cur:
-                            _c_tgt = self._room_centroids.get(_rname)
-                            if _c_tgt:
-                                if _c_cur[2] == _c_tgt[2]:
-                                    # Same floor/map: sigmoid on Euclidean distance
-                                    _adx = _c_cur[0] - _c_tgt[0]
-                                    _ady = _c_cur[1] - _c_tgt[1]
-                                    _adist = math.sqrt(_adx * _adx + _ady * _ady)
-                                    if self._use_metres:
-                                        # Metres: adjacent (<4m) → ~1.0; far (>12m) → ~0.15
-                                        _tp = 1.0 / (1.0 + math.exp(0.5 * (_adist - _ADJACENCY_SIGMOID_MID_M)))
-                                    else:
-                                        # Legacy normalised: adjacent (<0.15) → ~1.0; far (>0.40) → ~0.15
-                                        _tp = 1.0 / (1.0 + math.exp(10.0 * (_adist - 0.25)))
-                                    _tp = max(0.15, _tp)
-                                else:
-                                    _tp = 0.20  # different floors/maps → strong penalty
-                                room_scores[_rname] *= _tp
-                                continue
-                        # Fallback: fabric adjacency list (no map needed)
-                        if _fabric_adj and _cur_adj in _fabric_adj:
-                            _tp = 1.0 if _rname in _fabric_adj[_cur_adj] else 0.20
-                            room_scores[_rname] *= _tp
-                        # else: no data → no penalty (degrade gracefully)
-
-                _best_room = max(room_scores, key=lambda r: room_scores[r])
-                _cur_room = self._confirmed_room.get(key)
-                # ── Hysteresis: prevent boundary flicker ──────────────────
-                # When a device sits between two rooms, their scores oscillate
-                # within a small band.  Requiring the new room to exceed the
-                # current room by a margin (default 6%) prevents rapid flipping.
-                # Configurable in Settings → Presence → Hysteresis margin.
+                # ── Distance-aware hysteresis ─────────────────────────────
+                # Single decision gate that replaces the old adjacency sigmoid,
+                # floor stickiness, and basic hysteresis with one clear rule:
+                # the further apart two rooms are, the more evidence needed
+                # to switch.  Margin tiers:
+                #   Adjacent (< 5m):      1× base margin
+                #   Near (5-10m):         2× base margin
+                #   Far (> 10m):          3× base margin
+                #   Cross-floor:          3× base margin
+                #   Open/loft floor:      1× base margin (free vertical flow)
+                #   Indoor↔outdoor:       4× base margin
                 try:
                     _st_hyst = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
-                    _HYSTERESIS_MARGIN = float(((_st_hyst.data if _st_hyst else {}).get("hysteresis_margin") or 0.06))
-                    _HYSTERESIS_MARGIN = max(0.0, min(0.3, _HYSTERESIS_MARGIN))
+                    _BASE_MARGIN = float(((_st_hyst.data if _st_hyst else {}).get("hysteresis_margin") or 0.06))
+                    _BASE_MARGIN = max(0.0, min(0.3, _BASE_MARGIN))
                 except Exception:
-                    _HYSTERESIS_MARGIN = 0.06
-                if _cur_room and _cur_room in room_scores and _best_room != _cur_room:
-                    if room_scores[_best_room] - room_scores[_cur_room] < _HYSTERESIS_MARGIN:
-                        # Score gap too small to be decisive.  Tie-breaker:
-                        # if the best room is on the master map but current
-                        # isn't, prefer master (more authoritative boundaries).
-                        if fabric_rooms and _cur_room not in fabric_rooms and _best_room in fabric_rooms:
-                            candidate = _best_room
+                    _BASE_MARGIN = 0.06
+                _HYSTERESIS_MARGIN = _BASE_MARGIN  # keep name for downstream refs
+
+                _best_room = max(room_scores, key=lambda r: room_scores[r])
+                if _cur_confirmed and _cur_confirmed in room_scores and _best_room != _cur_confirmed:
+                    # Determine margin multiplier based on distance/floor
+                    _margin_mult = 1.0
+                    _best_fl = _room_to_floor.get(_best_room, "")
+                    _cur_fl = _room_to_floor.get(_cur_confirmed, "")
+
+                    if _best_fl and _cur_fl and _best_fl != _cur_fl:
+                        # Cross-floor transition
+                        _involved = {_best_fl, _cur_fl}
+                        _has_open = any(
+                            b.get("material") == "open" and b.get("floor_id") in _involved
+                            for b in (self._rf_barriers or [])
+                        )
+                        if OUTSIDE_FLOOR_ID in _involved:
+                            _margin_mult = 4.0  # indoor↔outdoor
+                        elif _has_open:
+                            _margin_mult = 1.0  # open loft/stairwell
                         else:
-                            candidate = _cur_room  # stay put — not enough evidence
+                            _margin_mult = 3.0  # separate floors
                     else:
-                        candidate = _best_room  # clear winner — switch rooms
+                        # Same floor — use centroid distance
+                        _c_cur = self._room_centroids.get(_cur_confirmed)
+                        _c_best = self._room_centroids.get(_best_room)
+                        if _c_cur and _c_best and _c_cur[2] == _c_best[2]:
+                            _dx = _c_cur[0] - _c_best[0]
+                            _dy = _c_cur[1] - _c_best[1]
+                            _dist_m = math.sqrt(_dx * _dx + _dy * _dy)
+                            if not self._use_metres:
+                                _dist_m *= 20.0  # rough normalised→metres approx
+                            if _dist_m > 10.0:
+                                _margin_mult = 3.0
+                            elif _dist_m > 5.0:
+                                _margin_mult = 2.0
+                            # else: adjacent, 1× margin
+
+                    # Recently changed room? Increase margin to prevent bounce-back
+                    _last_chg = self._last_room_change_mono.get(key, 0.0)
+                    _since_chg = time.monotonic() - _last_chg if _last_chg else 999.0
+                    if _since_chg < 30.0:
+                        _margin_mult = max(_margin_mult, 3.0)  # just moved → high bar
+
+                    _required_margin = _BASE_MARGIN * _margin_mult
+                    if room_scores[_best_room] - room_scores[_cur_confirmed] < _required_margin:
+                        candidate = _cur_confirmed  # not enough evidence — stay
+                    else:
+                        candidate = _best_room
                 else:
                     candidate = _best_room
 
-        # ── Floor stickiness (cross-floor hysteresis) ────────────────────────
-        # BLE signals leak between floors (stairwells, thin ceilings), so a
-        # device on floor 1 may occasionally score highest on a floor 2
-        # scanner.  To prevent phantom floor jumps, require DOUBLE the normal
-        # hysteresis margin for cross-floor transitions.  The device must be
-        # decisively closer to the new floor's scanners before switching.
-        _floor_hyst = _HYSTERESIS_MARGIN
-        if candidate and room_scores and source_to_floor:
-            _cur_room_fs = self._confirmed_room.get(key)
-            if _cur_room_fs and _cur_room_fs != candidate and _cur_room_fs in room_scores:
-                # Reuse room→floor lookup built at top of _smooth_room
-                _cand_fl = _room_to_floor.get(candidate)
-                _cur_fl = _room_to_floor.get(_cur_room_fs)
-                if _cand_fl and _cur_fl and _cand_fl != _cur_fl:
-                    # Check if an "open" (loft) barrier exists on either the
-                    # candidate or current floor.  Open barriers mark areas
-                    # where floors are vertically connected (e.g. a loft,
-                    # mezzanine, or open stairwell), so signal flows freely
-                    # and cross-floor stickiness should be reduced.
-                    _involved_floors = {_cand_fl, _cur_fl}
-                    _has_open = any(
-                        b.get("material") == "open"
-                        and b.get("floor_id") in _involved_floors
-                        for b in (self._rf_barriers or [])
-                    )
-                    # Open/loft: normal hysteresis. Indoor floors: 2× margin.
-                    # Indoor↔outdoor: 4× margin — outdoor requires overwhelming evidence.
-                    _involves_outside = OUTSIDE_FLOOR_ID in _involved_floors
-                    if _has_open:
-                        _floor_margin = _floor_hyst
-                    elif _involves_outside:
-                        _floor_margin = _floor_hyst * 4.0
-                    else:
-                        _floor_margin = _floor_hyst * 2.0
-                    if room_scores.get(candidate, 0) - room_scores.get(_cur_room_fs, 0) < _floor_margin:
-                        candidate = _cur_room_fs  # stay on current floor
-
-        # ── Adaptive learning blend ───────────────────────────────────────────
-        # When adaptive learning is enabled and has accumulated enough data
-        # (maturity > 5%), blend its fingerprint-similarity scores into the
-        # Gaussian room scores.  This lets the system learn from confirmed
-        # room assignments over time without manual calibration.
-        #
-        # Three adaptive adjustments (all capped to prevent the learned
-        # model from dominating the physics-based Gaussian):
-        #   1. Fingerprint blend (max 25%) — similarity to past observations
-        #   2. Transition prior (max 8%) — favor commonly observed transitions
-        #   3. Floor penalty (50% score cut) — discourage low-confidence floor jumps
+        # ── Adaptive tie-break ────────────────────────────────────────────────
+        # Adaptive learning is consulted ONLY as a tie-breaker when the
+        # Gaussian scorer can't decide (candidate == current because margin
+        # wasn't met).  This prevents the learned model from overriding
+        # physics — it can only help when physics is ambiguous.
         try:
             _st_ad = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
             _d_ad = (_st_ad.data if _st_ad else {}) or {}
             _adaptive_on = bool(_d_ad.get("adaptive_learning_enabled", False))
-            _floor_on = bool(_d_ad.get("adaptive_floor_detection", False))
         except Exception:
             _adaptive_on = False
-            _floor_on = False
 
-        if _adaptive_on and ema and room_scores:
+        if _adaptive_on and ema and room_scores and candidate == _cur_confirmed:
             try:
                 _ad_store = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
                 if _ad_store and _ad_store.maturity() > 0.20:
                     _ad_scores = _ad_store.score_rooms(dict(ema), source_to_area)
-                    # Blend weight scales with maturity (0→25%) so early data
-                    # has minimal impact.  Capped at 25% to keep Gaussian dominant.
-                    _blend = min(0.25, _ad_store.maturity() * 0.3)
-                    for _ar in room_scores:
-                        if _ar in _ad_scores:
-                            room_scores[_ar] = (1.0 - _blend) * room_scores[_ar] + _blend * _ad_scores[_ar]
-
-                    # Transition prior: boost rooms that are common destinations
-                    # from the current room.  Capped at 8% to avoid positive
-                    # feedback loops (device gets stuck because being in a room
-                    # reinforces staying in that room).
-                    _cur = self._confirmed_room.get(key)
-                    if _cur:
-                        _priors = _ad_store.transition_prior(_cur, room_scores.keys())
-                        if _priors:
-                            _prior_blend = min(0.08, _ad_store.maturity() * 0.1)
-                            for _ar in room_scores:
-                                room_scores[_ar] *= (1.0 + _prior_blend * _priors.get(_ar, 0.0))
-
-                    # Adaptive floor penalty: if the adaptive model has low
-                    # confidence that the device is actually on the candidate's
-                    # floor, halve that room's score to discourage the transition.
-                    if _floor_on and source_to_floor and candidate:
-                        _cand_floor = None
-                        _cur_floor = None
-                        _src_to_fl = source_to_floor or {}
-                        for _src, _area in source_to_area.items():
-                            if _area == candidate and _src in _src_to_fl:
-                                _cand_floor = _src_to_fl[_src]
-                                break
-                        if _cur:
-                            for _src, _area in source_to_area.items():
-                                if _area == _cur and _src in _src_to_fl:
-                                    _cur_floor = _src_to_fl[_src]
-                                    break
-                        if _cand_floor and _cur_floor and _cand_floor != _cur_floor:
-                            _fl_conf = _ad_store.floor_confidence(dict(ema), _cand_floor, _src_to_fl)
-                            if _fl_conf < 0.3:
-                                room_scores[candidate] *= 0.5
-
-                    # Recompute best room after blending — but re-apply hysteresis
-                    # so the adaptive blend can't bypass the flicker prevention.
-                    # Without this, a noisy adaptive score can flip the candidate
-                    # to a room that the Gaussian+hysteresis stage just rejected.
-                    _best_after = max(room_scores, key=lambda r: room_scores[r])
-                    _cur_hyst2 = self._confirmed_room.get(key)
-                    if _cur_hyst2 and _cur_hyst2 in room_scores and _best_after != _cur_hyst2:
-                        _margin2 = room_scores[_best_after] - room_scores[_cur_hyst2]
-                        if _margin2 < _HYSTERESIS_MARGIN:
-                            _best_after = _cur_hyst2  # not enough evidence — stay put
-                    candidate = _best_after
+                    if _ad_scores:
+                        _ad_best = max(_ad_scores, key=lambda r: _ad_scores[r])
+                        # Only override if adaptive strongly favors a different room
+                        # AND the Gaussian scorer had that room as a close second
+                        if (_ad_best != candidate
+                                and _ad_best in room_scores
+                                and _ad_scores.get(_ad_best, 0) > 0.7
+                                and room_scores.get(_ad_best, 0) > room_scores.get(candidate, 0) * 0.85):
+                            candidate = _ad_best
             except Exception as _ad_err:
-                _LOGGER.warning("Adaptive blend error for %s: %s", key[:30], _ad_err, exc_info=True)
+                _LOGGER.warning("Adaptive tie-break error for %s: %s", key[:30], _ad_err, exc_info=True)
 
         # ── Fingerprint positioning (k-NN or Random Forest) ─────────────────
         # When the user has collected calibration data (>= _KNN_MIN_POINTS),
