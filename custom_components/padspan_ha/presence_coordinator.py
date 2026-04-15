@@ -1018,17 +1018,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # ── Distance-aware hysteresis ─────────────────────────────
                 # Single decision gate: the further apart two rooms are, the
                 # more evidence needed to switch.  Margin tiers:
-                #   Adjacent (< 6m):      1× base margin
-                #   Far (> 6m):           1.5× base margin
+                #   Adjacent (< 6m):      1× base margin (default 10%)
+                #   Far (> 6m):           2× base margin
                 #   Cross-floor:          2× base margin
                 #   Open/loft floor:      1× base margin (free vertical flow)
                 #   Indoor↔outdoor:       3× base margin
                 try:
                     _st_hyst = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
-                    _BASE_MARGIN = float(((_st_hyst.data if _st_hyst else {}).get("hysteresis_margin") or 0.06))
+                    _BASE_MARGIN = float(((_st_hyst.data if _st_hyst else {}).get("hysteresis_margin") or 0.10))
                     _BASE_MARGIN = max(0.0, min(0.3, _BASE_MARGIN))
                 except Exception:
-                    _BASE_MARGIN = 0.06
+                    _BASE_MARGIN = 0.10
                 _HYSTERESIS_MARGIN = _BASE_MARGIN  # keep name for downstream refs
 
                 _best_room = max(room_scores, key=lambda r: room_scores[r])
@@ -1062,7 +1062,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             if not self._use_metres:
                                 _dist_m *= 20.0  # rough normalised→metres approx
                             if _dist_m > 6.0:
-                                _margin_mult = 1.5
+                                _margin_mult = 2.0
                             # else: adjacent, 1× margin
 
                     _required_margin = _BASE_MARGIN * _margin_mult
