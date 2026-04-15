@@ -719,10 +719,12 @@ function App({ ctx }) {
   const rooms = Object.keys(rtm).length;
   const tags = (() => { const s = new Set(); for (const r of Object.keys(rtm)) (rtm[r]||[]).forEach(e => s.add(e)); return s.size; })();
 
-  const sum = snap?.objects?.summary;
-  // Show identified (people/tagged) count — not raw BLE total or occupancy
-  // estimate, both of which inflate wildly with random BLE noise.
-  const identified = sum ? sum.identified : tags;
+  // Count only objects the user has actually labelled (real people/devices).
+  // summary.identified includes ALL entity objects (Bermuda etc) which inflates
+  // the count to 50+ when there are only 4 people.
+  const objList = snap?.objects?.list || [];
+  const labelled = objList.filter(o => o.user_label).length;
+  const identified = labelled || tags;
   const radios = snap?.ble?.radios || [];
   const cal = snap?.calibration_status;
 
