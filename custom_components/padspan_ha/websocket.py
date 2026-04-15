@@ -1145,9 +1145,8 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         continue
                     if cached_entry["addr"] == addr:
                         continue  # same address, not a rotation
-                    # Check RSSI similarity across scanners (within 10 dBm)
-                    _src_current = {s.get("source") if isinstance(s, dict) else s: (s.get("rssi") if isinstance(s, dict) else None) for s in ((rec.get("sources") or {}).items() if isinstance(rec.get("sources"), dict) else [])}
-                    # Scanners overlap check is best-effort; bridge if fingerprint matches
+                    # Sources is a dict {source_name: {rssi, age_s}} at this point
+                    # Bridge if fingerprint matches (RSSI overlap is best-effort)
                     canonical_by_addr[addr] = {
                         "canonical_id": cached_entry["canonical"],
                         "name": cached_entry["canonical"],
@@ -1215,13 +1214,25 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 else:
                     g["rssi"] = None; g["age_s"] = None
                 g["addrs"] = sorted(g["addrs"])
+                # Deduplicate sources by scanner — prefer freshest reading per
+                # source (consistent with private_ble merge strategy). Stale
+                # strong readings from old MACs shouldn't win over fresh ones.
                 dedup_map: dict[str, dict] = {}
                 for s in g["sources"]:
-                    sk = s.get("source") if isinstance(s, dict) else str(s)
+                    sk = s.get("source", "")
                     prev = dedup_map.get(sk)
-                    s_rssi = s.get("rssi") if isinstance(s, dict) else None
-                    if prev is None or (s_rssi is not None and (prev.get("rssi") is None or s_rssi > prev["rssi"])):
-                        dedup_map[sk] = s if isinstance(s, dict) else {"source": sk}
+                    if prev is None:
+                        dedup_map[sk] = s
+                    else:
+                        s_age = s.get("age_s")
+                        p_age = prev.get("age_s")
+                        # Prefer fresher (lower age_s); tie-break on stronger RSSI
+                        if s_age is not None and (p_age is None or s_age < p_age):
+                            dedup_map[sk] = s
+                        elif s_age == p_age:
+                            s_rssi = s.get("rssi")
+                            if s_rssi is not None and (prev.get("rssi") is None or s_rssi > prev["rssi"]):
+                                dedup_map[sk] = s
                 g["sources"] = sorted(dedup_map.values(), key=lambda x: x.get("source", ""))
 
                 # Detect simultaneous MACs → split into per-MAC objects.
@@ -3116,8 +3127,8 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                     val = smoothed.get(mk)
                     if val is not None:
                         obj[mk] = val
-    except Exception:
-        pass  # non-fatal — UI still works without smoothed data
+    except Exception as _overlay_err:
+        _LOGGER.warning("Coordinator overlay failed — positioning data may be stale: %s", _overlay_err, exc_info=True)
 
     # Inject stale presence-coordinator objects for followed keys that are
     # missing from the snapshot. The presence coordinator carries forward

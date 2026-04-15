@@ -55,7 +55,9 @@ def _std(vals: list[float]) -> float:
     if len(vals) < 2:
         return 0.0
     m = _mean(vals)
-    return math.sqrt(sum((v - m) ** 2 for v in vals) / len(vals))
+    # Sample std (N-1) — population std (N) understates variance by 15-20%
+    # for small calibration sets (5-15 readings), overstating k-NN confidence.
+    return math.sqrt(sum((v - m) ** 2 for v in vals) / (len(vals) - 1))
 
 
 @dataclass

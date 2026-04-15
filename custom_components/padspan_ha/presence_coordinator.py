@@ -389,8 +389,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._fabric_pruned = True
                         if _pruned:
                             _LOGGER.info("Fabric: pruned %d non-radio scanner entries", _pruned)
-                except Exception:
-                    pass
+                except Exception as _sync_err:
+                    _LOGGER.warning("Fabric sync error: %s", _sync_err)
             # Read scanner mappings from fabric (includes both ha_sync and manual)
             source_to_area, source_to_floor = _model.get_scanner_mappings()
 
@@ -404,8 +404,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _fl = getattr(_a, "floor_id", None)
                     if _a.name and _fl:
                         _area_to_floor[_a.name] = str(_fl)
-            except Exception:
-                pass
+            except Exception as _area_err:
+                _LOGGER.debug("Area registry floor lookup: %s", _area_err)
             for r in (snap.get("ble") or {}).get("radios") or []:
                 src  = r.get("source")
                 area = r.get("area_name") or r.get("area")
@@ -427,8 +427,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _off = _scanner_offsets.get(_src)
                         if _off:
                             _am[_src] = _am[_src] + float(_off)
-        except Exception:
-            pass
+        except Exception as _off_err:
+            _LOGGER.debug("Scanner offset application: %s", _off_err)
 
         # ── Dynamic vote-window sizing from room_change_delay_s setting ───
         # The user sets a desired delay in seconds; we convert that to a
@@ -720,6 +720,25 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 pass
             self._pending_room_changes.clear()
 
+        # ── Proactive state cleanup ─────────────────────────────────────────────
+        # Every 100 polls (~16 min at 10s interval), sweep all per-object state
+        # dicts and evict keys that haven't been seen recently. This prevents
+        # unbounded memory growth from transient BLE devices.
+        if not hasattr(self, "_cleanup_counter"):
+            self._cleanup_counter = 0
+        self._cleanup_counter += 1
+        if self._cleanup_counter >= 100:
+            self._cleanup_counter = 0
+            _stale_keys = []
+            _cutoff = time.monotonic() - 1800.0  # 30 min
+            for _k, _ts in list(self._last_seen.items()):
+                if _ts < _cutoff and _k not in result:
+                    _stale_keys.append(_k)
+            for _k in _stale_keys:
+                self._evict_object(_k)
+            if _stale_keys:
+                _LOGGER.debug("Proactive cleanup: evicted %d stale objects", len(_stale_keys))
+
         # ── Scanner health summary (Phase 3) ──────────────────────────────────
         # Expose per-scanner reliability weights for the UI to display.
         # Stored under a special key that won't collide with object keys.
@@ -964,8 +983,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 _learned_delta = _ad_s.learned_floor_attenuation(_room_fl, _src_fl)
                                 if _learned_delta is not None:
                                     _eff_rssi += _learned_delta  # typically negative
-                        except Exception:
-                            pass
+                        except Exception as _fl_err:
+                            _LOGGER.debug("Floor attenuation error: %s", _fl_err)
                 # Path-loss model: RSSI → estimated distance in meters
                 # d = 10 ^ ((ref_power - rssi) / (10 * n))
                 _dist  = max(0.1, 10.0 ** ((_ref - _eff_rssi) / (10.0 * _n_exp)))
@@ -1082,18 +1101,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # scanner.  To prevent phantom floor jumps, require DOUBLE the normal
         # hysteresis margin for cross-floor transitions.  The device must be
         # decisively closer to the new floor's scanners before switching.
-        _floor_hyst = locals().get("_HYSTERESIS_MARGIN", 0.06)
+        _floor_hyst = _HYSTERESIS_MARGIN
         if candidate and room_scores and source_to_floor:
             _cur_room_fs = self._confirmed_room.get(key)
             if _cur_room_fs and _cur_room_fs != candidate and _cur_room_fs in room_scores:
-                # Derive room→floor by looking up which floor each scanner's area is on
-                _room_to_fl: dict[str, str] = {}
-                for _src2, _area2 in source_to_area.items():
-                    _fl2 = source_to_floor.get(_src2)
-                    if _fl2 and _area2 not in _room_to_fl:
-                        _room_to_fl[_area2] = _fl2
-                _cand_fl = _room_to_fl.get(candidate)
-                _cur_fl = _room_to_fl.get(_cur_room_fs)
+                # Reuse room→floor lookup built at top of _smooth_room
+                _cand_fl = _room_to_floor.get(candidate)
+                _cur_fl = _room_to_floor.get(_cur_room_fs)
                 if _cand_fl and _cur_fl and _cand_fl != _cur_fl:
                     # Check if an "open" (loft) barrier exists on either the
                     # candidate or current floor.  Open barriers mark areas
@@ -1141,7 +1155,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if _adaptive_on and ema and room_scores:
             try:
                 _ad_store = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
-                if _ad_store and _ad_store.maturity() > 0.05:
+                if _ad_store and _ad_store.maturity() > 0.20:
                     _ad_scores = _ad_store.score_rooms(dict(ema), source_to_area)
                     # Blend weight scales with maturity (0→25%) so early data
                     # has minimal impact.  Capped at 25% to keep Gaussian dominant.
@@ -1537,9 +1551,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._room_confidence.pop(key, None)
         self._rssi_margin_confidence.pop(key, None)
         self._knn_position.pop(key, None)
+        self._smooth_xy.pop(key, None)
         self._beacon_autocal_last.pop(key, None)
         self._adaptive_last_obs.pop(key, None)
         self._last_room_change_mono.pop(key, None)
+        self._room_dwell_start.pop(key, None)
+        self._floor_dwell_start.pop(key, None)
+        self._device_floor.pop(key, None)
+        self._alert_last_sent.pop(key, None)
         self._ema_rssi.pop(key, None)
         self._kalman_p.pop(key, None)
 

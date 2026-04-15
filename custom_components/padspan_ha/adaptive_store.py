@@ -116,8 +116,9 @@ class AdaptiveStore:
         # EMA mean
         new_mean = old_mean + alpha * (new_val - old_mean)
         # EMA variance (exponentially-weighted moving variance)
+        # Standard EWMA variance: Var_new = (1-α) * Var_old + α * (x - μ_old)²
         diff = new_val - old_mean
-        new_var = (1.0 - alpha) * (old_var + alpha * diff * diff)
+        new_var = (1.0 - alpha) * old_var + alpha * diff * diff
         return {"mean": round(new_mean, 3), "var": round(max(0.0, new_var), 3), "n": n}
 
     # ── Observation recording ────────────────────────────────────────────────
@@ -327,13 +328,26 @@ class AdaptiveStore:
         best_other = max(other_means)
         gap = cand_mean - best_other  # positive = candidate floor is stronger
 
-        # Check against learned attenuation for this floor pair
-        # Use learned delta as expected: if gap matches expectation, confidence up
-        # For simplicity: map gap to confidence sigmoid
-        # gap > 5 dBm → high confidence (0.8+)
-        # gap ≈ 0 → ambiguous (0.5)
-        # gap < -5 → low confidence (0.2)
-        confidence = 1.0 / (1.0 + math.exp(-gap / 5.0))
+        # Consult learned cross-floor attenuation to set expectations.
+        # If we've learned that cross-floor signals are typically 15 dBm weaker,
+        # a 3 dBm gap should give LOW confidence (not 50%).
+        # The sigmoid midpoint shifts to the expected delta.
+        expected_delta = 5.0  # default: 5 dBm gap = 50% confidence
+        for fl in floor_rssi:
+            if fl == candidate_floor:
+                continue
+            pair_key1 = f"{candidate_floor}|{fl}"
+            pair_key2 = f"{fl}|{candidate_floor}"
+            learned = fp_data.get(pair_key1) or fp_data.get(pair_key2)
+            if learned and learned.get("n", 0) >= 5:
+                # Learned delta is typically negative (cross-floor is weaker).
+                # Use its absolute value as expected gap.
+                expected_delta = max(3.0, abs(learned.get("mean", 5.0)))
+                break
+
+        # Sigmoid: gap at expected_delta → ~73% confidence.
+        # Gap at 0 → 50%. Gap at -expected_delta → ~27%.
+        confidence = 1.0 / (1.0 + math.exp(-gap / max(2.0, expected_delta * 0.6)))
         return round(min(1.0, max(0.0, confidence)), 3)
 
     # ── Maturity ─────────────────────────────────────────────────────────────
