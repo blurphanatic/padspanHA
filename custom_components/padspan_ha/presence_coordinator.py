@@ -245,6 +245,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._ema_rssi: dict[str, dict[str, float]] = {}
         # {addr: {source: error_covariance}}  — Kalman state P
         self._kalman_p: dict[str, dict[str, float]] = {}
+        # {addr: {source: consecutive_miss_count}} — silence grace tracking
+        self._silence_miss: dict[str, dict[str, int]] = {}
 
         # ── Room-vote state (keyed by object key) ────────────────────────────
         # {key: deque of recent candidate rooms}
@@ -891,15 +893,31 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ema[src] = rssi   # first observation — seed directly
                 kp[src] = _R      # initialize at max uncertainty
 
-        # Decay sources that did NOT report (drifts toward silence target and pruned).
-        # Total silence (no scanners reporting) uses a gentler -95 dBm phantom so
-        # Kalman state survives ~20-25 polls (~200-250s) instead of ~7-8 polls.
-        # Partial silence (some scanners still active = genuine movement) keeps
-        # the aggressive -100 dBm target for fast pruning of losing scanners.
+        # Decay sources that did NOT report.  BLE advertisements are probabilistic
+        # — a scanner can miss 1-2 polls even when the device is stationary nearby.
+        # To prevent phantom room switches from normal BLE jitter, we only start
+        # decaying after a source has been silent for _SILENCE_GRACE consecutive
+        # polls.  This means a single missed advertisement doesn't affect scoring.
+        #
+        # Total silence (no scanners reporting) uses a gentler -95 dBm target;
+        # partial silence (some scanners active = possible movement) uses -100 dBm.
+        _SILENCE_GRACE = 2  # consecutive missed polls before decay starts
+        if addr not in self._silence_miss:
+            self._silence_miss[addr] = {}
+        _miss = self._silence_miss[addr]
+
         _all_silent = len(live_srcs) == 0 and len(ema) > 0
         _decay_target = -95.0 if _all_silent else _EMA_SILENCE_DBM
+
+        # Reset miss counter for sources that reported this poll
+        for src in live_srcs:
+            _miss.pop(src, None)
+
         for src in list(ema):
             if src not in live_srcs:
+                _miss[src] = _miss.get(src, 0) + 1
+                if _miss[src] < _SILENCE_GRACE:
+                    continue  # grace period — hold RSSI steady, don't decay
                 p = kp.get(src, _R)
                 K = p / (p + _R)
                 ema[src] = ema[src] + K * (_decay_target - ema[src])
@@ -907,6 +925,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if ema[src] < _EMA_PRUNE_DBM:
                     del ema[src]
                     kp.pop(src, None)
+                    _miss.pop(src, None)
 
         # ── Stage 1.5 prep: read path-loss model parameters ────────────────
         # ref_power: RSSI at 1 meter (typically -59 to -65 dBm)
@@ -1147,7 +1166,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _knn.get("nearest_room", "") if _knn else "N/A",
                         len(self._knn_position),
                     )
-                if _knn and _knn.get("confidence", 0.0) >= _KNN_LIVE_THRESHOLD:
+                _knn_conf = _knn.get("confidence", 0.0) if _knn else 0.0
+                if _knn and _knn_conf >= _KNN_LIVE_THRESHOLD:
                     _knn_room = _knn.get("nearest_room") or ""
                     # Room boundary check using fabric geometry (metres)
                     if _knn.get("x_m") is not None and _model:
@@ -1207,8 +1227,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _knn_smoothed["x_frac"] = round(_sx, 4)
                         _knn_smoothed["y_frac"] = round(_sy, 4)
                     self._knn_position[key] = _knn_smoothed
+                    # k-NN room override: only override Gaussian candidate when
+                    # k-NN is highly confident (>50%) OR the Gaussian candidate
+                    # matches the k-NN room.  Low-confidence k-NN matching a
+                    # stale calibration pattern should NOT override a confident
+                    # Gaussian answer from strong nearby scanners.
                     if _knn_room:
-                        candidate = _knn_room
+                        if _knn_room == candidate:
+                            pass  # agrees — no change needed
+                        elif _knn_conf >= 0.50:
+                            candidate = _knn_room  # high confidence override
+                        # else: k-NN disagrees but isn't confident enough — keep Gaussian
                 else:
                     self._knn_position.pop(key, None)
                     self._smooth_xy.pop(key, None)
@@ -1452,6 +1481,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._alert_last_sent.pop(key, None)
         self._ema_rssi.pop(key, None)
         self._kalman_p.pop(key, None)
+        self._silence_miss.pop(key, None)
 
     def clear_object_state(self, key: str) -> None:
         """Public API: clear all coordinator state for an object.
