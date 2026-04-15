@@ -1176,72 +1176,11 @@ class ModelStore:
         map_dict["receivers"] = existing_receivers
 
         # ── Room bounds ───────────────────────────────────────────────────
-        for rname, b in (map_dict.get("room_bounds") or {}).items():
-            if not isinstance(b, dict) or rname not in geometry:
-                continue
-            geo = geometry[rname]
-            if geo.get("type") == "poly" and b.get("type") == "poly":
-                pts_m = geo.get("points_m") or []
-                new_pts = []
-                for pm in pts_m:
-                    fracs = self.metres_to_map_frac(float(pm[0]), float(pm[1]), map_id)
-                    if fracs:
-                        new_pts.append([
-                            round(max(0.0, min(1.0, fracs[0])), 4),
-                            round(max(0.0, min(1.0, fracs[1])), 4),
-                        ])
-                if len(new_pts) >= 3:
-                    b["points"] = new_pts
-                    count += 1
-            elif geo.get("type") == "circle" and b.get("type") == "circle":
-                fracs = self.metres_to_map_frac(
-                    float(geo.get("cx_m", 0)), float(geo.get("cy_m", 0)), map_id
-                )
-                if fracs:
-                    b["cx"] = round(max(0.0, min(1.0, fracs[0])), 4)
-                    b["cy"] = round(max(0.0, min(1.0, fracs[1])), 4)
-                    t = (self.data.get("map_transforms") or {}).get(map_id, {})
-                    avg_scale = (float(t.get("scale_x_m", 1)) + float(t.get("scale_y_m", 1))) / 2
-                    if avg_scale > 0:
-                        b["r"] = round(max(0.01, min(0.5, float(geo.get("r_m", 1)) / avg_scale)), 4)
-                    count += 1
-
-        # Add rooms from fabric that belong to this map but aren't in room_bounds yet
-        map_floor = map_dict.get("floor_id", DEFAULT_FLOOR_ID)
-        existing_room_bounds = map_dict.setdefault("room_bounds", {})
-        for rname, geo in geometry.items():
-            if rname in existing_room_bounds:
-                continue
-            if geo.get("floor_id", DEFAULT_FLOOR_ID) != map_floor:
-                continue
-            if geo.get("type") == "poly":
-                pts_m = geo.get("points_m") or []
-                new_pts = []
-                for pm in pts_m:
-                    fracs = self.metres_to_map_frac(float(pm[0]), float(pm[1]), map_id)
-                    if fracs and 0.0 <= fracs[0] <= 1.0 and 0.0 <= fracs[1] <= 1.0:
-                        new_pts.append([
-                            round(fracs[0], 4),
-                            round(fracs[1], 4),
-                        ])
-                if len(new_pts) >= 3:
-                    existing_room_bounds[rname] = {"type": "poly", "points": new_pts}
-                    count += 1
-            elif geo.get("type") == "circle":
-                fracs = self.metres_to_map_frac(
-                    float(geo.get("cx_m", 0)), float(geo.get("cy_m", 0)), map_id
-                )
-                if fracs and 0.0 <= fracs[0] <= 1.0 and 0.0 <= fracs[1] <= 1.0:
-                    t = (self.data.get("map_transforms") or {}).get(map_id, {})
-                    avg_scale = (float(t.get("scale_x_m", 1)) + float(t.get("scale_y_m", 1))) / 2
-                    r_frac = round(max(0.01, min(0.5, float(geo.get("r_m", 1)) / avg_scale)), 4) if avg_scale > 0 else 0.1
-                    existing_room_bounds[rname] = {
-                        "type": "circle",
-                        "cx": round(fracs[0], 4),
-                        "cy": round(fracs[1], 4),
-                        "r": r_frac,
-                    }
-                    count += 1
+        # Room boundaries are the user's authoritative drawings. Do NOT
+        # overwrite them from metre-space re-derivation (map transform drift
+        # corrupts positions) and do NOT inject room boundaries from the
+        # fabric into maps (creates phantom outlines the user never drew).
+        # Room bounds are ONLY modified by explicit user Save in the Edit tab.
 
         # ── RF barriers ──────────────────────────────────────────────────
         map_barriers_m = [bm for bm in barriers_m if bm.get("map_id") == map_id]
