@@ -997,11 +997,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if _room not in room_scores or _score > room_scores[_room]:
                     room_scores[_room] = _score
 
+            _cur_confirmed = self._confirmed_room.get(key)
             if room_scores:
-                # ── Per-scanner score adjustments (folded into scoring) ────
-                # Outdoor and isolated-scanner penalties are applied as score
-                # weights rather than separate post-hoc multiplication layers.
-                _cur_confirmed = self._confirmed_room.get(key)
                 _cur_floor_id = _room_to_floor.get(_cur_confirmed, "") if _cur_confirmed else ""
                 _cur_is_outdoor = _cur_floor_id == OUTSIDE_FLOOR_ID
                 for _rname in list(room_scores):
@@ -1019,16 +1016,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             room_scores[_rname] *= _ISOLATED_SCANNER_DAMPING
 
                 # ── Distance-aware hysteresis ─────────────────────────────
-                # Single decision gate that replaces the old adjacency sigmoid,
-                # floor stickiness, and basic hysteresis with one clear rule:
-                # the further apart two rooms are, the more evidence needed
-                # to switch.  Margin tiers:
-                #   Adjacent (< 5m):      1× base margin
-                #   Near (5-10m):         2× base margin
-                #   Far (> 10m):          3× base margin
-                #   Cross-floor:          3× base margin
+                # Single decision gate: the further apart two rooms are, the
+                # more evidence needed to switch.  Margin tiers:
+                #   Adjacent (< 6m):      1× base margin
+                #   Far (> 6m):           1.5× base margin
+                #   Cross-floor:          2× base margin
                 #   Open/loft floor:      1× base margin (free vertical flow)
-                #   Indoor↔outdoor:       4× base margin
+                #   Indoor↔outdoor:       3× base margin
                 try:
                     _st_hyst = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
                     _BASE_MARGIN = float(((_st_hyst.data if _st_hyst else {}).get("hysteresis_margin") or 0.06))
@@ -1052,11 +1046,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             for b in (self._rf_barriers or [])
                         )
                         if OUTSIDE_FLOOR_ID in _involved:
-                            _margin_mult = 4.0  # indoor↔outdoor
+                            _margin_mult = 3.0  # indoor↔outdoor
                         elif _has_open:
                             _margin_mult = 1.0  # open loft/stairwell
                         else:
-                            _margin_mult = 3.0  # separate floors
+                            _margin_mult = 2.0  # separate floors
                     else:
                         # Same floor — use centroid distance
                         _c_cur = self._room_centroids.get(_cur_confirmed)
@@ -1067,17 +1061,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             _dist_m = math.sqrt(_dx * _dx + _dy * _dy)
                             if not self._use_metres:
                                 _dist_m *= 20.0  # rough normalised→metres approx
-                            if _dist_m > 10.0:
-                                _margin_mult = 3.0
-                            elif _dist_m > 5.0:
-                                _margin_mult = 2.0
+                            if _dist_m > 6.0:
+                                _margin_mult = 1.5
                             # else: adjacent, 1× margin
-
-                    # Recently changed room? Increase margin to prevent bounce-back
-                    _last_chg = self._last_room_change_mono.get(key, 0.0)
-                    _since_chg = time.monotonic() - _last_chg if _last_chg else 999.0
-                    if _since_chg < 30.0:
-                        _margin_mult = max(_margin_mult, 3.0)  # just moved → high bar
 
                     _required_margin = _BASE_MARGIN * _margin_mult
                     if room_scores[_best_room] - room_scores[_cur_confirmed] < _required_margin:
