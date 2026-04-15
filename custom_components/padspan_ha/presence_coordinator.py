@@ -1183,13 +1183,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             if _fl_conf < 0.3:
                                 room_scores[candidate] *= 0.5
 
-                    # Recompute best room after blending — NO second hysteresis.
-                    # Hysteresis was already applied above; applying it again
-                    # made room changes require ~2x the margin to overcome.
-                    _best_room = max(room_scores, key=lambda r: room_scores[r])
-                    candidate = _best_room
-            except Exception:
-                pass  # adaptive scoring is best-effort
+                    # Recompute best room after blending — but re-apply hysteresis
+                    # so the adaptive blend can't bypass the flicker prevention.
+                    # Without this, a noisy adaptive score can flip the candidate
+                    # to a room that the Gaussian+hysteresis stage just rejected.
+                    _best_after = max(room_scores, key=lambda r: room_scores[r])
+                    _cur_hyst2 = self._confirmed_room.get(key)
+                    if _cur_hyst2 and _cur_hyst2 in room_scores and _best_after != _cur_hyst2:
+                        _margin2 = room_scores[_best_after] - room_scores[_cur_hyst2]
+                        if _margin2 < _HYSTERESIS_MARGIN:
+                            _best_after = _cur_hyst2  # not enough evidence — stay put
+                    candidate = _best_after
+            except Exception as _ad_err:
+                _LOGGER.warning("Adaptive blend error for %s: %s", key[:30], _ad_err, exc_info=True)
 
         # ── Fingerprint positioning (k-NN or Random Forest) ─────────────────
         # When the user has collected calibration data (>= _KNN_MIN_POINTS),
@@ -1473,9 +1479,18 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # ── Adaptive learning: record observation ────────────────────────────
         # Feed confirmed room assignments back into the adaptive store so it
-        # can improve over time.  Only record when confidence >= 0.7 (stable)
-        # and rate-limited to 1 per device per 5 min to keep data compact.
-        if _adaptive_on and confirmed and confidence >= 0.7 and ema:
+        # can improve over time.  Only record from identified devices (phones
+        # with IRK, labelled objects) — random BLE devices at random positions
+        # inflate variance and make the fingerprint useless.
+        # Also require confidence >= 0.7 (stable) and rate-limit to 1 per
+        # device per 5 min to keep data compact.
+        _obj_for_adaptive = self._known_objs.get(key, {})
+        _is_identified_device = bool(
+            _obj_for_adaptive.get("user_label")
+            or _obj_for_adaptive.get("identified")
+            or _obj_for_adaptive.get("kind") == "private_ble"  # phone with IRK
+        )
+        if _adaptive_on and confirmed and confidence >= 0.7 and ema and _is_identified_device:
             try:
                 _now_mono = time.monotonic()
                 _last = self._adaptive_last_obs.get(key, 0.0)
@@ -1500,8 +1515,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         if self._adaptive_save_counter >= 20:
                             self._adaptive_save_counter = 0
                             self.hass.async_create_task(_ad.async_save_periodic())
-            except Exception:
-                pass  # adaptive learning is best-effort
+            except Exception as _obs_err:
+                _LOGGER.warning("Adaptive observe error for %s: %s", key[:30], _obs_err, exc_info=True)
 
         return confirmed
 

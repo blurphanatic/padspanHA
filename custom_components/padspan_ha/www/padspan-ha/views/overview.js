@@ -1762,7 +1762,7 @@ export function render(ctx){
             const cy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
             const [lwx,lwy]=mapPt(cx,cy);
             const [lix,liy]=iso(lwx,lwy,z);
-            s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="11" font-weight="600">${_esc(room)}</text>`;
+            s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" font-weight="600">${_esc(room)}</text>`;
           }
           // RF barriers — dotted white lines on 3D map
           if(ctx.state._overviewShowWalls){
@@ -1790,10 +1790,10 @@ export function render(ctx){
             const rxOp = isLive ? 1.0 : 0.45;
             const rxSrc = _esc((isLive ? liveRadio.source : null) || r.source || r.id || "");
             s += `<g data-scanner-src="${rxSrc}" data-tip="${_esc(_rTip)}" opacity="${rxOp}" style="cursor:pointer">`;
-            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="18" fill="none" stroke="${rxColor}" stroke-width="1.5" opacity="0.3"/>`;
-            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="10" fill="none" stroke="${rxColor}" stroke-width="2" opacity="0.6"/>`;
-            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="5"  fill="${rxColor}" opacity="0.9"/>`;
-            s += `<text x="${Math.round(px)}" y="${Math.round(py)-22}" text-anchor="middle" fill="${rxColor}" font-size="12" font-weight="600" style="text-decoration:underline;cursor:pointer">${_esc(rxName)}</text>`;
+            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="15" fill="none" stroke="${rxColor}" stroke-width="1.3" opacity="0.3"/>`;
+            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="9"  fill="none" stroke="${rxColor}" stroke-width="1.5" opacity="0.6"/>`;
+            s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4.5" fill="${rxColor}" opacity="0.9"/>`;
+            s += `<text x="${Math.round(px)}" y="${Math.round(py)-18}" text-anchor="middle" fill="${rxColor}" font-size="10" font-weight="600" style="text-decoration:underline;cursor:pointer">${_esc(rxName)}</text>`;
             s += `</g>`;
           }
         }
@@ -1898,22 +1898,22 @@ export function render(ctx){
         s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(o))}" style="cursor:pointer">`;
         // Confidence badge below the dot (skip for away)
         if(!isAway){
-          const cW = Math.min(confLabel.length * 7 + 10, 70);
-          s += `<rect x="${Math.round(bx)-cW/2}" y="${Math.round(by)+20}" width="${cW}" height="14" rx="3" fill="#071008" opacity="0.8"/>`;
-          s += `<text x="${Math.round(bx)}" y="${Math.round(by)+31}" text-anchor="middle" fill="${confColor}" font-size="10" font-weight="600">${_esc(confLabel)}</text>`;
+          const cW = Math.min(confLabel.length * 6.5 + 8, 65);
+          s += `<rect x="${Math.round(bx)-cW/2}" y="${Math.round(by)+18}" width="${cW}" height="13" rx="3" fill="#071008" opacity="0.8"/>`;
+          s += `<text x="${Math.round(bx)}" y="${Math.round(by)+28}" text-anchor="middle" fill="${confColor}" font-size="9" font-weight="600">${_esc(confLabel)}</text>`;
           // Red warning ring only when truly bad (< 30% or no data)
           if(confPct < 30){
-            s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="22" fill="none" stroke="${confColor}" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.5"/>`;
+            s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="20" fill="none" stroke="${confColor}" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.5"/>`;
           }
         }
-        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="18" fill="${BEACON_CLR}" opacity="${glowOp}"/>`;
-        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="12" fill="${BEACON_CLR}" stroke="#071008" stroke-width="2" opacity="${dotOp}"/>`;
-        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="4" fill="#071008" opacity="0.7"/>`;
+        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="16" fill="${BEACON_CLR}" opacity="${glowOp}"/>`;
+        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="11" fill="${BEACON_CLR}" stroke="#071008" stroke-width="1.5" opacity="${dotOp}"/>`;
+        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="3.5" fill="#071008" opacity="0.7"/>`;
         const awayTag = isAway ? " (Away)" : "";
         const fullLbl = lbl + awayTag;
-        const lblW = Math.min(fullLbl.length * 8 + 12, 150);
-        s += `<rect x="${Math.round(bx)-lblW/2}" y="${Math.round(by)-34}" width="${lblW}" height="18" rx="4" fill="#071008" opacity="0.7"/>`;
-        s += `<text x="${Math.round(bx)}" y="${Math.round(by)-20}" text-anchor="middle" fill="${lblColor}" font-size="13" font-weight="700">${_esc(fullLbl)}</text>`;
+        const lblW = Math.min(fullLbl.length * 7 + 10, 140);
+        s += `<rect x="${Math.round(bx)-lblW/2}" y="${Math.round(by)-32}" width="${lblW}" height="16" rx="3" fill="#071008" opacity="0.7"/>`;
+        s += `<text x="${Math.round(bx)}" y="${Math.round(by)-20}" text-anchor="middle" fill="${lblColor}" font-size="12" font-weight="700">${_esc(fullLbl)}</text>`;
         s += `</g>`;
       }
 
@@ -1995,22 +1995,22 @@ export function render(ctx){
             if(isAway){
               // Red crosshair for away objects (persistent mode)
               s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.92">`;
-              s += `<circle cx="${px}" cy="${py}" r="24" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
-              s += `<circle cx="${px}" cy="${py}" r="14" fill="none" stroke="#ef4444" stroke-width="2"/>`;
-              s += `<circle cx="${px}" cy="${py}" r="5" fill="#ef4444"/>`;
-              s += `<line x1="${px-30}" y1="${py}" x2="${px-16}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
-              s += `<line x1="${px+16}" y1="${py}" x2="${px+30}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
-              s += `<line x1="${px}" y1="${py-30}" x2="${px}" y2="${py-16}" stroke="#ef4444" stroke-width="1.5"/>`;
-              s += `<line x1="${px}" y1="${py+16}" x2="${px}" y2="${py+30}" stroke="#ef4444" stroke-width="1.5"/>`;
-              if(objLabel) s += `<text x="${px}" y="${py+40}" text-anchor="middle" fill="#fca5a5" font-size="11" font-weight="600">${_esc(objLabel)}</text>`;
+              s += `<circle cx="${px}" cy="${py}" r="22" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
+              s += `<circle cx="${px}" cy="${py}" r="12" fill="none" stroke="#ef4444" stroke-width="2"/>`;
+              s += `<circle cx="${px}" cy="${py}" r="4.5" fill="#ef4444"/>`;
+              s += `<line x1="${px-27}" y1="${py}" x2="${px-14}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
+              s += `<line x1="${px+14}" y1="${py}" x2="${px+27}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
+              s += `<line x1="${px}" y1="${py-27}" x2="${px}" y2="${py-14}" stroke="#ef4444" stroke-width="1.5"/>`;
+              s += `<line x1="${px}" y1="${py+14}" x2="${px}" y2="${py+27}" stroke="#ef4444" stroke-width="1.5"/>`;
+              if(objLabel) s += `<text x="${px}" y="${py+38}" text-anchor="middle" fill="#fca5a5" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
               s += `</g>`;
             } else {
               // Teal dot for active objects (persistent mode)
               s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.88">`;
-              s += `<circle cx="${px}" cy="${py}" r="15" fill="#5eead4" opacity="0.15"/>`;
-              s += `<circle cx="${px}" cy="${py}" r="10" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="0.95"/>`;
-              s += `<circle cx="${px}" cy="${py}" r="3" fill="#071008" opacity="0.7"/>`;
-              if(objLabel) s += `<text x="${px}" y="${py+24}" text-anchor="middle" fill="#5eead4" font-size="11" font-weight="600">${_esc(objLabel)}</text>`;
+              s += `<circle cx="${px}" cy="${py}" r="13" fill="#5eead4" opacity="0.15"/>`;
+              s += `<circle cx="${px}" cy="${py}" r="9" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="0.95"/>`;
+              s += `<circle cx="${px}" cy="${py}" r="2.5" fill="#071008" opacity="0.7"/>`;
+              if(objLabel) s += `<text x="${px}" y="${py+22}" text-anchor="middle" fill="#5eead4" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
               s += `</g>`;
             }
           } else if(!obj.user_label){

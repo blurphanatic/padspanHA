@@ -5439,8 +5439,8 @@ async def ws_propagation_health(hass: HomeAssistant, connection, msg) -> None:
                     "r_sq": r_sq,
                     "quality": quality,
                 })
-        except Exception:
-            pass
+        except Exception as _cal_err:
+            _LOGGER.warning("Propagation health: calibration model error: %s", _cal_err, exc_info=True)
 
     # ── Floor separation ──
     floor_sep: dict[str, Any] = {"mean_delta": 0, "pairs": 0, "sufficient": False}

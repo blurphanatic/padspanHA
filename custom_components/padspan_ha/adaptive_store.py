@@ -35,6 +35,13 @@ _MATURITY_OBS = 2000
 _MIN_PAIR_OBS = 10
 # Minimum total transition count from a room before using priors
 _MIN_TRANSITIONS = 20
+# Maximum avg variance per room before we stop trusting its fingerprint.
+# Variance > 50 means std dev > 7 dBm — the fingerprint is too noisy to
+# distinguish rooms and adds harmful noise to positioning.
+_MAX_USEFUL_VARIANCE = 50.0
+# Exponential decay alpha for fingerprint EMA — effective window ~20 samples.
+# Higher = faster adaptation to changes, lower = smoother but slower to adapt.
+_EMA_DECAY_ALPHA = 0.05
 
 
 def _now_iso() -> str:
@@ -81,20 +88,36 @@ class AdaptiveStore:
     async def _save(self) -> None:
         await self.store.async_save(self.data)
 
-    # ── Welford online update ────────────────────────────────────────────────
+    # ── Exponentially-weighted online update ─────────────────────────────────
 
     @staticmethod
     def _welford_update(
         existing: dict[str, float], new_val: float
     ) -> dict[str, float]:
-        """Update running mean/variance with one new sample (Welford's)."""
+        """Update running mean/variance with exponential decay.
+
+        Uses an EMA-style update so recent observations dominate and stale
+        data fades out naturally.  The effective window is ~1/alpha samples
+        (alpha=0.05 → ~20 most recent observations matter).  This prevents
+        variance from inflating indefinitely as the environment changes.
+
+        Still tracks 'n' for minimum-observation gating but the mean/var
+        are no longer equally-weighted across all history.
+        """
         n = existing.get("n", 0) + 1
         old_mean = existing.get("mean", 0.0)
-        delta = new_val - old_mean
-        new_mean = old_mean + delta / n
         old_var = existing.get("var", 0.0)
-        # var tracks sum-of-squares / n (population variance)
-        new_var = old_var + (delta * (new_val - new_mean) - old_var) / n
+        # Alpha controls decay rate: higher = faster adaptation, noisier.
+        # 0.05 → effective window of ~20 observations.
+        alpha = _EMA_DECAY_ALPHA
+        if n <= 1:
+            # First observation — seed directly
+            return {"mean": round(new_val, 3), "var": 0.0, "n": 1}
+        # EMA mean
+        new_mean = old_mean + alpha * (new_val - old_mean)
+        # EMA variance (exponentially-weighted moving variance)
+        diff = new_val - old_mean
+        new_var = (1.0 - alpha) * (old_var + alpha * diff * diff)
         return {"mean": round(new_mean, 3), "var": round(max(0.0, new_var), 3), "n": n}
 
     # ── Observation recording ────────────────────────────────────────────────
@@ -221,6 +244,13 @@ class AdaptiveStore:
                 if room_fp[s].get("n", 0) >= _MIN_PAIR_OBS
             ]
             if not usable:
+                continue
+
+            # Gate: skip rooms where fingerprint variance is too high to be
+            # useful.  High variance means the fingerprint can't distinguish
+            # this room — scoring it adds noise that hurts positioning.
+            avg_var = sum(room_fp[s].get("var", 0) for s in usable) / len(usable)
+            if avg_var > _MAX_USEFUL_VARIANCE:
                 continue
 
             # Mahalanobis-like distance: sum of (obs - mean)^2 / var

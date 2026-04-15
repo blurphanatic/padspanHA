@@ -452,7 +452,25 @@ function IsoMap({ ctx }) {
 
   useEffect(() => {
     if (!ref.current) return;
-    if (_mapNode && _mapNode.isConnected && _mapNode.parentNode === ref.current) return;
+
+    // If map is already mounted, update object dots on each poll
+    // (same as overview's _isoUpdateObjects) instead of leaving them stale.
+    if (_mapNode && _mapNode.isConnected && _mapNode.parentNode === ref.current) {
+      if (typeof ctx.state._isoUpdateObjects === "function") {
+        try {
+          ctx.state._isoUpdateObjects();
+          // Re-apply counter-scaling to new object DOM nodes after swap.
+          // Without this, replaced objects render at zoom-scaled size
+          // until the next user zoom/pan event.
+          const viewport = ref.current.closest(".pl-viewport-inner");
+          if (viewport) {
+            const scaleMatch = viewport.style.transform?.match(/scale\(([\d.]+)\)/);
+            if (scaleMatch) _counterScaleSVG(viewport, parseFloat(scaleMatch[1]));
+          }
+        } catch (_) {}
+      }
+      return;
+    }
     if (_mapNode && !_mapNode.isConnected) {
       ref.current.innerHTML = "";
       ref.current.appendChild(_mapNode);
