@@ -160,7 +160,11 @@ function Odometer({ value, size = "22px", color }) {
 }
 
 // ── Stats Overlay ────────────────────────────────────────────────────────────
-function Stats({ rooms, objects, radios, loading }) {
+function Stats({ rooms, objects, radios, loading, occupancy }) {
+  const confColor = occupancy
+    ? (occupancy.confidence === "high" ? "#52b788" : occupancy.confidence === "medium" ? "#f59e0b" : "#f87171")
+    : "#94a3b8";
+  const rangeStr = occupancy ? `${occupancy.total_low}–${occupancy.total_high}` : "";
   return html`
     <div className="pl-stats">
       <div className="pl-stats-item">
@@ -168,8 +172,8 @@ function Stats({ rooms, objects, radios, loading }) {
         <div className="pl-stats-lbl">Rooms</div>
       </div>
       <div className="pl-stats-item">
-        <div className="pl-stats-val"><${Odometer} value=${loading ? 0 : objects} /></div>
-        <div className="pl-stats-lbl">Objects</div>
+        <div className="pl-stats-val" style="color:${confColor}"><${Odometer} value=${loading ? 0 : objects} color=${confColor} /></div>
+        <div className="pl-stats-lbl">People${rangeStr ? ` (${rangeStr})` : ""}</div>
       </div>
       <div className="pl-stats-item">
         <div className="pl-stats-val"><${Odometer} value=${loading ? 0 : radios} /></div>
@@ -217,7 +221,7 @@ function Ticker({ dataMode, radios, objects, version, cal }) {
         ${dataMode === "live" ? "Live" : "Sample"}
       </div>
       <span>${radios} scanners</span>
-      <span>${objects} devices</span>
+      <span>${objects} people</span>
       <div style="display:flex;align-items:center;gap:4px">
         <span className="pl-ticker-dot" style="background:${knn ? "#52b788" : "#64748b"}"></span>
         ${algo} ${knn ? "active" : "ready"}
@@ -702,9 +706,28 @@ function App({ ctx }) {
   const tags = (() => { const s = new Set(); for (const r of Object.keys(rtm)) (rtm[r]||[]).forEach(e => s.add(e)); return s.size; })();
 
   const sum = snap?.objects?.summary;
-  const objects = sum ? (quiet ? sum.identified : sum.total) : tags;
+  // Show identified (people/tagged) count, not raw BLE total which inflates wildly
+  const objects = sum ? sum.identified : tags;
   const radios = snap?.ble?.radios || [];
   const cal = snap?.calibration_status;
+
+  // Async occupancy estimate — use the clustering estimator for the stat display
+  const [occupancy, setOccupancy] = useState(null);
+  useEffect(() => {
+    if (!ctx.actions.callWS) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await ctx.actions.callWS({ type: "padspan_ha/occupancy_estimate" });
+        if (!cancelled && res && res.total_estimate != null) setOccupancy(res);
+      } catch (_) {}
+    };
+    poll();
+    const iv = setInterval(poll, 30000);  // refresh every 30s
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [ctx.actions.callWS]);
+
+  const peopleCount = occupancy ? occupancy.total_estimate : objects;
 
   return html`
     <div className="pl-root">
@@ -712,7 +735,7 @@ function App({ ctx }) {
         <${MapViewport}>
           <${IsoMap} ctx=${ctx} />
         <//>
-        <${Stats} rooms=${rooms} objects=${objects} radios=${radios.length} loading=${loading} />
+        <${Stats} rooms=${rooms} objects=${peopleCount} radios=${radios.length} loading=${loading} occupancy=${occupancy} />
         <${Scanners} radios=${radios} ctx=${ctx} />
         <${MovementGhosts} roomTagMap=${rtm} />
         <${ActivityFeed} roomTagMap=${rtm} />
