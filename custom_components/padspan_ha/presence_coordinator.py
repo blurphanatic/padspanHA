@@ -944,24 +944,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _sigma = DEFAULT_ROOM_SIGMA_M
             _floor_on = False
 
-        # ── Stage 1.5: Gaussian room scoring ─────────────────────────────
-        # Why Gaussian instead of raw "max RSSI wins"?
-        #   Raw RSSI comparison treats -60 and -70 as a 10-unit gap, but the
-        #   actual distance difference is nonlinear (path-loss is logarithmic).
-        #   Converting RSSI → distance → Gaussian weight exp(-(d/sigma)^2)
-        #   makes scoring proportional to physical proximity.  A scanner
-        #   behind a wall (-75 dBm ~ 8m) scores near zero, while two
-        #   scanners at -60 and -63 dBm both score high — reducing flicker.
-        #
-        # Each room's score = max Gaussian weight across its scanners.
-        # Using max (not sum) prevents rooms with more scanners from winning
-        # purely due to having more hardware.
+        # ── Room scoring: strongest effective RSSI wins ──────────────────
+        # Each room's score = best effective RSSI from its scanners (in dBm).
+        # Corrections (barriers, cross-floor attenuation, reliability) adjust
+        # the effective RSSI before comparison.  Hysteresis is in dBm, not
+        # percentages — a 5 dBm difference is always a 5 dBm difference,
+        # regardless of absolute signal level.
         candidate: str | None = None
         rssi_margin_confidence: float = 0.0
+        room_scores: dict[str, float] = {}
         if ema:
-            # RSSI margin confidence: how far ahead the strongest scanner is.
-            # Normalized to [0, 1] where 15 dBm gap = 1.0 (very decisive).
-            # Surfaced in entity attributes for automation conditions.
+            # RSSI margin confidence (for entity attributes)
             sorted_vals = sorted(ema.values(), reverse=True)
             if len(sorted_vals) >= 2:
                 rssi_margin_confidence = round(
@@ -970,28 +963,22 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 rssi_margin_confidence = 1.0
 
-            # Score each room by its best scanner's Gaussian weight
-            room_scores: dict[str, float] = {}
+            # Score each room by its best scanner's effective RSSI
             for _src, _rssi in ema.items():
                 _room = source_to_area.get(_src)
                 if not _room:
                     continue
-                # RF barrier penalty: if scanner→room centroid line crosses
-                # a barrier, subtract attenuation dBm from effective RSSI.
                 _eff_rssi = _rssi
+                # RF barrier penalty
                 if self._rf_barriers and self._scanner_positions and self._room_centroids:
                     _sp = self._scanner_positions.get(_src)
                     _rc = self._room_centroids.get(_room)
                     if _sp and _rc:
-                        _ba = _barrier_attenuation(
-                            _sp[0], _sp[1], _sp[2],
-                            _rc[0], _rc[1], _rc[2],
+                        _eff_rssi -= _barrier_attenuation(
+                            _sp[0], _sp[1], _sp[2], _rc[0], _rc[1], _rc[2],
                             self._rf_barriers,
                         )
-                        _eff_rssi -= _ba
-                # Learned cross-floor attenuation: if scanner is on a different
-                # floor than the candidate room, apply the learned RSSI correction.
-                # This makes cross-floor scanners read appropriately weaker.
+                # Cross-floor attenuation
                 if _floor_on and source_to_floor:
                     _src_fl = source_to_floor.get(_src, "")
                     _room_fl = _room_to_floor.get(_room, "")
@@ -1001,92 +988,66 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             if _ad_s:
                                 _learned_delta = _ad_s.learned_floor_attenuation(_room_fl, _src_fl)
                                 if _learned_delta is not None:
-                                    _eff_rssi += _learned_delta  # typically negative
+                                    _eff_rssi += _learned_delta
                         except Exception as _fl_err:
                             _LOGGER.debug("Floor attenuation error: %s", _fl_err)
-                # Path-loss model: RSSI → estimated distance in meters
-                # d = 10 ^ ((ref_power - rssi) / (10 * n))
-                _dist  = max(0.1, 10.0 ** ((_ref - _eff_rssi) / (10.0 * _n_exp)))
-                # Gaussian weight: close scanners score ~1.0, far ones → 0
-                _score = math.exp(-(_dist / _sigma) ** 2)
-                # Phase 3: reliability weight — downweight scanners that
-                # frequently disagree with the consensus room assignment.
+                # Scanner reliability penalty (convert to dBm: low reliability = weaker)
                 _rel = self._scanner_reliability.get(_src, 1.0)
-                _score *= _rel
-                if _room not in room_scores or _score > room_scores[_room]:
-                    room_scores[_room] = _score
+                if _rel < 0.8:
+                    _eff_rssi -= (1.0 - _rel) * 10.0  # up to -5 dBm for worst scanners
+                # Outdoor penalty: -15 dBm unless device is already outdoor
+                _cur_confirmed = self._confirmed_room.get(key)
+                _cur_floor_id = _room_to_floor.get(_cur_confirmed, "") if _cur_confirmed else ""
+                if _cur_floor_id != OUTSIDE_FLOOR_ID and _room_to_floor.get(_room) == OUTSIDE_FLOOR_ID:
+                    _eff_rssi -= 15.0
+                # Keep best per room
+                if _room not in room_scores or _eff_rssi > room_scores[_room]:
+                    room_scores[_room] = _eff_rssi
 
             _cur_confirmed = self._confirmed_room.get(key)
             if room_scores:
-                _cur_floor_id = _room_to_floor.get(_cur_confirmed, "") if _cur_confirmed else ""
-                _cur_is_outdoor = _cur_floor_id == OUTSIDE_FLOOR_ID
-                for _rname in list(room_scores):
-                    _rf = _room_to_floor.get(_rname, "")
-                    # Outdoor damping: unless device is already outdoor
-                    if not _cur_is_outdoor and _rf == OUTSIDE_FLOOR_ID:
-                        room_scores[_rname] *= _OUTDOOR_SCORE_DAMPING
-                    # Isolated scanner damping: single scanner on its floor
-                    if _rf and _scanners_per_floor.get(_rf, 0) <= 1:
-                        _has_strong = any(
-                            source_to_area.get(s) == _rname and r > _ISOLATED_SCANNER_STRONG_DBM
-                            for s, r in ema.items()
-                        )
-                        if not _has_strong:
-                            room_scores[_rname] *= _ISOLATED_SCANNER_DAMPING
-
-                # ── Distance-aware hysteresis ─────────────────────────────
-                # Single decision gate: the further apart two rooms are, the
-                # more evidence needed to switch.  Margin tiers:
-                #   Adjacent (< 6m):      1× base margin (default 10%)
-                #   Far (> 6m):           2× base margin
-                #   Cross-floor:          2× base margin
-                #   Open/loft floor:      1× base margin (free vertical flow)
-                #   Indoor↔outdoor:       3× base margin
-                try:
-                    _st_hyst = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
-                    _BASE_MARGIN = float(((_st_hyst.data if _st_hyst else {}).get("hysteresis_margin") or 0.10))
-                    _BASE_MARGIN = max(0.0, min(0.3, _BASE_MARGIN))
-                except Exception:
-                    _BASE_MARGIN = 0.10
-                _HYSTERESIS_MARGIN = _BASE_MARGIN  # keep name for downstream refs
-
                 _best_room = max(room_scores, key=lambda r: room_scores[r])
+
+                # ── dBm-based hysteresis ──────────────────────────────────
+                # To switch rooms, the new room's RSSI must exceed the
+                # current room's RSSI by a threshold in dBm.  This directly
+                # reflects signal strength differences — no Gaussian compression.
+                #   Same floor, adjacent:    3 dBm
+                #   Same floor, far (>6m):   5 dBm
+                #   Cross-floor:             5 dBm
+                #   Open/loft:               3 dBm
+                #   Indoor <> outdoor:       8 dBm
+                _DBM_HYST = 3.0  # base hysteresis in dBm
                 if _cur_confirmed and _cur_confirmed in room_scores and _best_room != _cur_confirmed:
-                    # Determine margin multiplier based on distance/floor
-                    _margin_mult = 1.0
+                    _hyst = _DBM_HYST
                     _best_fl = _room_to_floor.get(_best_room, "")
                     _cur_fl = _room_to_floor.get(_cur_confirmed, "")
-
                     if _best_fl and _cur_fl and _best_fl != _cur_fl:
-                        # Cross-floor transition
                         _involved = {_best_fl, _cur_fl}
                         _has_open = any(
                             b.get("material") == "open" and b.get("floor_id") in _involved
                             for b in (self._rf_barriers or [])
                         )
                         if OUTSIDE_FLOOR_ID in _involved:
-                            _margin_mult = 3.0  # indoor↔outdoor
+                            _hyst = 8.0
                         elif _has_open:
-                            _margin_mult = 1.0  # open loft/stairwell
+                            _hyst = 3.0
                         else:
-                            _margin_mult = 2.0  # separate floors
+                            _hyst = 5.0  # cross-floor
                     else:
-                        # Same floor — use centroid distance
                         _c_cur = self._room_centroids.get(_cur_confirmed)
                         _c_best = self._room_centroids.get(_best_room)
                         if _c_cur and _c_best and _c_cur[2] == _c_best[2]:
                             _dx = _c_cur[0] - _c_best[0]
                             _dy = _c_cur[1] - _c_best[1]
-                            _dist_m = math.sqrt(_dx * _dx + _dy * _dy)
+                            _d = math.sqrt(_dx * _dx + _dy * _dy)
                             if not self._use_metres:
-                                _dist_m *= 20.0  # rough normalised→metres approx
-                            if _dist_m > 6.0:
-                                _margin_mult = 2.0
-                            # else: adjacent, 1× margin
+                                _d *= 20.0
+                            if _d > 6.0:
+                                _hyst = 5.0
 
-                    _required_margin = _BASE_MARGIN * _margin_mult
-                    if room_scores[_best_room] - room_scores[_cur_confirmed] < _required_margin:
-                        candidate = _cur_confirmed  # not enough evidence — stay
+                    if room_scores[_best_room] - room_scores[_cur_confirmed] < _hyst:
+                        candidate = _cur_confirmed
                     else:
                         candidate = _best_room
                 else:
@@ -1096,16 +1057,16 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # This lets us see exactly why a device is in the wrong room.
         _obj_label = (self._known_objs.get(key) or {}).get("user_label")
         if _obj_label and room_scores:
-            _top3 = sorted(room_scores.items(), key=lambda x: -x[1])[:5]
+            _top5 = sorted(room_scores.items(), key=lambda x: -x[1])[:5]
             _ema_top = sorted(ema.items(), key=lambda x: -x[1])[:5] if ema else []
             _src_rooms = {s: source_to_area.get(s, "?") for s, _ in _ema_top}
             _LOGGER.info(
-                "SCORING [%s] label=%s | confirmed=%s → candidate=%s | "
-                "scores: %s | ema(top5): %s | src→room: %s",
+                "SCORING [%s] label=%s | confirmed=%s > candidate=%s | "
+                "room_rssi: %s | raw_ema(top5): %s | src>room: %s",
                 key[:30], _obj_label, _cur_confirmed, candidate,
-                ", ".join(f"{r}={s:.3f}" for r, s in _top3),
+                ", ".join(f"{r}={s:.0f}dBm" for r, s in _top5),
                 ", ".join(f"{s[:20]}={r:.0f}" for s, r in _ema_top),
-                ", ".join(f"{s[:15]}→{r}" for s, r in _src_rooms.items()),
+                ", ".join(f"{s[:15]}>{r}" for s, r in _src_rooms.items()),
             )
 
         # ── Adaptive tie-break ────────────────────────────────────────────────
@@ -1129,10 +1090,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _ad_best = max(_ad_scores, key=lambda r: _ad_scores[r])
                         # Only override if adaptive strongly favors a different room
                         # AND the Gaussian scorer had that room as a close second
+                        # Adaptive tie-break: room_scores are now dBm, so check
+                        # that the adaptive candidate is within 3 dBm of current
+                        _ad_rssi_gap = room_scores.get(_ad_best, -999) - room_scores.get(candidate, -999)
                         if (_ad_best != candidate
                                 and _ad_best in room_scores
                                 and _ad_scores.get(_ad_best, 0) > 0.7
-                                and room_scores.get(_ad_best, 0) > room_scores.get(candidate, 0) * 0.85):
+                                and _ad_rssi_gap > -3.0):
                             candidate = _ad_best
             except Exception as _ad_err:
                 _LOGGER.warning("Adaptive tie-break error for %s: %s", key[:30], _ad_err, exc_info=True)
