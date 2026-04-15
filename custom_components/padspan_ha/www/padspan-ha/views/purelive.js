@@ -720,11 +720,10 @@ function App({ ctx }) {
   const tags = (() => { const s = new Set(); for (const r of Object.keys(rtm)) (rtm[r]||[]).forEach(e => s.add(e)); return s.size; })();
 
   // Count only objects the user has actually labelled (real people/devices).
-  // summary.identified includes ALL entity objects (Bermuda etc) which inflates
-  // the count to 50+ when there are only 4 people.
+  // Do NOT fall back to roomTagMap count — that includes every BLE device
+  // assigned to a room, which inflates to 50+.
   const objList = snap?.objects?.list || [];
-  const labelled = objList.filter(o => o.user_label).length;
-  const identified = labelled || tags;
+  const identified = objList.filter(o => o.user_label).length;
   const radios = snap?.ble?.radios || [];
   const cal = snap?.calibration_status;
 
