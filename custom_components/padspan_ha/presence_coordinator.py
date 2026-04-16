@@ -944,15 +944,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _sigma = DEFAULT_ROOM_SIGMA_M
             _floor_on = False
 
-        # ── Room scoring: strongest effective RSSI wins ──────────────────
-        # Each room's score = best effective RSSI from its scanners (in dBm).
-        # Corrections (barriers, cross-floor attenuation, reliability) adjust
-        # the effective RSSI before comparison.  Hysteresis is in dBm, not
-        # percentages — a 5 dBm difference is always a 5 dBm difference,
-        # regardless of absolute signal level.
+        # ── Room scoring ──────────────────────────────────────────────────
+        # Two scoring paths:
+        #   A) Spatial: when scanner positions + room geometry are available,
+        #      estimate the device's (x, y) via inverse-distance-weighted
+        #      centroid of scanner positions, then check which room polygon
+        #      contains that point.  This is true indoor positioning — it
+        #      works even for rooms without a dedicated scanner.
+        #   B) Fallback: strongest effective RSSI per room (original method).
+        # Both paths feed into the same hysteresis + vote pipeline below.
         candidate: str | None = None
         rssi_margin_confidence: float = 0.0
         room_scores: dict[str, float] = {}
+        _spatial_xy: tuple[float, float, str] | None = None  # (x_m, y_m, floor_id)
         if ema:
             # RSSI margin confidence (for entity attributes)
             sorted_vals = sorted(ema.values(), reverse=True)
@@ -963,7 +967,54 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 rssi_margin_confidence = 1.0
 
-            # Score each room by its best scanner's effective RSSI
+            # ── Path A: spatial positioning via weighted centroid ─────────
+            # Requires ≥3 scanners with known positions and live RSSI.
+            # Converts RSSI → distance via path-loss model, then computes
+            # inverse-distance² weighted centroid of scanner positions.
+            _spatial_candidate: str | None = None
+            if self._use_metres and self._scanner_positions and _model:
+                _pos_data: list[tuple[float, float, str, float]] = []  # (x, y, floor, dist)
+                for _src, _rssi in ema.items():
+                    _sp = self._scanner_positions.get(_src)
+                    if not _sp:
+                        continue
+                    # RSSI → estimated distance (path-loss model)
+                    _d_est = 10.0 ** ((_ref - _rssi) / (10.0 * _n_exp))
+                    _d_est = max(0.3, min(_d_est, 50.0))  # clamp 0.3–50 m
+                    _pos_data.append((_sp[0], _sp[1], _sp[2], _d_est))
+
+                if len(_pos_data) >= 3:
+                    # Group by floor — position on the floor with the most
+                    # scanner readings (cross-floor scanners are unreliable)
+                    _floor_groups: dict[str, list[tuple[float, float, float]]] = {}
+                    for _px, _py, _pf, _pd in _pos_data:
+                        _floor_groups.setdefault(_pf, []).append((_px, _py, _pd))
+                    _best_floor = max(_floor_groups, key=lambda f: len(_floor_groups[f]))
+                    _fg = _floor_groups[_best_floor]
+
+                    if len(_fg) >= 2:
+                        # Inverse-distance² weighted centroid
+                        _wx_sum = 0.0
+                        _wy_sum = 0.0
+                        _w_sum = 0.0
+                        for _fx, _fy, _fd in _fg:
+                            _w = 1.0 / (_fd * _fd + 0.01)  # +epsilon to avoid div/0
+                            _wx_sum += _fx * _w
+                            _wy_sum += _fy * _w
+                            _w_sum += _w
+                        _est_x = _wx_sum / _w_sum
+                        _est_y = _wy_sum / _w_sum
+                        _spatial_xy = (_est_x, _est_y, _best_floor)
+
+                        # Look up room from geometry
+                        _geo_room = _model.beacon_room_from_geometry(
+                            _est_x, _est_y, _best_floor
+                        )
+                        if _geo_room:
+                            _spatial_candidate = _geo_room
+
+            # ── Path B: RSSI-based room scoring (always computed) ────────
+            # This provides the fallback and also feeds the debug log.
             for _src, _rssi in ema.items():
                 _room = source_to_area.get(_src)
                 if not _room:
@@ -1004,10 +1055,21 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if _room not in room_scores or _eff_rssi > room_scores[_room]:
                     room_scores[_room] = _eff_rssi
 
+            # ── Merge spatial + RSSI scoring ─────────────────────────────
+            # Spatial positioning (Path A) is preferred when available —
+            # it uses actual geometry instead of just nearest-scanner.
+            # Fall back to RSSI scoring (Path B) when spatial can't resolve.
             _cur_confirmed = self._confirmed_room.get(key)
-            if room_scores:
+            if _spatial_candidate:
+                # Spatial resolved a room — use it as the primary candidate.
+                # RSSI scoring is still available for hysteresis validation.
+                _best_room = _spatial_candidate
+            elif room_scores:
                 _best_room = max(room_scores, key=lambda r: room_scores[r])
+            else:
+                _best_room = None
 
+            if _best_room and room_scores:
                 # ── dBm-based hysteresis ──────────────────────────────────
                 # To switch rooms, the new room's RSSI must exceed the
                 # current room's RSSI by a threshold in dBm.  This directly
@@ -1019,7 +1081,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 #   Indoor <> outdoor:       8 dBm
                 _DBM_HYST = 3.0  # base hysteresis in dBm
                 if _cur_confirmed and _cur_confirmed in room_scores and _best_room != _cur_confirmed:
+                    # When spatial positioning provides the candidate, reduce
+                    # hysteresis — the position is geometry-confirmed, not just
+                    # strongest-scanner guesswork.
                     _hyst = _DBM_HYST
+                    if _spatial_candidate:
+                        _hyst = max(1.0, _DBM_HYST - 1.0)  # spatial needs less hysteresis
                     _best_fl = _room_to_floor.get(_best_room, "")
                     _cur_fl = _room_to_floor.get(_cur_confirmed, "")
                     if _best_fl and _cur_fl and _best_fl != _cur_fl:
@@ -1034,7 +1101,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             _hyst = 3.0
                         else:
                             _hyst = 5.0  # cross-floor
-                    else:
+
+                    elif not _spatial_candidate:
                         _c_cur = self._room_centroids.get(_cur_confirmed)
                         _c_best = self._room_centroids.get(_best_room)
                         if _c_cur and _c_best and _c_cur[2] == _c_best[2]:
@@ -1046,12 +1114,25 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             if _d > 6.0:
                                 _hyst = 5.0
 
-                    if room_scores[_best_room] - room_scores[_cur_confirmed] < _hyst:
-                        candidate = _cur_confirmed
-                    else:
+                    # For spatial candidate, check RSSI of best room vs current.
+                    # If spatial room has no RSSI score (no scanner in that room),
+                    # skip RSSI hysteresis — trust the geometry.
+                    _best_rssi = room_scores.get(_best_room)
+                    _cur_rssi = room_scores.get(_cur_confirmed)
+                    if _best_rssi is not None and _cur_rssi is not None:
+                        if _best_rssi - _cur_rssi < _hyst:
+                            candidate = _cur_confirmed
+                        else:
+                            candidate = _best_room
+                    elif _spatial_candidate:
+                        # Spatial room has no dedicated scanner — trust geometry
                         candidate = _best_room
+                    else:
+                        candidate = _cur_confirmed if _cur_confirmed else _best_room
                 else:
                     candidate = _best_room
+            elif _best_room:
+                candidate = _best_room
 
         # ── Debug: log scoring details for labelled devices ─────────────────
         # This lets us see exactly why a device is in the wrong room.
@@ -1060,10 +1141,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _top5 = sorted(room_scores.items(), key=lambda x: -x[1])[:5]
             _ema_top = sorted(ema.items(), key=lambda x: -x[1])[:5] if ema else []
             _src_rooms = {s: source_to_area.get(s, "?") for s, _ in _ema_top}
+            _spatial_str = ""
+            if _spatial_xy:
+                _spatial_str = f" | spatial=({_spatial_xy[0]:.1f},{_spatial_xy[1]:.1f})>{_spatial_candidate or '?'}"
             _LOGGER.info(
-                "SCORING [%s] label=%s | confirmed=%s > candidate=%s | "
+                "SCORING [%s] label=%s | confirmed=%s > candidate=%s%s | "
                 "room_rssi: %s | raw_ema(top5): %s | src>room: %s",
-                key[:30], _obj_label, _cur_confirmed, candidate,
+                key[:30], _obj_label, _cur_confirmed, candidate, _spatial_str,
                 ", ".join(f"{r}={s:.0f}dBm" for r, s in _top5),
                 ", ".join(f"{s[:20]}={r:.0f}" for s, r in _ema_top),
                 ", ".join(f"{s[:15]}>{r}" for s, r in _src_rooms.items()),
@@ -1228,6 +1312,39 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.warning("k-NN error for %s: %s", key[:30], _knn_err, exc_info=True)
             self._knn_position.pop(key, None)
             self._smooth_xy.pop(key, None)
+
+        # ── Spatial position: store weighted-centroid estimate ─────────────
+        # When k-NN has no position (no calibration data), the spatial
+        # centroid from RSSI + scanner positions provides sub-room position.
+        # This is what makes "Room only" devices show at the right spot.
+        if _spatial_xy and not self._knn_position.get(key):
+            _sx_est, _sy_est, _sf_est = _spatial_xy
+            # EMA-smooth the spatial position to reduce jitter
+            _prev_sp = self._smooth_xy.get(key)
+            if _prev_sp:
+                _sp_alpha = 0.15  # heavier smoothing for RSSI-derived position
+                _sx_est = _prev_sp[0] + _sp_alpha * (_sx_est - _prev_sp[0])
+                _sy_est = _prev_sp[1] + _sp_alpha * (_sy_est - _prev_sp[1])
+            self._smooth_xy[key] = (_sx_est, _sy_est)
+            # Store as spatial position (same format as k-NN for object propagation)
+            _sp_entry: dict[str, Any] = {
+                "x_m": round(_sx_est, 3),
+                "y_m": round(_sy_est, 3),
+                "confidence": rssi_margin_confidence,
+                "room": _spatial_candidate or "",
+                "source": "spatial",
+            }
+            # Convert metres to map fracs for rendering
+            if _model:
+                for _mid, _t in (_model.data.get("map_transforms") or {}).items():
+                    if _t.get("floor_id") == _sf_est:
+                        _fracs = _model.metres_to_map_frac(_sx_est, _sy_est, _mid)
+                        if _fracs and 0.0 <= _fracs[0] <= 1.0 and 0.0 <= _fracs[1] <= 1.0:
+                            _sp_entry["x_frac"] = round(_fracs[0], 4)
+                            _sp_entry["y_frac"] = round(_fracs[1], 4)
+                            _sp_entry["map_id"] = _mid
+                            break
+            self._knn_position[key] = _sp_entry
 
         # ── Stage 2: majority-vote temporal stabilization ──────────────────
         # The candidate from stages 1-1.5 can still flip between polls due to
