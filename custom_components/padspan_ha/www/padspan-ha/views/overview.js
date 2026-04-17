@@ -1871,10 +1871,8 @@ export function render(ctx){
         if(bx == null && o.room && roomIsoPos[o.room]){
           [bx,by] = roomIsoPos[o.room];
         }
-        // Never skip followed objects — show at map center as last resort
-        if(bx == null){
-          bx = CX; by = CY;
-        }
+        // No position = not on the map
+        if(bx == null) continue;
 
         // Confidence circle (only when we have a real positioned match)
         if(posConf > 0){
@@ -1923,30 +1921,20 @@ export function render(ctx){
       {
         const _isFollowed = (o) => ctx.actions.followedHas(o.address || "") || ctx.actions.followedHas(o.entity_id || "") || ctx.actions.followedHas(o.key || "");
         const _mapAwayM = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null) ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
-        // For dots on the map: show active objects (within away timeout) + followed items when persistent is on
-        // Skip very stale objects (>1hr unless followed) to prevent "army of dots" from 7-day history
-        const _mapMaxAge = Math.max(_mapAwayM * 2, 3600); // show up to 2x away timeout or 1hr, whichever is larger
+        // Show objects that are currently present (have a position and are not stale)
         const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
         const _mapObjs = allObjects.filter(o => {
           if (_renderedObjKeys.has(o.key || o.address || o.entity_id || "")) return false;
-          const isFol = _isFollowed(o);
+          // Stale/ghost objects don't belong on the map
+          if (o._stale || o._ghost) return false;
           const hasKnn = typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id && mapTransforms[o.knn_map_id];
           const hasRoom = o.room && o.room !== "unknown" && o.room !== "not_home" && roomIsoPos[o.room];
-          // Must have k-NN or a room to be positionable
           if (!hasKnn && !hasRoom) return false;
-          // Skip objects positioned on a hidden floor/map
           if (o.knn_map_id && hiddenIds.has(o.knn_map_id)) return false;
-          // Quiet mode: only show followed or labeled/identified objects
-          if (_quietMode && !isFol && !o.user_label && !o.identified) return false;
-          // Persistent pins mode: only show followed items
-          if (ctx.state._overviewPersistentPins && !isFol) return false;
-          // Non-persistent, non-followed: only show labeled/identified objects.
-          // Unlabeled random BLE devices are too numerous and cluster at scanner positions.
-          if (!ctx.state._overviewPersistentPins && !isFol) {
-            if (!o.user_label && !o.identified) return false;
-            const age = typeof o.age_s === "number" ? o.age_s : 0;
-            if (age > _mapMaxAge) return false;
-          }
+          // Quiet mode: only show labeled/identified objects
+          if (_quietMode && !o.user_label && !o.identified) return false;
+          // Only show labeled/identified objects (not random BLE noise)
+          if (!o.user_label && !o.identified) return false;
           return true;
         });
         const _roomObjCount = {};

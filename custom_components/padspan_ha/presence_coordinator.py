@@ -126,8 +126,8 @@ _EMA_PRUNE_DBM: float = -98.0
 _EMA_SILENCE_DBM: float = -100.0
 
 # Number of consecutive missed polls before a device starts accumulating age_s.
-# Grace period = _AWAY_GRACE_POLLS * _SCAN_INTERVAL = 2 * 10s = 20s.
-_AWAY_GRACE_POLLS: int = 2
+# Grace period = _AWAY_GRACE_POLLS * _SCAN_INTERVAL = 12 * 10s = 120s.
+_AWAY_GRACE_POLLS: int = 12
 
 # ── Velocity gate ────────────────────────────────────────────────────────────
 # Prevents "teleportation" — objects jumping to non-adjacent rooms faster than
@@ -672,51 +672,24 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if _pinned:
             await self._inject_beacon_calibration(now, _pinned, result)
 
-        # ── Read signal-loss linger setting ───────────────────────────────────
-        try:
-            _st_ling = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
-            _linger_s = int((_st_ling.data if _st_ling else {}).get("signal_loss_linger_s", 90))
-            _linger_s = max(10, min(300, _linger_s))
-        except Exception:
-            _linger_s = 90
-        _linger_polls = max(2, round(_linger_s / _SCAN_INTERVAL.total_seconds()))
-
-        # ── Carry forward stale objects (home/away persistence) ──────────────
-        # Objects persist through the grace period (signal_loss_linger_s) and
-        # then as stale for up to _STALE_EVICT_S, after which they are evicted
-        # from all coordinator caches.
-        _STALE_EVICT_S = max(float(_linger_s) * 3, 600.0)  # 3× linger or 10min
+        # ── Grace period for missing objects ──────────────────────────────────
+        # Devices that vanish from BLE get a 120s grace period (12 polls) to
+        # cover normal BLE advertisement gaps.  After grace expires, the device
+        # is evicted immediately — no lingering stale objects on the map.
         _evict_keys: list[str] = []
         for key, last_obj in list(self._known_objs.items()):
             if key in result:
                 continue
-            # Grace period: don't start aging until enough consecutive misses.
-            # Devices with confident presence get a longer grace (signal_loss_linger_s)
-            # to ride out BLE dropouts without flickering to away.
             miss = self._away_miss.get(key, 0) + 1
             self._away_miss[key] = miss
-            _last_conf = last_obj.get("room_confidence", 0.0)
-            _grace = _linger_polls if _last_conf >= 0.6 else _AWAY_GRACE_POLLS
-            if miss < _grace:
-                # Grace period — treat as still present (age_s = 0)
+            if miss < _AWAY_GRACE_POLLS:
+                # Grace period — treat as still present
                 grace = dict(last_obj)
                 grace["age_s"] = 0.0
-                grace.pop("_stale", None)
                 result[key] = grace
                 continue
-            elapsed = now - self._last_seen.get(key, now)
-            # Evict objects that have been stale too long
-            if elapsed > _STALE_EVICT_S:
-                _evict_keys.append(key)
-                continue
-            stale = dict(last_obj)
-            stale["age_s"]  = elapsed
-            stale["_stale"] = True
-            # Preserve the last confirmed room in the stale entry
-            if stale.get("kind") in ("ble", "private_ble", "ibeacon") and self._confirmed_room.get(key):
-                stale["room"] = self._confirmed_room[key]
-            result[key] = stale
-        # Clean up evicted objects from all caches
+            # Grace expired — evict
+            _evict_keys.append(key)
         for key in _evict_keys:
             self._evict_object(key)
 

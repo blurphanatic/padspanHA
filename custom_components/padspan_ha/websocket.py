@@ -2412,63 +2412,9 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             obj.pop("_last_seen_ts", None)
             obj.pop("_cache_age_s", None)
 
-        # Create placeholder objects for followed keys that have no real
-        # advertisement yet. This ensures followed objects show up in the
-        # objects list even when their BLE address has rotated or the
-        # transmitter hasn't been seen by scanners yet.
-        try:
-            _st_ghost = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
-            _obj_store_ghost = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
-            if _st_ghost and _obj_store_ghost:
-                _followed = _st_ghost.data.get("followed_addrs") or []
-                _existing_keys = {(o.get("key") or "").upper() for o in objects}
-                _existing_keys |= {(o.get("address") or "").upper() for o in objects}
-                # Also index by all_addresses so we don't create duplicates
-                for _eo in objects:
-                    for _ea in (_eo.get("all_addresses") or []):
-                        _existing_keys.add(str(_ea).upper())
-                # Also check object history cache for names of non-labeled objects
-                _obj_hist_cache = hass.data.get(DOMAIN, {}).get(DATA_OBJECT_HISTORY) or {}
-                for _fk in _followed:
-                    _fku = str(_fk).upper()
-                    if _fku in _existing_keys:
-                        continue  # already have a real object
-                    _ghost_entry = _obj_store_ghost.get(_fk)
-                    _ghost_label = (_ghost_entry or {}).get("label", "")
-                    # Fall back to name from object history cache or the key itself
-                    if not _ghost_label:
-                        _hist = _obj_hist_cache.get(_fku) or _obj_hist_cache.get(_fk) or {}
-                        _ghost_label = _hist.get("user_label") or _hist.get("name") or ""
-                    if not _ghost_label:
-                        _ghost_label = _fk  # last resort: use the key as the name
-                    # Determine kind from key format
-                    if _fku.startswith("IBEACON:"):
-                        _ghost_kind = "ibeacon"
-                    elif ":" in _fku and len(_fku) == 17:
-                        _ghost_kind = "ble"
-                    else:
-                        _ghost_kind = "private_ble"
-                    _ghost_all_addrs = list((_ghost_entry or {}).get("all_addresses", []))
-                    if not _ghost_all_addrs:
-                        _ghost_all_addrs = list((_obj_hist_cache.get(_fku) or _obj_hist_cache.get(_fk) or {}).get("all_addresses", []))
-                    objects.append({
-                        "key": _fk,
-                        "kind": _ghost_kind,
-                        "address": _fk,
-                        "all_addresses": _ghost_all_addrs,
-                        "name": _ghost_label,
-                        "user_label": (_ghost_entry or {}).get("label", ""),
-                        "rssi": None,
-                        "age_s": None,
-                        "sources": [],
-                        "identified": bool((_ghost_entry or {}).get("label")),
-                        "linked_entities": [],
-                        "device": None,
-                        "room": None,
-                        "_ghost": True,  # indicates no live advertisement
-                    })
-        except Exception:
-            pass
+        # Ghost injection removed — if a device isn't broadcasting, it
+        # shouldn't appear in the object list.  Followed devices are tracked
+        # via alerts/history, not by faking their presence on the map.
 
         unidentified = [o for o in objects if o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified")]
         identified = [o for o in objects if not (o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified"))]
@@ -3132,55 +3078,9 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
     except Exception as _overlay_err:
         _LOGGER.warning("Coordinator overlay failed — positioning data may be stale: %s", _overlay_err, exc_info=True)
 
-    # Inject stale presence-coordinator objects for followed keys that are
-    # missing from the snapshot. The presence coordinator carries forward
-    # objects after they vanish from BLE, but the overlay above only updates
-    # EXISTING objects — it doesn't add new ones. This ensures followed
-    # objects remain visible even after MAC rotation or temporary signal loss.
-    try:
-        _pc2 = hass.data.get(DOMAIN, {}).get("presence_coordinator")
-        _st2 = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
-        _os2 = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
-        if _pc2 and _pc2.data and _st2:
-            _obj_list2 = (snap.get("objects") or {}).get("list") or []
-            _existing2 = {(o.get("key") or "").upper() for o in _obj_list2}
-            _followed2 = {str(f).upper() for f in (_st2.data.get("followed_addrs") or [])}
-            for _pk, _pv in _pc2.data.items():
-                _pku = str(_pk).upper()
-                if _pku not in _followed2 or _pku in _existing2:
-                    continue
-                # This is a followed object with presence data but missing from snapshot
-                _oe = _os2.get(_pk) if _os2 else None
-                _olabel = (_oe or {}).get("label", "")
-                _oname = _olabel or _pv.get("user_label") or _pv.get("name") or _pk
-                _inj = {
-                    "key": _pk,
-                    "kind": "ibeacon" if _pku.startswith("IBEACON:") else "ble",
-                    "address": _pk,
-                    "all_addresses": list((_oe or {}).get("all_addresses", [])) if _oe else list(_pv.get("all_addresses") or []),
-                    "name": _oname,
-                    "user_label": _olabel,
-                    "rssi": None,
-                    "age_s": None,
-                    "sources": [],
-                    "identified": bool(_olabel),
-                    "linked_entities": [],
-                    "device": None,
-                    "room": _pv.get("room"),
-                    "_ghost": True,
-                    "_stale": True,
-                }
-                # Also overlay presence data
-                for _mk2 in ("x_frac", "y_frac", "knn_map_id",
-                              "knn_confidence",
-                              "room_confidence", "rssi_margin_confidence"):
-                    _v2 = _pv.get(_mk2)
-                    if _v2 is not None:
-                        _inj[_mk2] = _v2
-                _obj_list2.append(_inj)
-                _existing2.add(_pku)
-    except Exception:
-        pass
+    # Ghost injection removed — devices not broadcasting should not appear
+    # on the map.  Followed devices get alerts via the follow system, not
+    # by faking stale presence objects in the snapshot.
 
     # Inject calibration status so the UI knows the state of the cal store
     try:
