@@ -2804,8 +2804,9 @@ export function render(ctx){
       })(),
     ].filter(Boolean));
 
-    // ── SUSPENDED banner with countdown + cancel ────────────────────────
-    if (liveSnap?.suspended === true) {
+    // ── SUSPENDED banner builder (used by both basic + advanced sections) ──
+    const _buildSuspendBanner = () => {
+      if (liveSnap?.suspended !== true) return null;
       const _remS = liveSnap.suspend_remaining_s ?? 0;
       const _mm = Math.floor(_remS / 60);
       const _ss = _remS % 60;
@@ -2831,11 +2832,10 @@ export function render(ctx){
         try {
           await ctx.actions.wsCall("padspan_ha/unsuspend_databases");
           ctx.toast("Normal pipeline resumed");
-          ctx.actions.refreshLive && ctx.actions.refreshLive();
         } catch(e) { ctx.toast("Failed: " + String(e), true); }
       });
 
-      const suspBanner = el("div",{style:
+      return el("div",{style:
         "display:flex;align-items:center;justify-content:center;gap:10px;" +
         "padding:8px 16px;margin-bottom:10px;border-radius:8px;" +
         "background:linear-gradient(135deg,#78350f,#92400e);" +
@@ -2849,8 +2849,7 @@ export function render(ctx){
           "Raw radio only \u00b7 " + _countdown),
         cancelBtn,
       ]);
-      root.appendChild(suspBanner);
-    }
+    };
 
     const mapCard = el("div",{class:"card"},[
       el("div",{class:"card-head"},[
@@ -3139,6 +3138,7 @@ export function render(ctx){
     bQuietRow.addEventListener("click", (e)=>{ if(e.target !== bQuietToggle){ bQuietToggle.checked = !bQuietToggle.checked; bQuietToggle.dispatchEvent(new Event("change")); } });
 
     const section = el("section",{},[
+      _buildSuspendBanner(),
       el("div",{style:"display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"},[
         el("div",{class:"row",style:"align-items:center;gap:8px"},[
           el("h2",{style:"margin:0"}, "Overview"),
@@ -3149,7 +3149,7 @@ export function render(ctx){
       summary,
       basicCompanionCard,
       mapCard,
-    ]);
+    ].filter(Boolean));
     return section;
   }
 
@@ -3576,12 +3576,13 @@ export function render(ctx){
   quietRow.addEventListener("click", (e)=>{ if(e.target !== quietToggle){ quietToggle.checked = !quietToggle.checked; quietToggle.dispatchEvent(new Event("change")); } });
 
   const section = el("section",{},[
+    _buildSuspendBanner(),
     el("div",{style:"display:flex;align-items:center;justify-content:space-between"},[
       el("h2",{style:"margin:0"}, "Overview"),
       quietRow,
     ]),
     el("div",{style:"color:#94a3b8;margin-top:2px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
-  ]);
+  ].filter(Boolean));
   // Migration banner — show on overview if fabric is empty but maps have data
   {
     const _maps2 = ctx.state.maps?.list || [];
