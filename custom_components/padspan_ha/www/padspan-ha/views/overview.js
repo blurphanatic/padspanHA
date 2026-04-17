@@ -2804,6 +2804,24 @@ export function render(ctx){
       })(),
     ].filter(Boolean));
 
+    // ── Flashing SUSPENDED indicator ──────────────────────────────────────
+    const _isSuspended = liveSnap?.suspended === true;
+    if (_isSuspended) {
+      const suspBanner = el("div",{style:
+        "text-align:center;padding:6px 12px;margin-bottom:8px;border-radius:6px;" +
+        "background:#92400e;color:#fbbf24;font-weight:700;font-size:13px;letter-spacing:0.5px;" +
+        "animation:padspan-suspend-flash 1.2s ease-in-out infinite"
+      }, "DATABASES SUSPENDED — Raw Radio + Spatial Centroid Only");
+      // Inject keyframes if not already present
+      if (!document.getElementById("padspan-suspend-flash-style")) {
+        const styleEl = document.createElement("style");
+        styleEl.id = "padspan-suspend-flash-style";
+        styleEl.textContent = `@keyframes padspan-suspend-flash { 0%,100%{opacity:1} 50%{opacity:0.4} }`;
+        document.head.appendChild(styleEl);
+      }
+      root.appendChild(suspBanner);
+    }
+
     const mapCard = el("div",{class:"card"},[
       el("div",{class:"card-head"},[
         el("div",{class:"h2"}, "Your home"),
