@@ -307,6 +307,62 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._adaptive_last_obs: dict[str, float] = {}
         # Save counter — only persist to disk every N observations (not every poll)
         self._adaptive_save_counter: int = 0
+        # Suspend: when set, use only raw radio + spatial centroid (no k-NN, no adaptive)
+        self._suspend_until: float = 0.0  # monotonic timestamp when suspend ends
+
+    # ── Suspend / reset smoothing state ─────────────────────────────────────
+
+    @property
+    def suspended(self) -> bool:
+        """True when databases are suspended — raw radio + spatial only."""
+        return time.monotonic() < self._suspend_until
+
+    def suspend_databases(self, minutes: int = 60) -> None:
+        """Suspend all learned/cached databases for N minutes.
+
+        Clears all smoothing state and disables k-NN, adaptive learning,
+        and scanner reliability for the duration.  Only raw radio RSSI +
+        spatial weighted centroid is used for positioning.
+        """
+        self.clear_smoothing_state()
+        self._suspend_until = time.monotonic() + minutes * 60
+        _LOGGER.info(
+            "Databases suspended for %d minutes — raw radio + spatial centroid only",
+            minutes,
+        )
+
+    def unsuspend_databases(self) -> None:
+        """End suspension early — resume normal pipeline."""
+        self._suspend_until = 0.0
+        self.clear_smoothing_state()  # start fresh when resuming too
+        _LOGGER.info("Database suspension ended — full pipeline resumed")
+
+    def clear_smoothing_state(self) -> None:
+        """Wipe all accumulated smoothing state — fresh start from raw radio.
+
+        Clears: Kalman RSSI, vote windows, confirmed rooms, k-NN cache,
+        smooth XY, scanner reliability, velocity gate, silence tracking.
+        Persistent stores (calibration, adaptive learning) are NOT touched.
+        """
+        self._ema_rssi.clear()
+        self._kalman_p.clear()
+        self._silence_miss.clear()
+        self._room_votes.clear()
+        self._confirmed_room.clear()
+        self._room_confidence.clear()
+        self._rssi_margin_confidence.clear()
+        self._knn_position.clear()
+        self._smooth_xy.clear()
+        self._scanner_agree.clear()
+        self._scanner_reliability.clear()
+        self._last_room_change_mono.clear()
+        self._room_dwell_start.clear()
+        self._floor_dwell_start.clear()
+        self._device_floor.clear()
+        self._co_visible.clear()
+        self._adj_learn_polls = 0
+        self._adaptive_last_obs.clear()
+        _LOGGER.info("Smoothing state cleared — fresh positioning from raw radio")
 
     # ── main update ──────────────────────────────────────────────────────────
 
@@ -1043,7 +1099,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         except Exception as _fl_err:
                             _LOGGER.debug("Floor attenuation error: %s", _fl_err)
                 # Scanner reliability penalty (convert to dBm: low reliability = weaker)
-                _rel = self._scanner_reliability.get(_src, 1.0)
+                # Skip when suspended — reliability scores may be poisoned
+                _rel = 1.0 if self.suspended else self._scanner_reliability.get(_src, 1.0)
                 if _rel < 0.8:
                     _eff_rssi -= (1.0 - _rel) * 10.0  # up to -5 dBm for worst scanners
                 # Outdoor penalty: -15 dBm unless device is already outdoor
@@ -1164,6 +1221,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _adaptive_on = bool(_d_ad.get("adaptive_learning_enabled", False))
         except Exception:
             _adaptive_on = False
+        if self.suspended:
+            _adaptive_on = False
 
         if _adaptive_on and ema and room_scores and candidate == _cur_confirmed:
             try:
@@ -1201,7 +1260,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # in the calibration map's coordinate space.
         try:
             _calib = self.hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
-            if _calib and len(_calib.data.get("points", [])) >= _KNN_MIN_POINTS:
+            if _calib and not self.suspended and len(_calib.data.get("points", [])) >= _KNN_MIN_POINTS:
                 # Choose algorithm based on setting
                 _st2 = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
                 _algo = ((_st2.data if _st2 else {}).get("positioning_algorithm") or "knn")
@@ -1487,7 +1546,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # scanner's own room matches the confirmed room.  Scanners that
         # consistently point to the wrong room get downweighted in Gaussian
         # scoring.  Only update when we have a stable confirmation (conf >= 0.6).
-        if confirmed and confidence >= 0.6 and ema:
+        # Skip when suspended — don't pollute reliability with potentially wrong data.
+        if confirmed and confidence >= 0.6 and ema and not self.suspended:
             for _src in ema:
                 _src_room = source_to_area.get(_src)
                 if not _src_room:

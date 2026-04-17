@@ -1946,6 +1946,58 @@ function _settingsPresence(ctx, el){
     resetAdaptiveBtn,
   ]));
 
+  // ── Suspend Databases (raw radio test) ─────────────────────────────────
+  {
+    const suspendBtn = el("button",{class:"btn",style:"background:#0369a1;border-color:#0369a1"},"Suspend All Databases (60 min)");
+    const unsuspendBtn = el("button",{class:"btn",style:"background:#065f46;border-color:#065f46;display:none"},"Resume Normal Pipeline");
+    const suspendStatus = el("div",{class:"muted",style:"font-size:12px;margin-top:6px"});
+
+    // Check current status from coordinator
+    const _checkSuspend = () => {
+      ctx.actions.wsCall("padspan_ha/status").then(res => {
+        if(res && res.suspended){
+          suspendBtn.style.display="none"; unsuspendBtn.style.display="";
+          suspendStatus.textContent = "Suspended — using raw radio + spatial centroid only";
+          suspendStatus.style.color = "#fbbf24";
+        } else {
+          suspendBtn.style.display=""; unsuspendBtn.style.display="none";
+          suspendStatus.textContent = "";
+        }
+      }).catch(()=>{});
+    };
+    _checkSuspend();
+
+    suspendBtn.addEventListener("click", async()=>{
+      if(!confirm("Suspend all learned databases for 60 minutes?\\n\\nThis clears Kalman filters, vote windows, scanner reliability, and cached positions.\\nOnly raw radio RSSI + spatial centroid positioning will be used.\\n\\nCalibration data and settings are NOT deleted.")) return;
+      suspendBtn.disabled=true; suspendBtn.textContent="Suspending…";
+      try {
+        await ctx.actions.wsCall("padspan_ha/suspend_databases",{minutes:60});
+        ctx.toast("Databases suspended — raw radio mode for 60 minutes");
+        _checkSuspend();
+      } catch(e){ ctx.toast("Failed: "+String(e), true); }
+      finally{ suspendBtn.disabled=false; suspendBtn.textContent="Suspend All Databases (60 min)"; }
+    });
+
+    unsuspendBtn.addEventListener("click", async()=>{
+      unsuspendBtn.disabled=true; unsuspendBtn.textContent="Resuming…";
+      try {
+        await ctx.actions.wsCall("padspan_ha/unsuspend_databases");
+        ctx.toast("Normal pipeline resumed");
+        _checkSuspend();
+      } catch(e){ ctx.toast("Failed: "+String(e), true); }
+      finally{ unsuspendBtn.disabled=false; unsuspendBtn.textContent="Resume Normal Pipeline"; }
+    });
+
+    wrap.appendChild(el("div",{class:"card"},[
+      el("div",{class:"h2",style:"margin-bottom:4px"},"Positioning Test Mode"),
+      el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
+        "Temporarily suspend all learned databases (Kalman state, vote windows, scanner reliability, k-NN cache, adaptive learning) " +
+        "and use only raw radio RSSI with spatial weighted-centroid positioning. Useful for diagnosing whether accumulated state is " +
+        "causing incorrect room assignments. Calibration data and settings are preserved — only in-memory smoothing state is cleared."),
+      suspendBtn, unsuspendBtn, suspendStatus,
+    ]));
+  }
+
   // ── HA Tags Integration ─────────────────────────────────────────────────
   {
     const tagsRoomEvt = settings.tags_room_events_enabled === true;

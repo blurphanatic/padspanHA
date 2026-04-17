@@ -161,6 +161,8 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_adaptive_status_get)
     websocket_api.async_register_command(hass, ws_adaptive_fingerprints_get)
     websocket_api.async_register_command(hass, ws_adaptive_reset)
+    websocket_api.async_register_command(hass, ws_suspend_databases)
+    websocket_api.async_register_command(hass, ws_unsuspend_databases)
     websocket_api.async_register_command(hass, ws_propagation_health)
     websocket_api.async_register_command(hass, ws_system_critics)
     websocket_api.async_register_command(hass, ws_store_backup_create)
@@ -3266,6 +3268,14 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
     except Exception:
         pass
 
+    # ── Expose suspend status ──────────────────────────────────────────────
+    try:
+        _pc_sus = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+        if _pc_sus:
+            snap["suspended"] = _pc_sus.suspended
+    except Exception:
+        pass
+
     connection.send_result(msg["id"], {"snapshot": snap})
 
 
@@ -5344,6 +5354,34 @@ async def ws_adaptive_reset(hass: HomeAssistant, connection, msg) -> None:
     if ad:
         await ad.async_reset()
     connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.websocket_command({
+    "type": "padspan_ha/suspend_databases",
+    vol.Optional("minutes", default=60): vol.All(int, vol.Range(min=1, max=480)),
+})
+@websocket_api.async_response
+async def ws_suspend_databases(hass: HomeAssistant, connection, msg) -> None:
+    """Suspend all learned databases — raw radio + spatial centroid only."""
+    coord = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+    minutes = msg.get("minutes", 60)
+    if coord:
+        coord.suspend_databases(minutes)
+        connection.send_result(msg["id"], {"ok": True, "minutes": minutes, "suspended": True})
+    else:
+        connection.send_result(msg["id"], {"ok": False, "error": "Coordinator not ready"})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/unsuspend_databases"})
+@websocket_api.async_response
+async def ws_unsuspend_databases(hass: HomeAssistant, connection, msg) -> None:
+    """End database suspension early — resume full pipeline."""
+    coord = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+    if coord:
+        coord.unsuspend_databases()
+        connection.send_result(msg["id"], {"ok": True, "suspended": False})
+    else:
+        connection.send_result(msg["id"], {"ok": False, "error": "Coordinator not ready"})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
