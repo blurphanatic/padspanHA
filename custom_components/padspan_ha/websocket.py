@@ -3273,6 +3273,10 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
         _pc_sus = hass.data.get(DOMAIN, {}).get("presence_coordinator")
         if _pc_sus:
             snap["suspended"] = _pc_sus.suspended
+            if _pc_sus.suspended:
+                import time as _time_mod
+                _remaining = max(0, _pc_sus._suspend_until - _time_mod.monotonic())
+                snap["suspend_remaining_s"] = round(_remaining)
     except Exception:
         pass
 

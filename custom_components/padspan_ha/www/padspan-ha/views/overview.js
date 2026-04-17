@@ -2804,21 +2804,51 @@ export function render(ctx){
       })(),
     ].filter(Boolean));
 
-    // ── Flashing SUSPENDED indicator ──────────────────────────────────────
-    const _isSuspended = liveSnap?.suspended === true;
-    if (_isSuspended) {
-      const suspBanner = el("div",{style:
-        "text-align:center;padding:6px 12px;margin-bottom:8px;border-radius:6px;" +
-        "background:#92400e;color:#fbbf24;font-weight:700;font-size:13px;letter-spacing:0.5px;" +
-        "animation:padspan-suspend-flash 1.2s ease-in-out infinite"
-      }, "DATABASES SUSPENDED — Raw Radio + Spatial Centroid Only");
-      // Inject keyframes if not already present
+    // ── SUSPENDED banner with countdown + cancel ────────────────────────
+    if (liveSnap?.suspended === true) {
+      const _remS = liveSnap.suspend_remaining_s ?? 0;
+      const _mm = Math.floor(_remS / 60);
+      const _ss = _remS % 60;
+      const _countdown = _remS > 0 ? `${_mm}:${String(_ss).padStart(2,"0")} remaining` : "ending soon";
+
+      // Inject keyframes once
       if (!document.getElementById("padspan-suspend-flash-style")) {
-        const styleEl = document.createElement("style");
-        styleEl.id = "padspan-suspend-flash-style";
-        styleEl.textContent = `@keyframes padspan-suspend-flash { 0%,100%{opacity:1} 50%{opacity:0.4} }`;
-        document.head.appendChild(styleEl);
+        const _sty = document.createElement("style");
+        _sty.id = "padspan-suspend-flash-style";
+        _sty.textContent = [
+          `@keyframes padspan-suspend-pulse { 0%,100%{box-shadow:0 0 8px rgba(251,191,36,.3)} 50%{box-shadow:0 0 18px rgba(251,191,36,.7)} }`,
+          `@keyframes padspan-suspend-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }`,
+        ].join("\n");
+        document.head.appendChild(_sty);
       }
+
+      const cancelBtn = el("button",{style:
+        "background:#991b1b;color:#fecaca;border:1px solid #b91c1c;border-radius:4px;" +
+        "padding:3px 12px;font-size:11px;font-weight:600;cursor:pointer;margin-left:12px"
+      }, "Resume Normal");
+      cancelBtn.addEventListener("click", async () => {
+        cancelBtn.disabled = true; cancelBtn.textContent = "Resuming...";
+        try {
+          await ctx.actions.wsCall("padspan_ha/unsuspend_databases");
+          ctx.toast("Normal pipeline resumed");
+          ctx.actions.refreshLive && ctx.actions.refreshLive();
+        } catch(e) { ctx.toast("Failed: " + String(e), true); }
+      });
+
+      const suspBanner = el("div",{style:
+        "display:flex;align-items:center;justify-content:center;gap:10px;" +
+        "padding:8px 16px;margin-bottom:10px;border-radius:8px;" +
+        "background:linear-gradient(135deg,#78350f,#92400e);" +
+        "border:1px solid #b45309;" +
+        "animation:padspan-suspend-pulse 2s ease-in-out infinite"
+      },[
+        el("span",{style:"font-size:16px;animation:padspan-suspend-dot 1s ease-in-out infinite"}, "\u26a0"),
+        el("span",{style:"color:#fbbf24;font-weight:700;font-size:13px;letter-spacing:0.3px"},
+          "DATABASES SUSPENDED"),
+        el("span",{style:"color:#fde68a;font-size:12px;font-weight:400"},
+          "Raw radio only \u00b7 " + _countdown),
+        cancelBtn,
+      ]);
       root.appendChild(suspBanner);
     }
 

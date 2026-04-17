@@ -121,6 +121,9 @@ function injectStyles(root) {
       color:#94a3b8;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center}
     .pl-info-toggle:hover{background:rgba(82,183,136,.15);color:#e2e8f0}
 
+    @keyframes padspan-suspend-pulse{0%,100%{box-shadow:0 0 8px rgba(251,191,36,.3)}50%{box-shadow:0 0 18px rgba(251,191,36,.7)}}
+    @keyframes padspan-suspend-dot{0%,100%{opacity:1}50%{opacity:0.3}}
+
     /* Compact controls bar */
     .pl-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 10px;
       background:rgba(10,21,14,.8);border-top:1px solid rgba(82,183,136,.1);flex-shrink:0;font-size:10px;color:#94a3b8}
@@ -727,12 +730,40 @@ function App({ ctx }) {
   const radios = snap?.ble?.radios || [];
   const cal = snap?.calibration_status;
 
+  const _isSusp = snap?.suspended === true;
+  const _suspRem = snap?.suspend_remaining_s ?? 0;
+  const _suspMM = Math.floor(_suspRem / 60);
+  const _suspSS = _suspRem % 60;
+  const _suspTime = _suspRem > 0 ? `${_suspMM}:${String(_suspSS).padStart(2,"0")}` : "0:00";
+
   return html`
     <div className="pl-root">
       <div className="pl-map-area">
         <${MapViewport}>
           <${IsoMap} ctx=${ctx} />
         <//>
+        ${_isSusp && html`
+          <div style=${{
+            position:"absolute",top:"8px",left:"50%",transform:"translateX(-50%)",zIndex:100,
+            display:"flex",alignItems:"center",gap:"8px",
+            padding:"6px 16px",borderRadius:"8px",
+            background:"linear-gradient(135deg,#78350f,#92400e)",
+            border:"1px solid #b45309",
+            animation:"padspan-suspend-pulse 2s ease-in-out infinite",
+            whiteSpace:"nowrap",
+          }}>
+            <span style=${{fontSize:"14px",animation:"padspan-suspend-dot 1s ease-in-out infinite"}}>\u26a0</span>
+            <span style=${{color:"#fbbf24",fontWeight:700,fontSize:"12px"}}>SUSPENDED</span>
+            <span style=${{color:"#fde68a",fontSize:"11px"}}>${_suspTime}</span>
+            <button style=${{
+              background:"#991b1b",color:"#fecaca",border:"1px solid #b91c1c",borderRadius:"4px",
+              padding:"2px 8px",fontSize:"10px",fontWeight:600,cursor:"pointer",
+            }} onClick=${async()=>{
+              try { await ctx.actions.wsCall("padspan_ha/unsuspend_databases"); ctx.toast("Resumed"); }
+              catch(e){ ctx.toast("Failed",true); }
+            }}>Resume</button>
+          </div>
+        `}
         <${Stats} rooms=${rooms} objects=${identified} radios=${radios.length} loading=${loading} />
         <${Scanners} radios=${radios} ctx=${ctx} />
         <${MovementGhosts} roomTagMap=${rtm} />

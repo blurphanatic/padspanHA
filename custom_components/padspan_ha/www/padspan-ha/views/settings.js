@@ -1948,54 +1948,66 @@ function _settingsPresence(ctx, el){
 
   // ── Suspend Databases (raw radio test) ─────────────────────────────────
   {
-    const suspendBtn = el("button",{class:"btn",style:"background:#0369a1;border-color:#0369a1"},"Suspend All Databases (60 min)");
-    const unsuspendBtn = el("button",{class:"btn",style:"background:#065f46;border-color:#065f46;display:none"},"Resume Normal Pipeline");
-    const suspendStatus = el("div",{class:"muted",style:"font-size:12px;margin-top:6px"});
+    const _snap = ctx.state.live?.snapshot;
+    const _isActive = _snap?.suspended === true;
+    const _remS = _snap?.suspend_remaining_s ?? 0;
+    const _mm = Math.floor(_remS / 60);
+    const _ss = _remS % 60;
+    const _countdownStr = _remS > 0 ? `${_mm}:${String(_ss).padStart(2,"0")} remaining` : "";
 
-    // Check current status from coordinator
-    const _checkSuspend = () => {
-      ctx.actions.wsCall("padspan_ha/status").then(res => {
-        if(res && res.suspended){
-          suspendBtn.style.display="none"; unsuspendBtn.style.display="";
-          suspendStatus.textContent = "Suspended — using raw radio + spatial centroid only";
-          suspendStatus.style.color = "#fbbf24";
-        } else {
-          suspendBtn.style.display=""; unsuspendBtn.style.display="none";
-          suspendStatus.textContent = "";
-        }
-      }).catch(()=>{});
-    };
-    _checkSuspend();
-
-    suspendBtn.addEventListener("click", async()=>{
-      if(!confirm("Suspend all learned databases for 60 minutes?\\n\\nThis clears Kalman filters, vote windows, scanner reliability, and cached positions.\\nOnly raw radio RSSI + spatial centroid positioning will be used.\\n\\nCalibration data and settings are NOT deleted.")) return;
-      suspendBtn.disabled=true; suspendBtn.textContent="Suspending…";
-      try {
-        await ctx.actions.wsCall("padspan_ha/suspend_databases",{minutes:60});
-        ctx.toast("Databases suspended — raw radio mode for 60 minutes");
-        _checkSuspend();
-      } catch(e){ ctx.toast("Failed: "+String(e), true); }
-      finally{ suspendBtn.disabled=false; suspendBtn.textContent="Suspend All Databases (60 min)"; }
-    });
-
-    unsuspendBtn.addEventListener("click", async()=>{
-      unsuspendBtn.disabled=true; unsuspendBtn.textContent="Resuming…";
-      try {
-        await ctx.actions.wsCall("padspan_ha/unsuspend_databases");
-        ctx.toast("Normal pipeline resumed");
-        _checkSuspend();
-      } catch(e){ ctx.toast("Failed: "+String(e), true); }
-      finally{ unsuspendBtn.disabled=false; unsuspendBtn.textContent="Resume Normal Pipeline"; }
-    });
-
-    wrap.appendChild(el("div",{class:"card"},[
+    const cardChildren = [
       el("div",{class:"h2",style:"margin-bottom:4px"},"Positioning Test Mode"),
       el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
         "Temporarily suspend all learned databases (Kalman state, vote windows, scanner reliability, k-NN cache, adaptive learning) " +
         "and use only raw radio RSSI with spatial weighted-centroid positioning. Useful for diagnosing whether accumulated state is " +
         "causing incorrect room assignments. Calibration data and settings are preserved — only in-memory smoothing state is cleared."),
-      suspendBtn, unsuspendBtn, suspendStatus,
-    ]));
+    ];
+
+    if (_isActive) {
+      // ── Active: show status, countdown, cancel ──
+      const statusRow = el("div",{style:
+        "display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:6px;" +
+        "background:linear-gradient(135deg,#78350f,#92400e);border:1px solid #b45309;margin-bottom:8px"
+      },[
+        el("span",{style:"font-size:18px"}, "\u26a0\ufe0f"),
+        el("div",{style:"flex:1"},[
+          el("div",{style:"color:#fbbf24;font-weight:700;font-size:13px"}, "SUSPENDED — Raw Radio Mode Active"),
+          el("div",{style:"color:#fde68a;font-size:12px;margin-top:2px"},
+            _countdownStr
+              ? `All learned databases bypassed \u00b7 ${_countdownStr}`
+              : "All learned databases bypassed \u00b7 ending soon"),
+        ]),
+      ]);
+      cardChildren.push(statusRow);
+
+      const cancelBtn = el("button",{class:"btn",style:"background:#991b1b;border-color:#991b1b"},"Resume Normal Pipeline");
+      cancelBtn.addEventListener("click", async()=>{
+        cancelBtn.disabled=true; cancelBtn.textContent="Resuming\u2026";
+        try {
+          await ctx.actions.wsCall("padspan_ha/unsuspend_databases");
+          ctx.toast("Normal pipeline resumed \u2014 smoothing state cleared for fresh start");
+          ctx.actions.refreshLive && ctx.actions.refreshLive();
+        } catch(e){ ctx.toast("Failed: "+String(e), true); }
+        finally{ cancelBtn.disabled=false; cancelBtn.textContent="Resume Normal Pipeline"; }
+      });
+      cardChildren.push(cancelBtn);
+    } else {
+      // ── Inactive: show activate button ──
+      const suspendBtn = el("button",{class:"btn",style:"background:#0369a1;border-color:#0369a1"},"Suspend All Databases (60 min)");
+      suspendBtn.addEventListener("click", async()=>{
+        if(!confirm("Suspend all learned databases for 60 minutes?\n\nThis clears Kalman filters, vote windows, scanner reliability, and cached positions.\nOnly raw radio RSSI + spatial centroid positioning will be used.\n\nCalibration data and settings are NOT deleted.")) return;
+        suspendBtn.disabled=true; suspendBtn.textContent="Suspending\u2026";
+        try {
+          await ctx.actions.wsCall("padspan_ha/suspend_databases",{minutes:60});
+          ctx.toast("Databases suspended \u2014 raw radio mode for 60 minutes");
+          ctx.actions.refreshLive && ctx.actions.refreshLive();
+        } catch(e){ ctx.toast("Failed: "+String(e), true); }
+        finally{ suspendBtn.disabled=false; suspendBtn.textContent="Suspend All Databases (60 min)"; }
+      });
+      cardChildren.push(suspendBtn);
+    }
+
+    wrap.appendChild(el("div",{class:"card"}, cardChildren));
   }
 
   // ── HA Tags Integration ─────────────────────────────────────────────────
