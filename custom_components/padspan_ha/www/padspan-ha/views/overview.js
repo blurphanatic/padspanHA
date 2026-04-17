@@ -2845,7 +2845,7 @@ export function render(ctx){
         el("span",{style:"font-size:16px;animation:padspan-suspend-dot 1s ease-in-out infinite"}, "\u26a0"),
         el("span",{style:"color:#fbbf24;font-weight:700;font-size:13px;letter-spacing:0.3px"},
           "DATABASES SUSPENDED"),
-        el("span",{style:"color:#fde68a;font-size:12px;font-weight:400"},
+        el("span",{"data-suspend-countdown":"1",style:"color:#fde68a;font-size:12px;font-weight:400"},
           "Raw radio only \u00b7 " + _countdown),
         cancelBtn,
       ]);

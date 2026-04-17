@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.20.11";
-const BUILD_ID = "20260417T174651Z";
+const APP_VERSION = "0.20.12";
+const BUILD_ID = "20260417T175049Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -2323,11 +2323,27 @@ class PadSpanHaApp extends HTMLElement {
     // Resetting _lastGoodRender prevents the stale-check (10s) from triggering
     // a forced full rebuild on the next poll cycle.
     if(fromPoll && this.state.view === "overview") {
-      if (typeof this.state._isoUpdateObjects === "function") {
-        try { this.state._isoUpdateObjects(); } catch(e) {}
+      // Detect suspend state change — force full rebuild so banner appears/disappears
+      const _curSusp = !!(this.state.live?.snapshot?.suspended);
+      if(this._lastSuspendState !== _curSusp) {
+        this._lastSuspendState = _curSusp;
+        // Fall through to full rebuild below
+      } else {
+        // Update suspend countdown in-place (no full rebuild)
+        if(_curSusp) {
+          const _bEl = this.$content.querySelector("[data-suspend-countdown]");
+          if(_bEl) {
+            const _r = this.state.live?.snapshot?.suspend_remaining_s ?? 0;
+            const _m = Math.floor(_r / 60), _s = _r % 60;
+            _bEl.textContent = "Raw radio only \u00b7 " + (_r > 0 ? `${_m}:${String(_s).padStart(2,"0")} remaining` : "ending soon");
+          }
+        }
+        if (typeof this.state._isoUpdateObjects === "function") {
+          try { this.state._isoUpdateObjects(); } catch(e) {}
+        }
+        this._lastGoodRender = performance.now();
+        return;
       }
-      this._lastGoodRender = performance.now();
-      return;
     }
     // Preact overview: let Preact handle its own diffing — just re-call render()
     // which diffs efficiently instead of rebuilding the entire DOM.
