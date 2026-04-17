@@ -307,6 +307,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._adaptive_last_obs: dict[str, float] = {}
         # Save counter — only persist to disk every N observations (not every poll)
         self._adaptive_save_counter: int = 0
+        # ── Automation tracking ───────────────────────────────────────────────
+        # Set of device keys present in the previous poll result (for arrive/depart)
+        self._prev_present: set[str] = set()
+
         # Suspend: when set, use only raw radio + spatial centroid (no k-NN, no adaptive)
         self._suspend_until: float = 0.0  # monotonic timestamp when suspend ends
 
@@ -692,6 +696,15 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _evict_keys.append(key)
         for key in _evict_keys:
             self._evict_object(key)
+
+        # ── PadSpan automations: arrive/depart triggers ──────────────────────
+        _cur_present = set(result.keys())
+        _arrived = _cur_present - self._prev_present
+        _departed = set(_evict_keys)  # keys that just got evicted = departed
+        self._prev_present = _cur_present
+
+        if _arrived or _departed:
+            await self._run_automations(_arrived, _departed, result)
 
         # ── Adjacency co-visibility learning (Phase 1) ────────────────────────
         # In auto mode, when no map-derived adjacency exists, learn room
@@ -1647,6 +1660,97 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if ku != key:
             self._evict_object(ku)
         _LOGGER.debug("Cleared coordinator state for %s", key)
+
+    # ── PadSpan automations ─────────────────────────────────────────────────
+
+    async def _run_automations(
+        self, arrived: set[str], departed: set[str], result: dict[str, Any]
+    ) -> None:
+        """Fire HA events and execute PadSpan automation rules for arrive/depart."""
+        # Build key→label lookup
+        _obj_store = self.hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+        _key_labels: dict[str, str] = {}
+        for k, obj in result.items():
+            lbl = obj.get("user_label") or ""
+            if lbl:
+                _key_labels[k] = lbl
+        if _obj_store:
+            for k, entry in _obj_store.items():
+                if isinstance(entry, dict) and entry.get("label"):
+                    _key_labels[str(k)] = entry["label"]
+
+        # ── Fire HA events for every arrive/depart ───────────────────────
+        # These events can be used as triggers in HA automations.
+        for key in arrived:
+            label = _key_labels.get(key, "")
+            room = (result.get(key) or {}).get("room", "")
+            self.hass.bus.async_fire("padspan_device_arrived", {
+                "device_key": key, "label": label, "room": room,
+            })
+            if label:
+                _LOGGER.info("Device arrived: %s (%s) in %s", label, key[:30], room)
+        for key in departed:
+            label = _key_labels.get(key, "")
+            self.hass.bus.async_fire("padspan_device_departed", {
+                "device_key": key, "label": label,
+            })
+            if label:
+                _LOGGER.info("Device departed: %s (%s)", label, key[:30])
+
+        # ── Execute PadSpan automation rules ─────────────────────────────
+        try:
+            _st = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            rules = (_st.data if _st else {}).get("padspan_automations") or []
+        except Exception:
+            return
+        if not rules:
+            return
+
+        for rule in rules:
+            if not isinstance(rule, dict) or not rule.get("enabled", True):
+                continue
+            trigger = rule.get("trigger")  # "arrive" or "depart"
+            device_key = rule.get("device_key", "")
+            device_label = rule.get("device_label", "")
+            action = rule.get("action", "")  # "turn_on" or "turn_off"
+            entity_id = rule.get("entity_id", "")
+            if not trigger or not entity_id or not action:
+                continue
+
+            # Match by key or label
+            _matched_keys: set[str] = set()
+            if device_key:
+                _matched_keys.add(device_key)
+            if device_label:
+                for k, lbl in _key_labels.items():
+                    if lbl.upper() == device_label.upper():
+                        _matched_keys.add(k)
+
+            # Check trigger
+            _fire = False
+            if trigger == "arrive" and _matched_keys & arrived:
+                _fire = True
+            elif trigger == "depart" and _matched_keys & departed:
+                _fire = True
+
+            if _fire:
+                parts = entity_id.split(".", 1)
+                if len(parts) == 2:
+                    svc_domain, _ = parts
+                    try:
+                        await self.hass.services.async_call(
+                            svc_domain, action, {"entity_id": entity_id}
+                        )
+                        _LOGGER.info(
+                            "PadSpan automation: %s %s → %s.%s(%s)",
+                            trigger, device_label or device_key,
+                            svc_domain, action, entity_id,
+                        )
+                    except Exception as _svc_err:
+                        _LOGGER.warning(
+                            "PadSpan automation failed: %s → %s",
+                            rule, _svc_err,
+                        )
 
     # ── Beacon auto-calibration ────────────────────────────────────────────
 

@@ -2693,6 +2693,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("distortion_intensity"): vol.Coerce(int),  # 0-100 %
         vol.Optional("heatmap_source"): vol.Coerce(int),      # 0-100 % (calibration vs adaptive blend)
         vol.Optional("auto_offset_mode"): str,                # "off"|"partial"|"full"
+        vol.Optional("padspan_automations"): list,              # [{trigger, device_key, device_label, action, entity_id, enabled}]
     }
 )
 @websocket_api.async_response
@@ -2842,6 +2843,22 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             payload["occupancy_cluster_threshold"] = max(2.0, min(30.0, float(msg["occupancy_cluster_threshold"])))
         if "occupancy_hybrid_enabled" in msg:
             payload["occupancy_hybrid_enabled"] = bool(msg["occupancy_hybrid_enabled"])
+        if "padspan_automations" in msg:
+            # Validate and sanitize each rule
+            _clean_rules = []
+            for r in (msg["padspan_automations"] or []):
+                if not isinstance(r, dict):
+                    continue
+                _clean_rules.append({
+                    "id": str(r.get("id", "")),
+                    "trigger": str(r.get("trigger", ""))[:10],
+                    "device_key": str(r.get("device_key", "")),
+                    "device_label": str(r.get("device_label", ""))[:80],
+                    "action": str(r.get("action", ""))[:20],
+                    "entity_id": str(r.get("entity_id", ""))[:120],
+                    "enabled": bool(r.get("enabled", True)),
+                })
+            payload["padspan_automations"] = _clean_rules
         await st.async_set(**payload)
 
         # ── Dynamic ESPresense MQTT toggle ───────────────────────────────────

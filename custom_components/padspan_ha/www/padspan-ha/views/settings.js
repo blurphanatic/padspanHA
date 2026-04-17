@@ -1946,6 +1946,121 @@ function _settingsPresence(ctx, el){
     resetAdaptiveBtn,
   ]));
 
+  // ── PadSpan Automations ───────────────────────────────────────────────
+  {
+    const rules = settings.padspan_automations || [];
+    const snap = (ctx.state.live && ctx.state.live.snapshot) || null;
+    const objList = snap?.objects?.list || [];
+
+    // Build device options from labelled objects
+    const deviceOpts = [];
+    const _seen = new Set();
+    for (const o of objList) {
+      const lbl = o.user_label || "";
+      const key = o.key || "";
+      if (lbl && !_seen.has(lbl.toUpperCase())) {
+        _seen.add(lbl.toUpperCase());
+        deviceOpts.push({ label: lbl, key });
+      }
+    }
+    deviceOpts.sort((a, b) => a.label.localeCompare(b.label));
+
+    // Build entity options (lights, switches, scenes)
+    const _entities = Object.keys(ctx.hass?.states || {}).filter(e =>
+      e.startsWith("light.") || e.startsWith("switch.") || e.startsWith("scene.") || e.startsWith("script.")
+    ).sort();
+
+    const _saveRules = async (newRules) => {
+      try {
+        await ctx.actions.settingsSet({ padspan_automations: newRules });
+        ctx.state.settings = { ...ctx.state.settings, padspan_automations: newRules };
+        ctx.toast("Automation saved");
+        ctx.actions.renderView && ctx.actions.renderView();
+      } catch(e) { ctx.toast("Save failed: " + String(e), true); }
+    };
+
+    const _deleteRule = (idx) => {
+      const updated = [...rules];
+      updated.splice(idx, 1);
+      _saveRules(updated);
+    };
+
+    const _toggleRule = (idx) => {
+      const updated = rules.map((r, i) => i === idx ? { ...r, enabled: !r.enabled } : r);
+      _saveRules(updated);
+    };
+
+    // Existing rules list
+    const ruleEls = rules.map((r, idx) => {
+      const lbl = r.device_label || r.device_key || "?";
+      const arrow = r.trigger === "arrive" ? "\u2192" : "\u2190";
+      const actionLbl = r.action === "turn_on" ? "ON" : r.action === "turn_off" ? "OFF" : r.action;
+      const entShort = (r.entity_id || "").split(".").pop() || "?";
+      const opacity = r.enabled ? "1" : "0.4";
+      const row = el("div",{style:`display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #1e293b;opacity:${opacity}`},[
+        el("span",{style:"font-size:11px;min-width:50px;color:#94a3b8"}, r.trigger === "arrive" ? "ARRIVE" : "DEPART"),
+        el("span",{style:"font-size:12px;color:#e2e8f0;flex:1"}, `${lbl} ${arrow} ${actionLbl} ${entShort}`),
+        el("button",{style:"background:none;border:none;color:#60a5fa;cursor:pointer;font-size:11px",title:"Toggle"}, r.enabled ? "ON" : "OFF"),
+        el("button",{style:"background:none;border:none;color:#f87171;cursor:pointer;font-size:11px",title:"Delete"}, "\u2715"),
+      ]);
+      row.children[2].addEventListener("click", () => _toggleRule(idx));
+      row.children[3].addEventListener("click", () => { if(confirm("Delete this automation?")) _deleteRule(idx); });
+      return row;
+    });
+
+    // Add new rule form
+    const triggerSel = el("select",{style:"font-size:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px"},[
+      el("option",{value:"depart"},"When device DEPARTS"),
+      el("option",{value:"arrive"},"When device ARRIVES"),
+    ]);
+    const deviceSel = el("select",{style:"font-size:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px"},[
+      el("option",{value:""},"— Select device —"),
+      ...deviceOpts.map(d => el("option",{value:d.label}, d.label)),
+    ]);
+    const actionSel = el("select",{style:"font-size:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px"},[
+      el("option",{value:"turn_off"},"Turn OFF"),
+      el("option",{value:"turn_on"},"Turn ON"),
+    ]);
+    const entitySel = el("select",{style:"font-size:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px;max-width:200px"},[
+      el("option",{value:""},"— Select entity —"),
+      ..._entities.map(e => el("option",{value:e}, e.split(".").pop())),
+    ]);
+
+    const addBtn = el("button",{class:"btn",style:"background:#065f46;border-color:#065f46;font-size:12px;padding:4px 12px"},"Add Rule");
+    addBtn.addEventListener("click", () => {
+      const dev = deviceSel.value;
+      const ent = entitySel.value;
+      if (!dev || !ent) { ctx.toast("Select a device and entity", true); return; }
+      const devOpt = deviceOpts.find(d => d.label === dev);
+      const newRule = {
+        id: "auto_" + Date.now().toString(36),
+        trigger: triggerSel.value,
+        device_key: devOpt ? devOpt.key : "",
+        device_label: dev,
+        action: actionSel.value,
+        entity_id: ent,
+        enabled: true,
+      };
+      _saveRules([...rules, newRule]);
+    });
+
+    const cardChildren = [
+      el("div",{class:"h2",style:"margin-bottom:4px"},"Automations"),
+      el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px"},
+        "Simple arrive/depart rules. PadSpan also fires HA events (padspan_device_arrived, " +
+        "padspan_device_departed) so you can build complex automations in HA."),
+    ];
+    if (ruleEls.length) {
+      cardChildren.push(el("div",{style:"margin-bottom:10px"}, ruleEls));
+    } else {
+      cardChildren.push(el("div",{class:"muted",style:"font-size:12px;margin-bottom:10px;font-style:italic"}, "No rules yet"));
+    }
+    cardChildren.push(el("div",{style:"display:flex;flex-wrap:wrap;align-items:center;gap:6px"},[
+      triggerSel, deviceSel, actionSel, entitySel, addBtn,
+    ]));
+    wrap.appendChild(el("div",{class:"card"}, cardChildren));
+  }
+
   // ── Suspend Databases (raw radio test) ─────────────────────────────────
   {
     const _snap = ctx.state.live?.snapshot;
