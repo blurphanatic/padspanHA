@@ -1028,7 +1028,6 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Requires ≥3 scanners with known positions and live RSSI.
             # Converts RSSI → distance via path-loss model, then computes
             # inverse-distance² weighted centroid of scanner positions.
-            _spatial_candidate: str | None = None
             if self._use_metres and self._scanner_positions and _model:
                 _pos_data: list[tuple[float, float, str, float]] = []  # (x, y, floor, dist)
                 for _src, _rssi in ema.items():
