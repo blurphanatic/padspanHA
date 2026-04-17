@@ -1013,6 +1013,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         rssi_margin_confidence: float = 0.0
         room_scores: dict[str, float] = {}
         _spatial_xy: tuple[float, float, str] | None = None  # (x_m, y_m, floor_id)
+        _spatial_candidate: str | None = None  # room from geometry check
         if ema:
             # RSSI margin confidence (for entity attributes)
             sorted_vals = sorted(ema.values(), reverse=True)
@@ -1350,17 +1351,22 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _knn_smoothed["x_frac"] = round(_sx, 4)
                         _knn_smoothed["y_frac"] = round(_sy, 4)
                     self._knn_position[key] = _knn_smoothed
-                    # k-NN room override: only override Gaussian candidate when
-                    # k-NN is highly confident (>50%) OR the Gaussian candidate
-                    # matches the k-NN room.  Low-confidence k-NN matching a
-                    # stale calibration pattern should NOT override a confident
-                    # Gaussian answer from strong nearby scanners.
+                    # k-NN room override: only override the candidate when k-NN
+                    # agrees with EITHER the spatial centroid OR the RSSI best-room.
+                    # k-NN alone should NOT force a device into a room that both
+                    # spatial and RSSI scoring say is wrong — that means the
+                    # calibration data is stale or was collected in the wrong spot.
                     if _knn_room:
                         if _knn_room == candidate:
                             pass  # agrees — no change needed
                         elif _knn_conf >= 0.50:
-                            candidate = _knn_room  # high confidence override
-                        # else: k-NN disagrees but isn't confident enough — keep Gaussian
+                            _rssi_best = max(room_scores, key=lambda r: room_scores[r]) if room_scores else None
+                            _knn_agrees_spatial = (_spatial_candidate and _knn_room == _spatial_candidate)
+                            _knn_agrees_rssi = (_rssi_best and _knn_room == _rssi_best)
+                            if _knn_agrees_spatial or _knn_agrees_rssi:
+                                candidate = _knn_room  # corroborated override
+                            # else: k-NN disagrees with both spatial AND RSSI — ignore it
+                        # else: k-NN disagrees but isn't confident enough — keep candidate
                 else:
                     self._knn_position.pop(key, None)
                     self._smooth_xy.pop(key, None)
@@ -1416,6 +1422,20 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             prev = list(existing) if existing else []
             self._room_votes[key] = deque(prev[-vote_window:], maxlen=vote_window)
         votes = self._room_votes[key]
+
+        # Clear stale votes when spatial centroid strongly disagrees with the
+        # current confirmed room.  This breaks the trap where old wrong-room
+        # votes prevent the device from moving to the geometry-confirmed room.
+        _confirmed_now = self._confirmed_room.get(key)
+        if (_spatial_candidate
+                and _confirmed_now
+                and _spatial_candidate != _confirmed_now
+                and rssi_margin_confidence >= 0.3
+                and len(votes) > 0):
+            # Spatial says different room — flush old votes so the new
+            # candidate doesn't have to fight through a full window of stale data
+            votes.clear()
+
         # Skip None candidates (total signal dropout) — preserves the last
         # known room instead of diluting the window with empty votes.
         if candidate is not None:
@@ -1491,15 +1511,19 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _is_cross_floor = False
                         if _conf_fl and _top_fl and _conf_fl != _top_fl:
                             _is_cross_floor = True
-                        # Determine required vote count based on dwell + context
+                        # Determine required vote count based on dwell + context.
+                        # When spatial centroid agrees with the new room, relax
+                        # requirements — geometry-confirmed transitions shouldn't
+                        # need unanimous votes to escape the current room.
+                        _spatial_confirms_new = (_spatial_candidate == top_room) if _spatial_candidate else False
                         if _is_outdoor_cross:
-                            _required = len(votes)  # unanimous for outdoor
+                            _required = len(votes) if not _spatial_confirms_new else vote_threshold
                         elif _is_cross_floor and _dwell < 60.0:
-                            _required = len(votes)  # unanimous for quick floor changes
+                            _required = len(votes) if not _spatial_confirms_new else vote_threshold + 1
                         elif _is_rapid or _is_distant:
-                            _required = len(votes)  # unanimous for rapid/distant
+                            _required = len(votes) if not _spatial_confirms_new else vote_threshold
                         elif _is_cross_floor and _dwell < 120.0:
-                            _required = min(len(votes), vote_threshold + 1)  # supermajority
+                            _required = min(len(votes), vote_threshold + 1)
                         else:
                             _required = vote_threshold  # normal
                         if top_count < _required:
@@ -1542,12 +1566,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._rssi_margin_confidence[key] = rssi_margin_confidence
 
         # ── Phase 3: per-scanner reliability update ──────────────────────────
-        # For each scanner that reported RSSI for this device, check if the
-        # scanner's own room matches the confirmed room.  Scanners that
-        # consistently point to the wrong room get downweighted in Gaussian
-        # scoring.  Only update when we have a stable confirmation (conf >= 0.6).
+        # Only learn reliability when we're VERY confident the confirmed room
+        # is correct: high vote confidence AND spatial centroid agrees.
+        # This prevents the negative feedback loop where a wrong room assignment
+        # poisons scanner reliability scores, making it impossible to recover.
         # Skip when suspended — don't pollute reliability with potentially wrong data.
-        if confirmed and confidence >= 0.6 and ema and not self.suspended:
+        _spatial_agrees = (_spatial_candidate == confirmed) if _spatial_candidate else False
+        if confirmed and confidence >= 0.9 and _spatial_agrees and ema and not self.suspended:
             for _src in ema:
                 _src_room = source_to_area.get(_src)
                 if not _src_room:
@@ -1560,9 +1585,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _q.append(_agreed)
                 if len(_q) >= _RELIABILITY_MIN_POLLS:
                     _agree_rate = sum(_q) / len(_q)
-                    # Disagree rate = fraction of polls where scanner's room != consensus
                     _disagree = 1.0 - _agree_rate
-                    # reliability = 1/(1+disagree) — ranges from 0.5 (always wrong) to 1.0 (always right)
                     _w = 1.0 / (1.0 + _disagree)
                     self._scanner_reliability[_src] = max(_RELIABILITY_FLOOR, round(_w, 3))
                 else:
