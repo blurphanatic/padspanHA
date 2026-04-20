@@ -2837,7 +2837,14 @@ export function render(ctx){
           } else {
             lines.push(`  spatial: NONE (no centroid computed)`);
           }
-          lines.push(`  scanners (${d.scanner_count}):`);
+          if (d.all_addresses && d.all_addresses.length) {
+            lines.push(`  MAC addresses: ${d.all_addresses.join(", ")}`);
+          }
+          lines.push(`  raw scanners from snapshot (${d.raw_scanner_count}):`);
+          for (const s of (d.raw_scanners || [])) {
+            lines.push(`    ${s.source} = ${s.rssi}dBm  age=${s.age_s?.toFixed(0)}s  rm=${s.room}`);
+          }
+          lines.push(`  kalman-smoothed scanners (${d.scanner_count}):`);
           for (const s of (d.scanners || [])) {
             const pos = s.pos ? `(${s.pos[0]},${s.pos[1]})` : "NO_POS";
             lines.push(`    ${s.source} = ${s.rssi}dBm  pos=${pos}  fl=${s.floor}  rm=${s.room}`);

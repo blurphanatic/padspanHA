@@ -5339,6 +5339,7 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
             else:
                 ema = {}
 
+            # Kalman-smoothed scanners (what the algorithm uses)
             scanners = []
             for src, rssi in sorted(ema.items(), key=lambda x: -x[1]):
                 sp = scanner_positions.get(src)
@@ -5347,6 +5348,18 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
                     "rssi": round(rssi, 1),
                     "pos": [round(sp[0], 1), round(sp[1], 1)] if sp else None,
                     "floor": sp[2] if sp else source_to_floor.get(src, "?"),
+                    "room": source_to_area.get(src, "?"),
+                })
+
+            # Raw scanners from the snapshot object (before Kalman)
+            raw_scanners = []
+            for s in (obj.get("sources") or []):
+                src = s.get("source", "")
+                sp = scanner_positions.get(src)
+                raw_scanners.append({
+                    "source": src,
+                    "rssi": s.get("rssi"),
+                    "age_s": s.get("age_s"),
                     "room": source_to_area.get(src, "?"),
                 })
 
@@ -5380,8 +5393,11 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
                 "kind": kind,
                 "room": obj.get("room", ""),
                 "confirmed": confirmed.get(key, ""),
+                "all_addresses": obj.get("all_addresses", []),
                 "scanners": scanners[:12],
                 "scanner_count": len(scanners),
+                "raw_scanners": raw_scanners[:12],
+                "raw_scanner_count": len(raw_scanners),
                 "spatial": spatial_info,
                 "dev_floor": dev_floor,
                 "geo_rooms": geo_rooms,
