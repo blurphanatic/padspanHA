@@ -2828,37 +2828,29 @@ export function render(ctx){
         lines.push(`--- BLE Data Source ---`);
         lines.push(`  method: ${seed.method || "?"} | scanners: ${seed.scanner_count || 0} | device_readings: ${seed.device_readings || 0}`);
         if (seed.error) lines.push(`  ERROR: ${seed.error}`);
+        // Room geometry summary (once)
+        const ag = res.all_room_geometry || {};
+        const agKeys = Object.keys(ag);
+        if (agKeys.length) {
+          lines.push(`--- Room Geometry (${agKeys.length}) ---`);
+          lines.push(`  ${agKeys.map(r => `${r}[${ag[r]}]`).join(", ")}`);
+        }
+        lines.push(`--- ${devices.length} devices ---`);
         lines.push("");
         for (const d of devices) {
-          lines.push(`=== ${d.label} (${d.kind}) ===`);
+          lines.push(`=== ${d.label || d.key} (${d.kind}) ===`);
           lines.push(`  key: ${d.key}`);
           lines.push(`  room: ${d.room || "NONE"} | confirmed: ${d.confirmed || "NONE"}`);
-          lines.push(`  use_metres: ${d.use_metres} | scanner_positions: ${d.scanner_positions_total} | barriers: ${d.barriers} | suspended: ${d.suspended}`);
-          lines.push(`  floor: ${d.dev_floor || "?"} | room_geometries_on_floor: ${(d.geo_rooms||[]).join(", ") || "NONE"}`);
-          const ag = d.all_room_geometry || {};
-          const agKeys = Object.keys(ag);
-          if (agKeys.length) {
-            lines.push(`  ALL room geometry (${agKeys.length}): ${agKeys.map(r => `${r}[${ag[r]}]`).join(", ")}`);
-          } else {
-            lines.push(`  ALL room geometry: NONE — no room boundaries in fabric`);
-          }
+          lines.push(`  floor: ${d.dev_floor || "?"} | geo_on_floor: ${(d.geo_rooms||[]).join(", ") || "NONE"}`);
           if (d.spatial) {
             lines.push(`  spatial: (${d.spatial.x_m?.toFixed(1)}, ${d.spatial.y_m?.toFixed(1)}) > ${d.spatial.room || "OUTSIDE_ALL_ROOMS"}`);
           } else {
-            lines.push(`  spatial: NONE (no centroid computed)`);
+            lines.push(`  spatial: NONE`);
           }
-          if (d.all_addresses && d.all_addresses.length) {
-            lines.push(`  MAC addresses: ${d.all_addresses.join(", ")}`);
-          }
-          lines.push(`  raw scanners from snapshot (${d.raw_scanner_count}):`);
-          for (const s of (d.raw_scanners || [])) {
-            lines.push(`    ${s.source} = ${s.rssi}dBm  age=${s.age_s?.toFixed(0)}s  rm=${s.room}`);
-          }
-          lines.push(`  kalman-smoothed scanners (${d.scanner_count}):`);
-          for (const s of (d.scanners || [])) {
+          lines.push(`  scanners (${d.scanner_count}): ${(d.scanners || []).slice(0,6).map(s => {
             const pos = s.pos ? `(${s.pos[0]},${s.pos[1]})` : "NO_POS";
-            lines.push(`    ${s.source} = ${s.rssi}dBm  pos=${pos}  fl=${s.floor}  rm=${s.room}`);
-          }
+            return `${s.room}=${s.rssi}dBm fl=${s.floor} ${pos}`;
+          }).join(" | ")}`);
           lines.push("");
         }
         pre.textContent = lines.join("\n");

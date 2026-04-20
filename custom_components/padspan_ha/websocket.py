@@ -5327,8 +5327,15 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
 
         for key, obj in pc.data.items():
             label = obj.get("user_label") or obj.get("name") or ""
-            if not label and not obj.get("identified") and not obj.get("room"):
+            # Only include devices that are labelled, identified, or confirmed
+            if not label and not obj.get("identified") and not confirmed.get(key):
                 continue
+            # Skip stale devices with no recent scanner readings
+            _sources = obj.get("sources") or []
+            if _sources:
+                _min_age = min((s.get("age_s") or 999999) for s in _sources)
+                if _min_age > 86400:
+                    continue
             # Get Kalman-smoothed RSSI for this device
             kind = obj.get("kind", "")
             if kind in ("ble", "private_ble"):
@@ -5387,12 +5394,10 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
                     if isinstance(geo, dict) and geo.get("floor_id") == dev_floor:
                         geo_rooms.append(rn)
 
-            # ALL room geometry entries (not filtered by floor) — for diagnosis
-            all_geo = {}
-            if model:
-                for rn, geo in (model.data.get("room_geometry_m") or {}).items():
-                    if isinstance(geo, dict):
-                        all_geo[rn] = geo.get("floor_id", "?")
+            # Cap MAC addresses to avoid Pixel-style 200+ list
+            _addrs = obj.get("all_addresses", [])
+            if len(_addrs) > 8:
+                _addrs = _addrs[:8]
 
             diag.append({
                 "key": key,
@@ -5400,15 +5405,14 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
                 "kind": kind,
                 "room": obj.get("room", ""),
                 "confirmed": confirmed.get(key, ""),
-                "all_addresses": obj.get("all_addresses", []),
+                "all_addresses": _addrs,
                 "scanners": scanners[:12],
                 "scanner_count": len(scanners),
-                "raw_scanners": raw_scanners[:12],
+                "raw_scanners": raw_scanners[:6],
                 "raw_scanner_count": len(raw_scanners),
                 "spatial": spatial_info,
                 "dev_floor": dev_floor,
                 "geo_rooms": geo_rooms,
-                "all_room_geometry": all_geo,
                 "scanner_positions_total": len(scanner_positions),
                 "barriers": len(rf_barriers),
                 "use_metres": getattr(pc, "_use_metres", False),
@@ -5428,7 +5432,17 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
         "device_readings": getattr(_bl, "seed_device_readings", 0) if _bl else 0,
         "error": getattr(_bl, "seed_error", "") if _bl else "",
     }
-    connection.send_result(msg["id"], {"devices": diag, "ble_seed": ble_seed})
+    # Room geometry summary (once, not per-device)
+    all_geo = {}
+    if model:
+        for rn, geo in (model.data.get("room_geometry_m") or {}).items():
+            if isinstance(geo, dict):
+                all_geo[rn] = geo.get("floor_id", "?")
+    connection.send_result(msg["id"], {
+        "devices": diag,
+        "ble_seed": ble_seed,
+        "all_room_geometry": all_geo,
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
