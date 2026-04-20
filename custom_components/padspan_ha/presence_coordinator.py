@@ -1024,19 +1024,31 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _src_list.append((_src, _sp[0], _sp[1], _rssi, _sp[2]))
 
                 if len(_src_list) >= 3:
-                    # Group by floor
-                    _floor_groups: dict[str, list[tuple[str, float, float, float]]] = {}
+                    # Determine which floor the device is on by strongest
+                    # RSSI, not most scanners.  A garage scanner at -60 dBm
+                    # on floor B beats 10 living room scanners at -75 dBm
+                    # on floor A.
+                    _floor_best_rssi: dict[str, float] = {}
+                    _floor_scanners: dict[str, list[tuple[str, float, float, float]]] = {}
                     for _src, _sx, _sy, _rssi, _sf in _src_list:
-                        _floor_groups.setdefault(_sf, []).append((_src, _sx, _sy, _rssi))
-                    _best_floor = max(_floor_groups, key=lambda f: len(_floor_groups[f]))
-                    _fg = _floor_groups[_best_floor]
+                        _floor_scanners.setdefault(_sf, []).append((_src, _sx, _sy, _rssi))
+                        if _sf not in _floor_best_rssi or _rssi > _floor_best_rssi[_sf]:
+                            _floor_best_rssi[_sf] = _rssi
+                    _best_floor = max(_floor_best_rssi, key=lambda f: _floor_best_rssi[f])
 
-                    if len(_fg) >= 2:
+                    # Use ALL scanners for centroid, but penalize cross-floor
+                    # scanners with a floor attenuation (their RSSI includes
+                    # floor/ceiling loss the path-loss model doesn't know about).
+                    _CROSS_FLOOR_PENALTY = 10.0  # dBm penalty for different floor
+                    _all_scanners: list[tuple[str, float, float, float]] = []
+                    for _src, _sx, _sy, _rssi, _sf in _src_list:
+                        _adj_rssi = _rssi
+                        if _sf != _best_floor:
+                            _adj_rssi -= _CROSS_FLOOR_PENALTY
+                        _all_scanners.append((_src, _sx, _sy, _adj_rssi))
+
+                    if len(_all_scanners) >= 2:
                         # ── Two-pass IDW centroid with RF barrier correction ──
-                        # Pass 1: rough position from raw RSSI (no barriers).
-                        # Pass 2: apply barrier attenuation between each scanner
-                        # and the pass-1 position, then recompute.  This prevents
-                        # scanners behind walls from appearing falsely close.
                         def _idw_centroid(scanners, ref_pt=None):
                             _wx = 0.0; _wy = 0.0; _wt = 0.0
                             for _, _sx, _sy, _rssi in scanners:
@@ -1055,10 +1067,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 _wt += _w
                             return (_wx / _wt, _wy / _wt) if _wt > 0 else None
 
-                        _p1 = _idw_centroid(_fg)
+                        _p1 = _idw_centroid(_all_scanners)
                         if _p1:
-                            # Pass 2 with barrier correction (skip if no barriers)
-                            _p2 = _idw_centroid(_fg, ref_pt=_p1) if self._rf_barriers else _p1
+                            _p2 = _idw_centroid(_all_scanners, ref_pt=_p1) if self._rf_barriers else _p1
                             _est_x, _est_y = _p2 or _p1
                             _spatial_xy = (_est_x, _est_y, _best_floor)
 
