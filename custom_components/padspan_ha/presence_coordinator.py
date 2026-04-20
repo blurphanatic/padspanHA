@@ -96,10 +96,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import (
     DOMAIN, DATA_SETTINGS, DATA_CALIBRATION, DATA_ADAPTIVE, DATA_MODEL,
-    OUTSIDE_FLOOR_ID,
+    DATA_OBJECTS, OUTSIDE_FLOOR_ID,
     DEFAULT_KALMAN_Q, DEFAULT_KALMAN_R,
     DEFAULT_REF_POWER, DEFAULT_PATH_LOSS_EXP, DEFAULT_ROOM_SIGMA_M,
-    OUTSIDE_FLOOR_ID,
 )
 
 _LOGGER = logging.getLogger(__name__)
