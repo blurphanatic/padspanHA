@@ -703,7 +703,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._prev_present = _cur_present
 
         if _arrived or _departed:
-            await self._run_automations(_arrived, _departed, result)
+            try:
+                await self._run_automations(_arrived, _departed, result)
+            except Exception as _auto_err:
+                _LOGGER.warning("Automations error (non-fatal): %s", _auto_err)
 
         # ── Adjacency co-visibility learning (Phase 1) ────────────────────────
         # In auto mode, when no map-derived adjacency exists, learn room
