@@ -5326,8 +5326,8 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
             source_to_area, source_to_floor = model.get_scanner_mappings()
 
         for key, obj in pc.data.items():
-            label = obj.get("user_label") or ""
-            if not label:
+            label = obj.get("user_label") or obj.get("name") or ""
+            if not label and not obj.get("identified") and not obj.get("room"):
                 continue
             # Get Kalman-smoothed RSSI for this device
             kind = obj.get("kind", "")
