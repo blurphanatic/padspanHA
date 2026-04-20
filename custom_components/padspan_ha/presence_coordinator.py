@@ -1728,7 +1728,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if lbl:
                 _key_labels[k] = lbl
         if _obj_store:
-            for k, entry in _obj_store.items():
+            for k, entry in _obj_store.all().items():
                 if isinstance(entry, dict) and entry.get("label"):
                     _key_labels[str(k)] = entry["label"]
 
