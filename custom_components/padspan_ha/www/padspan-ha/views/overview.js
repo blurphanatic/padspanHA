@@ -2837,6 +2837,13 @@ export function render(ctx){
           lines.push(`  room: ${d.room || "NONE"} | confirmed: ${d.confirmed || "NONE"}`);
           lines.push(`  use_metres: ${d.use_metres} | scanner_positions: ${d.scanner_positions_total} | barriers: ${d.barriers} | suspended: ${d.suspended}`);
           lines.push(`  floor: ${d.dev_floor || "?"} | room_geometries_on_floor: ${(d.geo_rooms||[]).join(", ") || "NONE"}`);
+          const ag = d.all_room_geometry || {};
+          const agKeys = Object.keys(ag);
+          if (agKeys.length) {
+            lines.push(`  ALL room geometry (${agKeys.length}): ${agKeys.map(r => `${r}[${ag[r]}]`).join(", ")}`);
+          } else {
+            lines.push(`  ALL room geometry: NONE — no room boundaries in fabric`);
+          }
           if (d.spatial) {
             lines.push(`  spatial: (${d.spatial.x_m?.toFixed(1)}, ${d.spatial.y_m?.toFixed(1)}) > ${d.spatial.room || "OUTSIDE_ALL_ROOMS"}`);
           } else {

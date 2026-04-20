@@ -5387,6 +5387,13 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
                     if isinstance(geo, dict) and geo.get("floor_id") == dev_floor:
                         geo_rooms.append(rn)
 
+            # ALL room geometry entries (not filtered by floor) — for diagnosis
+            all_geo = {}
+            if model:
+                for rn, geo in (model.data.get("room_geometry_m") or {}).items():
+                    if isinstance(geo, dict):
+                        all_geo[rn] = geo.get("floor_id", "?")
+
             diag.append({
                 "key": key,
                 "label": label,
@@ -5401,6 +5408,7 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
                 "spatial": spatial_info,
                 "dev_floor": dev_floor,
                 "geo_rooms": geo_rooms,
+                "all_room_geometry": all_geo,
                 "scanner_positions_total": len(scanner_positions),
                 "barriers": len(rf_barriers),
                 "use_metres": getattr(pc, "_use_metres", False),
