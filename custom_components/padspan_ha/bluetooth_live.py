@@ -236,25 +236,28 @@ class BluetoothLive:
         """
         try:
             _seeded_scanner = False
+            _scanner_count = 0
+            _total_ads = 0
             # ── Primary: per-scanner iteration (full RSSI matrix) ──
             try:
                 from habluetooth import get_manager as _get_bt_manager  # type: ignore
                 manager = _get_bt_manager()
                 if manager:
                     seen = _now()
-                    for scanner in manager.async_current_scanners():
+                    scanners_list = list(manager.async_current_scanners())
+                    _scanner_count = len(scanners_list)
+                    for scanner in scanners_list:
                         src = getattr(scanner, "source", None)
                         if not src:
                             continue
                         dev_adv = getattr(scanner, "discovered_devices_and_advertisement_data", None)
-                        if not dev_adv:
+                        if dev_adv is None:
                             continue
                         for ble_device, adv_data in dev_adv.values():
                             addr = getattr(ble_device, "address", None)
                             if not addr:
                                 continue
                             rssi = getattr(adv_data, "rssi", None)
-                            # Build a minimal record with source + RSSI
                             rec = _service_info_to_record_from_adv(
                                 addr, src, rssi, ble_device, adv_data, seen
                             )
@@ -263,11 +266,18 @@ class BluetoothLive:
                             self._seen_by_source[addr][str(src)] = _Adv(record=rec, seen=seen)
                             if str(src) != "_unknown":
                                 self._radio_last_heard[str(src)] = seen
+                            _total_ads += 1
                     _seeded_scanner = True
-            except ImportError:
-                pass  # habluetooth not available — fall back below
+                    _LOGGER.info(
+                        "BLE per-scanner seed: %d scanners, %d total device readings",
+                        _scanner_count, _total_ads,
+                    )
+                else:
+                    _LOGGER.warning("BLE per-scanner seed: get_manager() returned None")
+            except ImportError as _imp_err:
+                _LOGGER.warning("habluetooth not available: %s — falling back to deduplicated API", _imp_err)
             except Exception as _mgr_err:
-                _LOGGER.debug("BLE scanner iteration failed: %s (falling back)", _mgr_err)
+                _LOGGER.warning("BLE scanner iteration failed: %s — falling back", _mgr_err)
 
             # ── Fallback: deduplicated API (1 scanner per device) ──
             if not _seeded_scanner:
