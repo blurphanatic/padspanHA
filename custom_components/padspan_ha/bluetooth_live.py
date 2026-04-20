@@ -192,6 +192,11 @@ class BluetoothLive:
         # Used by the frontend to show a radio as "listening" even when its ads are old/filtered.
         self._radio_last_heard: Dict[str, dt.datetime] = {}  # source → datetime
         self._last_reseed: Optional[dt.datetime] = None  # periodic reseed for proxy scanners
+        # Diagnostics: last seed result
+        self.seed_method: str = "none"  # "per_scanner", "deduplicated", "failed"
+        self.seed_scanner_count: int = 0
+        self.seed_device_readings: int = 0
+        self.seed_error: str = ""
 
     def unload(self) -> None:
         for u in self._unsubs:
@@ -268,19 +273,20 @@ class BluetoothLive:
                                 self._radio_last_heard[str(src)] = seen
                             _total_ads += 1
                     _seeded_scanner = True
-                    _LOGGER.info(
-                        "BLE per-scanner seed: %d scanners, %d total device readings",
-                        _scanner_count, _total_ads,
-                    )
+                    self.seed_method = "per_scanner"
+                    self.seed_scanner_count = _scanner_count
+                    self.seed_device_readings = _total_ads
+                    self.seed_error = ""
                 else:
-                    _LOGGER.warning("BLE per-scanner seed: get_manager() returned None")
+                    self.seed_error = "get_manager() returned None"
             except ImportError as _imp_err:
-                _LOGGER.warning("habluetooth not available: %s — falling back to deduplicated API", _imp_err)
+                self.seed_error = f"habluetooth import: {_imp_err}"
             except Exception as _mgr_err:
-                _LOGGER.warning("BLE scanner iteration failed: %s — falling back", _mgr_err)
+                self.seed_error = f"scanner iteration: {_mgr_err}"
 
             # ── Fallback: deduplicated API (1 scanner per device) ──
             if not _seeded_scanner:
+                self.seed_method = "deduplicated"
                 from homeassistant.components import bluetooth  # type: ignore
                 if hasattr(bluetooth, "async_discovered_service_info"):
                     infos = bluetooth.async_discovered_service_info(self.hass)

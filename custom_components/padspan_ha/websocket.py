@@ -5407,7 +5407,20 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
                 "suspended": pc.suspended,
             })
 
-    connection.send_result(msg["id"], {"devices": diag})
+    # BLE seed status
+    _bl = None
+    try:
+        from .bluetooth_live import get_bluetooth_live
+        _bl = get_bluetooth_live(hass)
+    except Exception:
+        pass
+    ble_seed = {
+        "method": getattr(_bl, "seed_method", "?") if _bl else "no_bluetooth_live",
+        "scanner_count": getattr(_bl, "seed_scanner_count", 0) if _bl else 0,
+        "device_readings": getattr(_bl, "seed_device_readings", 0) if _bl else 0,
+        "error": getattr(_bl, "seed_error", "") if _bl else "",
+    }
+    connection.send_result(msg["id"], {"devices": diag, "ble_seed": ble_seed})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

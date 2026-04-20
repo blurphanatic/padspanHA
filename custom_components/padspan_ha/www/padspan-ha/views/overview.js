@@ -2826,6 +2826,11 @@ export function render(ctx){
         body.textContent = "";
         const pre = el("pre",{style:"font-size:11px;color:#e2e8f0;background:#0f172a;padding:10px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;max-height:400px;overflow-y:auto;user-select:all;cursor:text"});
         const lines = [];
+        const seed = res.ble_seed || {};
+        lines.push(`--- BLE Data Source ---`);
+        lines.push(`  method: ${seed.method || "?"} | scanners: ${seed.scanner_count || 0} | device_readings: ${seed.device_readings || 0}`);
+        if (seed.error) lines.push(`  ERROR: ${seed.error}`);
+        lines.push("");
         for (const d of devices) {
           lines.push(`=== ${d.label} (${d.kind}) ===`);
           lines.push(`  key: ${d.key}`);
