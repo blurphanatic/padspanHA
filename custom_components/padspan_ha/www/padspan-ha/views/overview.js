@@ -2812,12 +2812,10 @@ export function render(ctx){
     wrap.appendChild(hdr);
     const body = el("div",{style:"display:none;margin-top:8px"});
     wrap.appendChild(body);
-    let _loaded = false;
     hdr.addEventListener("click", async () => {
       const open = body.style.display !== "none";
       if (open) { body.style.display = "none"; arrow.style.transform = ""; return; }
       body.style.display = "block"; arrow.style.transform = "rotate(90deg)";
-      if (_loaded) return;
       body.textContent = "Loading...";
       try {
         const res = await ctx.actions.wsCall("padspan_ha/positioning_diag");
@@ -2867,14 +2865,22 @@ export function render(ctx){
         body.appendChild(pre);
         const copyBtn = el("button",{class:"btn",style:"margin-top:6px;font-size:11px;padding:4px 10px"},"Copy to Clipboard");
         copyBtn.addEventListener("click", () => {
-          navigator.clipboard.writeText(pre.textContent).then(() => ctx.toast("Copied")).catch(() => {
-            const range = document.createRange(); range.selectNodeContents(pre);
-            const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-            ctx.toast("Selected — press Ctrl+C");
-          });
+          const text = pre.textContent;
+          // Use textarea + execCommand as primary (works in HA shadow DOM)
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.cssText = "position:fixed;left:-9999px;top:-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand("copy"); ctx.toast("Copied"); }
+          catch(e) {
+            // Fallback: try clipboard API
+            navigator.clipboard.writeText(text).then(() => ctx.toast("Copied")).catch(() => ctx.toast("Copy failed — select text manually", true));
+          }
+          document.body.removeChild(ta);
         });
         body.appendChild(copyBtn);
-        _loaded = true;
+        // data loaded
       } catch(e) { body.textContent = "Error: " + String(e); }
     });
     return wrap;
