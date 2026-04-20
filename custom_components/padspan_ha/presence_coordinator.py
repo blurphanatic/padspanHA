@@ -191,16 +191,16 @@ def _segments_intersect(
 
 
 def _barrier_attenuation(
-    sx: float, sy: float, s_map: str,
-    rx: float, ry: float, r_map: str,
+    sx: float, sy: float, s_floor: str,
+    rx: float, ry: float, r_floor: str,
     barriers: list[dict],
 ) -> float:
     """Compute total RF attenuation (dBm) for barriers crossing the line from
-    scanner (sx,sy) to room centroid (rx,ry). Only considers barriers on the
-    same map as the scanner."""
+    point (sx,sy) to point (rx,ry). Only considers barriers on the same floor."""
     total = 0.0
     for bar in barriers:
-        if bar.get("map_id") != s_map:
+        _bar_floor = bar.get("floor_id") or bar.get("map_id", "")
+        if _bar_floor != s_floor:
             continue
         pts = bar["points"]
         for i in range(len(pts) - 1):
@@ -1015,45 +1015,58 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Converts RSSI → distance via path-loss model, then computes
             # inverse-distance² weighted centroid of scanner positions.
             if self._use_metres and self._scanner_positions and _model:
-                _pos_data: list[tuple[float, float, str, float]] = []  # (x, y, floor, dist)
+                # Collect scanners with known positions
+                _src_list: list[tuple[str, float, float, float, str]] = []
                 for _src, _rssi in ema.items():
                     _sp = self._scanner_positions.get(_src)
                     if not _sp:
                         continue
-                    # RSSI → estimated distance (path-loss model)
-                    _d_est = 10.0 ** ((_ref - _rssi) / (10.0 * _n_exp))
-                    _d_est = max(0.3, min(_d_est, 50.0))  # clamp 0.3–50 m
-                    _pos_data.append((_sp[0], _sp[1], _sp[2], _d_est))
+                    _src_list.append((_src, _sp[0], _sp[1], _rssi, _sp[2]))
 
-                if len(_pos_data) >= 3:
-                    # Group by floor — position on the floor with the most
-                    # scanner readings (cross-floor scanners are unreliable)
-                    _floor_groups: dict[str, list[tuple[float, float, float]]] = {}
-                    for _px, _py, _pf, _pd in _pos_data:
-                        _floor_groups.setdefault(_pf, []).append((_px, _py, _pd))
+                if len(_src_list) >= 3:
+                    # Group by floor
+                    _floor_groups: dict[str, list[tuple[str, float, float, float]]] = {}
+                    for _src, _sx, _sy, _rssi, _sf in _src_list:
+                        _floor_groups.setdefault(_sf, []).append((_src, _sx, _sy, _rssi))
                     _best_floor = max(_floor_groups, key=lambda f: len(_floor_groups[f]))
                     _fg = _floor_groups[_best_floor]
 
                     if len(_fg) >= 2:
-                        # Inverse-distance² weighted centroid
-                        _wx_sum = 0.0
-                        _wy_sum = 0.0
-                        _w_sum = 0.0
-                        for _fx, _fy, _fd in _fg:
-                            _w = 1.0 / (_fd * _fd + 0.01)  # +epsilon to avoid div/0
-                            _wx_sum += _fx * _w
-                            _wy_sum += _fy * _w
-                            _w_sum += _w
-                        _est_x = _wx_sum / _w_sum
-                        _est_y = _wy_sum / _w_sum
-                        _spatial_xy = (_est_x, _est_y, _best_floor)
+                        # ── Two-pass IDW centroid with RF barrier correction ──
+                        # Pass 1: rough position from raw RSSI (no barriers).
+                        # Pass 2: apply barrier attenuation between each scanner
+                        # and the pass-1 position, then recompute.  This prevents
+                        # scanners behind walls from appearing falsely close.
+                        def _idw_centroid(scanners, ref_pt=None):
+                            _wx = 0.0; _wy = 0.0; _wt = 0.0
+                            for _, _sx, _sy, _rssi in scanners:
+                                _eff = _rssi
+                                if ref_pt and self._rf_barriers:
+                                    _eff -= _barrier_attenuation(
+                                        _sx, _sy, _best_floor,
+                                        ref_pt[0], ref_pt[1], _best_floor,
+                                        self._rf_barriers,
+                                    )
+                                _d = 10.0 ** ((_ref - _eff) / (10.0 * _n_exp))
+                                _d = max(0.3, min(_d, 50.0))
+                                _w = 1.0 / (_d * _d + 0.01)
+                                _wx += _sx * _w
+                                _wy += _sy * _w
+                                _wt += _w
+                            return (_wx / _wt, _wy / _wt) if _wt > 0 else None
 
-                        # Look up room from geometry
-                        _geo_room = _model.beacon_room_from_geometry(
-                            _est_x, _est_y, _best_floor
-                        )
-                        if _geo_room:
-                            _spatial_candidate = _geo_room
+                        _p1 = _idw_centroid(_fg)
+                        if _p1:
+                            # Pass 2 with barrier correction (skip if no barriers)
+                            _p2 = _idw_centroid(_fg, ref_pt=_p1) if self._rf_barriers else _p1
+                            _est_x, _est_y = _p2 or _p1
+                            _spatial_xy = (_est_x, _est_y, _best_floor)
+
+                            _geo_room = _model.beacon_room_from_geometry(
+                                _est_x, _est_y, _best_floor
+                            )
+                            if _geo_room:
+                                _spatial_candidate = _geo_room
 
             # ── Path B: RSSI-based room scoring (always computed) ────────
             # This provides the fallback and also feeds the debug log.
@@ -1187,10 +1200,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _spatial_str = ""
             if _spatial_xy:
                 _spatial_str = f" | spatial=({_spatial_xy[0]:.1f},{_spatial_xy[1]:.1f})>{_spatial_candidate or '?'}"
+            _barrier_str = f" | barriers={len(self._rf_barriers)}" if self._rf_barriers else " | NO_BARRIERS"
             _LOGGER.info(
-                "SCORING [%s] label=%s | confirmed=%s > candidate=%s%s | "
+                "SCORING [%s] label=%s | confirmed=%s > candidate=%s%s%s | "
                 "room_rssi: %s | raw_ema(top5): %s | src>room: %s",
-                key[:30], _obj_label, _cur_confirmed, candidate, _spatial_str,
+                key[:30], _obj_label, _cur_confirmed, candidate, _spatial_str, _barrier_str,
                 ", ".join(f"{r}={s:.0f}dBm" for r, s in _top5),
                 ", ".join(f"{s[:20]}={r:.0f}" for s, r in _ema_top),
                 ", ".join(f"{s[:15]}>{r}" for s, r in _src_rooms.items()),
