@@ -1201,25 +1201,51 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             elif _best_room:
                 candidate = _best_room
 
-        # ── Debug: log scoring details for labelled devices ─────────────────
-        # This lets us see exactly why a device is in the wrong room.
+        # ── Comprehensive diagnostic for labelled devices ─────────────────────
         _obj_label = (self._known_objs.get(key) or {}).get("user_label")
-        if _obj_label and room_scores:
-            _top5 = sorted(room_scores.items(), key=lambda x: -x[1])[:5]
-            _ema_top = sorted(ema.items(), key=lambda x: -x[1])[:5] if ema else []
-            _src_rooms = {s: source_to_area.get(s, "?") for s, _ in _ema_top}
-            _spatial_str = ""
+        if _obj_label:
+            # Scanner data: which scanners see this device, their RSSI, position, floor, room
+            _scanner_detail = []
+            for _src, _rssi in sorted(ema.items(), key=lambda x: -x[1]) if ema else []:
+                _sp = self._scanner_positions.get(_src)
+                _rm = source_to_area.get(_src, "?")
+                _fl = source_to_floor.get(_src, "?") if source_to_floor else "?"
+                _pos_str = f"({_sp[0]:.1f},{_sp[1]:.1f})" if _sp else "NO_POS"
+                _scanner_detail.append(f"{_src[:18]}={_rssi:.0f}dBm pos={_pos_str} fl={_fl} rm={_rm}")
+
+            # Spatial centroid details
+            _spatial_detail = "NONE"
             if _spatial_xy:
-                _spatial_str = f" | spatial=({_spatial_xy[0]:.1f},{_spatial_xy[1]:.1f})>{_spatial_candidate or '?'}"
-            _barrier_str = f" | barriers={len(self._rf_barriers)}" if self._rf_barriers else " | NO_BARRIERS"
+                _spatial_detail = f"({_spatial_xy[0]:.1f},{_spatial_xy[1]:.1f}) floor={_spatial_xy[2]} room={_spatial_candidate or 'OUTSIDE_ALL_ROOMS'}"
+
+            # Room geometry check
+            _geo_rooms = []
+            if _model and _spatial_xy:
+                for _rn, _geo in (_model.data.get("room_geometry_m") or {}).items():
+                    if isinstance(_geo, dict) and _geo.get("floor_id") == _spatial_xy[2]:
+                        _geo_rooms.append(_rn)
+
             _LOGGER.info(
-                "SCORING [%s] label=%s | confirmed=%s > candidate=%s%s%s | "
-                "room_rssi: %s | raw_ema(top5): %s | src>room: %s",
-                key[:30], _obj_label, _cur_confirmed, candidate, _spatial_str, _barrier_str,
-                ", ".join(f"{r}={s:.0f}dBm" for r, s in _top5),
-                ", ".join(f"{s[:20]}={r:.0f}" for s, r in _ema_top),
-                ", ".join(f"{s[:15]}>{r}" for s, r in _src_rooms.items()),
+                "DIAG [%s] label=%s | scanners(%d): %s",
+                key[:30], _obj_label, len(_scanner_detail),
+                " | ".join(_scanner_detail[:8]),
             )
+            _LOGGER.info(
+                "DIAG [%s] spatial=%s | rooms_on_floor=%s | barriers=%d | "
+                "use_metres=%s | scanner_positions=%d | candidate=%s | confirmed=%s",
+                key[:30], _spatial_detail,
+                ",".join(_geo_rooms) if _geo_rooms else "NONE",
+                len(self._rf_barriers),
+                self._use_metres, len(self._scanner_positions),
+                candidate, _cur_confirmed,
+            )
+            if room_scores:
+                _top5 = sorted(room_scores.items(), key=lambda x: -x[1])[:5]
+                _LOGGER.info(
+                    "DIAG [%s] rssi_scores: %s",
+                    key[:30],
+                    ", ".join(f"{r}={s:.0f}dBm" for r, s in _top5),
+                )
 
         # ── Adaptive tie-break ────────────────────────────────────────────────
         # Adaptive learning is consulted ONLY as a tie-breaker when the
