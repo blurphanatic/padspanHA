@@ -128,6 +128,52 @@ def _service_info_to_record(si: Any, seen: Optional[dt.datetime] = None) -> Dict
     }
 
 
+def _service_info_to_record_from_adv(
+    addr: str, source: str, rssi: Any,
+    ble_device: Any, adv_data: Any, seen: dt.datetime,
+) -> Dict[str, Any]:
+    """Build a record dict from raw BLEDevice + AdvertisementData (per-scanner)."""
+    name = getattr(ble_device, "name", None) or getattr(adv_data, "local_name", None) or ""
+
+    manuf = getattr(adv_data, "manufacturer_data", None) or {}
+    manuf_out: Dict[str, str] = {}
+    try:
+        for k, v in dict(manuf).items():
+            if isinstance(v, (bytes, bytearray)):
+                manuf_out[str(k)] = _bytes_to_hex_list(bytes(v))
+            else:
+                manuf_out[str(k)] = str(v)
+    except Exception:
+        pass
+
+    svcdata = getattr(adv_data, "service_data", None) or {}
+    svc_out: Dict[str, str] = {}
+    try:
+        for k, v in dict(svcdata).items():
+            if isinstance(v, (bytes, bytearray)):
+                svc_out[str(k)] = _bytes_to_hex_list(bytes(v))
+            else:
+                svc_out[str(k)] = str(v)
+    except Exception:
+        pass
+
+    service_uuids = getattr(adv_data, "service_uuids", None) or []
+    tx_power = getattr(adv_data, "tx_power", None)
+
+    return {
+        "address": str(addr),
+        "name": str(name or addr),
+        "source": _coerce_source(source),
+        "rssi": int(rssi) if rssi is not None else None,
+        "tx_power": int(tx_power) if tx_power is not None else None,
+        "connectable": None,
+        "last_seen": seen.isoformat(),
+        "manufacturer_data": manuf_out,
+        "service_data": svc_out,
+        "service_uuids": list(service_uuids) if isinstance(service_uuids, (list, tuple, set)) else [],
+    }
+
+
 @dataclass
 class _Adv:
     record: Dict[str, Any]
@@ -176,36 +222,70 @@ class BluetoothLive:
             _LOGGER.debug("BLE adv parse failed: %s", e)
 
     def _seed_from_discovered(self) -> None:
-        """Populate cache from HA's discovered service-info list (best-effort).
+        """Populate cache with per-scanner RSSI data from ALL scanners.
 
-        This is critical for scanners like Shelly BLE relays that report
-        advertisements through HA's discovered-service-info API but NOT through
-        the async_register_callback mechanism.  Without periodic reseeding,
-        these scanners appear in the radios list but show zero advertisements.
+        HA's deduplicated APIs (async_discovered_service_info, async_register_callback)
+        only return ONE scanner's reading per device.  For indoor positioning we need
+        RSSI from EVERY scanner that sees each device.
 
-        We call async_discovered_service_info twice — once with connectable=True
-        (default, connectable scanners) and once with connectable=False (passive/
-        non-connectable scanners like Shelly BLE proxies).  The HA API defaults
-        to connectable=True which would exclude Shelly-relayed advertisements.
+        Primary method: iterate each scanner's own device cache via the habluetooth
+        manager (same pattern Bermuda uses).  Each scanner maintains its own dict of
+        discovered devices with per-scanner RSSI — no deduplication.
+
+        Fallback: async_discovered_service_info (deduplicated, only 1 scanner per device).
         """
         try:
-            from homeassistant.components import bluetooth  # type: ignore
+            _seeded_scanner = False
+            # ── Primary: per-scanner iteration (full RSSI matrix) ──
+            try:
+                from habluetooth import get_manager as _get_bt_manager  # type: ignore
+                manager = _get_bt_manager()
+                if manager:
+                    seen = _now()
+                    for scanner in manager.async_current_scanners():
+                        src = getattr(scanner, "source", None)
+                        if not src:
+                            continue
+                        dev_adv = getattr(scanner, "discovered_devices_and_advertisement_data", None)
+                        if not dev_adv:
+                            continue
+                        for ble_device, adv_data in dev_adv.values():
+                            addr = getattr(ble_device, "address", None)
+                            if not addr:
+                                continue
+                            rssi = getattr(adv_data, "rssi", None)
+                            # Build a minimal record with source + RSSI
+                            rec = _service_info_to_record_from_adv(
+                                addr, src, rssi, ble_device, adv_data, seen
+                            )
+                            if addr not in self._seen_by_source:
+                                self._seen_by_source[addr] = {}
+                            self._seen_by_source[addr][str(src)] = _Adv(record=rec, seen=seen)
+                            if str(src) != "_unknown":
+                                self._radio_last_heard[str(src)] = seen
+                    _seeded_scanner = True
+            except ImportError:
+                pass  # habluetooth not available — fall back below
+            except Exception as _mgr_err:
+                _LOGGER.debug("BLE scanner iteration failed: %s (falling back)", _mgr_err)
 
-            if hasattr(bluetooth, "async_discovered_service_info"):
-                # Connectable scanners (ESPHome, RPi, etc.)
-                infos = bluetooth.async_discovered_service_info(self.hass)
-                for si in infos:
-                    self._on_adv(si)
-                # Non-connectable scanners (Shelly BLE proxies, etc.)
-                try:
-                    infos_nc = bluetooth.async_discovered_service_info(
-                        self.hass, connectable=False
-                    )
-                    for si in infos_nc:
+            # ── Fallback: deduplicated API (1 scanner per device) ──
+            if not _seeded_scanner:
+                from homeassistant.components import bluetooth  # type: ignore
+                if hasattr(bluetooth, "async_discovered_service_info"):
+                    infos = bluetooth.async_discovered_service_info(self.hass)
+                    for si in infos:
                         self._on_adv(si)
-                except TypeError:
-                    pass  # Older HA without connectable param
-                self._last_reseed = _now()
+                    try:
+                        infos_nc = bluetooth.async_discovered_service_info(
+                            self.hass, connectable=False
+                        )
+                        for si in infos_nc:
+                            self._on_adv(si)
+                    except TypeError:
+                        pass
+
+            self._last_reseed = _now()
         except Exception as e:
             _LOGGER.debug("BLE seed failed: %s", e)
 
