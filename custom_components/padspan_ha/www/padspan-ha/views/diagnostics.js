@@ -3,16 +3,57 @@
 // Licensed under the GNU General Public License v3.0
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 /**
- * Diagnostics view — full JSON dump of UI and backend state.
- * Serializes version info, timing, WS counts, live snapshot, maps, room-tag map,
- * and auto-diagnostics into a copyable JSON block. Intended for pasting into
- * support conversations or AI-assisted debugging.
+ * Diagnostics view — compact JSON dump of UI and backend state.
+ * Only includes labelled / confirmed / recently-seen devices to keep
+ * the output small enough to paste into a chat or AI conversation.
  */
 
 export function render(ctx){
   const { el } = ctx.helpers;
   const root = el("section",{id:"diagnostics"});
   root.className = ctx.state.view==="diagnostics" ? "" : "hidden";
+
+  // ── Build a trimmed snapshot: only devices with a label, confirmation,
+  //    or an identified name, and only those seen in the last 24 hours.
+  const MAX_AGE_S = 86400;
+  const snap = ctx.state.live && ctx.state.live.snapshot;
+  let trimmedSnap = null;
+  let totalDevices = 0;
+  let includedDevices = 0;
+  if (snap && typeof snap === "object") {
+    trimmedSnap = {};
+    const keys = Object.keys(snap);
+    totalDevices = keys.length;
+    for (const k of keys) {
+      const d = snap[k];
+      if (!d) continue;
+      const hasLabel = !!(d.user_label || d.name || d.identified);
+      const hasRoom = !!(d.room);
+      if (!hasLabel && !hasRoom) continue;
+      // Skip very stale entries (oldest source age > 24h)
+      const sources = d.sources || [];
+      const minAge = sources.length
+        ? Math.min(...sources.map(s => s.age_s || Infinity))
+        : Infinity;
+      if (minAge > MAX_AGE_S) continue;
+      // Compact: strip all_addresses if huge (e.g. Pixel phone with 200+ MACs)
+      const copy = Object.assign({}, d);
+      if (copy.all_addresses && copy.all_addresses.length > 10) {
+        copy.all_addresses = copy.all_addresses.slice(0, 5);
+        copy._addr_truncated = true;
+      }
+      // Trim sources to top 6 by RSSI
+      if (copy.sources && copy.sources.length > 6) {
+        copy.sources = copy.sources
+          .slice()
+          .sort((a, b) => (b.rssi || -999) - (a.rssi || -999))
+          .slice(0, 6);
+        copy._sources_truncated = true;
+      }
+      trimmedSnap[k] = copy;
+      includedDevices++;
+    }
+  }
 
   const payload = {
     ui: {
@@ -27,9 +68,11 @@ export function render(ctx){
       versionInfo: ctx.state.versionInfo,
       status: ctx.state.status,
       roomTagMap: ctx.state.roomTagMap,
-      liveSnapshot: ctx.state.live.snapshot,
-      liveSources: ctx.state.live.sources,
       maps: ctx.state.maps.list,
+    },
+    snapshot: {
+      _summary: `${includedDevices} of ${totalDevices} devices (labelled/confirmed, seen <24h)`,
+      devices: trimmedSnap,
     },
     autoDiagnostics: ctx.state.diag,
   };
@@ -73,21 +116,19 @@ export function render(ctx){
 
   const btnCopy = el("button",{class:"btn"}, "Copy");
   btnCopy.addEventListener("click", async ()=>{
-    // Try modern clipboard first
+    // Try modern clipboard first (works on https:// or localhost)
     try {
       await navigator.clipboard.writeText(text);
       ctx.toast("Copied diagnostics.");
       return;
     } catch (e) {}
 
-    // Robust fallback: temp textarea attached to document.body (outside shadow DOM)
+    // Fallback: hidden textarea on document.body (bypasses HA shadow DOM)
     try {
       const tmp = document.createElement("textarea");
       tmp.value = text;
       tmp.setAttribute("readonly", "");
-      tmp.style.position = "fixed";
-      tmp.style.left = "-9999px";
-      tmp.style.top = "0";
+      tmp.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
       document.body.appendChild(tmp);
       tmp.focus();
       tmp.select();
@@ -99,17 +140,18 @@ export function render(ctx){
       }
     } catch (e2) {}
 
-    // Final fallback: manual
+    // Last resort: select in the visible textarea
     selectAll();
-    ctx.toast("Copy blocked by browser. Press Ctrl/Cmd+C.", true);
+    ctx.toast("Auto-copy blocked. Text selected — press Ctrl+C.", true);
   });
 
+  const sizeKb = Math.round(text.length / 1024);
   root.appendChild(el("div",{class:"grid"},[
     el("div",{class:"card"},[
       el("div",{style:"display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"},[
         el("div",{},[
           el("div",{style:"font-weight:700"}, "Diagnostics"),
-          el("div",{class:"muted"}, "Paste this back into chat when something breaks."),
+          el("div",{class:"muted"}, `${includedDevices} devices · ${sizeKb} KB — paste into chat when something breaks`),
         ]),
         el("div",{style:"display:flex;gap:8px;align-items:center"},[ btnSelect, btnCopy, btnDownload ])
       ]),
