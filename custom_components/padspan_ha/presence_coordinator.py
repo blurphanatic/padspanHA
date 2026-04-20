@@ -1421,29 +1421,32 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             break
             self._knn_position[key] = _sp_entry
 
-        # ── Stage 2: majority-vote temporal stabilization ──────────────────
-        # The candidate from stages 1-1.5 can still flip between polls due to
-        # RF noise.  The vote window adds temporal inertia: a room must win a
-        # majority of the last N polls before it becomes the confirmed room.
-        # Window size adapts to the user's room_change_delay_s setting.
+        # ── Stage 2: room confirmation ────────────────────────────────────────
+        # When spatial centroid resolved a room, trust it directly — it's based
+        # on physics (scanner positions + distances + room geometry), not noisy
+        # RSSI comparisons.  The vote window is only needed when spatial can't
+        # resolve (no scanner positions or position outside all room boundaries).
+        if _spatial_candidate and candidate == _spatial_candidate:
+            self._confirmed_room[key] = _spatial_candidate
+            self._room_confidence[key] = max(rssi_margin_confidence, 0.7)
+            self._rssi_margin_confidence[key] = rssi_margin_confidence
+            self._room_votes.pop(key, None)  # reset votes to match
+            return _spatial_candidate
+
+        # Fallback: majority-vote temporal stabilization for RSSI-only scoring.
         existing = self._room_votes.get(key)
         if existing is None or existing.maxlen != vote_window:
-            # Resize the deque when the setting changes mid-run; keep recent votes
             prev = list(existing) if existing else []
             self._room_votes[key] = deque(prev[-vote_window:], maxlen=vote_window)
         votes = self._room_votes[key]
 
-        # Clear stale votes when spatial centroid strongly disagrees with the
-        # current confirmed room.  This breaks the trap where old wrong-room
-        # votes prevent the device from moving to the geometry-confirmed room.
+        # Clear stale votes when spatial disagrees with confirmed room
         _confirmed_now = self._confirmed_room.get(key)
         if (_spatial_candidate
                 and _confirmed_now
                 and _spatial_candidate != _confirmed_now
-                and rssi_margin_confidence >= 0.3
                 and len(votes) > 0):
-            # Spatial says different room — flush old votes so the new
-            # candidate doesn't have to fight through a full window of stale data
+            # Spatial says different room — flush old votes
             votes.clear()
 
         # Skip None candidates (total signal dropout) — preserves the last
