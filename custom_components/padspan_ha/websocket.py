@@ -163,6 +163,7 @@ def async_register_websockets(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_adaptive_reset)
     websocket_api.async_register_command(hass, ws_suspend_databases)
     websocket_api.async_register_command(hass, ws_unsuspend_databases)
+    websocket_api.async_register_command(hass, ws_positioning_diag)
     websocket_api.async_register_command(hass, ws_propagation_health)
     websocket_api.async_register_command(hass, ws_system_critics)
     websocket_api.async_register_command(hass, ws_store_backup_create)
@@ -5303,6 +5304,94 @@ async def ws_unsuspend_databases(hass: HomeAssistant, connection, msg) -> None:
         connection.send_result(msg["id"], {"ok": True, "suspended": False})
     else:
         connection.send_result(msg["id"], {"ok": False, "error": "Coordinator not ready"})
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/positioning_diag"})
+@websocket_api.async_response
+async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
+    """Return detailed positioning diagnostics for all labelled devices."""
+    pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
+    model = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
+    diag: list[dict] = []
+    if pc and pc.data:
+        scanner_positions = getattr(pc, "_scanner_positions", {})
+        room_centroids = getattr(pc, "_room_centroids", {})
+        rf_barriers = getattr(pc, "_rf_barriers", [])
+        ema_rssi = getattr(pc, "_ema_rssi", {})
+        knn_pos = getattr(pc, "_knn_position", {})
+        confirmed = getattr(pc, "_confirmed_room", {})
+        source_to_area = {}
+        source_to_floor = {}
+        if model:
+            source_to_area, source_to_floor = model.get_scanner_mappings()
+
+        for key, obj in pc.data.items():
+            label = obj.get("user_label") or ""
+            if not label:
+                continue
+            # Get Kalman-smoothed RSSI for this device
+            kind = obj.get("kind", "")
+            if kind in ("ble", "private_ble"):
+                addr = str(obj.get("address") or "").upper()
+                ema = ema_rssi.get(addr, {})
+            elif kind == "ibeacon":
+                ema = ema_rssi.get(key, {})
+            else:
+                ema = {}
+
+            scanners = []
+            for src, rssi in sorted(ema.items(), key=lambda x: -x[1]):
+                sp = scanner_positions.get(src)
+                scanners.append({
+                    "source": src,
+                    "rssi": round(rssi, 1),
+                    "pos": [round(sp[0], 1), round(sp[1], 1)] if sp else None,
+                    "floor": sp[2] if sp else source_to_floor.get(src, "?"),
+                    "room": source_to_area.get(src, "?"),
+                })
+
+            # Spatial centroid info from knn_position (source=spatial)
+            knn = knn_pos.get(key, {})
+            spatial_info = None
+            if knn.get("source") == "spatial":
+                spatial_info = {
+                    "x_m": knn.get("x_m"), "y_m": knn.get("y_m"),
+                    "room": knn.get("room", ""),
+                    "x_frac": knn.get("x_frac"), "y_frac": knn.get("y_frac"),
+                }
+
+            # Room geometries on the device's floor
+            dev_floor = ""
+            if spatial_info:
+                # derive from scanner positions
+                for s in scanners:
+                    if s.get("pos") and s["rssi"] == max(ss["rssi"] for ss in scanners if ss.get("pos")):
+                        dev_floor = s["floor"]
+                        break
+            geo_rooms = []
+            if model and dev_floor:
+                for rn, geo in (model.data.get("room_geometry_m") or {}).items():
+                    if isinstance(geo, dict) and geo.get("floor_id") == dev_floor:
+                        geo_rooms.append(rn)
+
+            diag.append({
+                "key": key,
+                "label": label,
+                "kind": kind,
+                "room": obj.get("room", ""),
+                "confirmed": confirmed.get(key, ""),
+                "scanners": scanners[:12],
+                "scanner_count": len(scanners),
+                "spatial": spatial_info,
+                "dev_floor": dev_floor,
+                "geo_rooms": geo_rooms,
+                "scanner_positions_total": len(scanner_positions),
+                "barriers": len(rf_barriers),
+                "use_metres": getattr(pc, "_use_metres", False),
+                "suspended": pc.suspended,
+            })
+
+    connection.send_result(msg["id"], {"devices": diag})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

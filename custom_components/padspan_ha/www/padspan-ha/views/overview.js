@@ -2801,6 +2801,66 @@ export function render(ctx){
     ]);
   };
 
+  // ── Positioning Diagnostics panel ────────────────────────────────────
+  const _buildDiagPanel = () => {
+    const wrap = el("div",{class:"card",style:"border-color:#334155"});
+    const hdr = el("div",{style:"display:flex;align-items:center;gap:8px;cursor:pointer"});
+    const arrow = el("span",{style:"font-size:11px;color:#60a5fa;transition:transform .2s"},"\u25B6");
+    hdr.appendChild(arrow);
+    hdr.appendChild(el("span",{style:"font-weight:700;font-size:13px;color:#60a5fa"},"Positioning Diagnostics"));
+    hdr.appendChild(el("span",{class:"muted",style:"font-size:11px;flex:1"},"Tap to load"));
+    wrap.appendChild(hdr);
+    const body = el("div",{style:"display:none;margin-top:8px"});
+    wrap.appendChild(body);
+    let _loaded = false;
+    hdr.addEventListener("click", async () => {
+      const open = body.style.display !== "none";
+      if (open) { body.style.display = "none"; arrow.style.transform = ""; return; }
+      body.style.display = "block"; arrow.style.transform = "rotate(90deg)";
+      if (_loaded) return;
+      body.textContent = "Loading...";
+      try {
+        const res = await ctx.actions.wsCall("padspan_ha/positioning_diag");
+        const devices = res.devices || [];
+        if (!devices.length) { body.textContent = "No labelled devices found."; _loaded = true; return; }
+        body.textContent = "";
+        const pre = el("pre",{style:"font-size:11px;color:#e2e8f0;background:#0f172a;padding:10px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;max-height:400px;overflow-y:auto;user-select:all;cursor:text"});
+        const lines = [];
+        for (const d of devices) {
+          lines.push(`=== ${d.label} (${d.kind}) ===`);
+          lines.push(`  key: ${d.key}`);
+          lines.push(`  room: ${d.room || "NONE"} | confirmed: ${d.confirmed || "NONE"}`);
+          lines.push(`  use_metres: ${d.use_metres} | scanner_positions: ${d.scanner_positions_total} | barriers: ${d.barriers} | suspended: ${d.suspended}`);
+          lines.push(`  floor: ${d.dev_floor || "?"} | room_geometries_on_floor: ${(d.geo_rooms||[]).join(", ") || "NONE"}`);
+          if (d.spatial) {
+            lines.push(`  spatial: (${d.spatial.x_m?.toFixed(1)}, ${d.spatial.y_m?.toFixed(1)}) > ${d.spatial.room || "OUTSIDE_ALL_ROOMS"}`);
+          } else {
+            lines.push(`  spatial: NONE (no centroid computed)`);
+          }
+          lines.push(`  scanners (${d.scanner_count}):`);
+          for (const s of (d.scanners || [])) {
+            const pos = s.pos ? `(${s.pos[0]},${s.pos[1]})` : "NO_POS";
+            lines.push(`    ${s.source} = ${s.rssi}dBm  pos=${pos}  fl=${s.floor}  rm=${s.room}`);
+          }
+          lines.push("");
+        }
+        pre.textContent = lines.join("\n");
+        body.appendChild(pre);
+        const copyBtn = el("button",{class:"btn",style:"margin-top:6px;font-size:11px;padding:4px 10px"},"Copy to Clipboard");
+        copyBtn.addEventListener("click", () => {
+          navigator.clipboard.writeText(pre.textContent).then(() => ctx.toast("Copied")).catch(() => {
+            const range = document.createRange(); range.selectNodeContents(pre);
+            const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+            ctx.toast("Selected — press Ctrl+C");
+          });
+        });
+        body.appendChild(copyBtn);
+        _loaded = true;
+      } catch(e) { body.textContent = "Error: " + String(e); }
+    });
+    return wrap;
+  };
+
   // ---------- Basic mode layout ----------
   if(isBasic){
     const summary = el("div",{class:"basic-summary"},[
@@ -3134,6 +3194,7 @@ export function render(ctx){
         bQuietRow,
       ]),
       summary,
+      _buildDiagPanel(),
       basicCompanionCard,
       mapCard,
     ].filter(Boolean));
@@ -3569,6 +3630,7 @@ export function render(ctx){
       quietRow,
     ]),
     el("div",{style:"color:#94a3b8;margin-top:2px;margin-bottom:10px"}, `Mode: ${dataMode.toUpperCase()} · ${ctx.state.versionInfo?.version || ""} (${ctx.state.versionInfo?.build_id || ""})`),
+    _buildDiagPanel(),
   ].filter(Boolean));
   // Migration banner — show on overview if fabric is empty but maps have data
   {
