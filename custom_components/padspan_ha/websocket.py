@@ -5374,12 +5374,12 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
                 }
 
             # Room geometries on the device's floor
-            dev_floor = ""
-            if spatial_info:
-                # derive from scanner positions
+            dev_floor = knn.get("floor_id", "")
+            if not dev_floor:
+                # fallback: derive from strongest positioned scanner
                 for s in scanners:
                     if s.get("pos") and s["rssi"] == max(ss["rssi"] for ss in scanners if ss.get("pos")):
-                        dev_floor = s["floor"]
+                        dev_floor = s.get("floor", "")
                         break
             geo_rooms = []
             if model and dev_floor:

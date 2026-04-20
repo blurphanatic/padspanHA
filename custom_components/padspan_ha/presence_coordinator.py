@@ -1433,6 +1433,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _sp_entry: dict[str, Any] = {
                 "x_m": round(_sx_est, 3),
                 "y_m": round(_sy_est, 3),
+                "floor_id": _sf_est,
                 "confidence": rssi_margin_confidence,
                 "room": _spatial_candidate or "",
                 "source": "spatial",
