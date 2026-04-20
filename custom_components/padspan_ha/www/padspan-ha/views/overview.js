@@ -60,7 +60,7 @@ export function render(ctx){
   const objSummary = (liveSnap && liveSnap.objects && liveSnap.objects.summary) ? liveSnap.objects.summary : null;
   const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   const objectsTotal = objSummary ? (_quietMode ? objSummary.identified : objSummary.total) : tagsCount;
-  const unidentifiedCount = _quietMode ? 0 : (objSummary ? objSummary.unidentified : 0);
+  const unidentifiedCount = objSummary ? objSummary.unidentified : 0;
 
   const radios = (liveSnap && liveSnap.ble && Array.isArray(liveSnap.ble.radios)) ? liveSnap.ble.radios : [];
   const radiosCount = radios.length;
