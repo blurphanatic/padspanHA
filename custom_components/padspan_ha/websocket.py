@@ -5327,16 +5327,18 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
             source_to_area, source_to_floor = model.get_scanner_mappings()
 
         for key, obj in pc.data.items():
-            label = obj.get("user_label") or obj.get("name") or ""
-            # Only include devices that are labelled, identified, or confirmed
-            if not label and not obj.get("identified") and not confirmed.get(key):
+            if key.startswith("__"):
                 continue
-            # Skip stale devices with no recent scanner readings
-            _sources = obj.get("sources") or []
-            if _sources:
-                _min_age = min((s.get("age_s") or 999999) for s in _sources)
-                if _min_age > 86400:
-                    continue
+            label = obj.get("user_label") or obj.get("name") or ""
+            kind = obj.get("kind", "")
+            # Only include devices with actual scanner data (ema > 0)
+            _addr_for_ema = str(obj.get("address") or "").upper() if kind in ("ble", "private_ble") else key
+            _dev_ema = ema_rssi.get(_addr_for_ema, {})
+            if not _dev_ema and not label:
+                continue  # no scanner data and no label — skip
+            # Must be labelled, identified, or have a confirmed room with live scanners
+            if not label and not obj.get("identified") and not (confirmed.get(key) and _dev_ema):
+                continue
             # Get Kalman-smoothed RSSI for this device
             kind = obj.get("kind", "")
             if kind in ("ble", "private_ble"):

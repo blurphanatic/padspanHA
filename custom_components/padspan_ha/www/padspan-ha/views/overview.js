@@ -2835,24 +2835,27 @@ export function render(ctx){
           lines.push(`--- Room Geometry (${agKeys.length}) ---`);
           lines.push(`  ${agKeys.map(r => `${r}[${ag[r]}]`).join(", ")}`);
         }
-        lines.push(`--- ${devices.length} devices ---`);
+        // Split devices: active (have scanners) vs inactive
+        const active = devices.filter(d => (d.ema_count || 0) > 0);
+        const inactive = devices.filter(d => (d.ema_count || 0) === 0);
+        lines.push(`--- ${active.length} active devices (${inactive.length} inactive skipped) ---`);
         lines.push("");
-        for (const d of devices) {
-          lines.push(`=== ${d.label || d.key} (${d.kind}) ===`);
-          lines.push(`  key: ${d.key}`);
-          lines.push(`  room: ${d.room || "NONE"} | confirmed: ${d.confirmed || "NONE"}`);
-          lines.push(`  floor: ${d.dev_floor || "?"} | geo_on_floor: ${(d.geo_rooms||[]).join(", ") || "NONE"}`);
-          lines.push(`  ema: ${d.ema_count||0} | ema_with_pos: ${d.ema_with_pos||0} | use_metres: ${d.use_metres} | knn: ${d.knn_source || (d.knn_entry ? "exists" : "NONE")} | why: ${d.spatial_debug||"?"}`);
-          if (d.spatial) {
-            lines.push(`  spatial: (${d.spatial.x_m?.toFixed(1)}, ${d.spatial.y_m?.toFixed(1)}) > ${d.spatial.room || "OUTSIDE_ALL_ROOMS"}`);
-          } else {
-            lines.push(`  spatial: NONE`);
-          }
-          lines.push(`  scanners (${d.scanner_count}): ${(d.scanners || []).slice(0,6).map(s => {
-            const pos = s.pos ? `(${s.pos[0]},${s.pos[1]})` : "NO_POS";
-            return `${s.room}=${s.rssi}dBm fl=${s.floor} ${pos}`;
-          }).join(" | ")}`);
+        for (const d of active) {
+          const name = d.label || d.key.slice(0, 30);
+          const conf = d.confirmed || "NONE";
+          const why = d.spatial_debug || "?";
+          // One-line summary: name | confirmed room | spatial result
+          lines.push(`[${name}] ${d.kind} | room=${conf} | ${why}`);
+          // Top 4 scanners: room=RSSI (compact)
+          const top = (d.scanners || []).slice(0, 4).map(s =>
+            `${s.room}=${s.rssi}dBm`
+          ).join(", ");
+          lines.push(`  scanners(${d.ema_count}/${d.ema_with_pos}pos): ${top}`);
           lines.push("");
+        }
+        if (inactive.length) {
+          lines.push(`--- ${inactive.length} inactive (no scanners) ---`);
+          lines.push(inactive.map(d => d.label || d.key.slice(0, 25)).join(", "));
         }
         pre.textContent = lines.join("\n");
         body.appendChild(pre);
