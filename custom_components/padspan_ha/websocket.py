@@ -8641,53 +8641,11 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
             "excluded": False,
         }
 
-    # Phase 2: Count phone-like BLE from raw advertisements (visitors/guests)
-    # Uses random MAC + RSSI threshold + multi-scanner to distinguish
-    # real phones inside the building from IoT and neighbour devices.
-    raw_by_addr: dict[str, list] = {}
-    for ad in ads:
-        addr = str(ad.get("address") or "").upper()
-        if not addr or addr in devices:
-            continue
-        raw_by_addr.setdefault(addr, []).append(ad)
-
-    for addr, ad_list in raw_by_addr.items():
-        # Random MAC only (phones)
-        if not _is_random_mac(addr):
-            continue
-        # IoT OUI check
-        if any(addr.startswith(oui) for oui in _IOT_OUIS):
-            continue
-        # Collect per-scanner RSSI
-        _src_rssi: dict[str, float] = {}
-        for ad in ad_list:
-            rssi = ad.get("rssi")
-            src = ad.get("source")
-            if rssi is not None and src:
-                src_s = str(src)
-                if src_s not in _src_rssi or float(rssi) > _src_rssi[src_s]:
-                    _src_rssi[src_s] = float(rssi)
-        # Must be heard by >=2 scanners
-        if len(_src_rssi) < _MIN_SCANNERS:
-            continue
-        # Must have strong RSSI (inside building)
-        best_rssi = max(_src_rssi.values()) if _src_rssi else -999
-        if best_rssi < _INSIDE_RSSI:
-            continue
-        # Find room by strongest scanner
-        best_src = max(_src_rssi, key=lambda s: _src_rssi[s])
-        room = source_to_room.get(best_src, "")
-        # Dwell from timestamps
-        times = [ad.get("timestamp") or 0 for ad in ad_list if ad.get("timestamp")]
-        dwell = max(times) - min(times) if len(times) >= 2 else 0
-
-        devices[addr] = {
-            "room": room, "floor": source_to_floor.get(best_src, ""),
-            "kind": "ble_phone", "label": "",
-            "is_identified": False,
-            "dwell_s": dwell,
-            "excluded": False,
-        }
+    # Phase 2: Raw BLE advertisements NOT counted.
+    # Only devices tracked by the presence coordinator (with confirmed
+    # rooms from the spatial/vote pipeline) are reliable enough for
+    # occupancy.  Raw ads include hundreds of transient neighbor devices
+    # that pass RSSI/scanner filters but aren't in the building.
 
     # Phase 3: Apply dwell filter + infrastructure detection
     excluded_count = 0

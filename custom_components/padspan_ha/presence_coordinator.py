@@ -1394,11 +1394,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._knn_position.pop(key, None)
             self._smooth_xy.pop(key, None)
 
-        # ── Spatial position: store weighted-centroid estimate ─────────────
-        # When k-NN has no position (no calibration data), the spatial
-        # centroid from RSSI + scanner positions provides sub-room position.
-        # This is what makes "Room only" devices show at the right spot.
-        if _spatial_xy and not self._knn_position.get(key):
+        # ── Spatial position: always takes priority over k-NN ──────────────
+        # Spatial centroid is the primary position source (geometry-based).
+        # k-NN position is only used when spatial can't compute.
+        if _spatial_xy:
             _sx_est, _sy_est, _sf_est = _spatial_xy
             # EMA-smooth the spatial position to reduce jitter
             _prev_sp = self._smooth_xy.get(key)
