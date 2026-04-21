@@ -1100,15 +1100,6 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if not _room:
                     continue
                 _eff_rssi = _rssi
-                # RF barrier penalty
-                if self._rf_barriers and self._scanner_positions and self._room_centroids:
-                    _sp = self._scanner_positions.get(_src)
-                    _rc = self._room_centroids.get(_room)
-                    if _sp and _rc:
-                        _eff_rssi -= _barrier_attenuation(
-                            _sp[0], _sp[1], _sp[2], _rc[0], _rc[1], _rc[2],
-                            self._rf_barriers,
-                        )
                 # Cross-floor attenuation
                 if _floor_on and source_to_floor:
                     _src_fl = source_to_floor.get(_src, "")
@@ -1142,48 +1133,24 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Fall back to RSSI scoring (Path B) when spatial can't resolve.
             _cur_confirmed = self._confirmed_room.get(key)
             if _spatial_candidate:
-                # Spatial resolved a room — use it as the primary candidate.
-                # RSSI scoring is still available for hysteresis validation.
-                _best_room = _spatial_candidate
+                # Spatial centroid resolved a position inside a room polygon.
+                # This is the primary positioning path — geometry-based.
+                # Goes through the vote window like everything else.
+                candidate = _spatial_candidate
             elif room_scores:
+                # RSSI-only fallback: strongest signal per room with hysteresis
                 _best_room = max(room_scores, key=lambda r: room_scores[r])
-            else:
-                _best_room = None
-
-            if _best_room and room_scores:
-                # ── dBm-based hysteresis ──────────────────────────────────
-                # To switch rooms, the new room's RSSI must exceed the
-                # current room's RSSI by a threshold in dBm.  This directly
-                # reflects signal strength differences — no Gaussian compression.
-                #   Same floor, adjacent:    3 dBm
-                #   Same floor, far (>6m):   5 dBm
-                #   Cross-floor:             5 dBm
-                #   Open/loft:               3 dBm
-                #   Indoor <> outdoor:       8 dBm
-                _DBM_HYST = 3.0  # base hysteresis in dBm
                 if _cur_confirmed and _cur_confirmed in room_scores and _best_room != _cur_confirmed:
-                    # When spatial positioning provides the candidate, reduce
-                    # hysteresis — the position is geometry-confirmed, not just
-                    # strongest-scanner guesswork.
-                    _hyst = _DBM_HYST
-                    if _spatial_candidate:
-                        _hyst = max(1.0, _DBM_HYST - 1.0)  # spatial needs less hysteresis
+                    _hyst = 3.0  # base dBm hysteresis
                     _best_fl = _room_to_floor.get(_best_room, "")
                     _cur_fl = _room_to_floor.get(_cur_confirmed, "")
                     if _best_fl and _cur_fl and _best_fl != _cur_fl:
-                        _involved = {_best_fl, _cur_fl}
-                        _has_open = any(
-                            b.get("material") == "open" and b.get("floor_id") in _involved
-                            for b in (self._rf_barriers or [])
-                        )
-                        if OUTSIDE_FLOOR_ID in _involved:
-                            _hyst = 8.0
-                        elif _has_open:
-                            _hyst = 3.0
+                        if OUTSIDE_FLOOR_ID in {_best_fl, _cur_fl}:
+                            _hyst = 8.0  # indoor↔outdoor
                         else:
                             _hyst = 5.0  # cross-floor
-
-                    elif not _spatial_candidate:
+                    else:
+                        # Same floor — increase hysteresis for distant rooms
                         _c_cur = self._room_centroids.get(_cur_confirmed)
                         _c_best = self._room_centroids.get(_best_room)
                         if _c_cur and _c_best and _c_cur[2] == _c_best[2]:
@@ -1194,10 +1161,6 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 _d *= 20.0
                             if _d > 6.0:
                                 _hyst = 5.0
-
-                    # For spatial candidate, check RSSI of best room vs current.
-                    # If spatial room has no RSSI score (no scanner in that room),
-                    # skip RSSI hysteresis — trust the geometry.
                     _best_rssi = room_scores.get(_best_room)
                     _cur_rssi = room_scores.get(_cur_confirmed)
                     if _best_rssi is not None and _cur_rssi is not None:
@@ -1205,15 +1168,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             candidate = _cur_confirmed
                         else:
                             candidate = _best_room
-                    elif _spatial_candidate:
-                        # Spatial room has no dedicated scanner — trust geometry
-                        candidate = _best_room
                     else:
                         candidate = _cur_confirmed if _cur_confirmed else _best_room
                 else:
                     candidate = _best_room
-            elif _best_room:
-                candidate = _best_room
 
         # ── Comprehensive diagnostic for labelled devices ─────────────────────
         _obj_label = (self._known_objs.get(key) or {}).get("user_label")
@@ -1401,22 +1359,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _knn_smoothed["x_frac"] = round(_sx, 4)
                         _knn_smoothed["y_frac"] = round(_sy, 4)
                     self._knn_position[key] = _knn_smoothed
-                    # k-NN room override: only override the candidate when k-NN
-                    # agrees with EITHER the spatial centroid OR the RSSI best-room.
-                    # k-NN alone should NOT force a device into a room that both
-                    # spatial and RSSI scoring say is wrong — that means the
-                    # calibration data is stale or was collected in the wrong spot.
-                    if _knn_room:
-                        if _knn_room == candidate:
-                            pass  # agrees — no change needed
-                        elif _knn_conf >= 0.50:
-                            _rssi_best = max(room_scores, key=lambda r: room_scores[r]) if room_scores else None
-                            _knn_agrees_spatial = (_spatial_candidate and _knn_room == _spatial_candidate)
-                            _knn_agrees_rssi = (_rssi_best and _knn_room == _rssi_best)
-                            if _knn_agrees_spatial or _knn_agrees_rssi:
-                                candidate = _knn_room  # corroborated override
-                            # else: k-NN disagrees with both spatial AND RSSI — ignore it
-                        # else: k-NN disagrees but isn't confident enough — keep candidate
+                    # k-NN room override: calibration data the user collected.
+                    # Trust it when confidence is reasonable (>= 0.30).
+                    if _knn_room and _knn_conf >= 0.30:
+                        candidate = _knn_room
                 else:
                     self._knn_position.pop(key, None)
                     self._smooth_xy.pop(key, None)
@@ -1462,33 +1408,15 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             break
             self._knn_position[key] = _sp_entry
 
-        # ── Stage 2: room confirmation ────────────────────────────────────────
-        # When spatial centroid resolved a room, trust it directly — it's based
-        # on physics (scanner positions + distances + room geometry), not noisy
-        # RSSI comparisons.  The vote window is only needed when spatial can't
-        # resolve (no scanner positions or position outside all room boundaries).
-        if _spatial_candidate and candidate == _spatial_candidate:
-            self._confirmed_room[key] = _spatial_candidate
-            self._room_confidence[key] = max(rssi_margin_confidence, 0.7)
-            self._rssi_margin_confidence[key] = rssi_margin_confidence
-            self._room_votes.pop(key, None)  # reset votes to match
-            return _spatial_candidate
-
-        # Fallback: majority-vote temporal stabilization for RSSI-only scoring.
+        # ── Stage 2: majority-vote room confirmation ──────────────────────────
+        # ALL candidates (spatial, k-NN, or RSSI-based) go through the vote
+        # window.  This provides temporal stabilization — a room must win a
+        # majority of recent polls before it becomes the confirmed room.
         existing = self._room_votes.get(key)
         if existing is None or existing.maxlen != vote_window:
             prev = list(existing) if existing else []
             self._room_votes[key] = deque(prev[-vote_window:], maxlen=vote_window)
         votes = self._room_votes[key]
-
-        # Clear stale votes when spatial disagrees with confirmed room
-        _confirmed_now = self._confirmed_room.get(key)
-        if (_spatial_candidate
-                and _confirmed_now
-                and _spatial_candidate != _confirmed_now
-                and len(votes) > 0):
-            # Spatial says different room — flush old votes
-            votes.clear()
 
         # Skip None candidates (total signal dropout) — preserves the last
         # known room instead of diluting the window with empty votes.
@@ -1865,11 +1793,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._beacon_autocal_last[key] = now
             try:
                 await cal_store.async_add_point({
-                    "map_id": pin["map_id"],
-                    "x_frac": pin["x"],
-                    "y_frac": pin["y"],
-                    "floor_id": pin["floor_id"],
-                    "room": pin["room"],
+                    "map_id": "",
+                    "x_frac": 0.5,
+                    "y_frac": 0.5,
+                    "x_m": pin.get("x_m"),
+                    "y_m": pin.get("y_m"),
+                    "floor_id": pin.get("floor_id", ""),
+                    "room": pin.get("room", ""),
                     "label": f"[auto] {obj.get('user_label') or key}",
                     "device_id": key,
                     "duration_s": 10,

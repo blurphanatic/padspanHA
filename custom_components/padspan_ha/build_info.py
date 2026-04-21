@@ -4,8 +4,8 @@
 # See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 """Generated at build time. Used to prove what version is actually installed."""
 
-BUILD_VERSION = "0.20.38"
-BUILD_ID = "20260421T162312Z"
+BUILD_VERSION = "0.20.39"
+BUILD_ID = "20260421T194115Z"
 CHANNEL = "beta"
 
 # Backwards/for convenience
