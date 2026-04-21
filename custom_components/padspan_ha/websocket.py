@@ -8597,9 +8597,15 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
     now_mono = _time.monotonic()
     devices: dict[str, dict] = {}  # addr → {room, floor, kind, label, first_seen_s, is_identified, rssi_var}
 
-    # From enriched objects (presence coordinator) — these are identified
+    # From enriched objects (presence coordinator)
+    # Only count devices that represent actual people:
+    #   - User-labelled devices (explicitly tagged by user)
+    #   - Private BLE phones (IRK-resolved identity = real phone)
+    #   - Entity trackers (HA person/device_tracker)
+    # Random BLE devices (headphones, watches, neighbour phones, IoT)
+    # are NOT people — skip them entirely.
     for key, obj in pc_data.items():
-        if not isinstance(obj, dict):
+        if not isinstance(obj, dict) or key.startswith("__"):
             continue
         room = obj.get("room") or ""
         kind = obj.get("kind") or ""
@@ -8608,15 +8614,18 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
         if age_s is not None and float(age_s) > 600:
             continue  # too stale
 
-        # Classify
-        is_ibeacon = kind == "ibeacon"
-        is_entity = kind == "entity"
         has_label = bool(obj.get("user_label"))
-        is_identified = has_label or is_entity
+        is_entity = kind == "entity"
+        is_phone = kind == "private_ble"
 
-        # Skip iBeacons (infrastructure)
-        if is_ibeacon and not has_label:
+        # Skip random BLE devices — not people
+        if kind == "ble" and not has_label:
             continue
+        # Skip iBeacons (infrastructure)
+        if kind == "ibeacon" and not has_label:
+            continue
+
+        is_identified = has_label or is_entity or is_phone
 
         # IoT OUI check
         addr_upper = str(addr).upper()
@@ -8628,51 +8637,14 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
             "room": room, "floor": source_to_floor.get(room, ""),
             "kind": kind, "label": obj.get("user_label") or obj.get("name") or "",
             "is_identified": is_identified,
-            "dwell_s": float(age_s) if age_s is not None else 999,
+            "dwell_s": float(age_s) if age_s is not None else 0,
             "excluded": False,
         }
 
-    # Phase 2: Count raw BLE advertisements for untracked devices
-    # Group by address, find room by strongest scanner
-    raw_by_addr: dict[str, list] = {}
-    for ad in ads:
-        addr = str(ad.get("address") or "").upper()
-        if not addr or addr in devices:
-            continue  # already tracked
-        raw_by_addr.setdefault(addr, []).append(ad)
-
-    for addr, ad_list in raw_by_addr.items():
-        # IoT OUI check
-        is_iot = any(addr.startswith(oui) for oui in _IOT_OUIS)
-        if is_iot:
-            continue
-
-        # Find best scanner (strongest RSSI)
-        best_rssi = -999
-        best_src = ""
-        for ad in ad_list:
-            rssi = ad.get("rssi")
-            src = ad.get("source")
-            if rssi is not None and src and float(rssi) > best_rssi:
-                best_rssi = float(rssi)
-                best_src = str(src)
-
-        room = source_to_room.get(best_src, "")
-
-        # Compute dwell from first/last seen
-        times = [ad.get("timestamp") or 0 for ad in ad_list if ad.get("timestamp")]
-        if len(times) >= 2:
-            dwell = max(times) - min(times)
-        else:
-            dwell = 0
-
-        devices[addr] = {
-            "room": room, "floor": source_to_floor.get(best_src, ""),
-            "kind": "ble_raw", "label": "",
-            "is_identified": False,
-            "dwell_s": dwell,
-            "excluded": False,
-        }
+    # Phase 2: Raw BLE advertisements skipped — random BLE devices
+    # (neighbour phones, headphones, IoT) are not building occupants.
+    # Only devices tracked by the presence coordinator (labelled, phones
+    # with IRK, entity trackers) are counted.
 
     # Phase 3: Apply dwell filter + infrastructure detection
     excluded_count = 0
