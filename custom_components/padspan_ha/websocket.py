@@ -5350,8 +5350,9 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
             if not ema:
                 continue  # no scanner data = nothing to diagnose
             _stats["active"] += 1
-            if not label and not obj.get("identified") and not confirmed.get(key):
-                continue  # unlabelled + unconfirmed = skip
+            # Only show user-labelled devices — random BLE is noise
+            if not obj.get("user_label"):
+                continue
 
             # Decision chain from last poll
             cand = last_cand.get(key, {})
