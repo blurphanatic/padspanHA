@@ -262,6 +262,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._smooth_xy: dict[str, tuple[float, float]] = {}
         # {key: str}  — spatial debug info (why centroid succeeded/failed)
         self._spatial_debug: dict[str, str] = {}
+        # {key: dict}  — last candidate info for diagnostics
+        self._last_candidate: dict[str, dict[str, Any]] = {}
         # Throttle: {key: monotonic_ts} — last alert sent time per object
         self._alert_last_sent: dict[str, float] = {}
         _ALERT_COOLDOWN_S = 60  # min seconds between alerts for same device
@@ -1423,6 +1425,24 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             break
             self._knn_position[key] = _sp_entry
 
+        # ── Store candidate info for diagnostics ─────────────────────────────
+        _cand_source = "none"
+        if candidate == _spatial_candidate and _spatial_candidate:
+            _cand_source = "spatial"
+        elif candidate and self._knn_position.get(key) and candidate == (self._knn_position[key].get("room") or self._knn_position[key].get("nearest_room")):
+            _cand_source = "knn"
+        elif candidate:
+            _cand_source = "rssi"
+        _rssi_best = max(room_scores, key=lambda r: room_scores[r]) if room_scores else None
+        self._last_candidate[key] = {
+            "candidate": candidate,
+            "source": _cand_source,
+            "spatial_room": _spatial_candidate,
+            "spatial_xy": _spatial_xy,
+            "rssi_best": _rssi_best,
+            "rssi_top3": sorted(room_scores.items(), key=lambda x: -x[1])[:3] if room_scores else [],
+        }
+
         # ── Stage 2: majority-vote room confirmation ──────────────────────────
         # ALL candidates (spatial, k-NN, or RSSI-based) go through the vote
         # window.  This provides temporal stabilization — a room must win a
@@ -1656,6 +1676,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._floor_dwell_start.pop(key, None)
         self._device_floor.pop(key, None)
         self._alert_last_sent.pop(key, None)
+        self._last_candidate.pop(key, None)
         self._ema_rssi.pop(key, None)
         self._kalman_p.pop(key, None)
         self._silence_miss.pop(key, None)

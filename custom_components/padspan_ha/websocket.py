@@ -5313,14 +5313,14 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
     pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
     model = hass.data.get(DOMAIN, {}).get(DATA_MODEL)
     diag: list[dict] = []
+    _stats = {"total": 0, "active": 0, "spatial_ok": 0, "outside_all": 0}
     if pc and pc.data:
         scanner_positions = getattr(pc, "_scanner_positions", {})
-        room_centroids = getattr(pc, "_room_centroids", {})
-        rf_barriers = getattr(pc, "_rf_barriers", [])
         ema_rssi = getattr(pc, "_ema_rssi", {})
-        knn_pos = getattr(pc, "_knn_position", {})
         confirmed = getattr(pc, "_confirmed_room", {})
         spatial_debug = getattr(pc, "_spatial_debug", {})
+        last_cand = getattr(pc, "_last_candidate", {})
+        room_votes = getattr(pc, "_room_votes", {})
         source_to_area = {}
         source_to_floor = {}
         if model:
@@ -5329,107 +5329,59 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
         for key, obj in pc.data.items():
             if key.startswith("__"):
                 continue
+            _stats["total"] += 1
             label = obj.get("user_label") or obj.get("name") or ""
             kind = obj.get("kind", "")
-            # Only include devices with actual scanner data (ema > 0)
-            _addr_for_ema = str(obj.get("address") or "").upper() if kind in ("ble", "private_ble") else key
-            _dev_ema = ema_rssi.get(_addr_for_ema, {})
-            if not _dev_ema and not label:
-                continue  # no scanner data and no label — skip
-            # Must be labelled, identified, or have a confirmed room with live scanners
-            if not label and not obj.get("identified") and not (confirmed.get(key) and _dev_ema):
-                continue
-            # Get Kalman-smoothed RSSI for this device
-            kind = obj.get("kind", "")
-            if kind in ("ble", "private_ble"):
-                addr = str(obj.get("address") or "").upper()
-                ema = ema_rssi.get(addr, {})
-            elif kind == "ibeacon":
-                ema = ema_rssi.get(key, {})
-            else:
-                ema = {}
+            _addr_key = str(obj.get("address") or "").upper() if kind in ("ble", "private_ble") else key
+            ema = ema_rssi.get(_addr_key, {})
+            if not ema:
+                continue  # no scanner data = nothing to diagnose
+            _stats["active"] += 1
+            if not label and not obj.get("identified") and not confirmed.get(key):
+                continue  # unlabelled + unconfirmed = skip
 
-            # Kalman-smoothed scanners (what the algorithm uses)
-            scanners = []
-            for src, rssi in sorted(ema.items(), key=lambda x: -x[1]):
+            # Decision chain from last poll
+            cand = last_cand.get(key, {})
+            _sp_xy = cand.get("spatial_xy")
+            _sp_room = cand.get("spatial_room") or ""
+            _sp_dbg = spatial_debug.get(key, "")
+
+            # Track spatial stats
+            if "computed:" in _sp_dbg:
+                if ">OUTSIDE_ALL" in _sp_dbg:
+                    _stats["outside_all"] += 1
+                else:
+                    _stats["spatial_ok"] += 1
+
+            # Top 4 scanners (room + rssi + floor)
+            top_scanners = []
+            for src, rssi in sorted(ema.items(), key=lambda x: -x[1])[:4]:
                 sp = scanner_positions.get(src)
-                scanners.append({
-                    "source": src,
+                top_scanners.append({
+                    "room": source_to_area.get(src, "?"),
                     "rssi": round(rssi, 1),
-                    "pos": [round(sp[0], 1), round(sp[1], 1)] if sp else None,
                     "floor": sp[2] if sp else source_to_floor.get(src, "?"),
-                    "room": source_to_area.get(src, "?"),
                 })
 
-            # Raw scanners from the snapshot object (before Kalman)
-            raw_scanners = []
-            for s in (obj.get("sources") or []):
-                src = s.get("source", "")
-                sp = scanner_positions.get(src)
-                raw_scanners.append({
-                    "source": src,
-                    "rssi": s.get("rssi"),
-                    "age_s": s.get("age_s"),
-                    "room": source_to_area.get(src, "?"),
-                })
+            # Vote window
+            _votes = list(room_votes.get(key, []))
 
-            # Spatial centroid info from knn_position (source=spatial)
-            knn = knn_pos.get(key, {})
-            spatial_info = None
-            if knn.get("source") == "spatial":
-                spatial_info = {
-                    "x_m": knn.get("x_m"), "y_m": knn.get("y_m"),
-                    "room": knn.get("room", ""),
-                    "x_frac": knn.get("x_frac"), "y_frac": knn.get("y_frac"),
-                }
-
-            # Room geometries on the device's floor
-            dev_floor = knn.get("floor_id", "")
-            if not dev_floor:
-                # fallback: derive from strongest positioned scanner
-                for s in scanners:
-                    if s.get("pos") and s["rssi"] == max(ss["rssi"] for ss in scanners if ss.get("pos")):
-                        dev_floor = s.get("floor", "")
-                        break
-            geo_rooms = []
-            if model and dev_floor:
-                for rn, geo in (model.data.get("room_geometry_m") or {}).items():
-                    if isinstance(geo, dict) and geo.get("floor_id") == dev_floor:
-                        geo_rooms.append(rn)
-
-            # Cap MAC addresses to avoid Pixel-style 200+ list
-            _addrs = obj.get("all_addresses", [])
-            if len(_addrs) > 8:
-                _addrs = _addrs[:8]
-
-            # Debug: count how many ema sources have scanner positions
-            _ema_keys = set(ema.keys())
-            _pos_keys = set(scanner_positions.keys())
-            _ema_with_pos = len(_ema_keys & _pos_keys)
+            _ema_with_pos = len(set(ema.keys()) & set(scanner_positions.keys()))
 
             diag.append({
-                "key": key,
-                "label": label,
+                "label": label or key[:30],
                 "kind": kind,
-                "room": obj.get("room", ""),
                 "confirmed": confirmed.get(key, ""),
-                "all_addresses": _addrs,
-                "scanners": scanners[:12],
-                "scanner_count": len(scanners),
-                "raw_scanners": raw_scanners[:6],
-                "raw_scanner_count": len(raw_scanners),
-                "spatial": spatial_info,
-                "dev_floor": dev_floor,
-                "geo_rooms": geo_rooms,
-                "scanner_positions_total": len(scanner_positions),
-                "barriers": len(rf_barriers),
-                "use_metres": getattr(pc, "_use_metres", False),
-                "suspended": pc.suspended,
+                "candidate": cand.get("candidate", ""),
+                "cand_source": cand.get("source", ""),
+                "spatial_room": _sp_room,
+                "spatial_xy": f"({_sp_xy[0]:.1f},{_sp_xy[1]:.1f})@{_sp_xy[2]}" if _sp_xy else "",
+                "spatial_debug": _sp_dbg,
+                "rssi_top3": [[r, round(s, 1)] for r, s in cand.get("rssi_top3", [])],
+                "votes": _votes,
+                "scanners": top_scanners,
                 "ema_count": len(ema),
                 "ema_with_pos": _ema_with_pos,
-                "knn_entry": bool(knn_pos.get(key)),
-                "knn_source": knn.get("source", ""),
-                "spatial_debug": spatial_debug.get(key, "no_run"),
             })
 
     # BLE seed status
@@ -5453,8 +5405,10 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
                 all_geo[rn] = geo.get("floor_id", "?")
     connection.send_result(msg["id"], {
         "devices": diag,
+        "stats": _stats,
         "ble_seed": ble_seed,
         "all_room_geometry": all_geo,
+        "scanner_positions": len(getattr(pc, "_scanner_positions", {})) if pc else 0,
     })
 
 

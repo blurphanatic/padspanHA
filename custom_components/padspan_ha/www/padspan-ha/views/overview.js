@@ -2824,38 +2824,53 @@ export function render(ctx){
         body.textContent = "";
         const pre = el("pre",{style:"font-size:11px;color:#e2e8f0;background:#0f172a;padding:10px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;max-height:400px;overflow-y:auto;user-select:all;cursor:text"});
         const lines = [];
+        // System health summary
+        const st = res.stats || {};
         const seed = res.ble_seed || {};
-        lines.push(`--- BLE Data Source ---`);
-        lines.push(`  method: ${seed.method || "?"} | scanners: ${seed.scanner_count || 0} | device_readings: ${seed.device_readings || 0}`);
-        if (seed.error) lines.push(`  ERROR: ${seed.error}`);
-        // Room geometry summary (once)
         const ag = res.all_room_geometry || {};
         const agKeys = Object.keys(ag);
-        if (agKeys.length) {
-          lines.push(`--- Room Geometry (${agKeys.length}) ---`);
-          lines.push(`  ${agKeys.map(r => `${r}[${ag[r]}]`).join(", ")}`);
-        }
-        // Split devices: active (have scanners) vs inactive
-        const active = devices.filter(d => (d.ema_count || 0) > 0);
-        const inactive = devices.filter(d => (d.ema_count || 0) === 0);
-        lines.push(`--- ${active.length} active devices (${inactive.length} inactive skipped) ---`);
+        lines.push(`=== PadSpan Positioning Diagnostics ===`);
+        lines.push(`BLE: ${seed.method||"?"} | ${seed.scanner_count||0} scanners | ${st.active||0} active devices of ${st.total||0}`);
+        lines.push(`Scanner positions: ${res.scanner_positions||0} | Room polygons: ${agKeys.length} | Spatial OK: ${st.spatial_ok||0} | OUTSIDE_ALL: ${st.outside_all||0}`);
+        if (seed.error) lines.push(`BLE ERROR: ${seed.error}`);
         lines.push("");
-        for (const d of active) {
-          const name = d.label || d.key.slice(0, 30);
-          const conf = d.confirmed || "NONE";
-          const why = d.spatial_debug || "?";
-          // One-line summary: name | confirmed room | spatial result
-          lines.push(`[${name}] ${d.kind} | room=${conf} | ${why}`);
-          // Top 4 scanners: room=RSSI (compact)
-          const top = (d.scanners || []).slice(0, 4).map(s =>
-            `${s.room}=${s.rssi}dBm`
-          ).join(", ");
+        // Per device: decision chain
+        for (const d of devices) {
+          const conf = d.confirmed || "---";
+          const cand = d.candidate || "---";
+          const sp = d.spatial_room || "";
+          // Flag: does spatial disagree with confirmed?
+          const flag = (sp && conf !== "---" && sp !== conf) ? " \u26A0" : (sp && sp === conf) ? " \u2713" : "";
+          lines.push(`[${d.label}] ${d.kind}${flag}`);
+          // Line 2: decision chain
+          const src = d.cand_source || "?";
+          lines.push(`  confirmed: ${conf} | candidate: ${cand} (${src}) | spatial: ${sp || "none"}`);
+          // Line 3: spatial detail if computed
+          if (d.spatial_xy) {
+            lines.push(`  position: ${d.spatial_xy}`);
+          }
+          // Line 4: top scanners
+          const top = (d.scanners || []).map(s => `${s.room}=${s.rssi}[${s.floor}]`).join(", ");
           lines.push(`  scanners(${d.ema_count}/${d.ema_with_pos}pos): ${top}`);
+          // Line 5: vote window
+          if (d.votes && d.votes.length) {
+            // Abbreviate room names for compactness
+            const abbr = (r) => {
+              if (!r) return "?";
+              const words = r.split(/[\s']+/);
+              return words.length > 1 ? words.map(w => w[0]).join("").toUpperCase() : r.slice(0, 8);
+            };
+            const voteStr = d.votes.map(abbr).join(" ");
+            const counts = {};
+            d.votes.forEach(v => { counts[v] = (counts[v]||0) + 1; });
+            const topVote = Object.entries(counts).sort((a,b) => b[1]-a[1])[0];
+            lines.push(`  votes: [${voteStr}] ${topVote ? topVote[0]+"="+topVote[1]+"/"+d.votes.length : ""}`);
+          }
+          // Line 6: RSSI scores if available
+          if (d.rssi_top3 && d.rssi_top3.length) {
+            lines.push(`  rssi_scores: ${d.rssi_top3.map(([r,s]) => `${r}=${s}`).join(", ")}`);
+          }
           lines.push("");
-        }
-        if (inactive.length) {
-          lines.push(`--- ${inactive.length} inactive (no scanners) ---`);
-          lines.push(inactive.map(d => d.label || d.key.slice(0, 25)).join(", "));
         }
         pre.textContent = lines.join("\n");
         body.appendChild(pre);
