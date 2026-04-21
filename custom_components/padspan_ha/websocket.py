@@ -3096,9 +3096,22 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
     except Exception as _overlay_err:
         _LOGGER.warning("Coordinator overlay failed — positioning data may be stale: %s", _overlay_err, exc_info=True)
 
-    # Ghost injection removed — devices not broadcasting should not appear
-    # on the map.  Followed devices get alerts via the follow system, not
-    # by faking stale presence objects in the snapshot.
+    # Rebuild room_tag_map from overlaid objects so the map matches the
+    # presence coordinator's smoothed room assignments (spatial centroid).
+    # Without this, the map uses pre-overlay raw RSSI rooms while the
+    # object list uses post-overlay smoothed rooms → mismatch.
+    try:
+        _rtm_fresh: dict[str, list[str]] = {}
+        for _obj in (snap.get("objects") or {}).get("list") or []:
+            _r = _obj.get("room")
+            _eid = _obj.get("entity_id") or _obj.get("key") or ""
+            if _r and _eid:
+                _rtm_fresh.setdefault(_r, []).append(_eid)
+        if _rtm_fresh:
+            snap["room_tag_map_live"] = _rtm_fresh
+            snap["room_tag_map"] = _rtm_fresh
+    except Exception:
+        pass
 
     # Inject calibration status so the UI knows the state of the cal store
     try:
