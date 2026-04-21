@@ -1089,7 +1089,22 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 _spatial_candidate = _geo_room
                                 self._spatial_debug[key] += f">{_geo_room}"
                             else:
-                                self._spatial_debug[key] += ">OUTSIDE_ALL"
+                                # Position outside all room polygons (geometry gaps).
+                                # Fall back to nearest room centroid on this floor.
+                                _nearest_room = None
+                                _nearest_dist = 999.0
+                                for _rn, (_rcx, _rcy, _rfl) in self._room_centroids.items():
+                                    if _rfl != _best_floor:
+                                        continue
+                                    _rd = math.sqrt((_est_x - _rcx) ** 2 + (_est_y - _rcy) ** 2)
+                                    if _rd < _nearest_dist:
+                                        _nearest_dist = _rd
+                                        _nearest_room = _rn
+                                if _nearest_room and _nearest_dist < 10.0:
+                                    _spatial_candidate = _nearest_room
+                                    self._spatial_debug[key] += f">nearest:{_nearest_room}({_nearest_dist:.1f}m)"
+                                else:
+                                    self._spatial_debug[key] += ">OUTSIDE_ALL"
                         else:
                             self._spatial_debug[key] = "idw_returned_none"
 

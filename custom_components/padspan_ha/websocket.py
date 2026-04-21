@@ -8597,13 +8597,27 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
     now_mono = _time.monotonic()
     devices: dict[str, dict] = {}  # addr → {room, floor, kind, label, first_seen_s, is_identified, rssi_var}
 
+    # ── Phone detection helper ─────────────────────────────────────────
+    # Random MAC = locally-administered bit set (bit 1 of first octet).
+    # All modern phones (iOS 8+, Android 6+) use random MACs for BLE.
+    # IoT devices almost always use static (public) MACs.
+    def _is_random_mac(addr: str) -> bool:
+        try:
+            return bool(int(addr.replace(":", "")[:2], 16) & 0x02)
+        except (ValueError, IndexError):
+            return False
+
+    _INSIDE_RSSI = -75.0  # dBm — weaker = likely outside building
+    _MIN_SCANNERS = 2     # must be heard by >=2 scanners (not wall bleed)
+
     # From enriched objects (presence coordinator)
-    # Only count devices that represent actual people:
-    #   - User-labelled devices (explicitly tagged by user)
-    #   - Private BLE phones (IRK-resolved identity = real phone)
-    #   - Entity trackers (HA person/device_tracker)
-    # Random BLE devices (headphones, watches, neighbour phones, IoT)
-    # are NOT people — skip them entirely.
+    # Classification per Cisco/Aruba approach:
+    #   - Labelled devices: always count (user tagged = known person)
+    #   - Private BLE (IRK phones): always count (resolved identity)
+    #   - Entity trackers: always count (HA person/device_tracker)
+    #   - Random MAC BLE with strong RSSI + multi-scanner: phone inside building
+    #   - Static MAC BLE / weak RSSI / single scanner: exclude (IoT or outside)
+    #   - iBeacons: exclude (infrastructure)
     for key, obj in pc_data.items():
         if not isinstance(obj, dict) or key.startswith("__"):
             continue
@@ -8618,17 +8632,33 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
         is_entity = kind == "entity"
         is_phone = kind == "private_ble"
 
-        # Skip random BLE devices — not people
-        if kind == "ble" and not has_label:
-            continue
-        # Skip iBeacons (infrastructure)
+        # Skip iBeacons (infrastructure) unless labelled
         if kind == "ibeacon" and not has_label:
             continue
 
+        # For unlabelled BLE devices: classify as phone or noise
+        addr_upper = str(addr).upper()
+        if kind == "ble" and not has_label:
+            # Must have random MAC (phones do, IoT doesn't)
+            if not _is_random_mac(addr_upper):
+                continue
+            # IoT OUI check
+            if any(addr_upper.startswith(oui) for oui in _IOT_OUIS):
+                continue
+            # Must be heard strongly (inside building, not neighbour)
+            source_rssi = obj.get("_source_rssi") or {}
+            if not source_rssi:
+                continue
+            best_rssi = max(source_rssi.values())
+            if best_rssi < _INSIDE_RSSI:
+                continue  # too weak — likely outside
+            # Must be heard by multiple scanners (not single-wall bleed)
+            if len(source_rssi) < _MIN_SCANNERS:
+                continue
+
         is_identified = has_label or is_entity or is_phone
 
-        # IoT OUI check
-        addr_upper = str(addr).upper()
+        # IoT OUI check for non-BLE kinds
         is_iot = any(addr_upper.startswith(oui) for oui in _IOT_OUIS)
         if is_iot and not has_label:
             continue
@@ -8641,10 +8671,53 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
             "excluded": False,
         }
 
-    # Phase 2: Raw BLE advertisements skipped — random BLE devices
-    # (neighbour phones, headphones, IoT) are not building occupants.
-    # Only devices tracked by the presence coordinator (labelled, phones
-    # with IRK, entity trackers) are counted.
+    # Phase 2: Count phone-like BLE from raw advertisements (visitors/guests)
+    # Uses random MAC + RSSI threshold + multi-scanner to distinguish
+    # real phones inside the building from IoT and neighbour devices.
+    raw_by_addr: dict[str, list] = {}
+    for ad in ads:
+        addr = str(ad.get("address") or "").upper()
+        if not addr or addr in devices:
+            continue
+        raw_by_addr.setdefault(addr, []).append(ad)
+
+    for addr, ad_list in raw_by_addr.items():
+        # Random MAC only (phones)
+        if not _is_random_mac(addr):
+            continue
+        # IoT OUI check
+        if any(addr.startswith(oui) for oui in _IOT_OUIS):
+            continue
+        # Collect per-scanner RSSI
+        _src_rssi: dict[str, float] = {}
+        for ad in ad_list:
+            rssi = ad.get("rssi")
+            src = ad.get("source")
+            if rssi is not None and src:
+                src_s = str(src)
+                if src_s not in _src_rssi or float(rssi) > _src_rssi[src_s]:
+                    _src_rssi[src_s] = float(rssi)
+        # Must be heard by >=2 scanners
+        if len(_src_rssi) < _MIN_SCANNERS:
+            continue
+        # Must have strong RSSI (inside building)
+        best_rssi = max(_src_rssi.values()) if _src_rssi else -999
+        if best_rssi < _INSIDE_RSSI:
+            continue
+        # Find room by strongest scanner
+        best_src = max(_src_rssi, key=lambda s: _src_rssi[s])
+        room = source_to_room.get(best_src, "")
+        # Dwell from timestamps
+        times = [ad.get("timestamp") or 0 for ad in ad_list if ad.get("timestamp")]
+        dwell = max(times) - min(times) if len(times) >= 2 else 0
+
+        devices[addr] = {
+            "room": room, "floor": source_to_floor.get(best_src, ""),
+            "kind": "ble_phone", "label": "",
+            "is_identified": False,
+            "dwell_s": dwell,
+            "excluded": False,
+        }
 
     # Phase 3: Apply dwell filter + infrastructure detection
     excluded_count = 0
