@@ -2842,6 +2842,7 @@ export function render(ctx){
           lines.push(`  key: ${d.key}`);
           lines.push(`  room: ${d.room || "NONE"} | confirmed: ${d.confirmed || "NONE"}`);
           lines.push(`  floor: ${d.dev_floor || "?"} | geo_on_floor: ${(d.geo_rooms||[]).join(", ") || "NONE"}`);
+          lines.push(`  ema: ${d.ema_count||0} | ema_with_pos: ${d.ema_with_pos||0} | use_metres: ${d.use_metres} | knn: ${d.knn_source || (d.knn_entry ? "exists" : "NONE")} | why: ${d.spatial_debug||"?"}`);
           if (d.spatial) {
             lines.push(`  spatial: (${d.spatial.x_m?.toFixed(1)}, ${d.spatial.y_m?.toFixed(1)}) > ${d.spatial.room || "OUTSIDE_ALL_ROOMS"}`);
           } else {

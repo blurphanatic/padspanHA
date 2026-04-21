@@ -5320,6 +5320,7 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
         ema_rssi = getattr(pc, "_ema_rssi", {})
         knn_pos = getattr(pc, "_knn_position", {})
         confirmed = getattr(pc, "_confirmed_room", {})
+        spatial_debug = getattr(pc, "_spatial_debug", {})
         source_to_area = {}
         source_to_floor = {}
         if model:
@@ -5399,6 +5400,11 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
             if len(_addrs) > 8:
                 _addrs = _addrs[:8]
 
+            # Debug: count how many ema sources have scanner positions
+            _ema_keys = set(ema.keys())
+            _pos_keys = set(scanner_positions.keys())
+            _ema_with_pos = len(_ema_keys & _pos_keys)
+
             diag.append({
                 "key": key,
                 "label": label,
@@ -5417,6 +5423,11 @@ async def ws_positioning_diag(hass: HomeAssistant, connection, msg) -> None:
                 "barriers": len(rf_barriers),
                 "use_metres": getattr(pc, "_use_metres", False),
                 "suspended": pc.suspended,
+                "ema_count": len(ema),
+                "ema_with_pos": _ema_with_pos,
+                "knn_entry": bool(knn_pos.get(key)),
+                "knn_source": knn.get("source", ""),
+                "spatial_debug": spatial_debug.get(key, "no_run"),
             })
 
     # BLE seed status

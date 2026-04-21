@@ -260,6 +260,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._knn_position: dict[str, dict] = {}
         # {key: (x, y)}  — EMA-smoothed position for stable map display
         self._smooth_xy: dict[str, tuple[float, float]] = {}
+        # {key: str}  — spatial debug info (why centroid succeeded/failed)
+        self._spatial_debug: dict[str, str] = {}
         # Throttle: {key: monotonic_ts} — last alert sent time per object
         self._alert_last_sent: dict[str, float] = {}
         _ALERT_COOLDOWN_S = 60  # min seconds between alerts for same device
@@ -1016,6 +1018,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Requires ≥3 scanners with known positions and live RSSI.
             # Converts RSSI → distance via path-loss model, then computes
             # inverse-distance² weighted centroid of scanner positions.
+            if not (self._use_metres and self._scanner_positions and _model):
+                self._spatial_debug[key] = f"disabled:metres={self._use_metres},pos={len(self._scanner_positions)},model={bool(_model)}"
             if self._use_metres and self._scanner_positions and _model:
                 # Collect scanners with known positions
                 _src_list: list[tuple[str, float, float, float, str]] = []
@@ -1025,17 +1029,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         continue
                     _src_list.append((_src, _sp[0], _sp[1], _rssi, _sp[2]))
 
+                if len(_src_list) < 3:
+                    self._spatial_debug[key] = f"need_3_pos_scanners:got_{len(_src_list)}_of_{len(ema)}_ema"
                 if len(_src_list) >= 3:
-                    if not hasattr(self, "_spatial_log_ct"):
-                        self._spatial_log_ct = 0
-                    self._spatial_log_ct += 1
-                    if self._spatial_log_ct <= 5:
-                        _LOGGER.info(
-                            "Spatial centroid [%s]: %d scanners w/pos, "
-                            "use_metres=%s, model=%s",
-                            key[:30], len(_src_list),
-                            self._use_metres, bool(_model),
-                        )
                     # Determine which floor the device is on by strongest
                     # RSSI, not most scanners.  A garage scanner at -60 dBm
                     # on floor B beats 10 living room scanners at -75 dBm
@@ -1084,12 +1080,18 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             _p2 = _idw_centroid(_all_scanners, ref_pt=_p1) if self._rf_barriers else _p1
                             _est_x, _est_y = _p2 or _p1
                             _spatial_xy = (_est_x, _est_y, _best_floor)
+                            self._spatial_debug[key] = f"computed:({_est_x:.1f},{_est_y:.1f})@{_best_floor}"
 
                             _geo_room = _model.beacon_room_from_geometry(
                                 _est_x, _est_y, _best_floor
                             )
                             if _geo_room:
                                 _spatial_candidate = _geo_room
+                                self._spatial_debug[key] += f">{_geo_room}"
+                            else:
+                                self._spatial_debug[key] += ">OUTSIDE_ALL"
+                        else:
+                            self._spatial_debug[key] = "idw_returned_none"
 
             # ── Path B: RSSI-based room scoring (always computed) ────────
             # This provides the fallback and also feeds the debug log.
@@ -1430,16 +1432,6 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # When k-NN has no position (no calibration data), the spatial
         # centroid from RSSI + scanner positions provides sub-room position.
         # This is what makes "Room only" devices show at the right spot.
-        if not hasattr(self, "_sp_store_log_ct"):
-            self._sp_store_log_ct = 0
-        if _spatial_xy:
-            self._sp_store_log_ct += 1
-            if self._sp_store_log_ct <= 5:
-                _LOGGER.info(
-                    "Spatial store check [%s]: xy=(%s,%s,%s) knn_exists=%s",
-                    key[:30], round(_spatial_xy[0], 1), round(_spatial_xy[1], 1),
-                    _spatial_xy[2], bool(self._knn_position.get(key)),
-                )
         if _spatial_xy and not self._knn_position.get(key):
             _sx_est, _sy_est, _sf_est = _spatial_xy
             # EMA-smooth the spatial position to reduce jitter
