@@ -1376,9 +1376,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _knn_smoothed["x_frac"] = round(_sx, 4)
                         _knn_smoothed["y_frac"] = round(_sy, 4)
                     self._knn_position[key] = _knn_smoothed
-                    # k-NN room override: calibration data the user collected.
-                    # Trust it when confidence is reasonable (>= 0.30).
-                    if _knn_room and _knn_conf >= 0.30:
+                    # k-NN room override: only when spatial didn't resolve.
+                    # Spatial (IDW centroid + room geometry) is the primary
+                    # positioning method.  k-NN uses historical calibration
+                    # data which may be stale — it should not fight spatial.
+                    # k-NN still provides sub-room (x,y) position above.
+                    if _knn_room and _knn_conf >= 0.30 and not _spatial_candidate:
                         candidate = _knn_room
                 else:
                     self._knn_position.pop(key, None)
