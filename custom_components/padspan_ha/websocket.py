@@ -8939,10 +8939,12 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
         # Presence/occupancy sensors — at least 1 person per room with active sensor
         hybrid_floor = max(hybrid_floor, hybrid_signals["presence_sensors_active"])
 
-        # WiFi clients — rough proxy, ~2 devices per person
-        if hybrid_signals["wifi_clients"] > 0:
-            wifi_est = max(1, round(hybrid_signals["wifi_clients"] / 2))
-            hybrid_floor = max(hybrid_floor, wifi_est)
+        # WiFi clients — very weak signal in smart homes where most WiFi
+        # devices are IoT, not phones.  Only use as last-resort floor when
+        # no persons/presence sensors available, and use a conservative ratio.
+        if hybrid_floor == 0 and hybrid_signals["wifi_clients"] > 0:
+            wifi_est = max(1, round(hybrid_signals["wifi_clients"] / 10))
+            hybrid_floor = wifi_est
 
         # Motion — weaker signal, use as minimum if we have no other data
         if hybrid_floor == 0 and hybrid_signals["motion_sensors_active"] > 0:
