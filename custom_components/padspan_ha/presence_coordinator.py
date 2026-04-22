@@ -320,13 +320,23 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Suspend: when set, use only raw radio + spatial centroid (no k-NN, no adaptive)
         self._suspend_until: float = 0.0  # monotonic timestamp when suspend ends
+        self._suspend_permanent: bool = False  # persisted via settings store
+
+        # Restore persistent suspend from settings
+        try:
+            _st_init = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if _st_init and _st_init.data.get("databases_suspended"):
+                self._suspend_permanent = True
+                _LOGGER.info("Databases suspended (restored from settings)")
+        except Exception:
+            pass
 
     # ── Suspend / reset smoothing state ─────────────────────────────────────
 
     @property
     def suspended(self) -> bool:
         """True when databases are suspended — raw radio + spatial only."""
-        return time.monotonic() < self._suspend_until
+        return self._suspend_permanent or time.monotonic() < self._suspend_until
 
     def suspend_databases(self, minutes: int = 60) -> None:
         """Suspend all learned/cached databases for N minutes.
@@ -334,9 +344,20 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Clears all smoothing state and disables k-NN, adaptive learning,
         and scanner reliability for the duration.  Only raw radio RSSI +
         spatial weighted centroid is used for positioning.
+
+        Also persists the flag so it survives HA restarts.
         """
         self.clear_smoothing_state()
+        self._suspend_permanent = True
         self._suspend_until = time.monotonic() + minutes * 60
+        # Persist so it survives restarts
+        try:
+            _st = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if _st:
+                _st.data["databases_suspended"] = True
+                self.hass.async_create_task(_st.store.async_save(_st.data))
+        except Exception:
+            pass
         _LOGGER.info(
             "Databases suspended for %d minutes — raw radio + spatial centroid only",
             minutes,
@@ -345,7 +366,16 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def unsuspend_databases(self) -> None:
         """End suspension early — resume normal pipeline."""
         self._suspend_until = 0.0
+        self._suspend_permanent = False
         self.clear_smoothing_state()  # start fresh when resuming too
+        # Persist
+        try:
+            _st = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if _st:
+                _st.data.pop("databases_suspended", None)
+                self.hass.async_create_task(_st.store.async_save(_st.data))
+        except Exception:
+            pass
         _LOGGER.info("Database suspension ended — full pipeline resumed")
 
     def clear_smoothing_state(self) -> None:
