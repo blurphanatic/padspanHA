@@ -1312,42 +1312,45 @@ export function render(ctx){
     const pts = cs=>cs.map(pt).join(" ");
 
     const _isScanner = ctx.helpers.isScanner;
-    const _allObjRaw = ((liveSnap && liveSnap.objects && Array.isArray(liveSnap.objects.list)) ? liveSnap.objects.list : [])
-      .filter(o => !_isScanner(o));
-    // Dedup: suppress entity rows whose physical device already has a BLE/iBeacon/private_ble row.
-    // Build a room-inheritance map (entity room → BLE key) WITHOUT mutating shared snapshot objects.
-    const _isoAddrSet = new Set();
-    const _entityRoomByAddr = {};  // uppercase addr → entity's room (for inheritance)
-    for (const o of _allObjRaw) {
-      if (o.kind !== "ble" && o.kind !== "private_ble" && o.kind !== "ibeacon") continue;
-      if (o.address) _isoAddrSet.add(String(o.address).toUpperCase());
-      if (Array.isArray(o.all_addresses)) for (const a of o.all_addresses) _isoAddrSet.add(String(a).toUpperCase());
-    }
-    const _isoLinkedSet = new Set(_allObjRaw.flatMap(o => Array.isArray(o.linked_entities) ? o.linked_entities : []));
-    // Collect entity rooms for inheritance (never mutate snapshot objects)
-    for (const o of _allObjRaw) {
-      if (o.kind !== "entity") continue;
-      if (o.room && o.room !== "unknown" && o.room !== "not_home" && o.address) {
-        _entityRoomByAddr[String(o.address).toUpperCase()] = o.room;
+    // Re-readable object list — refreshed before each buildIsoSVG call so the
+    // 5s poll _updateIsoObjects renders current snapshot data, not stale closure.
+    let allObjects = [];
+    let allRadios_live = radios;
+    function _refreshIsoObjects() {
+      const _snap = ctx.state.live?.snapshot;
+      const _rawList = (_snap?.objects?.list || []);
+      const _allObjRaw = _rawList.filter(o => !_isScanner(o));
+      const _isoAddrSet = new Set();
+      const _entityRoomByAddr = {};
+      for (const o of _allObjRaw) {
+        if (o.kind !== "ble" && o.kind !== "private_ble" && o.kind !== "ibeacon") continue;
+        if (o.address) _isoAddrSet.add(String(o.address).toUpperCase());
+        if (Array.isArray(o.all_addresses)) for (const a of o.all_addresses) _isoAddrSet.add(String(a).toUpperCase());
       }
-    }
-    const allObjects = _allObjRaw.filter(o => {
-      if (o.kind === "entity" && (
-        (o.address && _isoAddrSet.has(String(o.address).toUpperCase())) ||
-        (o.entity_id && _isoLinkedSet.has(o.entity_id))
-      )) return false;
-      return true;
-    }).map(o => {
-      // For BLE objects missing a room, inherit from their suppressed entity counterpart
-      // Return a shallow copy to avoid mutating shared snapshot state
-      if ((o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon") &&
-          (!o.room || o.room === "unknown" || o.room === "not_home") && o.address) {
-        const eRoom = _entityRoomByAddr[String(o.address).toUpperCase()];
-        if (eRoom) return Object.assign({}, o, { room: eRoom });
+      const _isoLinkedSet = new Set(_allObjRaw.flatMap(o => Array.isArray(o.linked_entities) ? o.linked_entities : []));
+      for (const o of _allObjRaw) {
+        if (o.kind !== "entity") continue;
+        if (o.room && o.room !== "unknown" && o.room !== "not_home" && o.address) {
+          _entityRoomByAddr[String(o.address).toUpperCase()] = o.room;
+        }
       }
-      return o;
-    });
-    const allRadios_live = radios;
+      allObjects = _allObjRaw.filter(o => {
+        if (o.kind === "entity" && (
+          (o.address && _isoAddrSet.has(String(o.address).toUpperCase())) ||
+          (o.entity_id && _isoLinkedSet.has(o.entity_id))
+        )) return false;
+        return true;
+      }).map(o => {
+        if ((o.kind === "ble" || o.kind === "private_ble" || o.kind === "ibeacon") &&
+            (!o.room || o.room === "unknown" || o.room === "not_home") && o.address) {
+          const eRoom = _entityRoomByAddr[String(o.address).toUpperCase()];
+          if (eRoom) return Object.assign({}, o, { room: eRoom });
+        }
+        return o;
+      });
+      allRadios_live = (_snap?.ble?.radios) || radios;
+    }
+    _refreshIsoObjects();
 
     // Sync _hiddenMapIds from settings (authoritative, fetched on every refresh).
     // Fall back to localStorage only if settings hasn't populated it yet.
@@ -1610,6 +1613,8 @@ export function render(ctx){
     if(ctx.state._overviewShowDistortion === undefined) ctx.state._overviewShowDistortion = false;
 
     const buildIsoSVG = (focusZ)=>{
+      // Re-read objects from current snapshot (not stale closure)
+      _refreshIsoObjects();
       const slabWZ = 18/_ovFG;
       // Dynamic viewBox: expand to fit all floors.
       // Vertical: expand upward for tall floor stacks.
