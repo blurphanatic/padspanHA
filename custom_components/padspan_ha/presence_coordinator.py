@@ -1394,38 +1394,54 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._knn_position.pop(key, None)
             self._smooth_xy.pop(key, None)
 
-        # ── Spatial position: always takes priority over k-NN ──────────────
-        # Spatial centroid is the primary position source (geometry-based).
-        # k-NN position is only used when spatial can't compute.
+        # ── Spatial position: fills in when k-NN has no position ─────────
+        # k-NN provides precise calibration-derived (x_frac, y_frac) for dot
+        # rendering.  Spatial centroid is geometry-based and less accurate for
+        # sub-room placement, so it only provides position when k-NN can't.
+        # Spatial still drives room assignment via the vote pipeline above.
         if _spatial_xy:
             _sx_est, _sy_est, _sf_est = _spatial_xy
-            # EMA-smooth the spatial position to reduce jitter
-            _prev_sp = self._smooth_xy.get(key)
-            if _prev_sp:
-                _sp_alpha = 0.15  # heavier smoothing for RSSI-derived position
-                _sx_est = _prev_sp[0] + _sp_alpha * (_sx_est - _prev_sp[0])
-                _sy_est = _prev_sp[1] + _sp_alpha * (_sy_est - _prev_sp[1])
-            self._smooth_xy[key] = (_sx_est, _sy_est)
-            # Store as spatial position (same format as k-NN for object propagation)
-            _sp_entry: dict[str, Any] = {
-                "x_m": round(_sx_est, 3),
-                "y_m": round(_sy_est, 3),
-                "floor_id": _sf_est,
-                "confidence": rssi_margin_confidence,
-                "room": _spatial_candidate or "",
-                "source": "spatial",
-            }
-            # Convert metres to map fracs for rendering
-            if _model:
-                for _mid, _t in (_model.data.get("map_transforms") or {}).items():
-                    if _t.get("floor_id") == _sf_est:
-                        _fracs = _model.metres_to_map_frac(_sx_est, _sy_est, _mid)
-                        if _fracs and 0.0 <= _fracs[0] <= 1.0 and 0.0 <= _fracs[1] <= 1.0:
-                            _sp_entry["x_frac"] = round(_fracs[0], 4)
-                            _sp_entry["y_frac"] = round(_fracs[1], 4)
-                            _sp_entry["map_id"] = _mid
-                            break
-            self._knn_position[key] = _sp_entry
+            _existing_knn = self._knn_position.get(key)
+            _knn_has_frac = (
+                _existing_knn
+                and _existing_knn.get("source") != "spatial"
+                and _existing_knn.get("x_frac") is not None
+            )
+            if _knn_has_frac:
+                # k-NN already has good sub-room position — just add metre
+                # coords and room from spatial without overwriting fracs.
+                _existing_knn["x_m"] = round(_sx_est, 3)
+                _existing_knn["y_m"] = round(_sy_est, 3)
+                if _spatial_candidate:
+                    _existing_knn["room"] = _spatial_candidate
+            else:
+                # No k-NN position — use spatial centroid for rendering.
+                # EMA-smooth the spatial position to reduce jitter
+                _prev_sp = self._smooth_xy.get(key)
+                if _prev_sp:
+                    _sp_alpha = 0.15  # heavier smoothing for RSSI-derived position
+                    _sx_est = _prev_sp[0] + _sp_alpha * (_sx_est - _prev_sp[0])
+                    _sy_est = _prev_sp[1] + _sp_alpha * (_sy_est - _prev_sp[1])
+                self._smooth_xy[key] = (_sx_est, _sy_est)
+                _sp_entry: dict[str, Any] = {
+                    "x_m": round(_sx_est, 3),
+                    "y_m": round(_sy_est, 3),
+                    "floor_id": _sf_est,
+                    "confidence": rssi_margin_confidence,
+                    "room": _spatial_candidate or "",
+                    "source": "spatial",
+                }
+                # Convert metres to map fracs for rendering
+                if _model:
+                    for _mid, _t in (_model.data.get("map_transforms") or {}).items():
+                        if _t.get("floor_id") == _sf_est:
+                            _fracs = _model.metres_to_map_frac(_sx_est, _sy_est, _mid)
+                            if _fracs and 0.0 <= _fracs[0] <= 1.0 and 0.0 <= _fracs[1] <= 1.0:
+                                _sp_entry["x_frac"] = round(_fracs[0], 4)
+                                _sp_entry["y_frac"] = round(_fracs[1], 4)
+                                _sp_entry["map_id"] = _mid
+                                break
+                self._knn_position[key] = _sp_entry
 
         # ── Store candidate info for diagnostics ─────────────────────────────
         _cand_source = "none"
