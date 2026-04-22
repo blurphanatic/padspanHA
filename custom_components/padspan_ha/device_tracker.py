@@ -62,6 +62,7 @@ async def async_setup_entry(
         return
 
     created: set[str] = set()
+    created_labels: set[str] = set()
 
     @callback
     def _check_new() -> None:
@@ -76,8 +77,19 @@ async def async_setup_entry(
             if key in created:
                 continue
             if obj.get("kind") in ("ble", "private_ble", "ibeacon") and obj.get("user_label"):
+                # Guard against rotating-MAC duplication: if we already created
+                # an entity for this label, skip — the coordinator key changed
+                # but the physical device is the same.
+                label = obj["user_label"]
+                if label in created_labels:
+                    _LOGGER.debug(
+                        "Skipping duplicate tracker for '%s' (key %s — label already tracked)",
+                        label, key,
+                    )
+                    continue
                 new.append(PadSpanDeviceTracker(coordinator, key))
                 created.add(key)
+                created_labels.add(label)
         if new:
             _LOGGER.debug("Adding %d new PadSpan device tracker(s)", len(new))
             async_add_entities(new)

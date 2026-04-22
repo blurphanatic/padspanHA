@@ -81,7 +81,9 @@ async def async_setup_entry(
         return
 
     created: set[str] = set()
+    created_labels: set[str] = set()
     created_scanner: set[tuple[str, str]] = set()
+    created_scanner_labels: set[tuple[str, str]] = set()
 
     @callback
     def _check_new() -> None:
@@ -96,19 +98,35 @@ async def async_setup_entry(
         for key, obj in coordinator.data.items():
             if not _should_track(obj):
                 continue
+            label = obj["user_label"]
             if key not in created:
-                if _area_on:
-                    new.append(PadSpanAreaSensor(coordinator, key))
-                if _dist_on:
-                    new.append(PadSpanDistanceSensor(coordinator, key))
+                # Guard against rotating-MAC duplication: if we already created
+                # sensors for this label, skip — the coordinator key changed
+                # but the physical device is the same.
+                if label in created_labels:
+                    _LOGGER.debug(
+                        "Skipping duplicate sensors for '%s' (key %s — label already tracked)",
+                        label, key,
+                    )
+                else:
+                    if _area_on:
+                        new.append(PadSpanAreaSensor(coordinator, key))
+                    if _dist_on:
+                        new.append(PadSpanDistanceSensor(coordinator, key))
+                    created_labels.add(label)
                 created.add(key)
             # Per-scanner distance sensors — one per device × scanner pair
             if _scan_on:
                 for source in (obj.get("_source_rssi") or {}).keys():
                     pair = (key, source)
                     if pair not in created_scanner:
+                        # Same rotating-MAC guard for scanner sensors
+                        label_pair = (label, source)
+                        if label_pair in created_scanner_labels:
+                            continue
                         new.append(PadSpanScannerDistanceSensor(coordinator, key, source))
                         created_scanner.add(pair)
+                        created_scanner_labels.add(label_pair)
         if new:
             _LOGGER.debug("Adding %d new PadSpan sensor(s)", len(new))
             async_add_entities(new)
