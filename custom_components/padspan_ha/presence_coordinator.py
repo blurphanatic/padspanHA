@@ -1335,11 +1335,15 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _raw_x = float(_knn.get("x_frac", 0.0))
                         _raw_y = float(_knn.get("y_frac", 0.0))
                     _prev = self._smooth_xy.get(key)
-                    _prev_fl = (self._knn_position.get(key) or {}).get("floor_id", "")
+                    _prev_entry = self._knn_position.get(key) or {}
+                    _prev_fl = _prev_entry.get("floor_id", "")
+                    _prev_source = _prev_entry.get("source", "")
                     _new_fl = _knn.get("floor_id", "")
                     _conf = float(_knn.get("confidence", 0.0))
                     _base_alpha = 0.15 + 0.35 * min(_conf, 1.0)
-                    if _prev is not None and _prev_fl == _new_fl:
+                    # Reset EMA when previous was spatial (different data
+                    # source / coordinate space) or floor changed.
+                    if _prev is not None and _prev_fl == _new_fl and _prev_source != "spatial":
                         # Velocity-aware alpha: if the raw position is very close
                         # to the smoothed position (< 0.8m), the device is likely
                         # stationary and the difference is k-NN jitter.  Use a
