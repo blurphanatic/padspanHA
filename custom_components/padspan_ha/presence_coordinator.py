@@ -258,8 +258,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._rssi_margin_confidence: dict[str, float] = {}
         # {key: dict}  — latest k-NN fingerprint result (x_frac, y_frac, confidence, nearest_room)
         self._knn_position: dict[str, dict] = {}
-        # {key: (x, y)}  — EMA-smoothed position for stable map display
+        # {key: (x, y)}  — EMA-smoothed position for k-NN (stable map display)
         self._smooth_xy: dict[str, tuple[float, float]] = {}
+        # {key: dict}  — spatial IDW centroid position (independent of k-NN)
+        self._spatial_position: dict[str, dict] = {}
+        # {key: (x, y)}  — EMA-smoothed position for spatial (independent of k-NN)
+        self._spatial_smooth_xy: dict[str, tuple[float, float]] = {}
         # {key: str}  — spatial debug info (why centroid succeeded/failed)
         self._spatial_debug: dict[str, str] = {}
         # {key: dict}  — last candidate info for diagnostics
@@ -360,6 +364,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._rssi_margin_confidence.clear()
         self._knn_position.clear()
         self._smooth_xy.clear()
+        self._spatial_position.clear()
+        self._spatial_smooth_xy.clear()
         self._scanner_agree.clear()
         self._scanner_reliability.clear()
         self._last_room_change_mono.clear()
@@ -571,6 +577,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._room_confidence.pop(key, None)
                 self._knn_position.pop(key, None)
                 self._smooth_xy.pop(key, None)
+                self._spatial_position.pop(key, None)
+                self._spatial_smooth_xy.pop(key, None)
                 if obj.get("kind") in ("ble", "private_ble"):
                     # For private_ble, use canonical_id as Kalman key
                     _raw_addr = str(obj.get("address") or "").upper()
@@ -606,18 +614,18 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 obj["_smoothed"] = True
                 obj["room_confidence"] = self._room_confidence.get(key, 0.0)
                 obj["rssi_margin_confidence"] = self._rssi_margin_confidence.get(key, 0.0)
-                # Propagate k-NN sub-room position when calibration data is available
-                _knn = self._knn_position.get(key)
-                if _knn:
-                    obj["x_frac"] = _knn.get("x_frac")
-                    obj["y_frac"] = _knn.get("y_frac")
-                    obj["knn_confidence"] = _knn.get("confidence")
-                    if _knn.get("map_id"):
-                        obj["knn_map_id"] = _knn["map_id"]
-                    # Phase 3: propagate metre coordinates
-                    if _knn.get("x_m") is not None:
-                        obj["x_m"] = _knn["x_m"]
-                        obj["y_m"] = _knn["y_m"]
+                # Propagate sub-room position — prefer spatial (real-time geometry)
+                # over k-NN (historical calibration that may be stale).
+                _pos = self._spatial_position.get(key) or self._knn_position.get(key)
+                if _pos:
+                    obj["x_frac"] = _pos.get("x_frac")
+                    obj["y_frac"] = _pos.get("y_frac")
+                    obj["knn_confidence"] = _pos.get("confidence")
+                    if _pos.get("map_id"):
+                        obj["knn_map_id"] = _pos["map_id"]
+                    if _pos.get("x_m") is not None:
+                        obj["x_m"] = _pos["x_m"]
+                        obj["y_m"] = _pos["y_m"]
                 # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(smooth_addr, {}))
                 # Propagate TX power if seen in advertisements
@@ -648,18 +656,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 obj["_smoothed"] = True
                 obj["room_confidence"] = self._room_confidence.get(key, 0.0)
                 obj["rssi_margin_confidence"] = self._rssi_margin_confidence.get(key, 0.0)
-                # Propagate k-NN sub-room position when calibration data is available
-                _knn_ib = self._knn_position.get(key)
-                if _knn_ib:
-                    obj["x_frac"] = _knn_ib.get("x_frac")
-                    obj["y_frac"] = _knn_ib.get("y_frac")
-                    obj["knn_confidence"] = _knn_ib.get("confidence")
-                    if _knn_ib.get("map_id"):
-                        obj["knn_map_id"] = _knn_ib["map_id"]
-                    # Phase 3: propagate metre coordinates
-                    if _knn_ib.get("x_m") is not None:
-                        obj["x_m"] = _knn_ib["x_m"]
-                        obj["y_m"] = _knn_ib["y_m"]
+                # Propagate sub-room position — prefer spatial over k-NN
+                _pos_ib = self._spatial_position.get(key) or self._knn_position.get(key)
+                if _pos_ib:
+                    obj["x_frac"] = _pos_ib.get("x_frac")
+                    obj["y_frac"] = _pos_ib.get("y_frac")
+                    obj["knn_confidence"] = _pos_ib.get("confidence")
+                    if _pos_ib.get("map_id"):
+                        obj["knn_map_id"] = _pos_ib["map_id"]
+                    if _pos_ib.get("x_m") is not None:
+                        obj["x_m"] = _pos_ib["x_m"]
+                        obj["y_m"] = _pos_ib["y_m"]
                 # Store Kalman-smoothed per-source RSSI for scanner distance sensors
                 obj["_source_rssi"] = dict(self._ema_rssi.get(key, {}))
                 self._known_objs[key] = dict(obj)  # refresh with smoothed data
@@ -1394,20 +1401,20 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._knn_position.pop(key, None)
             self._smooth_xy.pop(key, None)
 
-        # ── Spatial position: store weighted-centroid estimate ─────────────
-        # When k-NN has no position (no calibration data), the spatial
-        # centroid from RSSI + scanner positions provides sub-room position.
-        # This is what makes "Room only" devices show at the right spot.
-        if _spatial_xy and not self._knn_position.get(key):
+        # ── Spatial position: independent from k-NN ─────────────────────
+        # Spatial uses real-time RSSI + known scanner geometry.  It writes
+        # to its own dict so k-NN failure/success never destroys spatial
+        # state and vice versa.  The propagation code prefers spatial over
+        # k-NN for dot rendering (spatial is real-time, k-NN can be stale).
+        if _spatial_xy:
             _sx_est, _sy_est, _sf_est = _spatial_xy
-            # EMA-smooth the spatial position to reduce jitter
-            _prev_sp = self._smooth_xy.get(key)
+            # EMA-smooth using spatial's own smooth state
+            _prev_sp = self._spatial_smooth_xy.get(key)
             if _prev_sp:
                 _sp_alpha = 0.15  # heavier smoothing for RSSI-derived position
                 _sx_est = _prev_sp[0] + _sp_alpha * (_sx_est - _prev_sp[0])
                 _sy_est = _prev_sp[1] + _sp_alpha * (_sy_est - _prev_sp[1])
-            self._smooth_xy[key] = (_sx_est, _sy_est)
-            # Store as spatial position (same format as k-NN for object propagation)
+            self._spatial_smooth_xy[key] = (_sx_est, _sy_est)
             _sp_entry: dict[str, Any] = {
                 "x_m": round(_sx_est, 3),
                 "y_m": round(_sy_est, 3),
@@ -1426,7 +1433,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             _sp_entry["y_frac"] = round(_fracs[1], 4)
                             _sp_entry["map_id"] = _mid
                             break
-            self._knn_position[key] = _sp_entry
+            self._spatial_position[key] = _sp_entry
+        else:
+            # No spatial data — clear stale spatial position
+            self._spatial_position.pop(key, None)
+            self._spatial_smooth_xy.pop(key, None)
 
         # ── Store candidate info for diagnostics ─────────────────────────────
         _cand_source = "none"
@@ -1672,6 +1683,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._rssi_margin_confidence.pop(key, None)
         self._knn_position.pop(key, None)
         self._smooth_xy.pop(key, None)
+        self._spatial_position.pop(key, None)
+        self._spatial_smooth_xy.pop(key, None)
         self._beacon_autocal_last.pop(key, None)
         self._adaptive_last_obs.pop(key, None)
         self._last_room_change_mono.pop(key, None)

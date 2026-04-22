@@ -3121,9 +3121,11 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
             _auto = sum(1 for p in _pts if str(p.get("label", "")).startswith("[auto]"))
             _empty = sum(1 for p in _pts if not (p.get("scanner_readings") or []))
             _knn_active_count = 0
+            _spatial_active_count = 0
             _pc3 = hass.data.get(DOMAIN, {}).get("presence_coordinator")
             if _pc3:
                 _knn_active_count = len(getattr(_pc3, "_knn_position", {}))
+                _spatial_active_count = len(getattr(_pc3, "_spatial_position", {}))
             # Collect all scanner source names used in calibration data
             _cal_sources = set()
             for _p in _pts:
@@ -3164,6 +3166,7 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                 "knn_min_required": 5,
                 "knn_active": len(_pts) >= 5,
                 "knn_positioned_objects": _knn_active_count,
+                "spatial_positioned_objects": _spatial_active_count,
                 "store_initialized": True,
                 "rf_trained": getattr(_cal, "rf_trained", False),
                 "positioning_algorithm": (
@@ -3181,6 +3184,7 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                 "store_initialized": False,
                 "knn_active": False,
                 "knn_positioned_objects": 0,
+                "spatial_positioned_objects": 0,
             }
     except Exception:
         pass
