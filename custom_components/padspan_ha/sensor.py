@@ -81,9 +81,11 @@ async def async_setup_entry(
         return
 
     created: set[str] = set()
-    created_labels: set[str] = set()
+    # label → list of sensor entities (for key migration on MAC rotation)
+    label_sensors: dict[str, list[SensorEntity]] = {}
     created_scanner: set[tuple[str, str]] = set()
-    created_scanner_labels: set[tuple[str, str]] = set()
+    # label → list of scanner sensor entities
+    label_scanner_sensors: dict[tuple[str, str], PadSpanScannerDistanceSensor] = {}
 
     @callback
     def _check_new() -> None:
@@ -95,38 +97,64 @@ async def async_setup_entry(
         _dist_on = _sd.get("ha_entity_distance_enabled", True)
         _scan_on = _sd.get("ha_entity_scanner_distance_enabled", True)
         new: list[SensorEntity] = []
-        for key, obj in coordinator.data.items():
+        # Sort by freshness — lowest age_s first so the active key wins dedup
+        items = sorted(
+            coordinator.data.items(),
+            key=lambda kv: kv[1].get("age_s") if isinstance(kv[1].get("age_s"), (int, float)) else 999999,
+        )
+        for key, obj in items:
             if not _should_track(obj):
                 continue
             label = obj["user_label"]
             if key not in created:
-                # Guard against rotating-MAC duplication: if we already created
-                # sensors for this label, skip — the coordinator key changed
-                # but the physical device is the same.
-                if label in created_labels:
-                    _LOGGER.debug(
-                        "Skipping duplicate sensors for '%s' (key %s — label already tracked)",
-                        label, key,
-                    )
+                if label in label_sensors:
+                    # Label already has entities — migrate keys if this one is fresher
+                    existing = label_sensors[label]
+                    if existing:
+                        old_key = existing[0]._key
+                        old_obj = (coordinator.data or {}).get(old_key, {})
+                        old_age = old_obj.get("age_s")
+                        age = obj.get("age_s")
+                        if (isinstance(age, (int, float)) and
+                            (not isinstance(old_age, (int, float)) or age < old_age)):
+                            for ent in existing:
+                                _LOGGER.debug(
+                                    "Migrating sensor '%s' from key %s to fresher key %s",
+                                    label, ent._key, key,
+                                )
+                                ent._key = key
                 else:
+                    sensors: list[SensorEntity] = []
                     if _area_on:
-                        new.append(PadSpanAreaSensor(coordinator, key))
+                        s = PadSpanAreaSensor(coordinator, key)
+                        new.append(s)
+                        sensors.append(s)
                     if _dist_on:
-                        new.append(PadSpanDistanceSensor(coordinator, key))
-                    created_labels.add(label)
+                        s = PadSpanDistanceSensor(coordinator, key)
+                        new.append(s)
+                        sensors.append(s)
+                    label_sensors[label] = sensors
                 created.add(key)
             # Per-scanner distance sensors — one per device × scanner pair
             if _scan_on:
                 for source in (obj.get("_source_rssi") or {}).keys():
                     pair = (key, source)
                     if pair not in created_scanner:
-                        # Same rotating-MAC guard for scanner sensors
                         label_pair = (label, source)
-                        if label_pair in created_scanner_labels:
-                            continue
-                        new.append(PadSpanScannerDistanceSensor(coordinator, key, source))
+                        if label_pair in label_scanner_sensors:
+                            # Migrate key if fresher
+                            existing_s = label_scanner_sensors[label_pair]
+                            old_obj = (coordinator.data or {}).get(existing_s._key, {})
+                            old_age = old_obj.get("age_s")
+                            age = obj.get("age_s")
+                            if (isinstance(age, (int, float)) and
+                                (not isinstance(old_age, (int, float)) or age < old_age)):
+                                existing_s._key = key
+                        else:
+                            s = PadSpanScannerDistanceSensor(coordinator, key, source)
+                            new.append(s)
+                            label_scanner_sensors[label_pair] = s
                         created_scanner.add(pair)
-                        created_scanner_labels.add(label_pair)
         if new:
             _LOGGER.debug("Adding %d new PadSpan sensor(s)", len(new))
             async_add_entities(new)

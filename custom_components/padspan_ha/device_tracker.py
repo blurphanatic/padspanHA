@@ -62,7 +62,8 @@ async def async_setup_entry(
         return
 
     created: set[str] = set()
-    created_labels: set[str] = set()
+    # label → entity instance (for key migration on MAC rotation)
+    label_entity: dict[str, PadSpanDeviceTracker] = {}
 
     @callback
     def _check_new() -> None:
@@ -73,23 +74,51 @@ async def async_setup_entry(
         if not _tracker_on:
             return
         new: list[PadSpanDeviceTracker] = []
-        for key, obj in coordinator.data.items():
+        # Sort by freshness — lowest age_s first so the active key wins dedup
+        items = sorted(
+            coordinator.data.items(),
+            key=lambda kv: kv[1].get("age_s") if isinstance(kv[1].get("age_s"), (int, float)) else 999999,
+        )
+        for key, obj in items:
             if key in created:
+                # Key already tracked — but check if entity needs key refresh
+                label = obj.get("user_label")
+                if label and label in label_entity:
+                    entity = label_entity[label]
+                    age = obj.get("age_s")
+                    old_obj = (coordinator.data or {}).get(entity._key, {})
+                    old_age = old_obj.get("age_s")
+                    # If this key is fresher than the entity's current key, migrate
+                    if (isinstance(age, (int, float)) and
+                        (not isinstance(old_age, (int, float)) or age < old_age) and
+                        entity._key != key):
+                        _LOGGER.debug(
+                            "Migrating tracker '%s' from stale key %s to fresh key %s",
+                            label, entity._key, key,
+                        )
+                        entity._key = key
                 continue
             if obj.get("kind") in ("ble", "private_ble", "ibeacon") and obj.get("user_label"):
-                # Guard against rotating-MAC duplication: if we already created
-                # an entity for this label, skip — the coordinator key changed
-                # but the physical device is the same.
                 label = obj["user_label"]
-                if label in created_labels:
-                    _LOGGER.debug(
-                        "Skipping duplicate tracker for '%s' (key %s — label already tracked)",
-                        label, key,
-                    )
+                if label in label_entity:
+                    # Label already has an entity — migrate its key if this one is fresher
+                    entity = label_entity[label]
+                    old_obj = (coordinator.data or {}).get(entity._key, {})
+                    old_age = old_obj.get("age_s")
+                    age = obj.get("age_s")
+                    if (isinstance(age, (int, float)) and
+                        (not isinstance(old_age, (int, float)) or age < old_age)):
+                        _LOGGER.debug(
+                            "Migrating tracker '%s' from key %s to fresher key %s",
+                            label, entity._key, key,
+                        )
+                        entity._key = key
+                    created.add(key)
                     continue
-                new.append(PadSpanDeviceTracker(coordinator, key))
+                entity = PadSpanDeviceTracker(coordinator, key)
+                new.append(entity)
                 created.add(key)
-                created_labels.add(label)
+                label_entity[label] = entity
         if new:
             _LOGGER.debug("Adding %d new PadSpan device tracker(s)", len(new))
             async_add_entities(new)
