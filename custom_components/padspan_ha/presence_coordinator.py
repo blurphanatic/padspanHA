@@ -1159,23 +1159,29 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _src_fl = source_to_floor.get(_src, "")
                     _room_fl = _room_to_floor.get(_room, "")
                     if _src_fl and _room_fl and _src_fl != _room_fl:
+                        _applied_floor_atten = False
                         try:
                             _ad_s = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
                             if _ad_s:
                                 _learned_delta = _ad_s.learned_floor_attenuation(_room_fl, _src_fl)
                                 if _learned_delta is not None:
                                     _eff_rssi += _learned_delta
+                                    _applied_floor_atten = True
                         except Exception as _fl_err:
                             _LOGGER.debug("Floor attenuation error: %s", _fl_err)
+                        if not _applied_floor_atten:
+                            _eff_rssi -= 10.0  # default cross-floor penalty
                 # Scanner reliability penalty (convert to dBm: low reliability = weaker)
                 # Skip when suspended — reliability scores may be poisoned
                 _rel = 1.0 if self.suspended else self._scanner_reliability.get(_src, 1.0)
                 if _rel < 0.8:
                     _eff_rssi -= (1.0 - _rel) * 10.0  # up to -5 dBm for worst scanners
-                # Outdoor penalty: -15 dBm unless device is already outdoor
+                # Outdoor penalty: -15 dBm for indoor→outdoor transitions only.
+                # Skip when device has no confirmed room yet (first placement)
+                # so outdoor devices aren't forced indoors on initial detection.
                 _cur_confirmed = self._confirmed_room.get(key)
                 _cur_floor_id = _room_to_floor.get(_cur_confirmed, "") if _cur_confirmed else ""
-                if _cur_floor_id != OUTSIDE_FLOOR_ID and _room_to_floor.get(_room) == OUTSIDE_FLOOR_ID:
+                if _cur_confirmed and _cur_floor_id != OUTSIDE_FLOOR_ID and _room_to_floor.get(_room) == OUTSIDE_FLOOR_ID:
                     _eff_rssi -= 15.0
                 # Keep best per room
                 if _room not in room_scores or _eff_rssi > room_scores[_room]:
