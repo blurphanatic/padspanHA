@@ -1212,8 +1212,18 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             for uuid_key, g in list(ibeacon_groups.items()):
                 rssi_list = g.pop("_rssi_list")
                 if rssi_list:
-                    best = max(rssi_list, key=lambda x: x[0])
-                    g["rssi"] = best[0]; g["age_s"] = best[1]
+                    # age_s = freshest reading (lowest age) across all MACs.
+                    # rssi  = strongest signal among recent readings (within 60s
+                    #         of freshest) so stale rotated-out MACs don't win.
+                    ages = [a for _, a in rssi_list if a is not None]
+                    min_age = min(ages) if ages else None
+                    g["age_s"] = min_age
+                    if min_age is not None:
+                        cutoff = min_age + 60
+                        recent = [r for r, a in rssi_list if a is not None and a <= cutoff]
+                        g["rssi"] = max(recent) if recent else max(r for r, _ in rssi_list)
+                    else:
+                        g["rssi"] = max(r for r, _ in rssi_list)
                 else:
                     g["rssi"] = None; g["age_s"] = None
                 g["addrs"] = sorted(g["addrs"])
