@@ -2678,6 +2678,8 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("espresense_room_map"): dict,
         vol.Optional("espresense_companion_url"): str,
         vol.Optional("aggressive_ble_reseed"): bool,
+        vol.Optional("presence_poll_interval_s"): vol.Coerce(int),
+        vol.Optional("ble_reseed_interval_s"): vol.Coerce(int),
         vol.Optional("lights_panel_enabled"): bool,
         vol.Optional("bermuda_ignore"): bool,
         vol.Optional("tags_room_events_enabled"): bool,
@@ -2821,6 +2823,10 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
                     "apple_auto_classify"):
             if key in msg:
                 payload[key] = bool(msg[key])
+        if "presence_poll_interval_s" in msg:
+            payload["presence_poll_interval_s"] = max(1, min(60, int(msg["presence_poll_interval_s"])))
+        if "ble_reseed_interval_s" in msg:
+            payload["ble_reseed_interval_s"] = max(1, min(60, int(msg["ble_reseed_interval_s"])))
         if "positioning_algorithm" in msg:
             algo = str(msg["positioning_algorithm"]).strip().lower()
             payload["positioning_algorithm"] = algo if algo in ("knn", "rf") else "knn"

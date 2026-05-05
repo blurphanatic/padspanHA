@@ -432,6 +432,18 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"PadSpan snapshot error: {err}") from err
 
         now = time.monotonic()
+
+        # ── Dynamic poll interval from settings ──────────────────────────────
+        try:
+            _st_pi = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            _pi = int((_st_pi.data if _st_pi else {}).get("presence_poll_interval_s") or 10)
+            _pi = max(1, min(60, _pi))
+            _new_interval = timedelta(seconds=_pi)
+            if self.update_interval != _new_interval:
+                self.update_interval = _new_interval
+        except Exception:
+            pass
+
         # Accumulates (key, old_room, new_room) tuples during this poll cycle;
         # processed at the end for alerts, movement history, and HA tag events.
         self._pending_room_changes: list[tuple[str, str | None, str]] = []
@@ -539,7 +551,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _st2 = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
             _delay_s = float(((_st2.data if _st2 else {}).get("room_change_delay_s") or 20.0))
             _delay_s = max(0.0, min(300.0, _delay_s))
-            _dyn_vote_window = max(1, round(_delay_s / _SCAN_INTERVAL.total_seconds()))
+            _dyn_vote_window = max(1, round(_delay_s / self.update_interval.total_seconds()))
             _dyn_vote_threshold = max(1, (_dyn_vote_window + 1) // 2)
         except Exception:
             _dyn_vote_window = _VOTE_WINDOW

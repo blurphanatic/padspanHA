@@ -37,7 +37,7 @@ def _clamp_interval(value: Any) -> int:
         v = int(value)
     except (ValueError, TypeError):
         v = DEFAULT_SCAN_INTERVAL
-    return max(5, min(3600, v))
+    return max(1, min(3600, v))
 
 def _schema(default_interval: int) -> vol.Schema:
     return vol.Schema(
@@ -45,7 +45,7 @@ def _schema(default_interval: int) -> vol.Schema:
             vol.Required(
                 CONF_SCAN_INTERVAL,
                 default=_clamp_interval(default_interval),
-            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
+            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=3600)),
         }
     )
 

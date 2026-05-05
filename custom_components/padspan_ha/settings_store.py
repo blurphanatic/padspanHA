@@ -72,6 +72,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # When enabled, reseeds from HA discovered-service-info every 5s instead of 30s.
     # Helps with HA 2026.4+ where habluetooth dedup suppresses repeat callbacks.
     "aggressive_ble_reseed": False,
+    # Presence poll interval (seconds).  How often the smoothing pipeline runs.
+    # Lower = faster room transitions but higher CPU.  Default 10s.
+    "presence_poll_interval_s": 10,
+    # BLE reseed interval (seconds).  How often bluetooth_live re-fetches from
+    # HA's discovered-service-info API.  Essential for passive proxy scanners
+    # (Shelly, etc.).  Overrides aggressive_ble_reseed when set.  Default 30s.
+    "ble_reseed_interval_s": 30,
     # Lights sidebar panel (off by default — requires HA restart to take effect)
     "lights_panel_enabled": False,
     "bermuda_ignore": False,  # experimental: ignore all Bermuda integration data

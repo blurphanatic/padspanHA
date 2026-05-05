@@ -407,15 +407,18 @@ class BluetoothLive:
             # through async_register_callback.  Default 30s; aggressive mode
             # (5s) can be enabled in settings for HA 2026.4+ where habluetooth
             # dedup suppresses repeat callbacks from passive proxies.
-            _aggressive = False
+            _RESEED_INTERVAL_S = 30
             try:
                 from .const import DOMAIN, DATA_SETTINGS
                 _st = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
-                if _st and _st.data.get("aggressive_ble_reseed"):
-                    _aggressive = True
+                if _st:
+                    _custom = (_st.data or {}).get("ble_reseed_interval_s")
+                    if _custom is not None:
+                        _RESEED_INTERVAL_S = max(1, min(60, int(_custom)))
+                    elif _st.data.get("aggressive_ble_reseed"):
+                        _RESEED_INTERVAL_S = 5
             except Exception:
                 pass
-            _RESEED_INTERVAL_S = 5 if _aggressive else 30
             _needs_reseed = (
                 not self._seen_by_source
                 or self._last_reseed is None

@@ -760,7 +760,8 @@ function _settingsPresence(ctx, el){
 
   // ── Room change delay ──────────────────────────────────────────────────────
   const currentDelay = (settings.room_change_delay_s != null ? Number(settings.room_change_delay_s) : 20);
-  const polls = Math.max(1, Math.round(currentDelay / 10));
+  const _pollInt = (settings.presence_poll_interval_s != null ? Number(settings.presence_poll_interval_s) : 10);
+  const polls = Math.max(1, Math.round(currentDelay / _pollInt));
   const delayInp = el("input", {
     type: "number", min: "0", max: "300", step: "5", value: String(currentDelay), style: inpStyle,
   });
@@ -785,8 +786,70 @@ function _settingsPresence(ctx, el){
       delaySaveBtn,
     ]),
     el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
-      `Current: ${currentDelay}s → requires ~${polls} consecutive 10-second poll${polls !== 1 ? "s" : ""} agreement. ` +
+      `Current: ${currentDelay}s → requires ~${polls} consecutive ${_pollInt}s poll${polls !== 1 ? "s" : ""} agreement. ` +
       `Set to 0 for instant room switching.`
+    ),
+  ]));
+
+  // ── Presence Poll Interval ──────────────────────────────────────────────────
+  const currentPoll = (settings.presence_poll_interval_s != null ? Number(settings.presence_poll_interval_s) : 10);
+  const pollInp = el("input", {
+    type: "number", min: "1", max: "60", step: "1", value: String(currentPoll), style: inpStyle,
+  });
+  const pollSaveBtn = el("button", { class: "btn" }, "Save");
+  pollSaveBtn.addEventListener("click", async () => {
+    const v = Math.max(1, Math.min(60, parseInt(pollInp.value) || 10));
+    try {
+      await ctx.actions.settingsSet({ presence_poll_interval_s: v });
+      ctx.toast(`Poll interval set to ${v}s`);
+    } catch(e) { ctx.toast("Failed to save setting", true); }
+  });
+  wrap.appendChild(el("div", { class: "card" }, [
+    el("div", { class: "h2" }, "Presence Poll Interval"),
+    el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
+      "How often the smoothing pipeline runs to update room assignments. " +
+      "Lower values give faster room transitions but use more CPU. " +
+      "Higher values reduce load on low-end hardware."
+    ),
+    el("div", { style: rowStyle }, [
+      el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Poll interval"),
+      pollInp,
+      el("div", { class: "muted", style: "font-size:12px" }, "seconds"),
+      pollSaveBtn,
+    ]),
+    el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
+      `Current: ${currentPoll}s. Default: 10s. Range: 1–60s.`
+    ),
+  ]));
+
+  // ── BLE Reseed Interval ──────────────────────────────────────────────────
+  const currentReseed = (settings.ble_reseed_interval_s != null ? Number(settings.ble_reseed_interval_s) : 30);
+  const reseedInp = el("input", {
+    type: "number", min: "1", max: "60", step: "1", value: String(currentReseed), style: inpStyle,
+  });
+  const reseedSaveBtn = el("button", { class: "btn" }, "Save");
+  reseedSaveBtn.addEventListener("click", async () => {
+    const v = Math.max(1, Math.min(60, parseInt(reseedInp.value) || 30));
+    try {
+      await ctx.actions.settingsSet({ ble_reseed_interval_s: v });
+      ctx.toast(`BLE reseed interval set to ${v}s`);
+    } catch(e) { ctx.toast("Failed to save setting", true); }
+  });
+  wrap.appendChild(el("div", { class: "card" }, [
+    el("div", { class: "h2" }, "BLE Reseed Interval"),
+    el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
+      "How often PadSpan re-fetches BLE data from HA's scanner infrastructure. " +
+      "Essential for passive proxy scanners (Shelly, ESPHome BLE proxy) whose " +
+      "advertisements don't arrive via callbacks. Lower values improve freshness on fast hardware."
+    ),
+    el("div", { style: rowStyle }, [
+      el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Reseed interval"),
+      reseedInp,
+      el("div", { class: "muted", style: "font-size:12px" }, "seconds"),
+      reseedSaveBtn,
+    ]),
+    el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
+      `Current: ${currentReseed}s. Default: 30s. Range: 1–60s.`
     ),
   ]));
 
