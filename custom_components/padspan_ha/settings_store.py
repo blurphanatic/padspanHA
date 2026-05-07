@@ -81,6 +81,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ble_reseed_interval_s": 30,
     # Lights sidebar panel (off by default — requires HA restart to take effect)
     "lights_panel_enabled": False,
+    "ha_entity_occupancy_enabled": False,  # expose occupancy estimate sensors to HA
     "bermuda_ignore": False,  # experimental: ignore all Bermuda integration data
     # HA Tags integration
     "tags_room_events_enabled": False,     # emit tag_scanned on room changes

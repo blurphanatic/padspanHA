@@ -25,6 +25,7 @@ Automation example:
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
@@ -161,6 +162,15 @@ async def async_setup_entry(
 
     _check_new()
     entry.async_on_unload(coordinator.async_add_listener(_check_new))
+
+    # ── Occupancy sensors (off by default, enabled in Settings) ──────────
+    st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+    _occ_on = ((st.data or {}) if st else {}).get("ha_entity_occupancy_enabled", False)
+    if _occ_on:
+        from .websocket import compute_occupancy_estimate
+        occ_coord = PadSpanOccupancyCoordinator(hass, compute_occupancy_estimate)
+        await occ_coord.async_config_entry_first_refresh()
+        async_add_entities([PadSpanOccupancySensor(occ_coord)])
 
 
 def _should_track(obj: dict[str, Any]) -> bool:
@@ -414,4 +424,91 @@ class PadSpanScannerDistanceSensor(CoordinatorEntity[PresenceCoordinator], Senso
             "rssi": round(rssi, 1) if rssi is not None else None,
             "age_s": round(age, 1) if isinstance(age, (int, float)) else None,
             "room": obj.get("room"),
+        }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Occupancy Estimation Sensors
+# ══════════════════════════════════════════════════════════════════════════════
+
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+
+
+class PadSpanOccupancyCoordinator(DataUpdateCoordinator):
+    """Polls the occupancy estimator on a 30s interval."""
+
+    def __init__(self, hass: HomeAssistant, compute_fn) -> None:
+        super().__init__(
+            hass, _LOGGER,
+            name="PadSpan Occupancy",
+            update_interval=timedelta(seconds=30),
+        )
+        self._compute = compute_fn
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        try:
+            return await self._compute(self.hass)
+        except Exception as err:
+            _LOGGER.warning("Occupancy estimate failed: %s", err)
+            return self.data or {}
+
+
+class PadSpanOccupancySensor(CoordinatorEntity["PadSpanOccupancyCoordinator"], SensorEntity):
+    """Building-level occupancy estimate sensor."""
+
+    _attr_has_entity_name = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: PadSpanOccupancyCoordinator) -> None:
+        super().__init__(coordinator)
+
+    @property
+    def unique_id(self) -> str:
+        return "padspan_ha__occupancy_estimate"
+
+    @property
+    def name(self) -> str:
+        return "Occupancy"
+
+    @property
+    def icon(self) -> str:
+        return "mdi:account-group"
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        return {
+            "identifiers": {(DOMAIN, "padspan_occupancy")},
+            "name": "PadSpan Occupancy",
+            "manufacturer": "PadSpan HA",
+            "model": "Occupancy Estimator",
+        }
+
+    @property
+    def native_value(self) -> int | None:
+        d = self.coordinator.data
+        if not d:
+            return None
+        return d.get("total_estimate")
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        return "people"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        d = self.coordinator.data or {}
+        rooms = d.get("rooms") or []
+        room_summary = {
+            r["room"]: {"min": r.get("estimate_low"), "estimate": r.get("estimate"), "max": r.get("estimate_high")}
+            for r in rooms
+        }
+        return {
+            "minimum": d.get("total_low"),
+            "maximum": d.get("total_high"),
+            "confidence": d.get("confidence"),
+            "identified": d.get("identified"),
+            "unidentified": d.get("unidentified"),
+            "clusters": d.get("clusters"),
+            "multiplier": d.get("multiplier"),
+            "rooms": room_summary,
         }

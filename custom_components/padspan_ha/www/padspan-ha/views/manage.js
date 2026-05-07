@@ -915,6 +915,7 @@ function _haEntityControls(ctx, el, settings){
     {key:"ha_entity_area_enabled", label:"sensor.padspan_{label}_area", desc:"Primary room sensor with confidence attributes"},
     {key:"ha_entity_distance_enabled", label:"sensor.padspan_{label}_distance", desc:"Distance to nearest scanner (metres)"},
     {key:"ha_entity_scanner_distance_enabled", label:"sensor.padspan_{label}_distance_{scanner}", desc:"Per-scanner distance for hyper-local triggers"},
+    {key:"ha_entity_occupancy_enabled", label:"sensor.padspan_occupancy", desc:"Building occupancy estimate (min/estimate/max) — requires integration reload"},
   ];
 
   for(const t of types){

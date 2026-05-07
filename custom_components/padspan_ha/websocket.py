@@ -2672,6 +2672,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("ha_entity_area_enabled"): bool,
         vol.Optional("ha_entity_distance_enabled"): bool,
         vol.Optional("ha_entity_scanner_distance_enabled"): bool,
+        vol.Optional("ha_entity_occupancy_enabled"): bool,
         vol.Optional("mqtt_publish_enabled"): bool,
         vol.Optional("espresense_mqtt_enabled"): bool,
         vol.Optional("espresense_topic_prefix"): str,
@@ -2812,6 +2813,7 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
         for key in ("ha_entity_tracker_enabled", "ha_entity_area_enabled",
                     "ha_entity_distance_enabled", "ha_entity_scanner_distance_enabled",
                     "mqtt_publish_enabled", "espresense_mqtt_enabled", "aggressive_ble_reseed",
+                    "ha_entity_occupancy_enabled",
                     "lights_panel_enabled", "bermuda_ignore",
                     "tags_room_events_enabled", "tags_nfc_identify_enabled",
                     "tags_phone_autolink_enabled", "quiet_mode",
@@ -8521,14 +8523,15 @@ async def ws_fabric_spatial_batch_save(hass: HomeAssistant, connection, msg) -> 
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-@websocket_api.websocket_command({"type": "padspan_ha/occupancy_estimate"})
-@websocket_api.async_response
-async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
-    """Estimate building and per-room occupancy from live BLE data.
+async def compute_occupancy_estimate(hass: HomeAssistant) -> dict:
+    """Compute building and per-room occupancy from live BLE data.
 
     Hybrid approach: identified devices count 1:1, unidentified BLE
     with sufficient dwell time count with a configurable multiplier.
     Auto-excludes iBeacons, infrastructure, and known IoT devices.
+
+    Returns the occupancy result dict.  Called by both the WS handler
+    and the occupancy sensor coordinator.
     """
     from .bluetooth_live import get_bluetooth_live
 
@@ -8564,11 +8567,10 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
     # Get live snapshot
     bl = get_bluetooth_live(hass)
     if not bl:
-        connection.send_result(msg["id"], {
+        return {
             "total_estimate": 0, "confidence": "low", "rooms": [],
             "identified": 0, "unidentified": 0, "excluded": 0, "multiplier": multiplier,
-        })
-        return
+        }
 
     snap = bl.get_snapshot(max_ads=10000, max_age_s=600)
     ads = snap.get("advertisements") or []
@@ -9004,7 +9006,7 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
     total_low = max(hybrid_signals["persons_home"], sum(r["estimate_low"] for r in rooms_result))
     total_high = max(total_estimate, sum(r["estimate_high"] for r in rooms_result))
 
-    connection.send_result(msg["id"], {
+    return {
         "total_estimate": total_estimate,
         "total_low": total_low,
         "total_high": total_high,
@@ -9021,7 +9023,15 @@ async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
         "ble_estimate": ble_estimate,
         "hybrid_enabled": _hybrid_enabled,
         "hybrid": hybrid_signals,
-    })
+    }
+
+
+@websocket_api.websocket_command({"type": "padspan_ha/occupancy_estimate"})
+@websocket_api.async_response
+async def ws_occupancy_estimate(hass: HomeAssistant, connection, msg) -> None:
+    """WS wrapper for occupancy estimation."""
+    result = await compute_occupancy_estimate(hass)
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command({
