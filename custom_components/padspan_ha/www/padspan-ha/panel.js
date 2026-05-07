@@ -22,8 +22,8 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.20.61";
-const BUILD_ID = "20260507T225542Z";
+const APP_VERSION = "0.20.62";
+const BUILD_ID = "20260507T233626Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -844,7 +844,10 @@ class PadSpanHaApp extends HTMLElement {
 
   _startDataPoll(){
     if(this._pollTimer) return;
-    this._pollTimer = setInterval(()=>this._pollTick(), 5000);
+    // Match UI refresh rate to the presence poll interval setting (default 5s, min 1s)
+    const pollS = (this.state.settings && this.state.settings.presence_poll_interval_s) || 5;
+    const pollMs = Math.max(1000, Math.min(10000, pollS * 1000));
+    this._pollTimer = setInterval(()=>this._pollTick(), pollMs);
   }
 
   _startPolling(){
