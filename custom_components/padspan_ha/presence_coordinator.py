@@ -1055,6 +1055,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         room_scores: dict[str, float] = {}
         _spatial_xy: tuple[float, float, str] | None = None  # (x_m, y_m, floor_id)
         _spatial_candidate: str | None = None  # room from geometry check
+        _cur_confirmed = self._confirmed_room.get(key)
         if ema:
             # RSSI margin confidence (for entity attributes)
             sorted_vals = sorted(ema.values(), reverse=True)
