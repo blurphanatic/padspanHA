@@ -1259,12 +1259,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if isinstance(_geo, dict) and _geo.get("floor_id") == _spatial_xy[2]:
                         _geo_rooms.append(_rn)
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 "DIAG [%s] label=%s | scanners(%d): %s",
                 key[:30], _obj_label, len(_scanner_detail),
                 " | ".join(_scanner_detail[:8]),
             )
-            _LOGGER.info(
+            _LOGGER.debug(
                 "DIAG [%s] spatial=%s | rooms_on_floor=%s | barriers=%d | "
                 "use_metres=%s | scanner_positions=%d | candidate=%s | confirmed=%s",
                 key[:30], _spatial_detail,
@@ -1275,7 +1275,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             if room_scores:
                 _top5 = sorted(room_scores.items(), key=lambda x: -x[1])[:5]
-                _LOGGER.info(
+                _LOGGER.debug(
                     "DIAG [%s] rssi_scores: %s",
                     key[:30],
                     ", ".join(f"{r}={s:.0f}dBm" for r, s in _top5),
