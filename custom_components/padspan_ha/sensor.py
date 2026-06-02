@@ -271,8 +271,12 @@ class PadSpanAreaSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity):
             attrs["ibeacon_uuid"] = obj["ibeacon_uuid"]
             attrs["ibeacon_major"] = obj.get("ibeacon_major")
             attrs["ibeacon_minor"] = obj.get("ibeacon_minor")
-        if obj.get("all_addresses"):
-            attrs["all_addresses"] = obj["all_addresses"]
+        all_addrs = obj.get("all_addresses") or []
+        if all_addrs:
+            attrs["num_addresses"] = len(all_addrs)
+            # Cap the list persisted to the recorder — high-rotation devices (iPhone IRK)
+            # can accumulate hundreds of MACs and exceed the 16384-byte attribute limit.
+            attrs["all_addresses"] = all_addrs[:5]
         return attrs
 
 

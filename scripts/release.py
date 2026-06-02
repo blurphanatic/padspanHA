@@ -152,10 +152,11 @@ def preflight_checks():
                 'hacs.json: "content_in_root" must be false '
                 "(manifest.json lives in custom_components/padspan_ha/, not repo root)"
             )
-        if not hacs.get("zip_release"):
-            errors.append('hacs.json: "zip_release" must be true')
-        if hacs.get("filename") != "padspan_ha.zip":
-            errors.append('hacs.json: "filename" must be "padspan_ha.zip"')
+        # zip_release is optional — both true (HACS downloads the zip asset)
+        # and false (HACS does a git checkout) are valid install methods.
+        # If true, filename must match the asset this script uploads.
+        if hacs.get("zip_release") and hacs.get("filename") != "padspan_ha.zip":
+            errors.append('hacs.json: "filename" must be "padspan_ha.zip" when zip_release is true')
 
     # 2. manifest.json must exist inside the integration dir
     manifest_path = INTEGRATION / "manifest.json"
