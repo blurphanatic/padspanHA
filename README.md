@@ -89,8 +89,10 @@ Tracking phones is the hardest problem in BLE presence — they rotate their Blu
 | **Android phone** | HA Companion App iBeacon | Install app, enable BLE Transmitter. Done. |
 | **iPhone / iPad** | IRK via [irk-capture](https://github.com/DerekSeaman/irk-capture) | Spare ESP32, flash irk-capture, pair once, paste IRK |
 | **Apple Watch** | IRK via irk-capture | Same as iPhone — pair watch to irk-capture ESP32 |
-| **AirTag / SmartTag** | Automatic (iBeacon) | Just works — PadSpan groups rotating MACs by UUID |
-| **AirPods** | Apple auto-classification | Detected automatically when feature enabled |
+| **Tile / Chipolo** | Automatic (iBeacon) | Stable UUID — just works, tag once and the name sticks across rotations |
+| **AirTag** | Probabilistic (experimental) | Enable **Apple Device Classification** + **MAC Rotation Bridging** in Settings → Features. AirTags rotate both MAC and Find My key every ~15 min and expose no stable identifier, so bridging links rotations by advertisement pattern — works while in continuous range, may mis-link in crowded RF environments |
+| **SmartTag** (Samsung) | Probabilistic | Same as AirTag — no stable identifier in the air, relies on MAC Rotation Bridging |
+| **AirPods** | Apple auto-classification | Detected and labeled automatically when feature enabled (display only — does not solve identity) |
 
 The **Phone Setup Wizard** (experimental) guides you through each path with step-by-step instructions. If you have an irk-capture ESP32 on your network, PadSpan auto-detects captured IRKs — no manual hex pasting.
 

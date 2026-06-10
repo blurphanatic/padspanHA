@@ -86,10 +86,12 @@ Toggle back to **Live mode**. Your BLE scanners are auto-discovered. You should 
 
 Go to the **Objects** tab. You'll see a mix of named and unnamed Bluetooth devices. Click **Tag** next to any device you recognize:
 - Your phone → "Alice's Phone"
-- Your AirTag → "Car Keys"
 - Your Tile → "Backpack"
+- Your HA Companion-App iBeacon → "Alice's Phone (BLE)"
 
-Once tagged, PadSpan creates HA entities for that device (device_tracker, area sensor, distance sensor). Each tagged device gets a **stable padspan_id** that survives MAC rotation and firmware updates.
+Once tagged, PadSpan creates HA entities for that device (device_tracker, area sensor, distance sensor). Each tagged device gets a **stable padspan_id** that survives MAC rotation and firmware updates — *provided the underlying device has a stable identifier* (iBeacon UUID for Tiles / Companion App, IRK for phones).
+
+**About AirTags / Samsung SmartTags:** these rotate both their MAC address and their advertised Find My key every ~15 minutes and broadcast no stable identifier. The padspan_id chain breaks at each rotation. Enable **Settings → Features → MAC Rotation Bridging + Apple Device Classification** for probabilistic tracking that follows the AirTag while it stays in continuous range. Tagging works in that window; expect the chain to reset when the tag leaves and re-enters BLE range.
 
 ## Step 7: Upload a Floor Plan
 

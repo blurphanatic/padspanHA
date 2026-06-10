@@ -70,8 +70,8 @@ export const HELP = {
   objects: {
     title: "Objects — Everything being tracked",
     body: [
-      "Objects lists every device PadSpan can see — phones tracked by Home Assistant, AirTags, Tile trackers, key fobs, and any other Bluetooth device your scanners have detected.",
-      "Badge colours tell you the device type: green BLE = standard Bluetooth device, orange BLE? = unidentified, blue Private BLE = phone using rotating MAC address (resolved automatically), amber iBeacon = AirTag / Tile / HA Companion App iBeacon grouped by stable UUID.",
+      "Objects lists every device PadSpan can see — phones tracked by Home Assistant, Tile trackers, key fobs, AirTags, and any other Bluetooth device your scanners have detected.",
+      "Badge colours tell you the device type: green BLE = standard Bluetooth device, orange BLE? = unidentified, blue Private BLE = phone using rotating MAC address (resolved automatically via IRK), amber iBeacon = Tile / HA Companion App iBeacon grouped by stable UUID. AirTags (purple Find My badge) rotate both their MAC and their advertised key every ~15 min and do NOT have a stable identifier — see the Naming help below for what works.",
       "Each object shows enrichment badges decoded from its BLE advertisement: a blue Company badge (e.g. Apple, Samsung, Google), a purple Device Type badge (e.g. Find My, AirPods, Nearby Info), and green Service badges (e.g. Battery, Device Information, Tile). These help identify unknown devices without tagging them.",
       "A red Away badge appears when a BLE device hasn't been seen for longer than the configured away timeout (default 5 min). 'Last: Kitchen' shows where it was last detected. The corresponding device_tracker entity in HA also shows not_home.",
       "Use the search box to find a device by name, address, company, or device type. Type 'apple' to see all Apple devices, 'tile' for Tile trackers, or 'away' for absent devices.",
@@ -82,9 +82,9 @@ export const HELP = {
     title: "Naming (tagging) a device",
     body: [
       "When PadSpan detects a Bluetooth device it doesn't recognise, it shows a hardware address like AA:BB:CC:11:22:33.",
-      "Click the 'Tag' button next to any device to give it a friendly name — for example 'Alice's AirTag', 'Car Keys', or 'Backpack Tracker'. Click Save. The name is stored permanently in Home Assistant.",
+      "Click the 'Tag' button next to any device to give it a friendly name — for example 'Backpack Tile', 'Car Keys', or 'Cat Collar'. Click Save. The name is stored permanently in Home Assistant.",
       "Once tagged, the name appears everywhere in PadSpan — on the Overview map, the Follow tracker, and all other pages. PadSpan also creates a device_tracker entity (e.g. device_tracker.car_keys) and an area sensor (e.g. sensor.car_keys_area) in Home Assistant for use in automations.",
-      "AirTags and other iBeacon devices use a stable UUID as their identifier. The tag sticks even as the MAC address rotates — you never need to re-tag them.",
+      "What sticks across rotations: Tile/Chipolo and HA Companion-App iBeacons broadcast a stable UUID, so the tag follows them forever. Phones use IRK resolution (Settings → IRK Manager) to bind a friendly name to the rotating address. AirTags / Samsung SmartTags are the hard case — they rotate both MAC and advertised key with no stable identifier. Enable Settings → Features → MAC Rotation Bridging + Apple Device Classification to get probabilistic tracking; the tag will follow the AirTag while it stays in continuous range but may break across long absences.",
       "You can rename a device at any time by clicking 'Relabel'. To remove a tag entirely, go to Settings → Manage → BLE Tags.",
     ],
   },
@@ -258,7 +258,7 @@ export const HELP = {
   calibration_beacon: {
     title: "Beacon Tune — Pin stationary beacons on floor plans",
     body: [
-      "Beacon Tune lets you place stationary BLE beacons (AirTags, Tiles, key fobs) at their exact physical positions on your floor plans.",
+      "Beacon Tune lets you place stationary BLE beacons (Tiles, key fobs, fixed-location iBeacons) at their exact physical positions on your floor plans. Note: AirTags rotate their address every ~15 min, so pinning one only persists as long as MAC Rotation Bridging keeps the chain alive — Tile/iBeacon devices with stable UUIDs are the reliable choice for fixed pins.",
       "Pick a map, then add beacons from the dropdown. Each pinned beacon appears as a teal diamond on the floor plan — drag it to match the real-world position.",
       "Once pinned, PadSpan uses the known position to override the beacon's room assignment — no more flickering between adjacent rooms.",
       "With Auto-Calibrate enabled, PadSpan automatically builds calibration fingerprints from the beacon's RSSI readings at its pinned location. This improves location accuracy for ALL tracked devices over time.",
@@ -416,7 +416,7 @@ export const HELP = {
       "Calibration captures real Bluetooth signal readings at known positions in your home. PadSpan uses this data to build a fingerprint model that maps signal patterns to physical locations.",
       "SETUP — Choose which device to calibrate with (usually your phone) and verify scanner connectivity.",
       "TUNE — The recommended visual calibration method. Place markers on the 3D map where scanners are, collect signal samples, and build the model interactively.",
-      "BEACON TUNE — For stationary Bluetooth beacons (iBeacons, Tiles, AirTags in fixed locations). Pin them on the map so PadSpan knows exactly where they are.",
+      "BEACON TUNE — For stationary Bluetooth beacons (iBeacons, Tiles in fixed locations). Pin them on the map so PadSpan knows exactly where they are. AirTags work too but only while MAC Rotation Bridging keeps the address chain intact.",
       "PIN & LISTEN — Classic calibration: click a spot on the map, stand there physically, and collect signal samples for 15–60 seconds. Repeat across the home.",
       "ROAM — Walk-around calibration: PadSpan records continuous signal samples as you move through the home. Less precise than Pin & Listen but faster for large areas.",
       "MODEL — View calibration statistics, LOO accuracy, and per-scanner path-loss fits. Export or clear calibration data.",
