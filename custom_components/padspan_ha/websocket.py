@@ -1865,11 +1865,17 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 tl = dst.setdefault("service_uuids", [])
                 if _u not in tl:
                     tl.append(_u)
-            ea = dst.setdefault("all_addresses", [])
-            if dst.get("address") and dst["address"] not in ea:
+            # all_addresses holds MAC addresses ONLY.  For ibeacon/private_ble
+            # objects the "address" field is a key string ("ibeacon:uuid:...")
+            # — appending those poisons the list (and the 7-day cache) with
+            # pseudo-addresses that later match nothing.
+            def _is_mac(s: Any) -> bool:
+                return isinstance(s, str) and len(s) == 17 and s.count(":") == 5
+            ea = [a for a in dst.setdefault("all_addresses", []) if _is_mac(a)]
+            if _is_mac(dst.get("address")) and dst["address"] not in ea:
                 ea.append(dst["address"])
             for _ma in (src.get("all_addresses") or [src.get("address")]):
-                if _ma and _ma not in ea:
+                if _is_mac(_ma) and _ma not in ea:
                     ea.append(_ma)
             dst["all_addresses"] = sorted(ea)
             for _le in (src.get("linked_entities") or []):
@@ -2298,11 +2304,17 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         obj[fld] = prev_val
                 # Preserve first_seen from history
                 obj["_first_seen"] = prev.get("_first_seen") or _now_ts
-                # Merge all_addresses (accumulate over time)
+                # Merge all_addresses (accumulate over time).  MAC-shaped
+                # entries only — historic cache entries were poisoned with
+                # key strings ("ibeacon:...") appended by older merge code;
+                # this filter also scrubs them out as the cache refreshes.
                 if prev.get("all_addresses") and obj.get("all_addresses"):
-                    merged = list(dict.fromkeys(
-                        list(obj["all_addresses"]) + list(prev["all_addresses"])
-                    ))
+                    merged = [
+                        a for a in dict.fromkeys(
+                            list(obj["all_addresses"]) + list(prev["all_addresses"])
+                        )
+                        if isinstance(a, str) and len(a) == 17 and a.count(":") == 5
+                    ]
                     obj["all_addresses"] = merged
             else:
                 obj["_first_seen"] = _now_ts
@@ -2384,9 +2396,15 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     # Try the object's key, address, canonical_id, ibeacon key variants
                     _lbl = None
                     _try_keys = [obj.get("key"), obj.get("address"), obj.get("canonical_id")]
-                    # Also try ibeacon key from metadata
+                    # Split iBeacon objects (key = ibeacon:uuid:major:minor:MAC) are
+                    # DISTINCT physical devices sharing a factory-default UUID.  They
+                    # must NOT inherit the unsplit group key's label — that resurrects
+                    # a stale label onto every beacon in the pack AND shadows per-MAC
+                    # renames made in the Bluetooth tab.
+                    _is_split_ib = kind == "ibeacon" and len(str(obj.get("key") or "").split(":")) > 4
+                    # Also try ibeacon key from metadata (unsplit objects only)
                     _ib_u = obj.get("ibeacon_uuid")
-                    if _ib_u is not None:
+                    if _ib_u is not None and not _is_split_ib:
                         _ibk = f"ibeacon:{_ib_u}:{obj.get('ibeacon_major', 0)}:{obj.get('ibeacon_minor', 0)}"
                         _try_keys.extend([_ibk, _ibk.upper()])
                     # Also try all_addresses
@@ -2423,6 +2441,17 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 _grp.sort(key=lambda o: (o.get("rssi") or -999), reverse=True)
                 _primary = _grp[0]
                 for _sec in _grp[1:]:
+                    # A label is a display string, NOT an identity.  Two iBeacon
+                    # objects with DIFFERENT keys are distinct physical devices
+                    # (e.g. a beacon multi-pack split per MAC) that merely share
+                    # an inherited label — never merge them, or the per-MAC split
+                    # gets silently undone right here.
+                    if (
+                        _primary.get("kind") == "ibeacon"
+                        and _sec.get("kind") == "ibeacon"
+                        and _sec.get("key") != _primary.get("key")
+                    ):
+                        continue
                     _sec_key = _sec.get("key", "")
                     if _sec_key:
                         _dedup_absorbed.add(_sec_key)
