@@ -1439,7 +1439,12 @@ class PadSpanHaApp extends HTMLElement {
 
         // Object label actions (tag/untag BLE devices)
         objectLabelSet: async (address, label)=>{
-          return await this._callWS({ type:"padspan_ha/object_label_set", address, label });
+          const res = await this._callWS({ type:"padspan_ha/object_label_set", address, label });
+          // Duplicate-label guard: the same label on two devices merges them
+          // into one HA device with doubled sensors — warn so the user picks
+          // a unique name instead of silently colliding.
+          if (res && res.warning) this._toast(res.warning, true);
+          return res;
         },
         objectLabelDelete: async (address)=>{
           return await this._callWS({ type:"padspan_ha/object_label_delete", address });

@@ -2319,6 +2319,16 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             else:
                 obj["_first_seen"] = _now_ts
 
+            # Split iBeacon objects own exactly ONE MAC — the one in their key.
+            # Never union sibling MACs from merged-era cache entries; the cache
+            # rewrite below then self-heals old entries that claimed the pack.
+            if obj.get("kind") == "ibeacon":
+                _kparts = str(obj.get("key") or "").split(":")
+                if len(_kparts) > 4:
+                    _own_mac = ":".join(_kparts[-6:])
+                    if len(_own_mac) == 17 and _own_mac.count(":") == 5:
+                        obj["all_addresses"] = [_own_mac]
+
             # Update cache entry
             obj["_last_seen_ts"] = _now_ts
             obj["_cache_age_s"] = obj.get("age_s") or 0
@@ -4068,7 +4078,10 @@ async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
         # Find the object in cache that matches the address we just labelled
         _target = _cache.get(addr) or _cache.get(store_addr)
 
-        # If not found by direct key, search by all_addresses or canonical_id
+        # If not found by direct key, search by exact key/canonical matches
+        # FIRST across the whole cache, then fall back to all_addresses.
+        # all_addresses can over-claim (merged-era sibling entries listed each
+        # other's MACs) — an exact match must always win over a claimed MAC.
         if not _target:
             addr_upper = addr.upper()
             store_upper = store_addr.upper()
@@ -4076,11 +4089,14 @@ async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
                 if _key.upper() == addr_upper or _key.upper() == store_upper:
                     _target = _obj
                     break
-                _all = _obj.get("all_addresses") or []
-                if any(str(a).upper() == addr_upper for a in _all):
+                if _obj.get("canonical_id") == store_addr or _obj.get("canonical_id") == addr:
                     _target = _obj
                     break
-                if _obj.get("canonical_id") == store_addr or _obj.get("canonical_id") == addr:
+        if not _target:
+            addr_upper = addr.upper()
+            for _key, _obj in _cache.items():
+                _all = _obj.get("all_addresses") or []
+                if any(str(a).upper() == addr_upper for a in _all):
                     _target = _obj
                     break
 
@@ -4099,9 +4115,16 @@ async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
                 _keys_to_label.add(_ib_key)
                 _keys_to_label.add(_ib_key.upper())
 
-            # Build ibeacon key from metadata if available
+            # Build ibeacon key from metadata if available.
+            # NEVER for split objects or factory-default UUIDs: the unsplit
+            # group key is shared by every beacon in a multi-pack, so storing
+            # a label under it stamps the whole pack with one beacon's name
+            # (and resurrects the merged-ghost problem on every rename).
+            _t_key = str(_target.get("key") or "")
+            _t_is_split = _t_key.startswith("ibeacon:") and len(_t_key.split(":")) > 4
             _ib_uuid = _target.get("ibeacon_uuid")
-            if _ib_uuid is not None:
+            _uuid_is_default = str(_ib_uuid or "").lower() in _DEFAULT_IBEACON_UUIDS
+            if _ib_uuid is not None and not _t_is_split and not _uuid_is_default:
                 _ib_major = _target.get("ibeacon_major", 0)
                 _ib_minor = _target.get("ibeacon_minor", 0)
                 _ib_k = f"ibeacon:{_ib_uuid}:{_ib_major}:{_ib_minor}"
@@ -4158,11 +4181,30 @@ async def ws_object_label_set(hass: HomeAssistant, connection, msg) -> None:
     except Exception as _dr_err:
         _LOGGER.debug("DeviceRegistry label_set: %s", _dr_err)
 
-    connection.send_result(msg["id"], {
+    # Warn when another DEVICE already uses this label.  Labels drive HA
+    # entity/device naming downstream, so two devices sharing a label end
+    # up merged into one HA device with doubled sensors.
+    _dup_keys: list[str] = []
+    try:
+        _cross_set = {str(k).upper() for k in _cross_stored}
+        for _ok, _oe in (obj_store.all() or {}).items():
+            if str(_oe.get("label") or "").strip() == label and str(_ok).upper() not in _cross_set:
+                _dup_keys.append(_ok)
+    except Exception:
+        pass
+
+    _result: dict[str, Any] = {
         "ok": True, "address": store_addr, "label": label,
         "cross_stored": _cross_stored,
         "padspan_id": _padspan_id,
-    })
+    }
+    if _dup_keys:
+        _result["duplicate_label_keys"] = _dup_keys
+        _result["warning"] = (
+            f"Label '{label}' is already used by {len(_dup_keys)} other device(s). "
+            "Devices sharing a label merge into one HA device — use unique names."
+        )
+    connection.send_result(msg["id"], _result)
 
 
 @websocket_api.websocket_command(
