@@ -133,8 +133,29 @@ class SettingsStore:
             self.data = {**DEFAULT_SETTINGS, **loaded}
         else:
             self.data = dict(DEFAULT_SETTINGS)
+        # Normalize followed_addrs: uppercase + dedup (order preserved).
+        # Every comparison in the system (frontend followedHas, backend
+        # settings_set, tag_integration) is uppercase; historic entries were
+        # saved in mixed formats and silently failed to match.
+        _normalized = False
+        try:
+            _fa = self.data.get("followed_addrs") or []
+            _seen: set[str] = set()
+            _norm: list[str] = []
+            for _x in _fa:
+                if not isinstance(_x, str):
+                    continue
+                _u = _x.strip().upper()
+                if _u and _u not in _seen:
+                    _seen.add(_u)
+                    _norm.append(_u)
+            if _norm != _fa:
+                self.data["followed_addrs"] = _norm
+                _normalized = True
+        except Exception:
+            pass
         # Only re-save if new defaults were added (loaded was missing keys)
-        if not isinstance(loaded, dict) or set(self.data.keys()) != set(loaded.keys()):
+        if _normalized or not isinstance(loaded, dict) or set(self.data.keys()) != set(loaded.keys()):
             await self.store.async_save(self.data)
         return self.data
 

@@ -405,12 +405,34 @@ def _get_settings(hass: HomeAssistant) -> dict:
     return {"data_mode": "sample"}
 
 def _is_rpa_addr(address: str) -> bool:
-    """Return True if a BLE address is a Resolvable Private Address (rotating MAC)."""
+    """Return True if a BLE address is a Resolvable Private Address (rotating MAC).
+
+    CAUTION: this MSB heuristic is only meaningful for addresses that are
+    actually of the *random* type.  HA's snapshot does not expose the HCI
+    address-type bit, so any PUBLIC IEEE-assigned MAC whose OUI starts with
+    0x40-0x7F (~25% of vendor space, e.g. 48:87:2D = Shen Zhen Da Xia "DX"
+    beacons) false-positives here.  Callers must not treat a True result as
+    proof of rotation on its own — see the named-device exemption in the
+    objects build and the same-OUI guard in the iBeacon split.
+    """
     try:
         msb = int(address.upper().split(":")[0], 16)
         return (msb & 0xC0) == 0x40
     except Exception:
         return False
+
+
+# iBeacon UUIDs that ship as factory defaults on cheap beacon hardware.
+# Beacons sold in multi-packs all broadcast the same uuid:major:minor out of
+# the box, so these UUIDs must never be trusted as a unique device identity —
+# the simultaneous-MAC split below always separates them per MAC.
+_DEFAULT_IBEACON_UUIDS = frozenset({
+    "e2c56db5-dffb-48d2-b060-d0f5a71096e0",  # AprilBrother / textbook demo UUID (DX CP27 and many clones)
+    "fda50693-a4e2-4fb1-afcf-c6eb07647825",  # common Chinese default (HM-10 clones, iTag)
+    "b9407f30-f5f8-466e-aff9-25556b57fe6d",  # Estimote factory default
+    "f7826da6-4fa2-4e98-8024-bc5b71e0893e",  # Kontakt.io factory default
+    "74278bda-b644-4520-8f0c-720eaf059935",  # Glimworm / generic example UUID
+})
 
 
 # ── Live Snapshot ──────────────────────────────────────────────────────────────
@@ -1262,6 +1284,19 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     ]
                     # Check if all recent MACs are RPAs (rotating) — if so, same device
                     _all_rpa = all(_is_rpa_addr(m) for m in recent_macs) if recent_macs else False
+                    # Two overrides — these are sibling DEVICES, not one rotating phone:
+                    # (1) Factory-default UUID: beacon multi-packs share uuid:major:minor
+                    #     out of the box; treat each MAC as its own physical device.
+                    # (2) Shared OUI: true RPA rotation randomizes the whole address, so
+                    #     several simultaneously-fresh MACs inside ONE vendor OUI block
+                    #     are distinct hardware. _is_rpa_addr() false-positives on public
+                    #     OUIs 0x40-0x7F (e.g. DX CP27 packs, OUI 48:87:2D) — without
+                    #     this guard the split is suppressed and the whole pack merges
+                    #     into a single object.
+                    _is_default_uuid = str(g.get("uuid") or "").lower() in _DEFAULT_IBEACON_UUIDS
+                    _same_oui = len({m[:9] for m in recent_macs}) == 1 if len(recent_macs) > 1 else False
+                    if _is_default_uuid or _same_oui:
+                        _all_rpa = False
                     if len(recent_macs) > 1 and not _all_rpa:
                         # Multiple distinct devices — split each MAC into its own object
                         for idx, mac in enumerate(recent_macs):
@@ -1457,7 +1492,16 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             # These are noise — duplicate entries from the same phone's non-
             # iBeacon advertisements, or from neighbors' devices.  Without
             # IRK they can't be merged and just clutter the device list.
-            if _is_rpa_addr(addr) and addr not in addr_to_device and addr not in addr_to_entities:
+            # EXEMPTION: keep devices that advertise a local name.  Phones'
+            # rotating-RPA adverts are anonymous; a named advertiser is almost
+            # always real hardware whose public OUI (0x40-0x7F first octet)
+            # false-positives in _is_rpa_addr() — e.g. DX-brand 48:87:2D gear.
+            if (
+                _is_rpa_addr(addr)
+                and addr not in addr_to_device
+                and addr not in addr_to_entities
+                and not str(rec.get("name") or "").strip()
+            ):
                 continue
 
             # Regular (non-rotating) BLE object
@@ -2747,10 +2791,13 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
             addrs = msg["followed_addrs"]
             _new_followed = [str(x).upper() for x in addrs if isinstance(x, str)] if isinstance(addrs, list) else []
             payload["followed_addrs"] = _new_followed
+            try:
+                _old_followed = set(str(x).upper() for x in (st.data.get("followed_addrs") or []))
+            except Exception:
+                _old_followed = set()
             # Clear coordinator state for unfollowed objects so they don't
             # linger on the overview 3D map as stale ghosts.
             try:
-                _old_followed = set(str(x).upper() for x in (st.data.get("followed_addrs") or []))
                 _removed_f = _old_followed - set(x.upper() for x in _new_followed)
                 if _removed_f:
                     _coord_f = hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR)
@@ -2759,6 +2806,47 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
                             _coord_f.clear_object_state(_rf)
             except Exception:
                 pass
+            # Auto-label newly-followed objects that have no label yet.
+            # Entity creation (device_tracker/sensor) requires user_label, so
+            # following alone used to produce no entities and the device never
+            # surfaced outside the panel.  Label = advertised BLE name when we
+            # can see one, else a readable fallback derived from the key.
+            try:
+                _added_f = set(_new_followed) - _old_followed
+                _obj_store_f = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+                if _added_f and _obj_store_f:
+                    _name_by_mac: dict[str, str] = {}
+                    try:
+                        _bl_f = get_bluetooth_live(hass)
+                        if _bl_f is not None:
+                            for _adf in (_bl_f.get_snapshot(max_ads=5000, max_age_s=14400).get("advertisements") or []):
+                                _a_addr = str(_adf.get("address") or "").upper()
+                                _a_name = str(_adf.get("name") or "").strip()
+                                if _a_addr and _a_name and _a_addr not in _name_by_mac:
+                                    _name_by_mac[_a_addr] = _a_name
+                    except Exception:
+                        pass
+                    for _af in _added_f:
+                        if _obj_store_f.get(_af):
+                            continue  # already labelled by the user
+                        _parts_f = _af.split(":")
+                        _mac_f = None
+                        if len(_parts_f) >= 6 and all(len(p) == 2 for p in _parts_f[-6:]):
+                            _mac_f = ":".join(_parts_f[-6:])
+                        _lbl_f = _name_by_mac.get(_mac_f or _af, "")
+                        if not _lbl_f:
+                            if _af.startswith("IBEACON:") and len(_parts_f) >= 4:
+                                _lbl_f = f"iBeacon {_parts_f[1][:8].lower()}"
+                                if _mac_f:
+                                    _lbl_f += f" ({_mac_f[-8:]})"
+                            elif _mac_f:
+                                _lbl_f = _mac_f
+                            else:
+                                continue  # entity_id or unknown form — already tracked via HA
+                        await _obj_store_f.async_set(_af, _lbl_f)
+                        _LOGGER.info("Auto-labelled followed object %s as %r", _af, _lbl_f)
+            except Exception as _fl_err:
+                _LOGGER.debug("Follow auto-label failed: %s", _fl_err)
         if "health_reminder_enabled" in msg:
             payload["health_reminder_enabled"] = bool(msg["health_reminder_enabled"])
         if "health_reminder_last_ts" in msg:

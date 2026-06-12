@@ -31,8 +31,13 @@ export function render(ctx) {
   const chosen = addr ? (allObjects.find(o => {
     const id = o.address||o.entity_id||"";
     if (id === addr || id.toUpperCase() === addr.toUpperCase()) return true;
-    // Also match by key or canonical_id (ibeacon/private_ble use stable keys)
+    // Also match by key or canonical_id (ibeacon/private_ble use stable keys).
+    // Case-insensitive: followed_addrs are stored uppercase while backend
+    // object keys are lowercase ("ibeacon:...", "irk:...").
+    const addrU = addr.toUpperCase();
     if (o.key === addr || o.canonical_id === addr) return true;
+    if ((o.key && String(o.key).toUpperCase() === addrU) ||
+        (o.canonical_id && String(o.canonical_id).toUpperCase() === addrU)) return true;
     // Match rotating MACs
     if (o.all_addresses && o.all_addresses.some(a => String(a).toUpperCase() === addr.toUpperCase())) return true;
     return false;
