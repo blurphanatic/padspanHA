@@ -286,12 +286,30 @@ async def ws_auto_diagnostics(hass: HomeAssistant, connection, msg) -> None:
         recs.append("Restart Home Assistant after installing the integration.")
     else:
         checks.append({"name": "coordinator", "ok": True, "detail": "Coordinator present"})
-        if not coord.room_tag_map:
-            checks.append({"name": "room_tag_map", "ok": False, "detail": "No room/tag data loaded"})
-            recs.append("Add/restore your room_tag_map; UI will be sparse without it.")
-            ok = False
+        # Rooms can be defined two ways: the curated room_tag_map (object→room
+        # overlay, optional) or room boundaries drawn on floor-plan maps (the
+        # primary model).  Only fail when NEITHER exists — an empty room_tag_map
+        # is fine when the map model already has rooms, so this stops the check
+        # crying wolf on map-only setups.
+        room_count = len(coord.room_tag_map or {})
+        room_source = "room_tag_map"
+        if not room_count:
+            try:
+                maps_store = hass.data.get(DOMAIN, {}).get(DATA_MAPS)
+                if maps_store:
+                    _rooms: set[str] = set()
+                    for _m in (maps_store.list_maps() or []):
+                        _rooms |= set((_m.get("room_bounds") or {}).keys())
+                    room_count = len(_rooms)
+                    room_source = "map room boundaries"
+            except Exception:  # noqa: BLE001 — diagnostics must never raise
+                pass
+        if room_count:
+            checks.append({"name": "room_tag_map", "ok": True, "detail": f"{room_count} rooms loaded ({room_source})"})
         else:
-            checks.append({"name": "room_tag_map", "ok": True, "detail": f"{len(coord.room_tag_map)} rooms loaded"})
+            checks.append({"name": "room_tag_map", "ok": False, "detail": "No room/tag data loaded"})
+            recs.append("Draw room boundaries on a floor plan (Maps tab) or set a room_tag_map.")
+            ok = False
         if coord.last_error:
             checks.append({"name": "last_error", "ok": False, "detail": coord.last_error})
             recs.append("Fix the last_error and re-run diagnostics.")
