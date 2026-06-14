@@ -631,9 +631,64 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._ema_rssi.pop(key, None)
                     self._kalman_p.pop(key, None)
 
+            # ── No-signal detection ───────────────────────────────────────
+            # An object is "no-signal" when it has no live BLE advertisements
+            # this cycle (carried forward from history cache) OR when its best
+            # current RSSI is at or below the -110 dBm no-signal sentinel.
+            # Threshold -110 dBm sits safely below the -100 dBm silence-decay
+            # floor so it never incorrectly mutes a weak-but-live device.
+            # The primary check uses addr_src_rssi (built from this cycle's
+            # actual advertisements) so a cached object with frozen rssi=-127
+            # is caught by the "no live ads" branch, not just the RSSI branch.
+            _NO_SIGNAL_DBM: float = -110.0
+            _obj_no_signal: bool = False
+            _obj_kind = obj.get("kind", "")
+            if _obj_kind in ("ble", "private_ble"):
+                _ns_raw_addr = str(obj.get("address") or "").upper()
+                _ns_smooth_addr = _rpa_map.get(_ns_raw_addr, _ns_raw_addr)
+                _ns_live = addr_src_rssi.get(_ns_smooth_addr) or {}
+                if not _ns_live:
+                    # No live advertisements from this device this cycle
+                    _obj_no_signal = True
+                elif max(_ns_live.values()) <= _NO_SIGNAL_DBM:
+                    # All live sources report sentinel-level RSSI
+                    _obj_no_signal = True
+            elif _obj_kind == "ibeacon":
+                _ns_addrs = obj.get("all_addresses") or []
+                _ns_any_live = any(
+                    (addr_src_rssi.get(str(a).upper()) or {})
+                    for a in _ns_addrs
+                )
+                _ns_live_vals: list[float] = [
+                    r
+                    for a in _ns_addrs
+                    for r in (addr_src_rssi.get(str(a).upper()) or {}).values()
+                ]
+                if not _ns_any_live:
+                    _obj_no_signal = True
+                elif _ns_live_vals and max(_ns_live_vals) <= _NO_SIGNAL_DBM:
+                    _obj_no_signal = True
+            else:
+                # Entity-based trackers: treat as no-signal if rssi is sentinel
+                _ns_rssi = obj.get("rssi")
+                if _ns_rssi is not None and float(_ns_rssi) <= _NO_SIGNAL_DBM:
+                    _obj_no_signal = True
+
             # Cache the live copy for home/away persistence
             self._last_seen[key] = now
-            self._away_miss[key] = 0  # reset grace counter — device is present
+            if not _obj_no_signal:
+                # Device is genuinely heard: reset grace counter so it isn't
+                # counted as missing and doesn't accumulate away-miss ticks.
+                self._away_miss[key] = 0
+            else:
+                # Device has no usable live signal: clear any frozen confident-
+                # room state so the away-miss counter can accumulate toward the
+                # away timeout.  The object stays in result for UI awareness but
+                # with zeroed confidence; it will be evicted once grace expires.
+                self._confirmed_room.pop(key, None)
+                self._room_confidence.pop(key, None)
+                if key in self._room_votes:
+                    self._room_votes[key].clear()
 
             self._known_objs[key] = dict(obj)
 
@@ -721,6 +776,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     obj["room"] = _pin["room"]
                     self._confirmed_room[key] = _pin["room"]
                 obj["_pinned"] = True
+
+            # ── No-signal room suppression ────────────────────────────────────
+            # After smoothing, if the object has no live signal, force room and
+            # room_confidence to empty/zero so the UI shows "away" (not a
+            # confidently-present ghost).  Pinned beacons are exempt — their room
+            # comes from a known physical position, not from RSSI.
+            if _obj_no_signal and key not in _pinned:
+                obj = dict(obj) if not isinstance(obj, dict) else obj
+                obj["room"] = None
+                obj["room_confidence"] = 0.0
+                obj["_no_signal"] = True
 
             result[key] = obj
 

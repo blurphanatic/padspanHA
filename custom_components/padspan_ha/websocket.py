@@ -3279,12 +3279,19 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
     # Overlay presence-coordinator smoothed data (x_frac, y_frac,
     # knn_confidence, room, room_confidence) so the UI can show
     # calibration-derived positions and stable room assignments.
+    # NOTE: _NO_SIGNAL_KEYS are applied even when the coordinator value is
+    # None/0 — this is intentional: a no-signal object has room=None and
+    # room_confidence=0.0, and we must not skip those values or the raw
+    # snapshot's stale room bleeds back into the UI.
     try:
         pc = hass.data.get(DOMAIN, {}).get("presence_coordinator")
         if pc and pc.data:
             _MERGE_KEYS = ("x_frac", "y_frac", "knn_confidence", "knn_map_id",
                            "room", "room_confidence", "rssi_margin_confidence",
                            "_smoothed", "_stale")
+            # Keys that must be copied even when their coordinator value is None
+            # or zero — the absence of signal is itself meaningful.
+            _ALWAYS_MERGE_KEYS = {"room", "room_confidence", "_no_signal"}
             obj_list = (snap.get("objects") or {}).get("list") or []
             for obj in obj_list:
                 key = obj.get("key", "")
@@ -3297,6 +3304,12 @@ async def ws_live_snapshot(hass: HomeAssistant, connection, msg) -> None:
                     val = smoothed.get(mk)
                     if val is not None:
                         obj[mk] = val
+                # Unconditionally propagate no-signal markers so a coordinator-
+                # cleared room (None) and zeroed confidence are never silently
+                # dropped by the `if val is not None` guard above.
+                for mk in _ALWAYS_MERGE_KEYS:
+                    if mk in smoothed:
+                        obj[mk] = smoothed[mk]
     except Exception as _overlay_err:
         _LOGGER.warning("Coordinator overlay failed — positioning data may be stale: %s", _overlay_err, exc_info=True)
 
