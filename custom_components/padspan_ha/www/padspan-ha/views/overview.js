@@ -890,20 +890,56 @@ export function render(ctx){
         const lbl = (o.user_label || o.private_ble_name || o.name || "").substring(0, 14);
         const _oKey = _esc(o.key || o.address || o.entity_id || "");
 
+        // ── Signal / certainty / recency encoding ──────────────────────────
+        // recency → opacity fade; certainty → dashed ring; signal → 3-bar glyph.
+        const _ageS = (typeof o.age_s === "number") ? o.age_s : null;
+        const _recF = _ageS == null ? 1 : (_ageS <= 15 ? 1 : _ageS >= 180 ? 0.3 : 1 - 0.7 * (_ageS - 15) / 165);
+        const _conf = (typeof o.room_confidence === "number") ? o.room_confidence
+                    : (typeof o.knn_confidence === "number") ? o.knn_confidence
+                    : (typeof o.rssi_margin_confidence === "number") ? o.rssi_margin_confidence : null;
+        const _rssi = (typeof o.rssi === "number") ? o.rssi : null;
+        const _ageTxt = _ageS == null ? "" : (_ageS < 60 ? Math.round(_ageS) + "s ago" : Math.round(_ageS / 60) + "m ago");
+        const _ttl = (o.user_label || o.private_ble_name || o.name || o.key || "")
+                   + (_rssi != null ? ` · ${_rssi} dBm` : "")
+                   + (_conf != null ? ` · ${Math.round(_conf * 100)}% sure` : "")
+                   + (_ageTxt ? ` · ${_ageTxt}` : "");
+        const _confRing = (cx, cy, baseR, color) => {
+          if (_conf == null) return "";
+          const rr = baseR * 1.6 + (1 - _conf) * baseR * 2.4;   // tighter = more certain
+          const op = (0.22 + _conf * 0.5).toFixed(2);
+          return `<circle cx="${_f(cx)}" cy="${_f(cy)}" r="${_f(rr)}" fill="none" stroke="${color}" stroke-width="${_sw*0.45}" stroke-dasharray="${_f(baseR*0.55)},${_f(baseR*0.4)}" opacity="${op}"/>`;
+        };
+        const _sigBars = (cx, cy, color) => {
+          if (_rssi == null) return "";
+          const lvl = _rssi >= -60 ? 3 : _rssi >= -75 ? 2 : _rssi >= -90 ? 1 : 0;
+          const bw = _dotR * 0.34, gap = _dotR * 0.16;
+          const bx = cx + _dotR * 1.3, by = cy + _dotR * 0.7;
+          let g = "";
+          for (let i = 0; i < 3; i++) {
+            const h = _dotR * (0.45 + i * 0.42);
+            g += `<rect x="${_f(bx + i*(bw+gap))}" y="${_f(by - h)}" width="${_f(bw)}" height="${_f(h)}" rx="${_f(bw*0.2)}" fill="${color}" opacity="${i < lvl ? 0.95 : 0.18}"/>`;
+          }
+          return g;
+        };
+
         if (isFollowed) {
-          s += `<g data-obj-key="${_oKey}" style="cursor:pointer">`;
-          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*2}" fill="#fbbf24" fill-opacity="0.15"/>`;
-          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#fbbf24" stroke="#071008" stroke-width="${_sw*0.5}"/>`;
-          if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*2)}" text-anchor="middle" fill="#fbbf24" font-size="${_fsObj}" font-weight="600">${_esc(lbl)}</text>`;
+          s += `<g data-obj-key="${_oKey}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
+          s += _confRing(px, py, _dotR, "#fbbf24");
+          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*2}" fill="#fbbf24" fill-opacity="${(0.15*_recF).toFixed(2)}"/>`;
+          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#fbbf24" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${_recF.toFixed(2)}"/>`;
+          s += _sigBars(px, py, "#fbbf24");
+          if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*2)}" text-anchor="middle" fill="#fbbf24" font-size="${_fsObj}" font-weight="600" opacity="${_recF.toFixed(2)}">${_esc(lbl)}</text>`;
           s += `</g>`;
         } else if (isTagged) {
-          s += `<g data-obj-key="${_oKey}" style="cursor:pointer">`;
-          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#5eead4" stroke="#071008" stroke-width="${_sw*0.5}" opacity="0.9"/>`;
-          if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8)}" text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="0.85">${_esc(lbl)}</text>`;
+          s += `<g data-obj-key="${_oKey}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
+          s += _confRing(px, py, _dotR, "#5eead4");
+          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#5eead4" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${(0.9*_recF).toFixed(2)}"/>`;
+          s += _sigBars(px, py, "#5eead4");
+          if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8)}" text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="${(0.85*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
           s += `</g>`;
         } else {
-          s += `<g data-obj-key="${_oKey}" style="cursor:pointer">`;
-          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*0.7}" fill="#f59e0b" stroke="#071008" stroke-width="${_sw*0.3}" opacity="0.5"/>`;
+          s += `<g data-obj-key="${_oKey}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
+          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*0.7}" fill="#f59e0b" stroke="#071008" stroke-width="${_sw*0.3}" opacity="${(0.5*_recF).toFixed(2)}"/>`;
           s += `</g>`;
         }
       }
