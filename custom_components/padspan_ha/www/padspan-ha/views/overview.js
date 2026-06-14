@@ -1258,21 +1258,30 @@ export function render(ctx){
     };
     applyTransform();
 
-    svgWrap.addEventListener("wheel", (e) => {
-      e.preventDefault();
-      const rect = svgWrap.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
+    // Shared zoom helper — zoom toward a point (mx,my) in wrap-local px.
+    const _zoomAt = (factor, mx, my) => {
       const oldZoom = zoom;
-      const delta = e.deltaY > 0 ? 0.9 : 1.1;
-      zoom = Math.max(0.5, Math.min(8, zoom * delta));
-      // Zoom toward cursor
+      zoom = Math.max(0.5, Math.min(8, zoom * factor));
       panX = mx - (mx - panX) * (zoom / oldZoom);
       panY = my - (my - panY) * (zoom / oldZoom);
-      ctx.state._2dZoom = zoom;
-      ctx.state._2dPanX = panX;
-      ctx.state._2dPanY = panY;
+      ctx.state._2dZoom = zoom; ctx.state._2dPanX = panX; ctx.state._2dPanY = panY;
       applyTransform();
+    };
+
+    // Wheel ONLY zooms while Ctrl/⌘ is held — otherwise the page scrolls as
+    // normal (plain wheel hijacking the map was a UX disaster). A brief hint
+    // tells the user how to zoom.
+    let _hintTO = null;
+    svgWrap.addEventListener("wheel", (e) => {
+      if (!(e.ctrlKey || e.metaKey)) {
+        zoomHint.style.opacity = "1";
+        clearTimeout(_hintTO);
+        _hintTO = setTimeout(() => { zoomHint.style.opacity = "0"; }, 1100);
+        return;  // let the page scroll
+      }
+      e.preventDefault();
+      const rect = svgWrap.getBoundingClientRect();
+      _zoomAt(e.deltaY > 0 ? 0.9 : 1.1, e.clientX - rect.left, e.clientY - rect.top);
     }, { passive: false });
 
     svgWrap.addEventListener("pointerdown", (e) => {
@@ -1300,16 +1309,29 @@ export function render(ctx){
     svgWrap.addEventListener("pointerup", endDrag);
     svgWrap.addEventListener("pointercancel", endDrag);
 
-    // Reset zoom button
-    const resetBtn = document.createElement("button");
-    resetBtn.className = "btn inline";
-    resetBtn.style.cssText = "position:absolute;top:6px;right:6px;z-index:2;font-size:11px;padding:2px 8px;background:#071008cc;color:#94a3b8";
-    resetBtn.textContent = "Reset zoom";
-    resetBtn.addEventListener("click", () => {
+    // Zoom control cluster (＋ / − / reset) — top-right, always visible.
+    const _ctr = () => { const r = svgWrap.getBoundingClientRect(); return [r.width/2, r.height/2]; };
+    const zoomCtl = document.createElement("div");
+    zoomCtl.style.cssText = "position:absolute;top:6px;right:6px;z-index:3;display:flex;flex-direction:column;gap:4px";
+    const _zbtn = (txt, title, fn) => {
+      const b = document.createElement("button");
+      b.className = "btn inline"; b.textContent = txt; b.title = title;
+      b.style.cssText = "width:30px;height:30px;padding:0;font-size:17px;font-weight:700;line-height:1;background:#071008dd;color:#cbd5e1;border-color:#334155";
+      b.addEventListener("click", (ev) => { ev.stopPropagation(); fn(); });
+      return b;
+    };
+    zoomCtl.appendChild(_zbtn("+", "Zoom in", () => { const [cx,cy]=_ctr(); _zoomAt(1.25, cx, cy); }));
+    zoomCtl.appendChild(_zbtn("−", "Zoom out", () => { const [cx,cy]=_ctr(); _zoomAt(0.8, cx, cy); }));
+    zoomCtl.appendChild(_zbtn("↺", "Reset zoom", () => {
       zoom = 1.0; panX = 0; panY = 0;
       ctx.state._2dZoom = 1; ctx.state._2dPanX = 0; ctx.state._2dPanY = 0;
       applyTransform();
-    });
+    }));
+
+    // Zoom hint (shown briefly when the user plain-wheels over the map).
+    const zoomHint = document.createElement("div");
+    zoomHint.textContent = "Hold ⌘ / Ctrl to zoom · drag to pan";
+    zoomHint.style.cssText = "position:absolute;bottom:8px;left:50%;transform:translateX(-50%);z-index:3;font-size:11px;padding:3px 9px;border-radius:6px;background:#071008ee;color:#cbd5e1;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap";
 
     // Click handler for 2D SVG: scanners and objects
     svgDiv.addEventListener("click", (e) => {
@@ -1335,7 +1357,8 @@ export function render(ctx){
     });
 
     svgWrap.appendChild(svgDiv);
-    svgWrap.appendChild(resetBtn);
+    svgWrap.appendChild(zoomCtl);
+    svgWrap.appendChild(zoomHint);
     outer.appendChild(svgWrap);
 
     return outer;
@@ -2118,6 +2141,17 @@ export function render(ctx){
     const isoDiv = document.createElement("div");
     isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px";
 
+    // 3D view zoom + rotate — CSS transform on the rendered SVG (pan via scroll).
+    if (typeof ctx.state._isoZoom !== "number") ctx.state._isoZoom = 1;
+    if (typeof ctx.state._isoRot  !== "number") ctx.state._isoRot  = 0;
+    const _applyIsoTransform = () => {
+      const _sv = isoDiv.querySelector("svg");
+      if (!_sv) return;
+      _sv.style.transformOrigin = "center center";
+      _sv.style.transition = "transform 0.12s ease";
+      _sv.style.transform = `scale(${ctx.state._isoZoom}) rotate(${ctx.state._isoRot}deg)`;
+    };
+
     // ── 3D map loading indicator ────────────────────────────────────────
     const _isoProgressFill = { style: {} }; // stub — no visual progress bar
 
@@ -2143,6 +2177,7 @@ export function render(ctx){
               svgEl.innerHTML = staticPart + `<g id="iso-objects">${dynPart}`;
             }
           }
+          _applyIsoTransform();  // re-apply zoom/rotate after a full rebuild
           _isoProgressFill.style.transition = "width 0.2s";
           _isoProgressFill.style.width = "100%";
           _isoProgressFill.style.background = "#52b788";
@@ -2193,6 +2228,23 @@ export function render(ctx){
       "font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.5";
     isoWrap.appendChild(isoDiv);
     isoWrap.appendChild(isoTipEl);
+
+    // Zoom + rotate control cluster for the 3D view.
+    const isoCtl = document.createElement("div");
+    isoCtl.style.cssText = "position:absolute;top:8px;right:8px;z-index:6;display:flex;flex-direction:column;gap:4px";
+    const _icbtn = (txt, title, fn) => {
+      const b = document.createElement("button");
+      b.className = "btn inline"; b.textContent = txt; b.title = title;
+      b.style.cssText = "width:30px;height:30px;padding:0;font-size:15px;font-weight:700;line-height:1;background:#071008dd;color:#cbd5e1;border-color:#334155";
+      b.addEventListener("click", (ev) => { ev.stopPropagation(); fn(); });
+      return b;
+    };
+    isoCtl.appendChild(_icbtn("+", "Zoom in", () => { ctx.state._isoZoom = Math.min(4, ctx.state._isoZoom * 1.2); _applyIsoTransform(); }));
+    isoCtl.appendChild(_icbtn("−", "Zoom out", () => { ctx.state._isoZoom = Math.max(0.4, ctx.state._isoZoom * 0.83); _applyIsoTransform(); }));
+    isoCtl.appendChild(_icbtn("↻", "Rotate right", () => { ctx.state._isoRot = (ctx.state._isoRot + 45) % 360; _applyIsoTransform(); }));
+    isoCtl.appendChild(_icbtn("↺", "Rotate left", () => { ctx.state._isoRot = (ctx.state._isoRot - 45) % 360; _applyIsoTransform(); }));
+    isoCtl.appendChild(_icbtn("⊙", "Reset zoom & rotation", () => { ctx.state._isoZoom = 1; ctx.state._isoRot = 0; _applyIsoTransform(); }));
+    isoWrap.appendChild(isoCtl);
 
     // Event delegation: hover → show info overlay, click → open detail modal
     isoDiv.addEventListener("mouseover", (e) => {
