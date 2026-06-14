@@ -1693,17 +1693,18 @@ export function render(ctx){
       // Re-read objects from current snapshot (not stale closure)
       _refreshIsoObjects();
       const slabWZ = 18/_ovFG;
-      // Dynamic viewBox: expand to fit all floors.
-      // Vertical: expand upward for tall floor stacks.
-      // Horizontal: expand rightward for L/R offset on upper floors + labels.
-      const maxIsoZ = sortedIsoLevels.length ? sortedIsoLevels[sortedIsoLevels.length-1] : 0;
-      const viewY   = Math.min(0, CY - maxIsoZ*_ovFG - 50);   // 50 px top padding
-      const horizExtra = Math.abs(maxIsoZ * _ovHG) + 60;       // 60 px padding for labels
-      const viewX   = _ovHG < 0 ? Math.floor(_ovHG * maxIsoZ) - 30 : -30;
-      const viewW   = W + horizExtra + 60;  // extra breathing room on both sides
-      const HTOTAL  = BASE_H + LEGEND_H - viewY;
-      let s = `<svg viewBox="${viewX} ${viewY} ${viewW} ${HTOTAL}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:${HTOTAL}px;display:block;font-family:system-ui,sans-serif">`;
-      s += `<rect x="${viewX}" y="${viewY}" width="${viewW}" height="${HTOTAL}" fill="#071008"/>`;
+      // Tight viewBox: track actual projected bounds then wrap with padding.
+      // We build the SVG body first (no opening <svg>), then emit the header.
+      const _bnd = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+      const _isoTracked = (wx, wy, wz) => {
+        const c = iso(wx, wy, wz);
+        if (c[0] < _bnd.minX) _bnd.minX = c[0];
+        if (c[0] > _bnd.maxX) _bnd.maxX = c[0];
+        if (c[1] < _bnd.minY) _bnd.minY = c[1];
+        if (c[1] > _bnd.maxY) _bnd.maxY = c[1];
+        return c;
+      };
+      let s = ``;
 
       // Floor surface patterns — defined once per level, referenced by fill="url(#...)"
       s += `<defs>`;
@@ -1737,8 +1738,9 @@ export function render(ctx){
       s += `</defs>`;
 
       if(!sorted.length){
-        s += `<text x="${W/2}" y="${BASE_H/2}" text-anchor="middle" fill="#4a6052" font-size="13">All layers hidden</text>`;
-        s += `</svg>`; return s;
+        // Empty state: use fixed fallback viewBox (no content to measure)
+        const _fvX=-30, _fvY=0, _fvW=W+120, _fvH=BASE_H+LEGEND_H;
+        return `<svg viewBox="${_fvX} ${_fvY} ${_fvW} ${_fvH}" xmlns="http://www.w3.org/2000/svg" width="100%" style="display:block;font-family:system-ui,sans-serif"><rect x="${_fvX}" y="${_fvY}" width="${_fvW}" height="${_fvH}" fill="#071008"/><text x="${W/2}" y="${BASE_H/2}" text-anchor="middle" fill="#4a6052" font-size="13">All layers hidden</text></svg>`;
       }
 
       // Emit 3D hatch pattern defs once (before any level renders cells)
@@ -1790,8 +1792,8 @@ export function render(ctx){
         if(!isFinite(x0)){x0=_indoorBB.minX;y0_=_indoorBB.minY;x1=_indoorBB.maxX;y1_=_indoorBB.maxY;}
         if(!isFinite(x0)){x0=0;y0_=0;x1=1;y1_=0.75;}
 
-        const TL=iso(x0,y0_,z), TR=iso(x1,y0_,z), BR=iso(x1,y1_,z), BL=iso(x0,y1_,z);
-        const TR_b=iso(x1,y0_,z-slabWZ), BR_b=iso(x1,y1_,z-slabWZ), BL_b=iso(x0,y1_,z-slabWZ);
+        const TL=_isoTracked(x0,y0_,z), TR=_isoTracked(x1,y0_,z), BR=_isoTracked(x1,y1_,z), BL=_isoTracked(x0,y1_,z);
+        const TR_b=_isoTracked(x1,y0_,z-slabWZ), BR_b=_isoTracked(x1,y1_,z-slabWZ), BL_b=_isoTracked(x0,y1_,z-slabWZ);
 
         s += `<g opacity="${go}">`;
         s += `<polygon points="${pts([TR,BR,BR_b,TR_b])}" fill="#0d2318" fill-opacity="0.35" stroke="#253e2e" stroke-width="0.8"/>`;
@@ -1836,14 +1838,14 @@ export function render(ctx){
           for(const [room,b] of Object.entries(m.room_bounds||{})){
             if(!b||b.type!=="poly"||!Array.isArray(b.points)||b.points.length<3) continue;
             const color = roomColorFn(room);
-            const pp = b.points.map(p=>{const[wx,wy]=mapPt(p[0],p[1]);return pt(iso(wx,wy,z));}).join(" ");
+            const pp = b.points.map(p=>{const[wx,wy]=mapPt(p[0],p[1]);return pt(_isoTracked(wx,wy,z));}).join(" ");
             const _objsHere = allObjects.filter(o=>o.room===room);
             const _roomTip = `${room}\n${_objsHere.length} object${_objsHere.length!==1?"s":""} detected`;
             s += `<g data-tip="${_esc(_roomTip)}"><polygon points="${pp}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="2" opacity="0.9"/></g>`;
             const cx=b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
             const cy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
             const [lwx,lwy]=mapPt(cx,cy);
-            const [lix,liy]=iso(lwx,lwy,z);
+            const [lix,liy]=_isoTracked(lwx,lwy,z);
             s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" font-weight="600">${_esc(room)}</text>`;
           }
           // RF barriers — dotted white lines on 3D map
@@ -1853,7 +1855,7 @@ export function render(ctx){
               const bar = _bars[bi];
               const bpts = bar.points || bar.pts || [];
               if(bpts.length<2) continue;
-              const bp = bpts.map(p=>{const[wx,wy]=mapPt(Number(p[0]),Number(p[1]));return pt(iso(wx,wy,z));}).join(" ");
+              const bp = bpts.map(p=>{const[wx,wy]=mapPt(Number(p[0]),Number(p[1]));return pt(_isoTracked(wx,wy,z));}).join(" ");
               s += `<polyline points="${bp}" fill="none" stroke="#ffffff" stroke-opacity="0.85" stroke-width="3" stroke-dasharray="5 8" stroke-linecap="round"/>`;
             }
           }
@@ -1864,7 +1866,7 @@ export function render(ctx){
             const liveRadio = allRadios_live.find(rd=>rd.name===(r.label||"")||rd.source===(r.id||"")||rd.source===(r.source||"")||rd.name===(r.id||""));
             const isLive = !!liveRadio;
             const[wx,wy]=mapPt(r.x||0,r.y||0);
-            const [px,py]=iso(wx,wy,z);
+            const [px,py]=_isoTracked(wx,wy,z);
             const rsid = (_sid((isLive ? liveRadio.source : null) || r.source || r.id || r.label || "") || "R").toUpperCase();
             const _rTip = `${rsid} · ${(isLive ? liveRadio.name : null)||r.label||r.id||"receiver"}${r.room ? "\nArea: "+r.room : ""}${isLive && liveRadio.scanning!=null ? "\nScanning: "+(liveRadio.scanning?"Yes":"No") : ""}${!isLive ? "\n(offline)" : ""}`;
             const rxColor = isLive ? "#52b788" : "#4a6052";
@@ -1930,7 +1932,7 @@ export function render(ctx){
         if(typeof o.x_frac === "number" && typeof o.y_frac === "number" && o.knn_map_id && mapTransforms[o.knn_map_id]){
           const tf=mapTransforms[o.knn_map_id];
           const [lwx,lwy]=tf.mapPt(o.x_frac, o.y_frac);
-          [bx,by]=iso(lwx, lwy, tf.z);
+          [bx,by]=_isoTracked(lwx, lwy, tf.z);
           posConf = o.knn_confidence || 0;
         }
         // Priority 2: Client-side fingerprint fallback — server k-NN is authoritative,
@@ -2033,7 +2035,7 @@ export function render(ctx){
           if(typeof obj.x_frac === "number" && typeof obj.y_frac === "number" && obj.knn_map_id && mapTransforms[obj.knn_map_id]){
             const tf=mapTransforms[obj.knn_map_id];
             const [lwx,lwy]=tf.mapPt(obj.x_frac, obj.y_frac);
-            [px,py]=[Math.round(iso(lwx,lwy,tf.z)[0]), Math.round(iso(lwx,lwy,tf.z)[1])];
+            [px,py]=[Math.round(_isoTracked(lwx,lwy,tf.z)[0]), Math.round(_isoTracked(lwx,lwy,tf.z)[1])];
           } else {
             const readings = _getObjReadings(obj);
             const fpMatch = _matchFingerprint(readings);
@@ -2095,15 +2097,27 @@ export function render(ctx){
       // Live BLE radios without map placement are omitted — they have no
       // precise coordinates and would just clutter the spatial view.
 
+      // Compute tight viewBox from tracked bounds; fall back if no points were emitted.
+      const _PAD = 50; // padding around content (px in SVG coords)
+      const _bndValid = isFinite(_bnd.minX) && isFinite(_bnd.minY);
+      // Extend bounds to cover label/text overhang (labels extend ~35px above/below dots)
+      const _bndMinX = _bndValid ? _bnd.minX - _PAD - 30 : -30;
+      const _bndMinY = _bndValid ? _bnd.minY - _PAD - 35 : 0;
+      const _bndMaxX = _bndValid ? _bnd.maxX + _PAD + 30 : W + 90;
+      const _bndMaxY = _bndValid ? _bnd.maxY + _PAD : BASE_H;
+      const _vW = _bndMaxX - _bndMinX;
+      const _vH = _bndMaxY - _bndMinY + LEGEND_H + 20; // extra 20 for legend row
+
       if(!hasBounds && sorted.length){
-        s += `<text x="${W/2}" y="${BASE_H-20}" text-anchor="middle" fill="#4a6052" font-size="16">Go to Maps → Edit to draw room boundaries</text>`;
+        s += `<text x="${(_bndMinX+_bndMaxX)/2}" y="${_bndMaxY - _PAD/2}" text-anchor="middle" fill="#4a6052" font-size="16">Go to Maps → Edit to draw room boundaries</text>`;
       }
 
-      // Legend at bottom — compact single row
-      s += `<line x1="10" y1="${BASE_H+4}" x2="${W-10}" y2="${BASE_H+4}" stroke="#1b3526" stroke-width="0.8"/>`;
+      // Legend at bottom — compact single row (positioned below content bounds)
+      const _legendY = _bndMaxY + 4;
+      s += `<line x1="${_bndMinX+10}" y1="${_legendY}" x2="${_bndMaxX-10}" y2="${_legendY}" stroke="#1b3526" stroke-width="0.8"/>`;
       {
-        const ly = BASE_H + 10;
-        let lx = 12;
+        const ly = _legendY + 6;
+        let lx = _bndMinX + 12;
         sortedIsoLevels.forEach((z, i)=>{
           const color = levelColor(z);
           const groupLabel = byLevel.get(z).map(m=>m.name||m.id).join("+");
@@ -2119,7 +2133,9 @@ export function render(ctx){
       }
 
       s += `</svg>`;
-      return s;
+      // Prepend the <svg> header and background rect using the computed tight bounds
+      const _svgHeader = `<svg viewBox="${Math.round(_bndMinX)} ${Math.round(_bndMinY)} ${Math.round(_vW)} ${Math.round(_vH)}" xmlns="http://www.w3.org/2000/svg" width="100%" style="display:block;font-family:system-ui,sans-serif"><rect x="${Math.round(_bndMinX)}" y="${Math.round(_bndMinY)}" width="${Math.round(_vW)}" height="${Math.round(_vH)}" fill="#071008"/>`;
+      return _svgHeader + s;
     };
 
     // Wrapper with floor focus slider + room list toggle
@@ -2139,7 +2155,7 @@ export function render(ctx){
     isoWrap.style.cssText = "position:relative;margin-top:6px";
 
     const isoDiv = document.createElement("div");
-    isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px";
+    isoDiv.style.cssText = "overflow:auto;border-radius:8px;background:#071008;padding:8px;max-height:min(72vh,760px)";
 
     // 3D view zoom + rotate — CSS transform on the rendered SVG (pan via scroll).
     if (typeof ctx.state._isoZoom !== "number") ctx.state._isoZoom = 1;
@@ -2235,7 +2251,7 @@ export function render(ctx){
     const _icbtn = (txt, title, fn) => {
       const b = document.createElement("button");
       b.className = "btn inline"; b.textContent = txt; b.title = title;
-      b.style.cssText = "width:30px;height:30px;padding:0;font-size:15px;font-weight:700;line-height:1;background:#071008dd;color:#cbd5e1;border-color:#334155";
+      b.style.cssText = "width:36px;height:36px;padding:0;font-size:16px;font-weight:700;line-height:1;background:#071008dd;color:#cbd5e1;border-color:#334155";
       b.addEventListener("click", (ev) => { ev.stopPropagation(); fn(); });
       return b;
     };
