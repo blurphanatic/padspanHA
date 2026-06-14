@@ -903,6 +903,34 @@ export function render(ctx){
                    + (_rssi != null ? ` · ${_rssi} dBm` : "")
                    + (_conf != null ? ` · ${Math.round(_conf * 100)}% sure` : "")
                    + (_ageTxt ? ` · ${_ageTxt}` : "");
+
+        // ── Rich hover tip (pipe-delimited lines, matching iso _objTip format) ──
+        const _tipParts = [];
+        _tipParts.push(o.user_label || o.private_ble_name || o.name || o.key || "Unknown");
+        if (o.room) _tipParts.push(`Room: ${o.room}`);
+        if (_rssi != null) _tipParts.push(`Signal: ${_rssi} dBm`);
+        if (_conf != null) _tipParts.push(`Certainty: ${Math.round(_conf * 100)}%`);
+        if (_ageTxt) _tipParts.push(`Seen: ${_ageTxt}`);
+        if (!o.user_label) _tipParts.push("Click to tag / view details");
+        const _tipStr = _esc(_tipParts.join("|"));
+
+        // ── Confidence badge (color by certainty; always shows % text for a11y) ──
+        const _confPct = _conf != null ? Math.round(_conf * 100) : null;
+        const _confLabel = _confPct != null ? _confPct + "%" : "Room";
+        const _confColor = _conf == null ? "#64748b"
+                         : _confPct >= 60 ? "#52b788"
+                         : _confPct >= 30 ? "#f59e0b" : "#f87171";
+        const _confBadge = (cx, cy) => {
+          // Badge is sized in SVG user units (fractions of 1, same as _dotR).
+          // Width chars × ~0.55 dotR per char + padding. Cap at 3 chars ("99%","Room").
+          const bW = _dotR * (_confLabel.length * 0.55 + 0.8);
+          const bH = _dotR * 1.0;
+          const bX = cx - bW / 2;
+          const bY = cy + _dotR * 1.5;
+          return `<rect x="${_f(bX)}" y="${_f(bY)}" width="${_f(bW)}" height="${_f(bH)}" rx="${_f(bH*0.3)}" fill="#071008" opacity="0.82"/>` +
+                 `<text x="${_f(cx)}" y="${_f(bY + bH*0.78)}" text-anchor="middle" fill="${_confColor}" font-size="${_f(_dotR*0.65)}" font-weight="700">${_esc(_confLabel)}</text>`;
+        };
+
         const _confRing = (cx, cy, baseR, color) => {
           if (_conf == null) return "";
           const rr = baseR * 1.6 + (1 - _conf) * baseR * 2.4;   // tighter = more certain
@@ -923,22 +951,24 @@ export function render(ctx){
         };
 
         if (isFollowed) {
-          s += `<g data-obj-key="${_oKey}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
+          s += `<g data-obj-key="${_oKey}" data-tip="${_tipStr}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
           s += _confRing(px, py, _dotR, "#fbbf24");
           s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*2}" fill="#fbbf24" fill-opacity="${(0.15*_recF).toFixed(2)}"/>`;
           s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#fbbf24" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${_recF.toFixed(2)}"/>`;
           s += _sigBars(px, py, "#fbbf24");
+          s += _confBadge(px, py);
           if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*2)}" text-anchor="middle" fill="#fbbf24" font-size="${_fsObj}" font-weight="600" opacity="${_recF.toFixed(2)}">${_esc(lbl)}</text>`;
           s += `</g>`;
         } else if (isTagged) {
-          s += `<g data-obj-key="${_oKey}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
+          s += `<g data-obj-key="${_oKey}" data-tip="${_tipStr}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
           s += _confRing(px, py, _dotR, "#5eead4");
           s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#5eead4" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${(0.9*_recF).toFixed(2)}"/>`;
           s += _sigBars(px, py, "#5eead4");
+          s += _confBadge(px, py);
           if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8)}" text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="${(0.85*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
           s += `</g>`;
         } else {
-          s += `<g data-obj-key="${_oKey}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
+          s += `<g data-obj-key="${_oKey}" data-tip="${_tipStr}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
           s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*0.7}" fill="#f59e0b" stroke="#071008" stroke-width="${_sw*0.3}" opacity="${(0.5*_recF).toFixed(2)}"/>`;
           s += `</g>`;
         }
@@ -1356,7 +1386,36 @@ export function render(ctx){
       }
     });
 
+    // ── Floating info panel for 2D map hover (mirrors iso isoTipEl) ──────────
+    // Attached to svgWrap (NOT svgDiv) so it is unaffected by zoom/pan transforms
+    // and survives any svgDiv.innerHTML = buildSVG() refresh.
+    const mapTipEl = document.createElement("div");
+    mapTipEl.style.cssText = "position:absolute;top:8px;left:8px;background:rgba(7,16,8,0.92);" +
+      "border:1px solid #2d6a4f;border-radius:8px;padding:6px 10px;font-size:11px;color:#a7f3d0;" +
+      "pointer-events:none;white-space:pre-line;max-width:min(260px,calc(100vw - 40px));z-index:5;display:none;" +
+      "font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.5";
+
+    // Hover: show tip panel on [data-tip] elements inside svgDiv
+    svgDiv.addEventListener("mouseover", (e) => {
+      const g = e.target.closest("[data-tip]");
+      if (g) {
+        mapTipEl.textContent = "";
+        const lines = g.getAttribute("data-tip").split("|");
+        lines.forEach((line, i) => {
+          if (i > 0) mapTipEl.appendChild(document.createElement("br"));
+          mapTipEl.appendChild(document.createTextNode(line));
+        });
+        mapTipEl.style.display = "block";
+      }
+    });
+    svgDiv.addEventListener("mouseout", (e) => {
+      const g = e.target.closest("[data-tip]");
+      if (!g || !svgDiv.contains(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("[data-tip]")))
+        mapTipEl.style.display = "none";
+    });
+
     svgWrap.appendChild(svgDiv);
+    svgWrap.appendChild(mapTipEl);
     svgWrap.appendChild(zoomCtl);
     svgWrap.appendChild(zoomHint);
     outer.appendChild(svgWrap);
