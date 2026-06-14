@@ -350,7 +350,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             hass.data[DOMAIN]["coordinator"] = coord
         coord.room_tag_map = call.data.get("room_tag_map") or {}
         coord.mark_success()
-        _LOGGER.info("room_tag_map replaced via service (%d rooms)", len(coord.room_tag_map))
+        # Persist so the map survives restarts/reloads (was in-memory only).
+        try:
+            _settings = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if _settings:
+                await _settings.async_set(room_tag_map=coord.room_tag_map)
+        except Exception as err:
+            _LOGGER.exception("Failed to persist room_tag_map: %s", err)
+        _LOGGER.info("room_tag_map replaced via service (%d rooms, persisted)", len(coord.room_tag_map))
 
     hass.services.async_register(DOMAIN, SERVICE_SET_MAP, _set_map, schema=SERVICE_SCHEMA)
 
@@ -437,6 +444,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coord.api_key = str(entry.data.get(CONF_API_KEY, ""))
     coord.scan_interval = int(entry.options.get(CONF_SCAN_INTERVAL, entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)))
     coord.ensure_defaults()
+
+    # Restore the persisted room_tag_map.  It is saved into SettingsStore by the
+    # set_room_tag_map service; without this load the coordinator starts empty on
+    # every restart/reload, which blanks the Diagnostics check and the room→object
+    # map the UI falls back to.  Only restore when the live coordinator has none,
+    # so an in-session service update is never clobbered by a reload.
+    try:
+        _settings = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+        if _settings and not coord.room_tag_map:
+            _saved_rtm = _settings.get("room_tag_map") or {}
+            if isinstance(_saved_rtm, dict) and _saved_rtm:
+                coord.room_tag_map = {
+                    str(room): [str(k) for k in keys]
+                    for room, keys in _saved_rtm.items()
+                    if isinstance(keys, (list, tuple))
+                }
+                _LOGGER.info("Restored persisted room_tag_map (%d rooms)", len(coord.room_tag_map))
+    except Exception as err:
+        _LOGGER.exception("Failed to restore persisted room_tag_map: %s", err)
 
     # Ensure room metadata exists for all rooms
     try:
