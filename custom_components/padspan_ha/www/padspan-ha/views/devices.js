@@ -133,21 +133,21 @@ function _renderAll(ctx) {
   if (!ctx.state.devSearch) ctx.state.devSearch = "";
   if (!ctx.state.devFilter) ctx.state.devFilter = "all"; // all | tagged | untagged | entity | missing
 
-  const search = String(ctx.state.devSearch || "").trim().toLowerCase();
   const filter = ctx.state.devFilter;
 
-  // ── Filter ────────────────────────────────────────────────────────────────
+  // Assigned after the rows are built; declared here so the search box's
+  // oninput closure can call it without triggering a full re-render.
+  let applyDevSearch = () => {};
+
+  // ── Filter (type only — the text search is applied in-place below so the
+  //    search box keeps focus; re-rendering on every keystroke recreated the
+  //    input and dropped focus/cursor, making it unusable). ─────────────────
   const filtered = allDevices.filter(d => {
     // Type filter
     if (filter === "tagged" && !(d.tagged || d.type === "entity")) return false;
     if (filter === "untagged" && (d.tagged || d.type === "entity")) return false;
     if (filter === "entity" && d.type !== "entity") return false;
     if (filter === "missing" && !d.missing) return false;
-    // Search
-    if (search) {
-      const hay = `${d.name} ${d.id} ${d.room} ${d.stateRaw} ${d.type}`.toLowerCase();
-      if (!hay.includes(search)) return false;
-    }
     return true;
   });
 
@@ -213,7 +213,7 @@ function _renderAll(ctx) {
       class: "input", style: "flex:1;min-width:180px;max-width:300px",
       placeholder: "Search name, address, room\u2026",
       value: ctx.state.devSearch,
-      oninput: e => { ctx.state.devSearch = e.target.value; ctx.actions.renderRooms(); },
+      oninput: e => { ctx.state.devSearch = e.target.value; applyDevSearch(); },
     }),
     filterBtn("all", "All", allDevices.length),
     filterBtn("tagged", "Named", entityCount + taggedCount),
@@ -281,7 +281,8 @@ function _renderAll(ctx) {
       }}, "Untag"));
     }
 
-    return el("div", { class: "dev-tag", style: "cursor:pointer", onclick: (e) => {
+    const hay = `${d.name} ${d.id} ${d.room} ${d.stateRaw} ${d.type}`.toLowerCase();
+    return el("div", { class: "dev-tag", "data-search": hay, style: "cursor:pointer", onclick: (e) => {
       if (e.target.closest("button")) return;
       if (d.obj) ctx.actions.showObjectDetail(d.obj);
     }}, [
@@ -297,13 +298,30 @@ function _renderAll(ctx) {
     ]);
   });
 
+  const countEl = el("div", { class: "h2", style: "flex:1" }, "");
+  const emptyMsg = el("div", { class: "muted", style: "padding:12px 0" }, "No devices match the current filters.");
+  const listEl = el("div", { class: "dev-tag-list list-scroll" }, rows);
+
+  // In-place text search: toggle row visibility against the live search term
+  // without rebuilding the DOM, so the search box retains focus while typing.
+  applyDevSearch = () => {
+    const q = String(ctx.state.devSearch || "").trim().toLowerCase();
+    let shown = 0;
+    for (const row of rows) {
+      const ok = !q || (row.getAttribute("data-search") || "").includes(q);
+      row.style.display = ok ? "" : "none";
+      if (ok) shown++;
+    }
+    countEl.textContent = `Showing ${shown} of ${allDevices.length}`;
+    emptyMsg.style.display = shown === 0 ? "" : "none";
+    listEl.style.display = shown === 0 ? "none" : "";
+  };
+  applyDevSearch();
+
   const listCard = el("div", { class: "card" }, [
-    el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [
-      el("div", { class: "h2", style: "flex:1" }, `Showing ${filtered.length} of ${allDevices.length}`),
-    ]),
-    filtered.length === 0
-      ? el("div", { class: "muted", style: "padding:12px 0" }, "No devices match the current filters.")
-      : el("div", { class: "dev-tag-list list-scroll" }, rows),
+    el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [countEl]),
+    emptyMsg,
+    listEl,
   ]);
 
   return el("div", {}, [header, controls, listCard]);
