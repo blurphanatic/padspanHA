@@ -1424,6 +1424,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
         # (A) Entity-based objects (bermuda tags, device_trackers, etc.)
         _MAC_RE = __import__("re").compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+        # Matches the Private BLE Device integration's per-device helper entities
+        # (sensor.private_ble_device_<irkhex>_area / _floor, device_tracker.*_bermuda_tracker).
+        # The <irkhex> is the leading hex of the device's IRK, letting us fold these
+        # derived readouts into the single irk: phone object instead of listing each
+        # as its own trackable.
+        _PBLE_RE = __import__("re").compile(r"private_ble_device_([0-9a-fA-F]{4,})")
         for t in (snapshot.get("tags") or []):
             eid = t.get("entity_id") or ""
             addr = ""
@@ -1478,6 +1484,30 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                                 break
             except Exception:
                 addr = ""
+
+            # Fold derived Private BLE / Bermuda helper entities into the phone's
+            # irk: object instead of emitting them as separate trackables. Match by
+            # the IRK-hex embedded in the entity_id (e.g. private_ble_device_4e5b3c_*)
+            # when an irk: group with that hex prefix exists. Devices with no irk:
+            # object (e.g. a Bermuda-only tracker) are left untouched.
+            if not canonical_id:
+                _pbm = _PBLE_RE.search(eid)
+                if _pbm:
+                    _hx = _pbm.group(1).lower()
+                    for _cid in _private_groups:
+                        if _cid.startswith("irk:") and _cid[4:].lower().startswith(_hx):
+                            canonical_id = _cid
+                            break
+            if canonical_id and canonical_id in _private_groups:
+                _al = _private_groups[canonical_id].get("all_linked")
+                if isinstance(_al, set):
+                    _al.add(eid)
+                elif isinstance(_al, list):
+                    if eid not in _al:
+                        _al.append(eid)
+                else:
+                    _private_groups[canonical_id]["all_linked"] = {eid}
+                continue  # linked to the phone object; no standalone entity object
 
             prefix = ":".join(addr.split(":")[:3]) if addr else ""
             _ent_obj: dict[str, Any] = {
@@ -2355,11 +2385,22 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         # Merge cached objects not seen this cycle back into the list
         # Skip keys absorbed by deduplication — they are ghosts of merged objects
         _cached_added = 0
+        # Entities already folded into a device object (e.g. a phone's
+        # private_ble_device_*_area / _floor / _bermuda_tracker helper sensors
+        # linked into its irk: object) must not be resurrected from the cache as
+        # standalone trackables.
+        _linked_now: set[str] = set()
+        for _o in objects:
+            for _le in (_o.get("linked_entities") or []):
+                _linked_now.add(_le)
         for key, cached_obj in list(_cache.items()):
             if key in _current_keys:
                 continue  # already in this cycle's list
             if key in _dedup_absorbed:
                 del _cache[key]  # purge absorbed ghost from cache
+                continue
+            if cached_obj.get("kind") == "entity" and cached_obj.get("entity_id") in _linked_now:
+                del _cache[key]  # folded into a device object; drop the ghost
                 continue
             # When bermuda_ignore is on, purge cached entity objects from Bermuda
             # so they don't keep resurrecting after being filtered out
