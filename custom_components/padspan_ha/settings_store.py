@@ -99,6 +99,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "beacon_group_overrides": {},         # device_id → model_key override (ungroup/regroup)
     # Private BLE IRK devices (managed in PadSpan — no separate integration needed)
     "irk_devices": [],                    # [{name: str, irk_hex: str}]
+    # Curated room → object map (room name → list of object keys).  Set via the
+    # padspan_ha.set_room_tag_map service / Manage UI.  Persisted here so it
+    # survives restarts and integration reloads — previously the coordinator's
+    # room_tag_map was in-memory only and reset to {} on every restart.
+    "room_tag_map": {},                   # {room_name: [object_key, ...]}
     # ── Enterprise preview features (off by default) ─────────────────────────
     "trackability_rating_enabled": False,   # per-device Easy/Medium/Hard trackability score
     "walk_to_identify_enabled": False,      # spatial correlation device discovery ("who just walked in?")

@@ -1,6 +1,6 @@
 set_room_tag_map:
   name: "Set Room Tag Map"
-  description: "Replace the in-memory room_tag_map (for testing)."
+  description: "Replace the curated room_tag_map (room name → list of object keys). Persisted across restarts."
   fields:
     room_tag_map:
       required: true
