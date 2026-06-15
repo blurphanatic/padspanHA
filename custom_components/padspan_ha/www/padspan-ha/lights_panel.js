@@ -12,8 +12,8 @@
   BUILD_ID / APP_VERSION updated automatically by scripts/release.py.
 */
 
-const APP_VERSION = "0.20.69";
-const BUILD_ID = "20260612T022324Z";
+const APP_VERSION = "0.20.70";
+const BUILD_ID = "20260614T195502Z";
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, attrs={}, children=[]){
@@ -724,4 +724,8 @@ class PadSpanLightsApp extends HTMLElement {
   }
 }
 
-customElements.define("padspan-lights-app", PadSpanLightsApp);
+// Guard against duplicate definition when a stale module lingers alongside a
+// freshly-registered one after an integration reload (see panel.js for detail).
+if (!customElements.get("padspan-lights-app")) {
+  customElements.define("padspan-lights-app", PadSpanLightsApp);
+}
