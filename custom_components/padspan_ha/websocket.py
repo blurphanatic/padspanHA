@@ -4778,6 +4778,17 @@ async def ws_room_tag_purge_missing(hass: HomeAssistant, connection, msg) -> Non
         if valid:
             new_map[room] = valid
     coord.room_tag_map = new_map
+    # Persist the purge so phantom entries don't reappear on restart.  The
+    # set_room_tag_map service saves room_tag_map to SettingsStore and
+    # async_setup_entry restores it; without saving here the restored map would
+    # re-add the very entries we just removed.  Only write when something changed.
+    if removed:
+        try:
+            _settings = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if _settings:
+                await _settings.async_set(room_tag_map=new_map)
+        except Exception as err:
+            _LOGGER.exception("Failed to persist purged room_tag_map: %s", err)
     connection.send_result(msg["id"], {"removed": removed, "rooms": len(new_map)})
 
 
