@@ -835,13 +835,15 @@ export function render(ctx){
             const liveR = liveRadioMap[src];
             const isOnline = !!liveR;
             const rxColor = isOnline ? "#52b788" : "#4a6052";
-            const rxName = (r.label || (liveR && liveR.name) || r.source || "radio").substring(0, 16);
+            const rxFull = r.label || (liveR && liveR.name) || r.source || "radio";
+            const rxShort = _esc((_sid(src) || rxFull.substring(0,3)).toUpperCase());
             const rxSrc2d = _esc(src);
-            s += `<g data-scanner-src="${rxSrc2d}" style="cursor:pointer">`;
+            // Compact: small radio glyph + 2-3 char id; full name on hover (title).
+            s += `<g data-scanner-src="${rxSrc2d}" style="cursor:pointer"><title>${_esc(rxFull)} ${isOnline?"● online":"○ offline"}</title>`;
             s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_mkR*1.8}" fill="none" stroke="${rxColor}" stroke-width="${_sw*0.5}" opacity="0.3"/>`;
             s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_mkR}" fill="none" stroke="${rxColor}" stroke-width="${_sw*0.7}" opacity="0.6"/>`;
             s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_mkR*0.5}" fill="${rxColor}" opacity="0.9"/>`;
-            s += `<text x="${_f(px)}" y="${_f(py - _mkR*2.2)}" text-anchor="middle" fill="${rxColor}" font-size="${_fsScan}" font-weight="600" style="text-decoration:underline">${_esc(rxName)}</text>`;
+            s += `<text x="${_f(px)}" y="${_f(py - _mkR*2.4)}" text-anchor="middle" fill="${rxColor}" font-size="${_fsScan*0.85}" font-weight="700">${rxShort}</text>`;
             s += `</g>`;
           }
         }
@@ -944,6 +946,22 @@ export function render(ctx){
       });
       return btn;
     };
+
+    // View-mode toggle — this top-down overhead is the default; flip to 3D stack.
+    const viewTo3d = document.createElement("button");
+    viewTo3d.className = "btn inline";
+    viewTo3d.style.cssText = "font-size:11px;padding:2px 8px;color:#94a3b8;border-color:#334155";
+    viewTo3d.textContent = "◈ 3D view";
+    viewTo3d.title = "Switch to the 3D stacked-floor view";
+    viewTo3d.addEventListener("click", async () => {
+      viewTo3d.disabled = true;
+      try { await ctx.actions.settingsSet({ overview_2d_mode: false }); }
+      catch(e){ viewTo3d.disabled = false; if(ctx.toast) ctx.toast("Failed to switch view", true); }
+    });
+    filterBar.appendChild(viewTo3d);
+    const sepView = document.createElement("span");
+    sepView.style.cssText = "width:1px;height:16px;background:#334155;margin:0 2px";
+    filterBar.appendChild(sepView);
 
     // Layer toggles (map image off by default — setup tool only) + room lines
     filterBar.appendChild(makeFilterBtn("mapImg", "Map", "#a78bfa"));
@@ -1788,8 +1806,7 @@ export function render(ctx){
             const isLive = !!liveRadio;
             const[wx,wy]=mapPt(r.x||0,r.y||0);
             const [px,py]=iso(wx,wy,z);
-            const rxName = ((isLive ? liveRadio.name : null) || r.label || r.id || "receiver").substring(0, 16);
-            const rsid = _sid((isLive ? liveRadio.source : null) || r.source || r.id || r.label || "");
+            const rsid = (_sid((isLive ? liveRadio.source : null) || r.source || r.id || r.label || "") || "R").toUpperCase();
             const _rTip = `${rsid} · ${(isLive ? liveRadio.name : null)||r.label||r.id||"receiver"}${r.room ? "\nArea: "+r.room : ""}${isLive && liveRadio.scanning!=null ? "\nScanning: "+(liveRadio.scanning?"Yes":"No") : ""}${!isLive ? "\n(offline)" : ""}`;
             const rxColor = isLive ? "#52b788" : "#4a6052";
             const rxOp = isLive ? 1.0 : 0.45;
@@ -1798,7 +1815,7 @@ export function render(ctx){
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="15" fill="none" stroke="${rxColor}" stroke-width="1.3" opacity="0.3"/>`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="9"  fill="none" stroke="${rxColor}" stroke-width="1.5" opacity="0.6"/>`;
             s += `<circle cx="${Math.round(px)}" cy="${Math.round(py)}" r="4.5" fill="${rxColor}" opacity="0.9"/>`;
-            s += `<text x="${Math.round(px)}" y="${Math.round(py)-18}" text-anchor="middle" fill="${rxColor}" font-size="10" font-weight="600" style="text-decoration:underline;cursor:pointer">${_esc(rxName)}</text>`;
+            s += `<text x="${Math.round(px)}" y="${Math.round(py)-13}" text-anchor="middle" fill="${rxColor}" font-size="9" font-weight="700" style="cursor:pointer">${_esc(rsid)}</text>`;
             s += `</g>`;
           }
         }
@@ -2374,6 +2391,19 @@ export function render(ctx){
     ctrlRow.appendChild(ovResetBtn);
     ctrlRow.appendChild(ovSaveLbl);
     ctrlRow.appendChild(roomToggleBtn);
+
+    // View-mode toggle — flip to the top-down overhead (2D) map.
+    const ovTo2d = document.createElement("button");
+    ovTo2d.className = "btn inline";
+    ovTo2d.style.cssText = "padding:1px 6px;font-size:10px;color:#94a3b8";
+    ovTo2d.textContent = "▣ Overhead";
+    ovTo2d.title = "Switch to the large top-down overhead map";
+    ovTo2d.addEventListener("click", async ()=>{
+      ovTo2d.disabled = true;
+      try { await ctx.actions.settingsSet({ overview_2d_mode: true }); }
+      catch(e){ ovTo2d.disabled = false; if(ctx.toast) ctx.toast("Failed to switch view", true); }
+    });
+    ctrlRow.appendChild(ovTo2d);
 
     const ovPersistentBtn = document.createElement("button");
     ovPersistentBtn.className = "btn inline";
