@@ -246,6 +246,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._kalman_p: dict[str, dict[str, float]] = {}
         # {addr: {source: consecutive_miss_count}} — silence grace tracking
         self._silence_miss: dict[str, dict[str, int]] = {}
+        # {key: addr} — object key → Kalman state key (RPA-resolved address
+        # for ble/private_ble).  Lets _evict_object clean the address-keyed
+        # Kalman dicts above, which are NOT keyed by object key.
+        self._kalman_addr_key: dict[str, str] = {}
 
         # ── Room-vote state (keyed by object key) ────────────────────────────
         # {key: deque of recent candidate rooms}
@@ -388,6 +392,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._ema_rssi.clear()
         self._kalman_p.clear()
         self._silence_miss.clear()
+        self._kalman_addr_key.clear()
         self._room_votes.clear()
         self._confirmed_room.clear()
         self._room_confidence.clear()
@@ -552,7 +557,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _delay_s = float(((_st2.data if _st2 else {}).get("room_change_delay_s") or 20.0))
             _delay_s = max(0.0, min(300.0, _delay_s))
             _dyn_vote_window = max(1, round(_delay_s / self.update_interval.total_seconds()))
-            _dyn_vote_threshold = max(1, (_dyn_vote_window + 1) // 2)
+            _dyn_vote_threshold = _dyn_vote_window // 2 + 1
         except Exception:
             _dyn_vote_window = _VOTE_WINDOW
             _dyn_vote_threshold = _VOTE_THRESHOLD
@@ -647,6 +652,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # For private_ble, use canonical_id as Kalman state key so all
                 # rotating MACs share one continuous smoothing state.
                 smooth_addr = _rpa_map.get(raw_addr, raw_addr)
+                self._kalman_addr_key[key] = smooth_addr
                 smoothed_room = self._smooth_room(
                     key, smooth_addr, addr_src_rssi, source_to_area,
                     _dyn_vote_window, _dyn_vote_threshold, source_to_floor,
@@ -1519,10 +1525,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         confirmed = self._confirmed_room.get(key)
         confidence = 0.0
         if counts:
-            top_room = max(counts, key=lambda r: counts[r])
+            # Tie-break: prefer the currently confirmed room over dict order
+            top_room = max(counts, key=lambda r: (counts[r], r == confirmed))
             top_count = counts[top_room]
-            # Confidence = fraction of window agreeing on the top room (0.0–1.0)
-            confidence = round(top_count / len(votes), 2)
+            # Confidence = fraction of the FULL window agreeing on the top
+            # room (0.0–1.0).  Divide by window size, not current fill — a
+            # single poll after a state reset must not report 1.0 and satisfy
+            # the adaptive-learning / scanner-reliability confidence gates.
+            confidence = round(top_count / vote_window, 2)
             if top_count >= vote_threshold:
                 if top_room != confirmed:
                     # ── Velocity gate ────────────────────────────────────
@@ -1734,6 +1744,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._ema_rssi.pop(key, None)
         self._kalman_p.pop(key, None)
         self._silence_miss.pop(key, None)
+        # Kalman state for ble/private_ble is keyed by (RPA-resolved) address,
+        # not the object key — pop that too or a returning device resurrects
+        # its pre-departure RSSI and transient devices leak state forever.
+        _addr = self._kalman_addr_key.pop(key, None)
+        if _addr and _addr != key:
+            self._ema_rssi.pop(_addr, None)
+            self._kalman_p.pop(_addr, None)
+            self._silence_miss.pop(_addr, None)
 
     def clear_object_state(self, key: str) -> None:
         """Public API: clear all coordinator state for an object.
@@ -2104,6 +2122,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if not self._ema_rssi[addr]:
                     del self._ema_rssi[addr]
                     self._kalman_p.pop(addr, None)
+        for addr in list(self._silence_miss):
+            if source in self._silence_miss[addr]:
+                del self._silence_miss[addr][source]
+                if not self._silence_miss[addr]:
+                    del self._silence_miss[addr]
         return cleared
 
     async def _record_movement(self, result: dict[str, Any]) -> None:
