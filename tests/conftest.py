@@ -100,8 +100,28 @@ class _SubscriptableBase:
 
 
 class _FakeDataUpdateCoordinator(_SubscriptableBase):
-    """Stand-in for DataUpdateCoordinator that is subscriptable."""
-    pass
+    """Stand-in for DataUpdateCoordinator that is subscriptable.
+
+    Accepts the real HA constructor signature so subclasses (e.g.
+    PresenceCoordinator) can be built via their REAL ``__init__`` in tests.
+    ``hass`` and ``update_interval`` are stored because production code reads
+    them (``self.hass.data``, ``self.update_interval.total_seconds()``).
+    """
+
+    def __init__(
+        self,
+        hass: Any = None,
+        logger: Any = None,
+        *,
+        name: str = "",
+        update_interval: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        self.hass = hass
+        self.logger = logger
+        self.name = name
+        self.update_interval = update_interval
+        self.data: Any = None
 
 
 class _FakeCoordinatorEntity(_SubscriptableBase):

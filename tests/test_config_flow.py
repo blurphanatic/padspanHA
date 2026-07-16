@@ -34,8 +34,8 @@ def test_clamp_float_truncated() -> None:
 
 
 def test_clamp_minimum_boundary() -> None:
-    """Value exactly at the minimum (5) is kept."""
-    assert _clamp_interval(5) == 5
+    """Value exactly at the minimum (1) is kept."""
+    assert _clamp_interval(1) == 1
 
 
 def test_clamp_maximum_boundary() -> None:
@@ -44,10 +44,9 @@ def test_clamp_maximum_boundary() -> None:
 
 
 def test_clamp_below_minimum() -> None:
-    """Values below 5 are clamped up to 5."""
-    assert _clamp_interval(1) == 5
-    assert _clamp_interval(0) == 5
-    assert _clamp_interval(-100) == 5
+    """Values below 1 are clamped up to 1."""
+    assert _clamp_interval(0) == 1
+    assert _clamp_interval(-100) == 1
 
 
 def test_clamp_above_maximum() -> None:
@@ -64,7 +63,7 @@ def test_clamp_above_maximum() -> None:
 def test_clamp_none_returns_default() -> None:
     """None triggers TypeError, which falls back to DEFAULT_SCAN_INTERVAL."""
     result = _clamp_interval(None)
-    assert result == max(5, min(3600, DEFAULT_SCAN_INTERVAL))
+    assert result == max(1, min(3600, DEFAULT_SCAN_INTERVAL))
 
 
 def test_clamp_non_numeric_string_returns_default() -> None:

@@ -1,0 +1,8 @@
+# Pinned test dependencies for the PadSpan HA unit suite.
+#
+# The suite stubs the entire `homeassistant` package tree (tests/conftest.py),
+# so Home Assistant itself is NOT required.  Only pytest + the third-party
+# libraries the tested modules import directly are needed.
+pytest==9.0.2
+pytest-asyncio==1.3.0
+voluptuous==0.16.0
