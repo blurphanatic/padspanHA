@@ -33,6 +33,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers import device_registry as dr
 
 from .const import (
     DOMAIN,
@@ -270,11 +271,17 @@ class PadSpanAreaSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity):
     @property
     def device_info(self) -> dict[str, Any]:
         uid = _device_uid(self._obj) or self._init_uid
+        address = self._obj.get("address")
+        model_id = self._obj.get("kind")
+        serial_number = self._obj.get("padspan_id")
         return {
             "identifiers": {(DOMAIN, uid)},
             "name": self._label(),
             "manufacturer": "PadSpan HA",
             "model": "BLE Presence Tracker",
+            "model_id": model_id,
+            "serial_number": serial_number,
+            "connections": {(dr.CONNECTION_BLUETOOTH, address)}
         }
 
     # ── state ─────────────────────────────────────────────────────────────────
@@ -361,11 +368,17 @@ class PadSpanDistanceSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity
     @property
     def device_info(self) -> dict[str, Any]:
         uid = _device_uid(self._obj) or self._init_uid
+        address = self._obj.get("address")
+        model_id = self._obj.get("kind")
+        serial_number = self._obj.get("padspan_id")
         return {
             "identifiers": {(DOMAIN, uid)},
             "name": self._label(),
             "manufacturer": "PadSpan HA",
             "model": "BLE Presence Tracker",
+            "model_id": model_id,
+            "serial_number": serial_number,
+            "connections": {(dr.CONNECTION_BLUETOOTH, address)}
         }
 
     @property
@@ -443,11 +456,17 @@ class PadSpanScannerDistanceSensor(CoordinatorEntity[PresenceCoordinator], Senso
     @property
     def device_info(self) -> dict[str, Any]:
         uid = _device_uid(self._obj) or self._init_uid
+        address = self._obj.get("address")
+        model_id = self._obj.get("kind")
+        serial_number = self._obj.get("padspan_id")
         return {
             "identifiers": {(DOMAIN, uid)},
             "name": self._label(),
             "manufacturer": "PadSpan HA",
             "model": "BLE Presence Tracker",
+            "model_id": model_id,
+            "serial_number": serial_number,
+            "connections": {(dr.CONNECTION_BLUETOOTH, address)}
         }
 
     @property
