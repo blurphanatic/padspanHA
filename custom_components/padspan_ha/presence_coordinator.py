@@ -92,6 +92,11 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
@@ -316,6 +321,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ── Adaptive learning rate-limit ───────────────────────────────────────
         # {key: monotonic_ts} — last adaptive observation time per device
         self._adaptive_last_obs: dict[str, float] = {}
+        # {key: {source: rssi}} — RSSI vector of the last RECORDED observation,
+        # for novelty gating (a stationary tag must not collapse the room
+        # fingerprint to a single physical spot)
+        self._adaptive_last_vec: dict[str, dict[str, float]] = {}
         # Save counter — only persist to disk every N observations (not every poll)
         self._adaptive_save_counter: int = 0
         # ── Automation tracking ───────────────────────────────────────────────
@@ -410,6 +419,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._co_visible.clear()
         self._adj_learn_polls = 0
         self._adaptive_last_obs.clear()
+        self._adaptive_last_vec.clear()
         _LOGGER.info("Smoothing state cleared — fresh positioning from raw radio")
 
     # ── main update ──────────────────────────────────────────────────────────
@@ -1309,14 +1319,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if _ad_scores:
                         _ad_best = max(_ad_scores, key=lambda r: _ad_scores[r])
                         # Only override if adaptive strongly favors a different room
-                        # AND the Gaussian scorer had that room as a close second
-                        # Adaptive tie-break: room_scores are now dBm, so check
-                        # that the adaptive candidate is within 3 dBm of current
+                        # AND the Gaussian scorer had that room as a close second.
+                        # room_scores are dBm; the deficit the adaptive store may
+                        # override scales with its maturity — a barely-trained
+                        # store only breaks near-exact ties (1 dBm), a fully
+                        # mature one may override up to 3 dBm.
                         _ad_rssi_gap = room_scores.get(_ad_best, -999) - room_scores.get(candidate, -999)
+                        _ad_max_gap = -(1.0 + 2.0 * _ad_store.maturity())
                         if (_ad_best != candidate
                                 and _ad_best in room_scores
                                 and _ad_scores.get(_ad_best, 0) > 0.7
-                                and _ad_rssi_gap > -3.0):
+                                and _ad_rssi_gap > _ad_max_gap):
                             candidate = _ad_best
             except Exception as _ad_err:
                 _LOGGER.warning("Adaptive tie-break error for %s: %s", key[:30], _ad_err, exc_info=True)
@@ -1676,7 +1689,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # with IRK, labelled objects) — random BLE devices at random positions
         # inflate variance and make the fingerprint useless.
         # Also require confidence >= 0.7 (stable) and rate-limit to 1 per
-        # device per 5 min to keep data compact.
+        # device per 5 min to keep data compact.  Beyond that, three quality
+        # gates (dwell stability, novelty, ground-truth corroboration) keep
+        # self-reinforcing or redundant observations out of the fingerprints
+        # — see _adaptive_obs_quality_ok.
         _obj_for_adaptive = self._known_objs.get(key, {})
         _is_identified_device = bool(
             _obj_for_adaptive.get("user_label")
@@ -1687,8 +1703,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             try:
                 _now_mono = time.monotonic()
                 _last = self._adaptive_last_obs.get(key, 0.0)
-                if _now_mono - _last >= 300.0:
+                if (_now_mono - _last >= 300.0
+                        and self._adaptive_obs_quality_ok(key, confirmed, dict(ema), _now_mono)):
                     self._adaptive_last_obs[key] = _now_mono
+                    self._adaptive_last_vec[key] = dict(ema)
                     _ad = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
                     if _ad:
                         # Derive floor of confirmed room
@@ -1713,6 +1731,93 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return confirmed
 
+    # ── Adaptive observation quality gates ───────────────────────────────
+
+    def _adaptive_obs_quality_ok(
+        self, key: str, room: str, ema: dict[str, float], now_mono: float
+    ) -> bool:
+        """Quality gates for adaptive-learning observations.
+
+        The adaptive store learns from the system's own confirmed rooms, so
+        a wrong-but-confident assignment reinforces itself.  These gates keep
+        low-quality observations out of the fingerprints:
+
+        1. Dwell stability — the device must have been in its confirmed room
+           for >= 2 min; mid-transition polls pollute fingerprints.  A device
+           with no recorded room change (stationary since startup) passes.
+        2. Novelty — skip if the RSSI vector is nearly identical to the last
+           RECORDED observation; a tag parked on a charger must not collapse
+           the room fingerprint to that one spot (the fingerprint EMA window
+           is only ~20 samples).
+        3. Ground truth — if the room's HA area has motion/occupancy/presence
+           sensors, one must corroborate.  Rooms without such sensors record
+           as before (no evidence either way is not counted against).
+        """
+        _dwell_start = self._room_dwell_start.get(key)
+        if _dwell_start and now_mono - _dwell_start < 120.0:
+            return False
+
+        _prev = self._adaptive_last_vec.get(key)
+        if _prev and set(_prev) == set(ema) and all(
+            abs(ema[s] - _prev[s]) < 2.0 for s in ema
+        ):
+            return False
+
+        return self._room_corroborated(room) is not False
+
+    def _room_corroborated(self, room: str) -> bool | None:
+        """Check for independent HA evidence that a person is in `room`.
+
+        Returns True if a motion/occupancy/presence binary_sensor in the
+        room's area is 'on' (or switched off within the last 30 s), False if
+        such sensors exist but none corroborate, None if the area has no such
+        sensors.  Fails open (None) on registry errors — never block learning
+        on lookup problems.
+        """
+        try:
+            _area = next(
+                (a for a in ar.async_get(self.hass).async_list_areas()
+                 if (a.name or "").strip().lower() == room.strip().lower()),
+                None,
+            )
+            if _area is None:
+                return None
+            _ent_reg = er.async_get(self.hass)
+            # Entities assigned to the area directly, plus entities that
+            # inherit the area from their device.
+            _entity_ids = {
+                e.entity_id for e in er.async_entries_for_area(_ent_reg, _area.id)
+            }
+            for _dev in dr.async_entries_for_area(dr.async_get(self.hass), _area.id):
+                for e in er.async_entries_for_device(_ent_reg, _dev.id):
+                    if e.area_id is None:
+                        _entity_ids.add(e.entity_id)
+
+            _found_sensor = False
+            for _eid in _entity_ids:
+                if not _eid.startswith("binary_sensor."):
+                    continue
+                _state = self.hass.states.get(_eid)
+                if _state is None:
+                    continue
+                if _state.attributes.get("device_class") not in (
+                    "motion", "occupancy", "presence",
+                ):
+                    continue
+                _found_sensor = True
+                if _state.state == "on":
+                    return True
+                # Recently cleared counts too — motion sensors switch off
+                # while the person is still in the room.
+                if _state.state == "off":
+                    _age = time.time() - _state.last_changed.timestamp()
+                    if _age <= 30.0:
+                        return True
+            return False if _found_sensor else None
+        except Exception as _corr_err:
+            _LOGGER.debug("Corroboration check for %s failed: %s", room, _corr_err)
+            return None
+
     # ── Object state cleanup ─────────────────────────────────────────────
 
     def _evict_object(self, key: str) -> None:
@@ -1735,6 +1840,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._spatial_smooth_xy.pop(key, None)
         self._beacon_autocal_last.pop(key, None)
         self._adaptive_last_obs.pop(key, None)
+        self._adaptive_last_vec.pop(key, None)
         self._last_room_change_mono.pop(key, None)
         self._room_dwell_start.pop(key, None)
         self._floor_dwell_start.pop(key, None)
