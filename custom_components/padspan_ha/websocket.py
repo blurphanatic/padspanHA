@@ -943,11 +943,16 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception:
         pass
 
-    # Mark radios flagged as "lost" or "disabled" in PadSpan settings
+    # Mark radios flagged as "lost" or "disabled" in PadSpan settings.
+    # These sources are excluded from location math downstream (per-object
+    # per-scanner RSSI maps + strongest-scanner fallback room assignment),
+    # but stay in the radios list so the UI can show them as lost/disabled.
+    _excluded_radio_srcs: set[str] = set()
     try:
         _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS, None)
         lost_set     = (_st.data.get("lost_radios",     {}) if _st else {})
         disabled_set = (_st.data.get("disabled_radios", {}) if _st else {})
+        _excluded_radio_srcs = {str(s) for s in lost_set} | {str(s) for s in disabled_set}
         for radio in ((snapshot.get("ble") or {}).get("radios") or []):
             src = str(radio.get("source") or "")
             if src in lost_set:
@@ -1036,7 +1041,9 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 ble_by_addr[addr] = rec
 
             src = a.get("source")
-            if src:
+            # Scanners marked lost/disabled don't contribute to per-scanner
+            # RSSI maps (excluded from location math; radios list unaffected).
+            if src and str(src) not in _excluded_radio_srcs:
                 src_key = str(src)
                 a_rssi = a.get("rssi")
                 a_age = a.get("age_s")
@@ -2640,19 +2647,29 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         for r in radios:
             src = r.get("source")
             area = r.get("area_name") or r.get("area")
-            if src and area:
+            # Lost/disabled scanners are excluded from location math
+            if src and area and str(src) not in _excluded_radio_srcs:
                 source_to_area[str(src)] = str(area)
 
         if source_to_area:
             ads_raw = (snapshot.get("ble") or {}).get("advertisements") or []
-            # Build {addr: {source: rssi}} from raw advertisements
+            # Build {addr: {source: rssi}} from raw advertisements.
+            # Skip readings older than 60s so a scanner that heard the device
+            # long ago can't win (same recency cutoff as the iBeacon merge),
+            # and skip scanners marked lost/disabled.
             addr_src_rssi: dict[str, dict[str, float]] = {}
             for ad in ads_raw:
                 addr = str(ad.get("address") or "").upper()
                 src  = ad.get("source")
                 rssi = ad.get("rssi")
-                if addr and src and rssi is not None:
-                    addr_src_rssi.setdefault(addr, {})[str(src)] = float(rssi)
+                if not (addr and src and rssi is not None):
+                    continue
+                if str(src) in _excluded_radio_srcs:
+                    continue
+                _age = ad.get("age_s")
+                if isinstance(_age, (int, float)) and _age > 60:
+                    continue
+                addr_src_rssi.setdefault(addr, {})[str(src)] = float(rssi)
 
             # Apply per-scanner RSSI offsets (corrects scanners that read consistently high/low)
             _scanner_offsets: dict[str, float] = {}

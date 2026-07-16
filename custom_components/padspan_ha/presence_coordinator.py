@@ -322,6 +322,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # {addr: {source: metres}} — ESPresense node-calibrated distances from
         # this poll's ads (rebuilt each poll; consumed by the spatial path)
         self._espresense_dist: dict[str, dict[str, float]] = {}
+        # {addr: tx_power} and {source: {rssi_1m, n}} — per-poll caches for
+        # per-tag / per-receiver path-loss in the spatial distance conversion
+        self._addr_tx_power: dict[str, int] = {}
+        self._pl_fits: dict[str, dict[str, Any]] = {}
         # {key: dict}  — spatial IDW centroid position (independent of k-NN)
         self._spatial_position: dict[str, dict] = {}
         # {key: (x, y)}  — EMA-smoothed position for spatial (independent of k-NN)
@@ -543,7 +547,20 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # keeps its wide age window for the UI object list — this gate only
         # protects the Kalman/spatial inputs.)
         _max_ad_age_s = 3.0 * self.update_interval.total_seconds()
+        # Radios the user marked lost/disabled must not vote in positioning
+        # (their handlers document this; the UI decoration keeps showing them)
+        _excluded_srcs: set[str] = set()
+        try:
+            _st_ex = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if _st_ex:
+                _excluded_srcs = (
+                    set((_st_ex.data.get("lost_radios") or {}))
+                    | set((_st_ex.data.get("disabled_radios") or {}))
+                )
+        except Exception:
+            _excluded_srcs = set()
         _es_map: dict[str, dict[str, float]] = {}
+        _ad_ages: dict[tuple[str, str], float] = {}
         for ad in (snap.get("ble") or {}).get("advertisements") or []:
             raw_addr = str(ad.get("address") or "").upper()
             addr = _rpa_map.get(raw_addr, raw_addr)  # canonical or raw
@@ -557,11 +574,22 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _age = ad.get("age_s")
             if isinstance(_age, (int, float)) and _age > _max_ad_age_s:
                 continue
+            if src and str(src) in _excluded_srcs:
+                continue
             if addr and src and rssi is not None:
                 existing = addr_src_rssi.setdefault(addr, {})
-                # For merged RPAs, keep the strongest RSSI per source
-                if str(src) not in existing or float(rssi) > existing[str(src)]:
+                # For merged RPAs, prefer the FRESHEST reading per scanner —
+                # keeping the strongest let an old strong ad from a previous
+                # rotating-MAC generation permanently outrank the live weaker
+                # one.  Near-simultaneous readings (±0.5 s) break strongest.
+                _k2 = (addr, str(src))
+                _a = float(_age) if isinstance(_age, (int, float)) else 0.0
+                _prev_a = _ad_ages.get(_k2)
+                if (str(src) not in existing
+                        or _a < _prev_a - 0.5
+                        or (abs(_a - _prev_a) <= 0.5 and float(rssi) > existing[str(src)])):
                     existing[str(src)] = float(rssi)
+                    _ad_ages[_k2] = _a
             # ESPresense nodes publish a node-calibrated, node-filtered
             # distance — collect it so the spatial path can use it directly
             # instead of re-deriving distance via the global path-loss model.
@@ -572,6 +600,17 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 except (TypeError, ValueError):
                     pass
         self._espresense_dist = _es_map
+        self._addr_tx_power = addr_tx_power
+        # Per-receiver path-loss fits (metres-based) from the calibration
+        # store, refreshed once per poll for the spatial distance conversion.
+        try:
+            _calib_pl = self.hass.data.get(DOMAIN, {}).get(DATA_CALIBRATION)
+            if _calib_pl and hasattr(_calib_pl, "path_loss_by_source"):
+                self._pl_fits = _calib_pl.path_loss_by_source() or {}
+            else:
+                self._pl_fits = {}
+        except Exception:
+            self._pl_fits = {}
 
         # ── Build source-to-area and source-to-floor lookups ──────────────
         # Phase 1: read from the positioning fabric (ModelStore) when available.
@@ -1072,14 +1111,18 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # K (Kalman gain) adapts automatically: high P (uncertainty) → K≈1
         # (trust new measurement); low P → K≈0 (trust existing estimate).
         for src, rssi in live_srcs.items():
+            # ESPresense readings are already filtered at the node — trust
+            # them more (lower measurement noise) instead of double-smoothing
+            # with the same R as raw proxy advertisements.
+            _r_src = _R * 0.25 if src.startswith("espresense_") else _R
             if src in ema:
                 p = kp.get(src, _R)
-                K = p / (p + _R)                        # Kalman gain
+                K = p / (p + _r_src)                    # Kalman gain
                 ema[src] = ema[src] + K * (rssi - ema[src])  # state update
                 kp[src] = (1.0 - K) * p + _Q            # covariance update
             else:
                 ema[src] = rssi   # first observation — seed directly
-                kp[src] = _R      # initialize at max uncertainty
+                kp[src] = _r_src  # initialize at max uncertainty
 
         # Decay sources that did NOT report.  BLE advertisements are probabilistic
         # — a scanner can miss 1-2 polls even when the device is stationary nearby.
@@ -1106,6 +1149,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _miss[src] = _miss.get(src, 0) + 1
                 if _miss[src] < _SILENCE_GRACE:
                     continue  # grace period — hold RSSI steady, don't decay
+                # Hard cap: the all-silent decay target (-95) sits ABOVE the
+                # -98 prune threshold, so entries asymptotically approach -95
+                # and were never pruned.  30 missed polls (~5 min) is decisive.
+                if _miss[src] >= 30:
+                    del ema[src]
+                    kp.pop(src, None)
+                    _miss.pop(src, None)
+                    continue
                 p = kp.get(src, _R)
                 K = p / (p + _R)
                 ema[src] = ema[src] + K * (_decay_target - ema[src])
@@ -1114,6 +1165,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     del ema[src]
                     kp.pop(src, None)
                     _miss.pop(src, None)
+
+        # Live subset: only sources that reported THIS poll.  Synthetic
+        # hold/decay values stay in `ema` for room-score hysteresis and
+        # display, but must not feed fingerprint (k-NN/RF) or adaptive
+        # queries as if they were real measurements.
+        _live_ema = {s: v for s, v in ema.items() if _miss.get(s, 0) == 0}
 
         # ── Stage 1.5 prep: read path-loss model parameters ────────────────
         # ref_power: RSSI at 1 meter (typically -59 to -65 dBm)
@@ -1215,6 +1272,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _all_scanners.append((_src, _sx, _sy, _adj_rssi))
 
                     if len(_all_scanners) >= 2:
+                        # Per-tag reference power: iBeacon measured power is a
+                        # genuine RSSI@1m; BLE AD 0x0A radiated power (0..+12
+                        # dBm) is NOT — only accept plausible dBm@1m values.
+                        _tag_ref = None
+                        _tp = self._addr_tx_power.get(addr)
+                        if _tp is not None and -90 <= _tp <= -30:
+                            _tag_ref = float(_tp)
+
                         # ── Two-pass IDW centroid with RF barrier correction ──
                         def _scanner_dists(scanners, ref_pt=None):
                             """Per-scanner distance estimates (metres)."""
@@ -1227,12 +1292,27 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         ref_pt[0], ref_pt[1], _best_floor,
                                         self._rf_barriers,
                                     )
+                                # Reference power / exponent: per-receiver fit
+                                # from calibration data when available, else
+                                # the tag's own measured power, else global.
+                                _fit = self._pl_fits.get(_s_src)
+                                if _fit:
+                                    _ref_s = float(_fit.get("rssi_1m", _ref))
+                                    _n_s = float(_fit.get("n", _n_exp))
+                                else:
+                                    _ref_s = _tag_ref if _tag_ref is not None else _ref
+                                    _n_s = _n_exp
                                 _dd = _es_direct.get(_s_src)
                                 if _dd is not None:
-                                    # Barrier correction in distance space
-                                    _d = _dd * (10.0 ** (_att / (10.0 * _n_exp)))
+                                    # Node distance includes wall attenuation →
+                                    # overestimated; correct in distance space.
+                                    _d = _dd * (10.0 ** (-_att / (10.0 * _n_s)))
                                 else:
-                                    _d = 10.0 ** ((_ref - (_rssi - _att)) / (10.0 * _n_exp))
+                                    # A wall makes measured RSSI weaker than free
+                                    # space; recover the geometric distance by
+                                    # ADDING the attenuation back (the old -=
+                                    # doubled the through-wall error instead).
+                                    _d = 10.0 ** ((_ref_s - (_rssi + _att)) / (10.0 * _n_s))
                                 _out.append((_sx, _sy, max(0.3, min(_d, 50.0))))
                             return _out
 
@@ -1263,6 +1343,16 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         ref_pt=(_est_x, _est_y) if self._rf_barriers else None,
                                     ),
                                 )
+                            # Smooth BEFORE the room decision — the raw
+                            # per-poll estimate jitters across polygon
+                            # boundaries; the room lookup must see the same
+                            # stabilized position the user sees on the map.
+                            _prev_sp_fl = (self._spatial_position.get(key) or {}).get("floor_id")
+                            if _prev_sp_fl and _prev_sp_fl != _best_floor:
+                                self._spatial_smooth_xy.pop(key, None)  # floor change → fresh state
+                            _est_x, _est_y = self._ab_smooth_xy(
+                                self._spatial_smooth_xy, key, _est_x, _est_y
+                            )
                             _spatial_xy = (_est_x, _est_y, _best_floor)
                             self._spatial_debug[key] = f"computed:({_est_x:.1f},{_est_y:.1f})@{_best_floor}"
 
@@ -1427,11 +1517,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self.suspended:
             _adaptive_on = False
 
-        if _adaptive_on and ema and room_scores and candidate == _cur_confirmed:
+        if _adaptive_on and _live_ema and room_scores and candidate == _cur_confirmed:
             try:
                 _ad_store = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
                 if _ad_store and _ad_store.maturity() > 0.20:
-                    _ad_scores = _ad_store.score_rooms(dict(ema), source_to_area)
+                    _ad_scores = _ad_store.score_rooms(dict(_live_ema), source_to_area)
                     if _ad_scores:
                         _ad_best = max(_ad_scores, key=lambda r: _ad_scores[r])
                         # Only override if adaptive strongly favors a different room
@@ -1471,9 +1561,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _st2 = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
                 _algo = ((_st2.data if _st2 else {}).get("positioning_algorithm") or "knn")
                 if _algo == "rf" and _calib.rf_trained:
-                    _knn = _calib.rf_locate(dict(ema))
+                    _knn = _calib.rf_locate(dict(_live_ema))
                 else:
-                    _knn = _calib.knn_locate(dict(ema))
+                    _knn = _calib.knn_locate(dict(_live_ema))
                 # Periodic debug log (first object each cycle)
                 if not hasattr(self, "_knn_log_count"):
                     self._knn_log_count = 0
@@ -1514,30 +1604,13 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     else:
                         _raw_x = float(_knn.get("x_frac", 0.0))
                         _raw_y = float(_knn.get("y_frac", 0.0))
-                    _prev = self._smooth_xy.get(key)
                     _prev_fl = (self._knn_position.get(key) or {}).get("floor_id", "")
                     _new_fl = _knn.get("floor_id", "")
-                    _conf = float(_knn.get("confidence", 0.0))
-                    _base_alpha = 0.15 + 0.35 * min(_conf, 1.0)
-                    if _prev is not None and _prev_fl == _new_fl:
-                        # Velocity-aware alpha: if the raw position is very close
-                        # to the smoothed position (< 0.8m), the device is likely
-                        # stationary and the difference is k-NN jitter.  Use a
-                        # much lower alpha (0.03) to prevent noise accumulation.
-                        _dx = _raw_x - _prev[0]
-                        _dy = _raw_y - _prev[1]
-                        _raw_dist = (_dx * _dx + _dy * _dy) ** 0.5
-                        if _raw_dist < 0.8:
-                            _alpha = 0.03  # near-stationary: heavy damping
-                        elif _raw_dist < 1.5:
-                            _alpha = _base_alpha * 0.5  # slow movement: moderate damping
-                        else:
-                            _alpha = _base_alpha  # real movement: normal tracking
-                        _sx = _prev[0] + _alpha * (_raw_x - _prev[0])
-                        _sy = _prev[1] + _alpha * (_raw_y - _prev[1])
-                    else:
-                        _sx, _sy = _raw_x, _raw_y  # new floor or first time
-                    self._smooth_xy[key] = (_sx, _sy)
+                    if _prev_fl and _prev_fl != _new_fl:
+                        self._smooth_xy.pop(key, None)  # new floor → fresh state
+                    # α-β filtered (replaces the velocity-aware EMA whose
+                    # 0.03 near-stationary alpha froze sub-metre movement)
+                    _sx, _sy = self._ab_smooth_xy(self._smooth_xy, key, _raw_x, _raw_y)
                     _knn_smoothed = dict(_knn)
                     if _has_metres:
                         _knn_smoothed["x_m"] = round(_sx, 3)
@@ -1581,13 +1654,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # k-NN for dot rendering (spatial is real-time, k-NN can be stale).
         if _spatial_xy:
             _sx_est, _sy_est, _sf_est = _spatial_xy
-            # EMA-smooth using spatial's own smooth state
-            _prev_sp = self._spatial_smooth_xy.get(key)
-            if _prev_sp:
-                _sp_alpha = 0.15  # heavier smoothing for RSSI-derived position
-                _sx_est = _prev_sp[0] + _sp_alpha * (_sx_est - _prev_sp[0])
-                _sy_est = _prev_sp[1] + _sp_alpha * (_sy_est - _prev_sp[1])
-            self._spatial_smooth_xy[key] = (_sx_est, _sy_est)
+            # Already α-β smoothed before the room decision — no second pass
             _sp_entry: dict[str, Any] = {
                 "x_m": round(_sx_est, 3),
                 "y_m": round(_sy_est, 3),
@@ -1815,14 +1882,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             or _obj_for_adaptive.get("identified")
             or _obj_for_adaptive.get("kind") == "private_ble"  # phone with IRK
         )
-        if _adaptive_on and confirmed and confidence >= 0.7 and ema and _is_identified_device:
+        if _adaptive_on and confirmed and confidence >= 0.7 and _live_ema and _is_identified_device:
             try:
                 _now_mono = time.monotonic()
                 _last = self._adaptive_last_obs.get(key, 0.0)
                 if (_now_mono - _last >= 300.0
-                        and self._adaptive_obs_quality_ok(key, confirmed, dict(ema), _now_mono)):
+                        and self._adaptive_obs_quality_ok(key, confirmed, dict(_live_ema), _now_mono)):
                     self._adaptive_last_obs[key] = _now_mono
-                    self._adaptive_last_vec[key] = dict(ema)
+                    self._adaptive_last_vec[key] = dict(_live_ema)
                     _ad = self.hass.data.get(DOMAIN, {}).get(DATA_ADAPTIVE)
                     if _ad:
                         # Derive floor of confirmed room
@@ -1832,7 +1899,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 if _area == confirmed and _src in (source_to_floor or {}):
                                     _conf_floor = source_to_floor[_src]
                                     break
-                        _ad.observe(confirmed, _conf_floor, dict(ema), source_to_area, source_to_floor or {})
+                        _ad.observe(confirmed, _conf_floor, dict(_live_ema), source_to_area, source_to_floor or {})
                         # Record transitions
                         for _chg_key, _old, _new in self._pending_room_changes:
                             if _chg_key == key:
@@ -1846,6 +1913,43 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.warning("Adaptive observe error for %s: %s", key[:30], _obs_err, exc_info=True)
 
         return confirmed
+
+    # ── Position smoothing (α-β constant-velocity filter) ────────────────
+
+    def _ab_smooth_xy(
+        self, store: dict[str, tuple], key: str, x: float, y: float
+    ) -> tuple[float, float]:
+        """Smooth an x/y estimate with a 2D α-β (constant-velocity) filter.
+
+        Replaces the fixed/velocity-gated EMAs: an EMA either lags a walking
+        target (~60 s convergence at alpha 0.15 / 0.1 Hz) or freezes
+        sub-metre movement entirely (alpha 0.03).  The α-β filter carries a
+        velocity state so it follows walking motion yet still damps
+        stationary jitter.  Velocity is clamped to a fast walk (2.5 m/s);
+        state lives in `store` as (x, y, vx, vy) per object key.
+        """
+        _dt = max(1.0, self.update_interval.total_seconds())
+        st = store.get(key)
+        if not st or len(st) != 4:
+            store[key] = (x, y, 0.0, 0.0)
+            return x, y
+        px, py, vx, vy = st
+        pred_x = px + vx * _dt
+        pred_y = py + vy * _dt
+        rx = x - pred_x
+        ry = y - pred_y
+        _A = 0.5   # position gain
+        _B = 0.15  # velocity gain
+        nx = pred_x + _A * rx
+        ny = pred_y + _A * ry
+        nvx = vx + (_B / _dt) * rx
+        nvy = vy + (_B / _dt) * ry
+        _spd = math.hypot(nvx, nvy)
+        if _spd > 2.5:
+            nvx *= 2.5 / _spd
+            nvy *= 2.5 / _spd
+        store[key] = (nx, ny, nvx, nvy)
+        return nx, ny
 
     # ── Adaptive observation quality gates ───────────────────────────────
 

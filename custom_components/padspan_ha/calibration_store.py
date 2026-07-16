@@ -37,6 +37,8 @@ from .random_forest import RandomForestLocator
 GRID_N = 10           # 10×10 coverage grid per floor map
 SIGMA_CELLS = 1.8     # Gaussian sigma in grid-cell units (~20% of map width)
 KNN_K = 3             # k for k-NN fingerprint matching
+MIN_SCANNER_SAMPLES = 3   # scanner readings below this are dropped from a stored point
+HIGH_STD_DBM = 8.0        # per-scanner std above this is flagged (not rejected)
 
 
 def _now_iso() -> str:
@@ -49,6 +51,16 @@ def _gaussian(dist: float, sigma: float) -> float:
 
 def _mean(vals: list[float]) -> float:
     return sum(vals) / len(vals) if vals else 0.0
+
+
+def _median(vals: list[float]) -> float:
+    if not vals:
+        return 0.0
+    s = sorted(vals)
+    mid = len(s) // 2
+    if len(s) % 2:
+        return s[mid]
+    return (s[mid - 1] + s[mid]) / 2.0
 
 
 def _std(vals: list[float]) -> float:
@@ -127,16 +139,35 @@ class CalibrationStore:
             ]
             if not samples:
                 continue
-            m = _mean(samples)
+            # Median, not mean — BLE noise is heavy-tailed (multipath fades
+            # drop 15-20 dB). Key kept as mean_rssi for downstream compat.
+            m = _median(samples)
             s = _std(samples)
-            clean_readings.append({
+            reading: dict[str, Any] = {
                 "source": str(r.get("source") or "")[:200],
                 "name": str(r.get("name") or r.get("source") or "")[:120],
                 "rssi_samples": samples[:200],
                 "mean_rssi": round(m, 2),
                 "std_rssi": round(s, 2),
                 "sample_count": len(samples),
-            })
+            }
+            if s > HIGH_STD_DBM:
+                reading["quality"] = "high_std"
+            clean_readings.append(reading)
+
+        # Quality gate: require MIN_SCANNER_SAMPLES per scanner. Never reject a
+        # point the user explicitly saved — if no scanner qualifies, keep the
+        # best-sampled one and flag the point as undersampled.
+        point_quality = ""
+        qualified = [
+            r for r in clean_readings if r["sample_count"] >= MIN_SCANNER_SAMPLES
+        ]
+        if qualified:
+            clean_readings = qualified
+        elif clean_readings:
+            best = max(clean_readings, key=lambda r: r["sample_count"])
+            clean_readings = [best]
+            point_quality = "undersampled"
 
         clean: dict[str, Any] = {
             "id": point_id,
@@ -152,6 +183,8 @@ class CalibrationStore:
             "weight": max(0.1, min(10.0, float(point.get("weight") or 1.0))),
             "scanner_readings": clean_readings,
         }
+        if point_quality:
+            clean["quality"] = point_quality
         # Phase 3: compute real-world metre coordinates
         if point.get("x_m") is not None and point.get("y_m") is not None:
             # Caller provided explicit metres (standalone/mapless calibration)
@@ -392,25 +425,57 @@ class CalibrationStore:
     ) -> dict[str, Any] | None:
         """
         OLS fit of RSSI = RSSI_1m - 10*n*log10(d) for one scanner.
-        Uses map-fraction distances (accurate enough for comparative purposes).
+
+        Phase 3: fits in metre distances when the scanner position converts
+        to metres and points carry x_m/y_m — rssi_1m is then a physical
+        dBm@1m reference (units="m"). Otherwise falls back to map-fraction
+        distances (comparative/display only, units="frac").
         Requires ≥3 data points.
         """
         data: list[tuple[float, float]] = []
         pts = self.data.get("points", [])
-        if map_id:
-            pts = [p for p in pts if p.get("map_id") == map_id]
+        units = "frac"
 
-        for pt in pts:
-            for reading in pt.get("scanner_readings", []):
-                if reading.get("source") != scanner_source:
-                    continue
-                dx = pt["x_frac"] - scanner_x_frac
-                dy = pt["y_frac"] - scanner_y_frac
-                d = math.sqrt(dx ** 2 + dy ** 2)
-                if d < 0.02:   # too close — likely at scanner position itself
-                    continue
-                log_d = math.log10(d)
-                data.append((log_d, reading["mean_rssi"]))
+        # Metre-space fit: same gate style as knn_locate — points with metre
+        # coords available, plus a convertible scanner position.
+        metre_pts = [p for p in pts if p.get("x_m") is not None and p.get("y_m") is not None]
+        scanner_m = None
+        if metre_pts and map_id and self._model is not None:
+            scanner_m = self._model.map_frac_to_metres(scanner_x_frac, scanner_y_frac, map_id)
+        if scanner_m:
+            sx_m, sy_m = scanner_m
+            # Metres are map-independent — use all metre points, cross-map.
+            for pt in metre_pts:
+                for reading in pt.get("scanner_readings", []):
+                    if reading.get("source") != scanner_source:
+                        continue
+                    d = math.sqrt(
+                        (float(pt["x_m"]) - sx_m) ** 2 + (float(pt["y_m"]) - sy_m) ** 2
+                    )
+                    if d < 0.3:   # too close — likely at scanner position itself
+                        continue
+                    data.append((math.log10(d), reading["mean_rssi"]))
+            if len(data) >= 3:
+                units = "m"
+            else:
+                data = []
+
+        if not data:
+            # Legacy map-fraction fit
+            frac_pts = pts
+            if map_id:
+                frac_pts = [p for p in pts if p.get("map_id") == map_id]
+            for pt in frac_pts:
+                for reading in pt.get("scanner_readings", []):
+                    if reading.get("source") != scanner_source:
+                        continue
+                    dx = pt["x_frac"] - scanner_x_frac
+                    dy = pt["y_frac"] - scanner_y_frac
+                    d = math.sqrt(dx ** 2 + dy ** 2)
+                    if d < 0.02:   # too close — likely at scanner position itself
+                        continue
+                    log_d = math.log10(d)
+                    data.append((log_d, reading["mean_rssi"]))
 
         if len(data) < 3:
             return None
@@ -441,7 +506,37 @@ class CalibrationStore:
             "rssi_1m": round(a, 1),
             "r_squared": round(max(0.0, r_sq), 3),
             "point_count": n_pts,
+            "units": units,
         }
+
+    def path_loss_by_source(self) -> dict[str, dict]:
+        """Physical per-scanner path-loss parameters from metre-space fits.
+
+        Reads the fits stored per source by compute_model() and returns
+        {source: {"rssi_1m": float, "n": float, "points": int}} for
+        metre-unit fits with >= 5 points and sane values
+        (rssi_1m in [-90, -30] dBm, n in [1.5, 4.5]).
+        Consumed by the presence coordinator for distance conversion.
+        """
+        out: dict[str, dict] = {}
+        path_loss = (self.data.get("model") or {}).get("path_loss") or {}
+        for src, fit in path_loss.items():
+            if not isinstance(fit, dict) or fit.get("units") != "m":
+                continue
+            try:
+                rssi_1m = float(fit["rssi_1m"])
+                n = float(fit["n"])
+                points = int(fit.get("point_count", 0))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if points < 5:
+                continue
+            if not (-90.0 <= rssi_1m <= -30.0):
+                continue
+            if not (1.5 <= n <= 4.5):
+                continue
+            out[src] = {"rssi_1m": rssi_1m, "n": n, "points": points}
+        return out
 
     # ── k-NN fingerprint matching ──────────────────────────────────────────────
 
@@ -485,7 +580,10 @@ class CalibrationStore:
             shared = set(query_rssi.keys()) & set(fp.keys())
             if not shared:
                 continue
-            dist_sq = sum((query_rssi[s] - fp[s]) ** 2 for s in shared)
+            # Mean squared error over shared scanners — an unnormalized sum
+            # would let sparse fingerprints (1 shared scanner) systematically
+            # beat well-observed ones (5 shared) despite larger per-scanner error.
+            dist_sq = sum((query_rssi[s] - fp[s]) ** 2 for s in shared) / len(shared)
             # Penalise points with fewer shared scanners
             penalty = 1.0 + 0.3 * max(0, len(query_rssi) - len(shared))
             scored.append((dist_sq * penalty, len(shared), pt))
@@ -577,15 +675,11 @@ class CalibrationStore:
             rx_m, ry_m = None, None  # type: ignore[assignment]
             best_floor = ""
 
-        # Confidence (shared between both paths — computed from RSSI space)
-        _best_dist_sq = scored[0][0]
-        _topk_sources: set[str] = set()
-        for _d, _ns, _pt in top_k:
-            for _r in _pt.get("scanner_readings", []):
-                _topk_sources.add(_r.get("source", ""))
-        _shared_total = len(set(query_rssi.keys()) & _topk_sources)
-        _shared_total = max(_shared_total, 1)
-        _mean_sq = _best_dist_sq / _shared_total
+        # Confidence (shared between both paths — computed from RSSI space).
+        # scored[0][0] is already the per-scanner mean squared error; coverage
+        # counts the best point's OWN shared scanners, not the top-k union.
+        _mean_sq = scored[0][0]
+        _shared_total = max(scored[0][1], 1)
         _REF_VARIANCE = 25.0
         _conf_rssi = 1.0 / (1.0 + _mean_sq / _REF_VARIANCE)
         _conf_coverage = min(_shared_total, 4) / 4.0
@@ -678,7 +772,8 @@ class CalibrationStore:
                 shared = set(query.keys()) & set(fp.keys())
                 if not shared:
                     continue
-                dist_sq = sum((query[s] - fp[s]) ** 2 for s in shared)
+                # Mean squared error over shared scanners (same metric as knn_locate)
+                dist_sq = sum((query[s] - fp[s]) ** 2 for s in shared) / len(shared)
                 penalty = 1.0 + 0.3 * max(0, len(query) - len(shared))
                 scored.append((dist_sq * penalty, p2))
 

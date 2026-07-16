@@ -133,16 +133,22 @@ class AdaptiveStore:
         # Alpha controls decay rate: higher = faster adaptation, noisier.
         # 0.05 → effective window of ~20 observations.
         alpha = _EMA_DECAY_ALPHA
+        _ts = round(time.time(), 1)  # last-updated, for staleness gating
         if n <= 1:
             # First observation — seed directly
-            return {"mean": round(new_val, 3), "var": 0.0, "n": 1}
+            return {"mean": round(new_val, 3), "var": 0.0, "n": 1, "ts": _ts}
         # EMA mean
         new_mean = old_mean + alpha * (new_val - old_mean)
         # EMA variance (exponentially-weighted moving variance)
         # Standard EWMA variance: Var_new = (1-α) * Var_old + α * (x - μ_old)²
         diff = new_val - old_mean
         new_var = (1.0 - alpha) * old_var + alpha * diff * diff
-        return {"mean": round(new_mean, 3), "var": round(max(0.0, new_var), 3), "n": n}
+        return {
+            "mean": round(new_mean, 3),
+            "var": round(max(0.0, new_var), 3),
+            "n": n,
+            "ts": _ts,
+        }
 
     # ── Observation recording ────────────────────────────────────────────────
 
@@ -274,14 +280,20 @@ class AdaptiveStore:
         _norm = {src: rssi - _dev_mean for src, rssi in ema_rssi.items()}
 
         scores: dict[str, float] = {}
+        _now_ts = time.time()
+        _MAX_PAIR_AGE_S = 30 * 86400  # ignore pairs not refreshed in 30 days
         for room, room_fp in fps.items():
             shared = set(_norm.keys()) & set(room_fp.keys())
             # Only score if we have enough shared scanners with sufficient
             # data — with normalized vectors a single shared scanner is
             # uninformative (relative values need >= 2 points of reference).
+            # Lifetime n alone is not enough: the environment changes, so a
+            # pair must also have been refreshed recently (ts written by
+            # _welford_update; pairs without one are treated as fresh).
             usable = [
                 s for s in shared
                 if room_fp[s].get("n", 0) >= _MIN_PAIR_OBS
+                and (_now_ts - room_fp[s].get("ts", _now_ts)) < _MAX_PAIR_AGE_S
             ]
             if len(usable) < 2:
                 continue
@@ -298,7 +310,11 @@ class AdaptiveStore:
             for src in usable:
                 fp = room_fp[src]
                 diff = _norm[src] - fp["mean"]
-                var = max(fp.get("var", 1.0), 1.0)  # floor at 1.0 to avoid /0
+                # Floor at 9.0 dBm² (3 dBm std): BLE RSSI at a fixed spot
+                # genuinely spreads that much, and a tighter learned variance
+                # is an artifact of the novelty-gated sampling, not physics —
+                # a 1.0 floor made small diffs look like strong evidence.
+                var = max(fp.get("var", 9.0), 9.0)
                 dist_sq += (diff ** 2) / var
 
             avg_dist = dist_sq / len(usable)

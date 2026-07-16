@@ -652,6 +652,7 @@ function _startCollection(ctx, cs, _snap, _mapData) {
   cs.collecting  = true;
   cs.stopFlag    = false;
   cs.readings    = {};
+  cs._lastSample = {};   // per-radio {rssi, age_s} from previous tick (stale-ad dedup)
   cs._pollCount  = 0;
   // Resolve TX power for distance estimates during/after collection
   const _csObj = (_snap?.objects?.list || []).find(o =>
@@ -676,7 +677,7 @@ function _startCollection(ctx, cs, _snap, _mapData) {
     // The real per-radio RSSI also lives in snap.ble.advertisements, one entry per {device,radio}.
     const { perRadio } = _findBeaconAds(snap, cs.deviceId);
     for (const [src, info] of Object.entries(perRadio)) {
-      if (typeof info.rssi !== "number") continue;
+      if (!_acceptCalSample(cs._lastSample, src, info)) continue;
       if (!cs.readings[src]) {
         cs.readings[src] = { name: info.name || src, samples: [] };
       } else if (info.name && info.name !== src) {
@@ -1379,12 +1380,17 @@ function _findBeaconAds(snap, deviceId) {
     return false;
   });
 
-  // Build per-radio map — keep strongest/most recent reading per radio
+  // Build per-radio map — keep the FRESHEST reading per radio (lowest age_s),
+  // falling back to strongest only when ages are equal/unknown. A stale cached
+  // ad can be stronger than the live one and would otherwise mask it.
   const perRadio = {};
   for (const ad of myAds) {
     const src = String(ad.source || "");
     if (!src) continue;
-    if (!perRadio[src] || (ad.rssi || -200) > (perRadio[src].rssi || -200)) {
+    const cur = perRadio[src];
+    const adAge = (typeof ad.age_s === "number") ? ad.age_s : Infinity;
+    const curAge = cur && (typeof cur.age_s === "number") ? cur.age_s : Infinity;
+    if (!cur || adAge < curAge || (adAge === curAge && (ad.rssi || -200) > (cur.rssi || -200))) {
       perRadio[src] = {
         name: radioNameMap[src] || src,
         rssi: ad.rssi,
@@ -1393,6 +1399,30 @@ function _findBeaconAds(snap, deviceId) {
     }
   }
   return { myAds, perRadio, targetAddr };
+}
+
+// ── Calibration sample quality gate (P0-11.1) ────────────────────────────────
+// Collection loops poll the snapshot once per second, but a scanner that last
+// heard the beacon minutes ago keeps serving the same cached advertisement —
+// without a gate it contributes 15-60 identical stale samples per point.
+const _CAL_MAX_AGE_S = 10;
+
+// Decide whether info ({rssi, age_s}) is a NEW usable sample for radio `src`.
+// lastMap tracks the previously accepted/seen {rssi, age_s} per radio.
+// Rejects: non-numeric rssi; readings older than _CAL_MAX_AGE_S; and repeats
+// of the same cached ad (rssi identical while age_s only grows between polls).
+function _acceptCalSample(lastMap, src, info) {
+  if (typeof info.rssi !== "number") return false;
+  const age = (typeof info.age_s === "number") ? info.age_s : null;
+  if (age != null && age > _CAL_MAX_AGE_S) return false;
+  const prev = lastMap[src];
+  lastMap[src] = { rssi: info.rssi, age_s: age };
+  if (prev && prev.rssi === info.rssi &&
+      age != null && prev.age_s != null && age >= prev.age_s) {
+    // Same rssi and age did not reset since last tick → same cached ad.
+    return false;
+  }
+  return true;
 }
 
 function _totalSamples(cs) {
@@ -3855,14 +3885,19 @@ function _beaconTuneTab(ctx, el, cs, calData) {
             const src = String(ad.source || "");
             if (!src || typeof ad.rssi !== "number") continue;
             if (entry._allAddrs.has(adAddr) || (entry._canonical && ad._xref && ad._xref.canonical_id === entry._canonical)) {
-              if (!perRadio[src] || ad.rssi > (perRadio[src].rssi || -200)) {
-                perRadio[src] = { name: perRadio[src]?.name || src, rssi: ad.rssi, age_s: ad.age_s };
+              // Prefer freshest ad per radio (lowest age_s), not strongest
+              const cur = perRadio[src];
+              const adAge = (typeof ad.age_s === "number") ? ad.age_s : Infinity;
+              const curAge = cur && (typeof cur.age_s === "number") ? cur.age_s : Infinity;
+              if (!cur || adAge < curAge || (adAge === curAge && ad.rssi > (cur.rssi || -200))) {
+                perRadio[src] = { name: cur?.name || src, rssi: ad.rssi, age_s: ad.age_s };
               }
             }
           }
         }
+        const _last = entry._lastSample || (entry._lastSample = {});
         for (const [src, info] of Object.entries(perRadio)) {
-          if (typeof info.rssi !== "number") continue;
+          if (!_acceptCalSample(_last, src, info)) continue;
           if (!entry.readings[src]) {
             entry.readings[src] = { name: info.name || src, samples: [] };
           } else if (info.name && info.name !== src) {
@@ -5102,6 +5137,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
     bs._guideCapturing = true;
     bs._guideReadings = {};
+    bs._guideLastSample = {};  // per-radio {rssi, age_s} from previous tick (stale-ad dedup)
     bs._guideEndTime = Date.now() + 60000;
     bs._guideResolvedAddr = addr;
     bs._guideAllAddrs = allAddrs;
@@ -5117,6 +5153,9 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         await ctx.actions.refreshSnapshotQuiet();
         const snap2 = ctx.state.live?.snapshot;
         const ads = snap2?.ble?.advertisements || [];
+        // Pick the freshest matching ad per radio (lowest age_s), then gate
+        // through the age filter + stale-ad dedup before recording a sample.
+        const perRadio = {};
         for (const ad of ads) {
           const adAddr = String(ad.address || "").toUpperCase();
           const src = String(ad.source || "");
@@ -5127,11 +5166,20 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           if (!match && canonical && ad.canonical_id === canonical) match = true;
           if (!match && ad.key === bkKey) match = true;
           if (!match) continue;
+          const cur = perRadio[src];
+          const adAge = (typeof ad.age_s === "number") ? ad.age_s : Infinity;
+          const curAge = cur && (typeof cur.age_s === "number") ? cur.age_s : Infinity;
+          if (!cur || adAge < curAge || (adAge === curAge && (ad.rssi || -200) > (cur.rssi || -200))) {
+            perRadio[src] = { rssi: ad.rssi, age_s: ad.age_s };
+          }
+        }
+        for (const [src, info] of Object.entries(perRadio)) {
+          if (!_acceptCalSample(bs._guideLastSample, src, info)) continue;
           if (!bs._guideReadings[src]) {
             const radioName = (snap2?.ble?.radios || []).find(r => r.source === src)?.name || src;
             bs._guideReadings[src] = { name: radioName, samples: [] };
           }
-          bs._guideReadings[src].samples.push(ad.rssi);
+          bs._guideReadings[src].samples.push(info.rssi);
         }
       } catch (e) { /* ignore poll errors */ }
       _refreshGuideCard();

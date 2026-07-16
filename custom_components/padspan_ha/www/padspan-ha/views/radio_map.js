@@ -60,7 +60,7 @@ function _modelRSSI(wx, wy, scanners, barriers, refPower, pathLossN, mapScaleM) 
       const pts = bar.points || [];
       for (let i = 0; i < pts.length - 1; i++) {
         if (_segmentsIntersect(wx, wy, sc.wx, sc.wy, pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1])) {
-          rssi -= (bar.attenuation_dbm || 6);
+          rssi -= (bar.attenuation_dbm ?? 6);
         }
       }
     }
@@ -252,7 +252,7 @@ function _barrierAttenuation(x1, y1, x2, y2, barriers) {
   let totalDb = 0;
   for (const bar of barriers) {
     const pts = bar.points || [];
-    const atten = bar.attenuation_dbm || 6;
+    const atten = bar.attenuation_dbm ?? 6;
     for (let i = 0; i < pts.length - 1; i++) {
       const [cx, cy] = pts[i];
       const [dx, dy] = pts[i + 1];
@@ -561,7 +561,7 @@ export function distortionMapSVG(calPoints, mapId, barriers, receivers) {
     const pts = bar.points || [];
     if (pts.length < 2) continue;
     const color = matColors[bar.material] || matColors.custom;
-    const atten = bar.attenuation_dbm || 6;
+    const atten = bar.attenuation_dbm ?? 6;
     const sw = Math.max(0.005, Math.min(0.012, atten * 0.001));
     const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(4)},${p[1].toFixed(4)}`).join(" ");
     // Glow layer (wider, semi-transparent)
@@ -850,7 +850,7 @@ export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, a
       if (pts.length < 2) continue;
       worldBarriers.push({
         points: pts.map(p => { const [wx, wy] = tf.mapPt(Number(p[0]), Number(p[1])); return [wx, wy]; }),
-        attenuation_dbm: bar.attenuation_dbm || 6,
+        attenuation_dbm: bar.attenuation_dbm ?? 6,
       });
     }
   }
@@ -902,7 +902,7 @@ export function modelIsoHeatmapSVG(groupMaps, mapTransforms, iso, z, settings, a
           const bpts = bar.points;
           for (let i = 0; i < bpts.length - 1; i++) {
             if (_segmentsIntersect(qwx, qwy, sc.wx, sc.wy, bpts[i][0], bpts[i][1], bpts[i+1][0], bpts[i+1][1])) {
-              rssi -= (bar.attenuation_dbm || 6);
+              rssi -= (bar.attenuation_dbm ?? 6);
             }
           }
         }
@@ -989,7 +989,7 @@ export function isoLevelHeatmapSVG(calPoints, groupMaps, mapTransforms, iso, z) 
       if (pts.length < 2) continue;
       worldBarriers.push({
         points: pts.map(p => { const [wx, wy] = tf.mapPt(Number(p[0]), Number(p[1])); return [wx, wy]; }),
-        attenuation_dbm: bar.attenuation_dbm || 6,
+        attenuation_dbm: bar.attenuation_dbm ?? 6,
       });
     }
   }
@@ -1134,7 +1134,7 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
       if (pts.length < 2) continue;
       worldBarriers.push({
         points: pts.map(p => { const [wx, wy] = mpt(Number(p[0]), Number(p[1])); return [wx, wy]; }),
-        attenuation_dbm: bar.attenuation_dbm || 6,
+        attenuation_dbm: bar.attenuation_dbm ?? 6,
       });
     }
   }
@@ -1178,7 +1178,7 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
           const bpts = bar.points;
           for (let i = 0; i < bpts.length - 1; i++) {
             if (_segmentsIntersect(qwx, qwy, sc.wx, sc.wy, bpts[i][0], bpts[i][1], bpts[i+1][0], bpts[i+1][1])) {
-              rssi -= (bar.attenuation_dbm || 6);
+              rssi -= (bar.attenuation_dbm ?? 6);
             }
           }
         }
@@ -1223,7 +1223,7 @@ export function modelFloorHeatmapSVG(floorMaps, mapPtFns, w2v, wBB, settings, al
     if (bar.material === "open") {
       s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="0.002" stroke-dasharray="0.004,0.008" opacity="0.5"/>`;
     } else {
-      const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm || 6) * 0.0006));
+      const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm ?? 6) * 0.0006));
       s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${f(sw)}" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
     }
   }
@@ -1306,7 +1306,7 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
       if (pts.length < 2) continue;
       worldBarriers.push({
         points: pts.map(p => { const [wx, wy] = mpt(Number(p[0]), Number(p[1])); return [wx, wy]; }),
-        attenuation_dbm: bar.attenuation_dbm || 6,
+        attenuation_dbm: bar.attenuation_dbm ?? 6,
         material: bar.material || "custom",
       });
     }
@@ -1355,7 +1355,7 @@ export function floorHeatmapSVG(calPoints, floorMaps, mapPtFns, w2v, wBB, scanne
     if (bar.material === "open") {
       s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="0.002" stroke-dasharray="0.004,0.008" opacity="0.5"/>`;
     } else {
-      const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm || 6) * 0.0006));
+      const sw = Math.max(0.003, Math.min(0.008, (bar.attenuation_dbm ?? 6) * 0.0006));
       s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${f(sw)}" stroke-dasharray="0.012,0.006" opacity="0.7"/>`;
     }
   }
