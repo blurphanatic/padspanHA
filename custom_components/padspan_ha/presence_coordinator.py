@@ -214,6 +214,56 @@ def _barrier_attenuation(
     return total
 
 
+def _wls_refine(
+    x0: float, y0: float, meas: list[tuple[float, float, float]], iters: int = 3
+) -> tuple[float, float]:
+    """Refine a position estimate via weighted-least-squares multilateration.
+
+    meas: [(scanner_x, scanner_y, estimated_distance_m)].  Runs Gauss-Newton
+    iterations minimizing Σ wᵢ(‖x−pᵢ‖ − dᵢ)² with wᵢ = 1/dᵢ² (near receivers
+    are more reliable — dBm error translates to less absolute distance error
+    up close).  Seeded at (x0, y0), typically the IDW centroid — unlike the
+    centroid, the solution CAN sit between or outside the receivers.
+
+    Damped (max 5 m movement per iteration) and conservative: on singular
+    geometry (collinear receivers) or non-finite results, returns the seed.
+    """
+    x, y = x0, y0
+    for _ in range(iters):
+        a11 = a12 = a22 = b1 = b2 = 0.0
+        for sx, sy, d in meas:
+            dx = x - sx
+            dy = y - sy
+            r = math.hypot(dx, dy)
+            if r < 1e-6:
+                continue
+            w = 1.0 / (d * d + 0.01)
+            ux = dx / r
+            uy = dy / r
+            resid = r - d
+            a11 += w * ux * ux
+            a12 += w * ux * uy
+            a22 += w * uy * uy
+            b1 += w * ux * resid
+            b2 += w * uy * resid
+        det = a11 * a22 - a12 * a12
+        if abs(det) < 1e-9:
+            break
+        step_x = (a22 * b1 - a12 * b2) / det
+        step_y = (a11 * b2 - a12 * b1) / det
+        mag = math.hypot(step_x, step_y)
+        if mag > 5.0:
+            step_x *= 5.0 / mag
+            step_y *= 5.0 / mag
+        x -= step_x
+        y -= step_y
+        if mag < 0.05:
+            break
+    if not (math.isfinite(x) and math.isfinite(y)):
+        return x0, y0
+    return x, y
+
+
 class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Central BLE room-presence engine for PadSpan HA.
 
@@ -269,6 +319,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._knn_position: dict[str, dict] = {}
         # {key: (x, y)}  — EMA-smoothed position for k-NN (stable map display)
         self._smooth_xy: dict[str, tuple[float, float]] = {}
+        # {addr: {source: metres}} — ESPresense node-calibrated distances from
+        # this poll's ads (rebuilt each poll; consumed by the spatial path)
+        self._espresense_dist: dict[str, dict[str, float]] = {}
         # {key: dict}  — spatial IDW centroid position (independent of k-NN)
         self._spatial_position: dict[str, dict] = {}
         # {key: (x, y)}  — EMA-smoothed position for spatial (independent of k-NN)
@@ -483,20 +536,42 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # from the same physical phone share one Kalman filter state.
         addr_src_rssi: dict[str, dict[str, float]] = {}
         addr_tx_power: dict[str, int] = {}
+        # Stale-ad gate: only readings younger than ~3 polls may enter the
+        # positioning fusion.  Without this, a receiver that last heard the
+        # tag minutes ago keeps re-injecting its old RSSI every poll and
+        # drags the position toward where the tag USED to be.  (The snapshot
+        # keeps its wide age window for the UI object list — this gate only
+        # protects the Kalman/spatial inputs.)
+        _max_ad_age_s = 3.0 * self.update_interval.total_seconds()
+        _es_map: dict[str, dict[str, float]] = {}
         for ad in (snap.get("ble") or {}).get("advertisements") or []:
             raw_addr = str(ad.get("address") or "").upper()
             addr = _rpa_map.get(raw_addr, raw_addr)  # canonical or raw
             src  = ad.get("source")
             rssi = ad.get("rssi")
+            # Capture TX Power Level from the advertisement (BLE AD type 0x0A)
+            # — a static device property, safe to take from an old ad.
+            tx_pwr = ad.get("tx_power")
+            if addr and tx_pwr is not None and addr not in addr_tx_power:
+                addr_tx_power[addr] = int(tx_pwr)
+            _age = ad.get("age_s")
+            if isinstance(_age, (int, float)) and _age > _max_ad_age_s:
+                continue
             if addr and src and rssi is not None:
                 existing = addr_src_rssi.setdefault(addr, {})
                 # For merged RPAs, keep the strongest RSSI per source
                 if str(src) not in existing or float(rssi) > existing[str(src)]:
                     existing[str(src)] = float(rssi)
-            # Capture TX Power Level from the advertisement (BLE AD type 0x0A)
-            tx_pwr = ad.get("tx_power")
-            if addr and tx_pwr is not None and addr not in addr_tx_power:
-                addr_tx_power[addr] = int(tx_pwr)
+            # ESPresense nodes publish a node-calibrated, node-filtered
+            # distance — collect it so the spatial path can use it directly
+            # instead of re-deriving distance via the global path-loss model.
+            _es_d = ad.get("espresense_distance")
+            if addr and src and _es_d is not None:
+                try:
+                    _es_map.setdefault(addr, {})[str(src)] = float(_es_d)
+                except (TypeError, ValueError):
+                    pass
+        self._espresense_dist = _es_map
 
         # ── Build source-to-area and source-to-floor lookups ──────────────
         # Phase 1: read from the positioning fabric (ModelStore) when available.
@@ -1089,9 +1164,14 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not (self._use_metres and self._scanner_positions and _model):
                 self._spatial_debug[key] = f"disabled:metres={self._use_metres},pos={len(self._scanner_positions)},model={bool(_model)}"
             if self._use_metres and self._scanner_positions and _model:
-                # Collect scanners with known positions
+                # Collect scanners with known positions.  Only sources that
+                # actually reported this poll participate — held/decaying
+                # values for silent scanners are synthetic, and fabricated
+                # measurements must not steer the x/y estimate.
                 _src_list: list[tuple[str, float, float, float, str]] = []
                 for _src, _rssi in ema.items():
+                    if _miss.get(_src, 0) > 0:
+                        continue
                     _sp = self._scanner_positions.get(_src)
                     if not _sp:
                         continue
@@ -1116,27 +1196,49 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # scanners with a floor attenuation (their RSSI includes
                     # floor/ceiling loss the path-loss model doesn't know about).
                     _CROSS_FLOOR_PENALTY = 10.0  # dBm penalty for different floor
+                    # ESPresense nodes publish a node-calibrated distance —
+                    # use it directly instead of the global path-loss model.
+                    # Cross-floor penalty translates to distance space as a
+                    # multiplier (d ∝ 10^(-rssi/(10n))).
+                    _es_direct_raw = self._espresense_dist.get(addr) or {}
+                    _cf_mult = 10.0 ** (_CROSS_FLOOR_PENALTY / (10.0 * _n_exp))
+                    _es_direct: dict[str, float] = {}
                     _all_scanners: list[tuple[str, float, float, float]] = []
                     for _src, _sx, _sy, _rssi, _sf in _src_list:
                         _adj_rssi = _rssi
+                        if _src in _es_direct_raw:
+                            _es_direct[_src] = _es_direct_raw[_src] * (
+                                _cf_mult if _sf != _best_floor else 1.0
+                            )
                         if _sf != _best_floor:
                             _adj_rssi -= _CROSS_FLOOR_PENALTY
                         _all_scanners.append((_src, _sx, _sy, _adj_rssi))
 
                     if len(_all_scanners) >= 2:
                         # ── Two-pass IDW centroid with RF barrier correction ──
-                        def _idw_centroid(scanners, ref_pt=None):
-                            _wx = 0.0; _wy = 0.0; _wt = 0.0
-                            for _, _sx, _sy, _rssi in scanners:
-                                _eff = _rssi
+                        def _scanner_dists(scanners, ref_pt=None):
+                            """Per-scanner distance estimates (metres)."""
+                            _out: list[tuple[float, float, float]] = []
+                            for _s_src, _sx, _sy, _rssi in scanners:
+                                _att = 0.0
                                 if ref_pt and self._rf_barriers:
-                                    _eff -= _barrier_attenuation(
+                                    _att = _barrier_attenuation(
                                         _sx, _sy, _best_floor,
                                         ref_pt[0], ref_pt[1], _best_floor,
                                         self._rf_barriers,
                                     )
-                                _d = 10.0 ** ((_ref - _eff) / (10.0 * _n_exp))
-                                _d = max(0.3, min(_d, 50.0))
+                                _dd = _es_direct.get(_s_src)
+                                if _dd is not None:
+                                    # Barrier correction in distance space
+                                    _d = _dd * (10.0 ** (_att / (10.0 * _n_exp)))
+                                else:
+                                    _d = 10.0 ** ((_ref - (_rssi - _att)) / (10.0 * _n_exp))
+                                _out.append((_sx, _sy, max(0.3, min(_d, 50.0))))
+                            return _out
+
+                        def _idw_centroid(scanners, ref_pt=None):
+                            _wx = 0.0; _wy = 0.0; _wt = 0.0
+                            for _sx, _sy, _d in _scanner_dists(scanners, ref_pt):
                                 _w = 1.0 / (_d * _d + 0.01)
                                 _wx += _sx * _w
                                 _wy += _sy * _w
@@ -1147,6 +1249,20 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         if _p1:
                             _p2 = _idw_centroid(_all_scanners, ref_pt=_p1) if self._rf_barriers else _p1
                             _est_x, _est_y = _p2 or _p1
+                            # ── WLS multilateration refinement ────────────
+                            # The IDW centroid cannot leave the receivers'
+                            # convex hull and snaps toward the strongest one.
+                            # Gauss-Newton over the same distances, seeded by
+                            # the centroid, can place the tag between or
+                            # outside receivers (3+ ranges constrain a point).
+                            if len(_all_scanners) >= 3:
+                                _est_x, _est_y = _wls_refine(
+                                    _est_x, _est_y,
+                                    _scanner_dists(
+                                        _all_scanners,
+                                        ref_pt=(_est_x, _est_y) if self._rf_barriers else None,
+                                    ),
+                                )
                             _spatial_xy = (_est_x, _est_y, _best_floor)
                             self._spatial_debug[key] = f"computed:({_est_x:.1f},{_est_y:.1f})@{_best_floor}"
 

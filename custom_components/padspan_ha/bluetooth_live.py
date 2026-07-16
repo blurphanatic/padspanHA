@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -249,6 +250,7 @@ class BluetoothLive:
                 manager = _get_bt_manager()
                 if manager:
                     seen = _now()
+                    _mono_now = time.monotonic()
                     scanners_list = list(manager.async_current_scanners())
                     _scanner_count = len(scanners_list)
                     for scanner in scanners_list:
@@ -258,17 +260,38 @@ class BluetoothLive:
                         dev_adv = getattr(scanner, "discovered_devices_and_advertisement_data", None)
                         if dev_adv is None:
                             continue
+                        # Per-device timestamps of when the scanner ACTUALLY
+                        # last heard each device (monotonic, Bermuda-style).
+                        # Without them, reseeding would stamp every cached
+                        # entry as heard-now, laundering stale readings as
+                        # fresh every 30 s for as long as the cache holds them.
+                        _stamps = getattr(scanner, "discovered_device_timestamps", None) or {}
                         for ble_device, adv_data in dev_adv.values():
                             addr = getattr(ble_device, "address", None)
                             if not addr:
                                 continue
                             rssi = getattr(adv_data, "rssi", None)
+                            _stamp = _stamps.get(addr)
+                            if _stamp is not None:
+                                # Stamps are monotonic; > 1e9 means a unix-epoch
+                                # implementation — handle both.
+                                if float(_stamp) > 1e9:
+                                    _age = max(0.0, time.time() - float(_stamp))
+                                else:
+                                    _age = max(0.0, _mono_now - float(_stamp))
+                                dev_seen = seen - dt.timedelta(seconds=_age)
+                            else:
+                                # No real timestamp for this device: keep the
+                                # existing record's age rather than refreshing
+                                # it; only brand-new entries get stamped now.
+                                _prev = self._seen_by_source.get(addr, {}).get(str(src))
+                                dev_seen = _prev.seen if _prev else seen
                             rec = _service_info_to_record_from_adv(
-                                addr, src, rssi, ble_device, adv_data, seen
+                                addr, src, rssi, ble_device, adv_data, dev_seen
                             )
                             if addr not in self._seen_by_source:
                                 self._seen_by_source[addr] = {}
-                            self._seen_by_source[addr][str(src)] = _Adv(record=rec, seen=seen)
+                            self._seen_by_source[addr][str(src)] = _Adv(record=rec, seen=dev_seen)
                             if str(src) != "_unknown":
                                 self._radio_last_heard[str(src)] = seen
                             _total_ads += 1
