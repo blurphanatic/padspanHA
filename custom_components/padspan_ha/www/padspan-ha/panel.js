@@ -2455,8 +2455,8 @@ class PadSpanHaApp extends HTMLElement {
       const _allDone = _completedCount === _steps.length;
 
       // Auto-mark completed when all steps done
-      if (_allDone && !_onboardingDone && this.state.settings && this.actions?.settingsSave) {
-        try { this.actions.settingsSave({ onboarding_completed: true }).catch(() => {}); } catch(e) {}
+      if (_allDone && !_onboardingDone && this.state.settings && this.actions?.settingsSet) {
+        try { this.actions.settingsSet({ onboarding_completed: true }).catch(() => {}); } catch(e) {}
       }
 
       if (!_onboardingDone && !_allDone && !this.state._onboardingDismissed && this.state.view === "overview") {
@@ -2469,7 +2469,7 @@ class PadSpanHaApp extends HTMLElement {
           this.state._onboardingDismissed = true;
           if (this.state.settings) this.state.settings.onboarding_completed = true;
           bar.remove();
-          try { this.actions?.settingsSave?.({ onboarding_completed: true })?.catch?.(() => {}); } catch(e) {}
+          try { this.actions?.settingsSet?.({ onboarding_completed: true })?.catch?.(() => {}); } catch(e) {}
           this._scheduleRender();
         });
         hdr.appendChild(skipBtn);
