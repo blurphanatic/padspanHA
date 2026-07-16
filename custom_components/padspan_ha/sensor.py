@@ -34,7 +34,13 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, DATA_SETTINGS, DEFAULT_REF_POWER, DEFAULT_PATH_LOSS_EXP
+from .const import (
+    DOMAIN,
+    DATA_SETTINGS,
+    DATA_DEVICE_REGISTRY,
+    DEFAULT_REF_POWER,
+    DEFAULT_PATH_LOSS_EXP,
+)
 from .presence_coordinator import PresenceCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,13 +68,21 @@ def _distance_params(hass: HomeAssistant) -> tuple[float, float]:
 
 
 def _calc_distance(rssi: float, obj: dict, hass: HomeAssistant) -> float:
-    """Calculate distance using path-loss formula, preferring device's own TX power."""
+    """Calculate distance using path-loss formula, preferring device's own RSSI@1m."""
     ref, n = _distance_params(hass)
-    # Use device's own advertised TX Power (from iBeacon payload or BLE AD type 0x0A)
-    # if available — this eliminates the need for manual ref_power calibration.
+    # A device-advertised reference is only usable when it is a plausible
+    # RSSI@1m (e.g. iBeacon measured power, ~-59 dBm).  BLE AD 0x0A
+    # "Tx Power Level" is radiated power (0..+12 dBm), NOT RSSI@1m — using it
+    # raw yields ~900 m distances.  Mirror the coordinator's spatial-path
+    # validation: only trust values in [-90, -30], else keep configured ref.
     tx_power = obj.get("tx_power")
     if tx_power is not None:
-        ref = float(tx_power)
+        try:
+            _tp = float(tx_power)
+        except (TypeError, ValueError):
+            _tp = None
+        if _tp is not None and -90.0 <= _tp <= -30.0:
+            ref = _tp
     return round(max(0.0, 10 ** ((ref - rssi) / (10.0 * n))), 1)
 
 
@@ -189,6 +203,33 @@ def _device_uid(obj: dict[str, Any]) -> str:
     return obj.get("address") or obj.get("entity_id") or obj.get("key", "")
 
 
+def _stable_uid_key(hass: HomeAssistant, key: str, obj: dict[str, Any]) -> str:
+    """Return the identity string used to build entity unique_ids.
+
+    irk:/ibeacon:/entity: keys are already stable — keep the key-based scheme
+    so entities registered under it are not orphaned.  Plain ble:/MAC keys
+    rotate across restarts (labelled phones without a registered IRK,
+    random-static MACs, degraded-mode IRK devices), minting _2/_3 orphan
+    entities — for those, prefer the persistent padspan_id from the
+    DeviceRegistry, then canonical_id, falling back to the key itself.
+    """
+    if key.startswith(("irk:", "ibeacon:", "entity:")):
+        return key
+    dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+    if dev_reg:
+        # Only trust persistent registry entries — ephemeral padspan_ids are
+        # regenerated every restart and would fragment unique_ids further.
+        pid = obj.get("padspan_id")
+        if pid and dev_reg.get(pid):
+            return str(pid)
+        rpid = dev_reg.resolve(key)
+        if rpid and dev_reg.get(rpid):
+            return str(rpid)
+    if obj.get("canonical_id"):
+        return str(obj["canonical_id"])
+    return key
+
+
 class PadSpanAreaSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity):
     """Reports the current room for a labelled BLE device."""
 
@@ -201,6 +242,8 @@ class PadSpanAreaSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity):
         obj = (coordinator.data or {}).get(key, {})
         self._init_label = str(obj.get("user_label") or obj.get("name") or key)
         self._init_uid = _device_uid(obj) or key
+        # Snapshot at creation: unique_id must never follow _key migrations
+        self._uid_key = _stable_uid_key(coordinator.hass, key, obj)
 
     # ── internal helpers ─────────────────────────────────────────────────────
 
@@ -216,7 +259,7 @@ class PadSpanAreaSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity):
 
     @property
     def unique_id(self) -> str:
-        safe = self._key.replace(":", "_").replace(" ", "_").replace("/", "_")
+        safe = self._uid_key.replace(":", "_").replace(" ", "_").replace("/", "_")
         return f"padspan_ha__{safe}__area"
 
     @property
@@ -295,6 +338,8 @@ class PadSpanDistanceSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity
         obj = (coordinator.data or {}).get(key, {})
         self._init_label = str(obj.get("user_label") or obj.get("name") or key)
         self._init_uid = _device_uid(obj) or key
+        # Snapshot at creation: unique_id must never follow _key migrations
+        self._uid_key = _stable_uid_key(coordinator.hass, key, obj)
 
     @property
     def _obj(self) -> dict[str, Any]:
@@ -306,7 +351,7 @@ class PadSpanDistanceSensor(CoordinatorEntity[PresenceCoordinator], SensorEntity
 
     @property
     def unique_id(self) -> str:
-        safe = self._key.replace(":", "_").replace(" ", "_").replace("/", "_")
+        safe = self._uid_key.replace(":", "_").replace(" ", "_").replace("/", "_")
         return f"padspan_ha__{safe}__distance"
 
     @property
@@ -374,6 +419,8 @@ class PadSpanScannerDistanceSensor(CoordinatorEntity[PresenceCoordinator], Senso
         obj = (coordinator.data or {}).get(key, {})
         self._init_label = str(obj.get("user_label") or obj.get("name") or key)
         self._init_uid = _device_uid(obj) or key
+        # Snapshot at creation: unique_id must never follow _key migrations
+        self._uid_key = _stable_uid_key(coordinator.hass, key, obj)
 
     @property
     def _obj(self) -> dict[str, Any]:
@@ -385,7 +432,7 @@ class PadSpanScannerDistanceSensor(CoordinatorEntity[PresenceCoordinator], Senso
 
     @property
     def unique_id(self) -> str:
-        safe_key = self._key.replace(":", "_").replace(" ", "_").replace("/", "_")
+        safe_key = self._uid_key.replace(":", "_").replace(" ", "_").replace("/", "_")
         safe_src = self._source.replace(":", "_").replace(" ", "_").replace("/", "_")
         return f"padspan_ha__{safe_key}__dist__{safe_src}"
 
