@@ -130,8 +130,10 @@ _EMA_PRUNE_DBM: float = -98.0
 _EMA_SILENCE_DBM: float = -100.0
 
 # Number of consecutive missed polls before a device starts accumulating age_s.
-# Grace period = _AWAY_GRACE_POLLS * _SCAN_INTERVAL = 12 * 10s = 120s.
-_AWAY_GRACE_POLLS: int = 12
+# Away grace is expressed in SECONDS and converted to polls at runtime —
+# poll-count constants would silently retune whenever the user changes
+# presence_poll_interval_s (e.g. 12 polls = 2 min at 10 s but 12 min at 60 s).
+_AWAY_GRACE_S: float = 120.0
 
 # ── Velocity gate ────────────────────────────────────────────────────────────
 # Prevents "teleportation" — objects jumping to non-adjacent rooms faster than
@@ -508,7 +510,7 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ── Dynamic poll interval from settings ──────────────────────────────
         try:
             _st_pi = self.hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
-            _pi = int((_st_pi.data if _st_pi else {}).get("presence_poll_interval_s") or 10)
+            _pi = int((_st_pi.data if _st_pi else {}).get("presence_poll_interval_s") or 5)
             _pi = max(1, min(60, _pi))
             _new_interval = timedelta(seconds=_pi)
             if self.update_interval != _new_interval:
@@ -746,6 +748,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self._known_objs.get(key, {}).get("_stale"):
                 self._room_votes.pop(key, None)
                 self._room_confidence.pop(key, None)
+                # A stale room must not anchor first-poll attribution —
+                # clear the confirmed room and the adaptive novelty vector too
+                self._confirmed_room.pop(key, None)
+                self._adaptive_last_vec.pop(key, None)
                 self._knn_position.pop(key, None)
                 self._smooth_xy.pop(key, None)
                 self._spatial_position.pop(key, None)
@@ -756,9 +762,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     addr_clear = _rpa_map.get(_raw_addr, _raw_addr)
                     self._ema_rssi.pop(addr_clear, None)
                     self._kalman_p.pop(addr_clear, None)
+                    self._silence_miss.pop(addr_clear, None)
                 elif obj.get("kind") == "ibeacon":
                     self._ema_rssi.pop(key, None)
                     self._kalman_p.pop(key, None)
+                    self._silence_miss.pop(key, None)
 
             # Cache the live copy for home/away persistence
             self._last_seen[key] = now
@@ -863,15 +871,25 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # cover normal BLE advertisement gaps.  After grace expires, the device
         # is evicted immediately — no lingering stale objects on the map.
         _evict_keys: list[str] = []
+        _poll_s = max(1.0, self.update_interval.total_seconds())
+        _away_grace_polls = max(2, round(_AWAY_GRACE_S / _poll_s))
         for key, last_obj in list(self._known_objs.items()):
             if key in result:
                 continue
             miss = self._away_miss.get(key, 0) + 1
             self._away_miss[key] = miss
-            if miss < _AWAY_GRACE_POLLS:
+            if miss < _away_grace_polls:
                 # Grace period — treat as still present
                 grace = dict(last_obj)
                 grace["age_s"] = 0.0
+                # After a REAL absence (>60 s, not a routine 1-2 poll ad gap),
+                # mark the cached copy stale so re-entry gets a fresh vote /
+                # Kalman state instead of resuming old-location votes.  This
+                # is what arms the re-entry cleanup branch, which previously
+                # never fired because nothing set _stale.
+                if miss * _poll_s >= 60.0:
+                    grace["_stale"] = True
+                    self._known_objs[key]["_stale"] = True
                 result[key] = grace
                 continue
             # Grace expired — evict
@@ -1069,6 +1087,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Side-effects: updates self._room_confidence, _rssi_margin_confidence,
         _knn_position, _confirmed_room, and _room_votes for this key.
         """
+        # Normalize optional maps once — spot guards existed at most (not
+        # all) access sites; a None source_to_floor crashed the
+        # _scanners_per_floor loop below.
+        source_to_floor = source_to_floor or {}
         # Phase 1/2: resolve ModelStore for fabric adjacency + metre thresholds
         _model = self.hass.data.get(DOMAIN, {}).get(DATA_MODEL)
 
@@ -1106,6 +1128,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception:
             _Q = _KALMAN_Q
             _R = _KALMAN_R
+        # Process noise accumulates per unit TIME — scale Q with the poll
+        # interval (tuned at the historical 10 s poll) so filter lag stays
+        # constant when the user changes presence_poll_interval_s.
+        _poll_s = max(1.0, self.update_interval.total_seconds())
+        _Q = _Q * (_poll_s / 10.0)
 
         # Kalman update for sources that reported this poll.
         # K (Kalman gain) adapts automatically: high P (uncertainty) → K≈1
@@ -1132,7 +1159,9 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         #
         # Total silence (no scanners reporting) uses a gentler -95 dBm target;
         # partial silence (some scanners active = possible movement) uses -100 dBm.
-        _SILENCE_GRACE = 2  # consecutive missed polls before decay starts
+        # ~20 s of silence before decay starts, expressed in polls at the
+        # current interval (2 at the historical 10 s poll, 4 at 5 s)
+        _SILENCE_GRACE = max(1, round(20.0 / _poll_s))
         if addr not in self._silence_miss:
             self._silence_miss[addr] = {}
         _miss = self._silence_miss[addr]
@@ -1151,8 +1180,8 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     continue  # grace period — hold RSSI steady, don't decay
                 # Hard cap: the all-silent decay target (-95) sits ABOVE the
                 # -98 prune threshold, so entries asymptotically approach -95
-                # and were never pruned.  30 missed polls (~5 min) is decisive.
-                if _miss[src] >= 30:
+                # and were never pruned.  ~5 min of silence is decisive.
+                if _miss[src] >= max(6, round(300.0 / _poll_s)):
                     del ema[src]
                     kp.pop(src, None)
                     _miss.pop(src, None)

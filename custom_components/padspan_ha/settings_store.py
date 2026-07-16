@@ -74,7 +74,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "aggressive_ble_reseed": False,
     # Presence poll interval (seconds).  How often the smoothing pipeline runs.
     # Lower = faster room transitions but higher CPU.  Default 10s.
-    "presence_poll_interval_s": 10,
+    "presence_poll_interval_s": 5,
     # BLE reseed interval (seconds).  How often bluetooth_live re-fetches from
     # HA's discovered-service-info API.  Essential for passive proxy scanners
     # (Shelly, etc.).  Overrides aggressive_ble_reseed when set.  Default 30s.
