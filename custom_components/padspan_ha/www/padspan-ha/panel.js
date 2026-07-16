@@ -23,7 +23,7 @@ If UI changes don't show:
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
 const APP_VERSION = "0.21.0";
-const BUILD_ID = "20260716T151019Z";
+const BUILD_ID = "20260716T151145Z";
 const CHANNEL = "beta";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
