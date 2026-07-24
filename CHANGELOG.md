@@ -4,6 +4,20 @@ All notable changes to PadSpan HA are documented here.
 
 ---
 
+## 0.31.1 (2026-07-24)
+
+### Fixed
+- Every room-positioned device rendered on the upper floor. Two causes: the
+  Ground Floor map carried a coordinate-identical clone of the basement's
+  room polygons (and the basement's floor id), and the 3D view's room
+  position table had no duplicate guard, so the cloned upper entries
+  overwrote the real ones. The cloned data is repaired in place (backup
+  kept) and the 3D view now resolves a duplicated room name to the lowest
+  floor, matching the 2D view. Devices positioned by scanner signal were
+  never affected, which is why the Bluetooth trackers stayed put.
+
+---
+
 ## 0.31.0 (2026-07-24)
 
 The first roadmap release of the Ghosthunter Edition. Everything below was

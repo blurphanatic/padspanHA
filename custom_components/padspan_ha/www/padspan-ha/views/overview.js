@@ -1769,7 +1769,10 @@ export function render(ctx){
           const cx=b.points.reduce((a,p)=>a+p[0],0)/b.points.length;
           const cy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
           const [wx,wy]=tf.mapPt(cx,cy);
-          roomIsoPos[room] = iso(wx, wy, z);
+          // First map (lowest z) wins, matching the 2D map's roomCentroids.
+          // Without this guard a duplicate room name on a higher floor
+          // silently relocated every object in that room upstairs.
+          if (!(room in roomIsoPos)) roomIsoPos[room] = iso(wx, wy, z);
         }
         for(const r of (m.receivers||[])){
           if(r.room && !receiverIsoByRoom[r.room]){
