@@ -1,3 +1,0 @@
-# ARCHITECTURE
-
-Placeholder doc.

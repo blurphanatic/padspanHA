@@ -566,3 +566,62 @@
   .toolbar select{min-width:0;flex:1;max-width:100%}
   .h2{font-size:15px}
 }
+
+/* ── Overview map control bars — responsive at the panel container width (D1) ──
+   .psha-narrow is toggled on the map wrapper by JS from its own offsetWidth, so
+   these bars respond to the PANEL's width, not the browser window's. A slider and
+   its value chip live together in a .psha-slider-group so the number stays
+   visually attached to its slider in both layouts. */
+.psha-slider-group{display:inline-flex;align-items:center;gap:6px}
+.psha-slider-label{color:#94a3b8}
+.psha-val-chip{
+  font-variant-numeric:tabular-nums;
+  text-align:center;
+  padding:1px 7px;
+  border-radius:6px;
+  background:rgba(148,163,184,.14);
+  color:#cbd5e1;
+  line-height:1.5;
+}
+/* Wide: pill grid and button row are transparent wrappers so the bar keeps its
+   current single-row density. */
+.psha-pill-grid{display:contents}
+.psha-btn-row{display:contents}
+
+/* Narrow: each slider gets its own full-width row; pills wrap in a touch grid;
+   Save/Reset share their own row. */
+.psha-narrow .psha-slider-group{display:flex;width:100%;gap:8px;margin:2px 0}
+.psha-narrow .psha-slider-group>input[type="range"]{flex:1 1 auto;min-width:0;height:30px}
+.psha-narrow .psha-slider-group>.psha-val-chip{margin-left:auto;flex:0 0 auto;min-width:48px}
+.psha-narrow .psha-slider-label{flex:0 0 auto}
+.psha-narrow .psha-pill-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(98px,1fr));
+  gap:8px;width:100%;margin:2px 0;
+}
+.psha-narrow .psha-pill-grid>button{min-height:40px}
+.psha-narrow .psha-btn-row{display:flex;gap:8px;width:100%;margin:2px 0}
+.psha-narrow .psha-btn-row>button{flex:1 1 auto;min-height:40px}
+/* 2D filter bar: flex layout lives here (not inline) so the narrow grid wins. */
+.psha-filter-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+/* 2D filter pills: same touch grid; hide the thin vertical separators. */
+.psha-narrow .psha-filter-bar{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(98px,1fr));
+  gap:8px;
+}
+.psha-narrow .psha-filter-bar>button{min-height:40px}
+.psha-narrow .psha-filter-bar>span{display:none}
+/* Narrow refinements from the live vision pass: action buttons centre their
+   text, and range inputs get real touch-sized thumbs. */
+.psha-narrow .psha-btn-row>button{display:flex;align-items:center;justify-content:center}
+.psha-narrow .psha-slider-group>input[type="range"]{
+  -webkit-appearance:none;appearance:none;background:transparent;
+}
+.psha-narrow .psha-slider-group>input[type="range"]::-webkit-slider-runnable-track{
+  height:6px;border-radius:3px;background:#1b3526;
+}
+.psha-narrow .psha-slider-group>input[type="range"]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:24px;height:24px;border-radius:50%;
+  background:#52b788;border:2px solid #071008;margin-top:-9px;
+}

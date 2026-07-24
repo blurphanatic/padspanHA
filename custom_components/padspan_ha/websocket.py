@@ -2465,6 +2465,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         # Merge cached objects not seen this cycle back into the list
         # Skip keys absorbed by deduplication — they are ghosts of merged objects
         _cached_added = 0
+        _ghosts_purged_cycle = 0
         # Entities already folded into a device object (e.g. a phone's
         # private_ble_device_*_area / _floor / _bermuda_tracker helper sensors
         # linked into its irk: object) must not be resurrected from the cache as
@@ -2509,6 +2510,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             # Tagged/identified objects never expire from history
             if not is_identified and stale_s > _HISTORY_TTL:
                 del _cache[key]
+                # Ghost accounting: every expired unidentified identity is a
+                # purged ghost, surfaced in the snapshot summary for the
+                # Overview's Ghost Report tile.
+                _ghosts_purged_cycle += 1
                 continue
             # Heal pre-cap poisoned address histories in place: cache entries
             # persisted before _ALL_ADDR_CAP existed can carry tens of
@@ -2537,6 +2542,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 ]
             objects.append(obj_copy)
             _cached_added += 1
+
+        # Accumulate the ghost ledger (process-lifetime; the tile labels it
+        # "since restart")
+        if _ghosts_purged_cycle:
+            _dom["_ghosts_purged_total"] = (
+                int(_dom.get("_ghosts_purged_total") or 0) + _ghosts_purged_cycle
+            )
 
         # Second dedup pass: catch cached objects that were reintroduced
         if _cached_added > 0:
@@ -2695,6 +2707,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 "common_prefixes": common_prefixes,  # prefix -> count (>=3)
                 "resolver": _resolver_diag,
                 "cached_objects": _cached_added,
+                # Ghost Report: identities expired by the retention window,
+                # this cycle and cumulatively since HA started, plus the
+                # window itself so the tile can show it.
+                "ghosts_purged_cycle": _ghosts_purged_cycle,
+                "ghosts_purged_total": int(_dom.get("_ghosts_purged_total") or 0),
+                "unidentified_ttl_s": _HISTORY_TTL,
                 "dedup_absorbed": len(_dedup_absorbed),
             },
         }

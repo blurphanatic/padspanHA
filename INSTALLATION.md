@@ -13,6 +13,10 @@ Copy this folder:
 to:
 `/config/custom_components/padspan_ha`
 
+When updating an existing install, delete the old `padspan_ha` folder first so no
+stale files are left behind, then copy the new one in. Restart HA and hard-refresh
+the browser (Ctrl+Shift+R) afterwards.
+
 ### Common mistake
 Do **NOT** end up with:
 `/config/custom_components/custom_components/padspan_ha`

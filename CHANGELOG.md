@@ -4,6 +4,31 @@ All notable changes to PadSpan HA are documented here.
 
 ---
 
+## 0.31.0 (2026-07-24)
+
+The first roadmap release of the Ghosthunter Edition. Everything below was
+verified on a live installation at desktop and phone widths before tagging.
+
+### Added
+- Ghost Report tile on the Overview: the snapshot now counts untagged
+  identities expired by the retention window, per cycle and since restart,
+  and shows the active window.
+- Responsive control bars. On narrow panels each slider gets its own
+  full-width row with a value chip attached, toggle pills wrap into a
+  touch-sized grid, Save and Reset get their own row, and the sliders gain
+  proper touch thumbs. Desktop keeps its single-row density with the value
+  chips.
+- Halo strokes on map object and cluster labels, with room names drawn
+  beneath the object layer, so text stays legible over any background.
+
+### Documentation
+- ROADMAP.md is now a real document written against delivered code.
+- The duplicate architecture, install and troubleshooting docs are merged
+  into their canonical files, and the surviving docs no longer describe
+  files or flows that do not exist.
+
+---
+
 ## 0.30.0 (2026-07-24)
 
 First Ghosthunter Edition release, on its own version line (see NOTICE.md). Contains upstream 0.21.0 in full, plus Ghosthunter's performance and usability work on top.

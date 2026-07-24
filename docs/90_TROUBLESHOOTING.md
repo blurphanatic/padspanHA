@@ -27,5 +27,11 @@ Check WS diagnostics.
 Most likely you updated only some files.
 This repo is designed to ship as a **full zip** every time.
 
-Compare `FILE_MANIFEST.txt` after install to ensure all files were replaced.
+Delete the old `custom_components/padspan_ha/` folder before extracting the new
+one, so stale files cannot linger, then restart HA and hard-refresh the browser.
+
+## Reading diagnostics
+The Diagnostics view exposes the backend state as JSON. Open it first when a view
+is empty or a value looks wrong; it shows what the panel actually received over the
+websocket.
 

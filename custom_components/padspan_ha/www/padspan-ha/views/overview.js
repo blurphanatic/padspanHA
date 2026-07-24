@@ -74,6 +74,39 @@ export function render(ctx){
     // head-only truncation made ..._area and ..._area_last_seen identical.
     return full.length <= 18 ? full : full.slice(0, 9) + "…" + full.slice(-8);
   };
+
+  // ── Map label halo (D2) ─────────────────────────────────────────────────────
+  // Dark stroke drawn *under* the glyph fill (paint-order:stroke) so object and
+  // cluster labels stay legible over any map background. Stroke width differs by
+  // map because the two builders draw in different coordinate spaces: the iso map
+  // is in px-ish SVG units, the 2D map in normalized [0..1] units.
+  const _isoHalo = 'paint-order="stroke" stroke="#071008" stroke-width="3" stroke-linejoin="round"';
+  const _mapHalo = 'paint-order="stroke" stroke="#071008" stroke-width="0.0022" stroke-linejoin="round"';
+
+  // ── Responsive control bars (D1) ────────────────────────────────────────────
+  // The panel renders inside HA, so the map's usable width is its container's
+  // width, not the window's. Toggle .psha-narrow on the map wrapper from its own
+  // offsetWidth (measured after mount) so the CSS in styles.css can stack the
+  // slider rows / pill grid on narrow panels. A ResizeObserver keeps it live.
+  const _PSHA_NARROW_W = 640;
+  const _grp = (cls, children) => {
+    const d = document.createElement("div");
+    d.className = cls;
+    for (const c of children) if (c) d.appendChild(c);
+    return d;
+  };
+  const _installResponsiveBars = (container) => {
+    const apply = () => {
+      const w = container.offsetWidth || container.clientWidth || 0;
+      if (!w) return;
+      container.classList.toggle("psha-narrow", w < _PSHA_NARROW_W);
+    };
+    requestAnimationFrame(apply);
+    if (typeof ResizeObserver === "function") {
+      try { new ResizeObserver(apply).observe(container); } catch (e) { /* no-op */ }
+    }
+  };
+
   // Shared handler for the 2D↔3D view-mode toggle buttons (one on each map).
   const _switchViewMode = async (btn, to2d) => {
     btn.disabled = true;
@@ -930,7 +963,7 @@ export function render(ctx){
             const cx = b.points.reduce((a, p) => a + p[0], 0) / b.points.length;
             const cy = b.points.reduce((a, p) => a + p[1], 0) / b.points.length;
             const [vcx, vcy] = _pt(m, cx, cy);
-            s += `<text x="${_f(vcx)}" y="${_f(vcy)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="${_fsRoom}" font-weight="600" opacity="0.8">${_esc(room)}</text>`;
+            s += `<text x="${_f(vcx)}" y="${_f(vcy)}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="${_fsRoom}" font-weight="600" opacity="0.6">${_esc(room)}</text>`;
           }
         }
       }
@@ -1081,23 +1114,23 @@ export function render(ctx){
           if (_noSig) {
             g += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#94a3b8" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${(0.5*_recF).toFixed(2)}"/>`;
             if (!minimal) g += _awayBadge(px, py);
-            if (lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8 + labelDy)}" text-anchor="middle" fill="#94a3b8" font-size="${_fsObj}" font-weight="600" opacity="${(0.7*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
+            if (lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8 + labelDy)}" ${_mapHalo} text-anchor="middle" fill="#94a3b8" font-size="${_fsObj}" font-weight="600" opacity="${(0.7*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
           } else if (isFollowed) {
             if (!minimal) g += _confRing(px, py, _dotR, "#fbbf24");
             g += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*2}" fill="#fbbf24" fill-opacity="${(0.15*_recF).toFixed(2)}"/>`;
             g += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#fbbf24" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${_recF.toFixed(2)}"/>`;
             if (!minimal) { g += _sigBars(px, py, "#fbbf24"); g += _confBadge(px, py); }
-            if (lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*2 + labelDy)}" text-anchor="middle" fill="#fbbf24" font-size="${_fsObj}" font-weight="600" opacity="${_recF.toFixed(2)}">${_esc(lbl)}</text>`;
+            if (lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*2 + labelDy)}" ${_mapHalo} text-anchor="middle" fill="#fbbf24" font-size="${_fsObj}" font-weight="600" opacity="${_recF.toFixed(2)}">${_esc(lbl)}</text>`;
           } else if (isTagged) {
             if (!minimal) g += _confRing(px, py, _dotR, "#5eead4");
             g += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#5eead4" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${(0.9*_recF).toFixed(2)}"/>`;
             if (!minimal) { g += _sigBars(px, py, "#5eead4"); g += _confBadge(px, py); }
-            if (lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8 + labelDy)}" text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="${(0.85*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
+            if (lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8 + labelDy)}" ${_mapHalo} text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="${(0.85*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
           } else {
             g += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*0.7}" fill="#f59e0b" stroke="#071008" stroke-width="${_sw*0.3}" opacity="${(0.5*_recF).toFixed(2)}"/>`;
             // Untagged dots are label-less by design in normal rendering, but a
             // spiderfied/pair member without a label is an unusable mystery dot.
-            if (minimal && lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*1.5 + labelDy)}" text-anchor="middle" fill="#f59e0b" font-size="${_fsObj}" font-weight="600" opacity="0.85">${_esc(lbl)}</text>`;
+            if (minimal && lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*1.5 + labelDy)}" ${_mapHalo} text-anchor="middle" fill="#f59e0b" font-size="${_fsObj}" font-weight="600" opacity="0.85">${_esc(lbl)}</text>`;
           }
           return g + `</g>`;
         };
@@ -1170,7 +1203,10 @@ export function render(ctx){
 
     // Filter toggles
     const filterBar = document.createElement("div");
-    filterBar.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px";
+    // Layout lives in .psha-filter-bar (styles.css) so the narrow grid override can
+    // win — an inline display would beat the stylesheet and defeat .psha-narrow.
+    filterBar.className = "psha-filter-bar";
+    filterBar.style.cssText = "margin-bottom:8px";
 
     let _updateScannerBar = null; // set later if radio map enabled
     const makeFilterBtn = (key, label, color) => {
@@ -1330,11 +1366,10 @@ export function render(ctx){
       gainSlider.addEventListener("input", _updateHeat);
       contrastSlider.addEventListener("input", _updateHeat);
 
-      heatCtrlBar.appendChild(document.createTextNode(""));
       heatCtrlBar.append(
-        gainLbl, gainSlider,
-        contrastLbl, contrastSlider,
-        saveBtn,
+        _grp("psha-slider-group", [gainLbl, gainSlider]),
+        _grp("psha-slider-group", [contrastLbl, contrastSlider]),
+        _grp("psha-btn-row", [saveBtn]),
       );
 
       // Show/hide with radio map toggle
@@ -1610,6 +1645,7 @@ export function render(ctx){
     svgWrap.appendChild(zoomHint);
     outer.appendChild(svgWrap);
 
+    _installResponsiveBars(outer);
     return outer;
   }
 
@@ -2095,7 +2131,7 @@ export function render(ctx){
             const cy=b.points.reduce((a,p)=>a+p[1],0)/b.points.length;
             const [lwx,lwy]=mapPt(cx,cy);
             const [lix,liy]=_isoTracked(lwx,lwy,z);
-            s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" font-weight="600">${_esc(room)}</text>`;
+            s += `<text x="${Math.round(lix)}" y="${Math.round(liy)+lidx*2}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="9" font-weight="600" opacity="0.8">${_esc(room)}</text>`;
           }
           // RF barriers — dotted white lines on 3D map
           if(ctx.state._overviewShowWalls){
@@ -2290,7 +2326,7 @@ export function render(ctx){
           const fullLbl = lbl + (isAway ? (_noSig ? " (away)" : " (Away)") : "");
           const lblW = Math.min(fullLbl.length * 7 + 10, 140);
           g += `<rect x="${Math.round(bx)-lblW/2}" y="${Math.round(by)-32+labelDy}" width="${lblW}" height="16" rx="3" fill="#071008" opacity="0.7"/>`;
-          g += `<text x="${Math.round(bx)}" y="${Math.round(by)-20+labelDy}" text-anchor="middle" fill="${lblColor}" font-size="12" font-weight="700">${_esc(fullLbl)}</text>`;
+          g += `<text x="${Math.round(bx)}" y="${Math.round(by)-20+labelDy}" ${_isoHalo} text-anchor="middle" fill="${lblColor}" font-size="12" font-weight="700">${_esc(fullLbl)}</text>`;
           return g + `</g>`;
         };
         _isoEntries.push({
@@ -2380,7 +2416,7 @@ export function render(ctx){
                 let g = `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.6">`;
                 g += `<circle cx="${px}" cy="${py}" r="9" fill="#94a3b8" stroke="#071008" stroke-width="1.5" opacity="0.7"/>`;
                 if(!minimal) g += _isoAwayBadge(px, py);
-                if(objLabel) g += `<text x="${px}" y="${py+22+labelDy}" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
+                if(objLabel) g += `<text x="${px}" y="${py+22+labelDy}" ${_isoHalo} text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
                 return g + `</g>`;
               } else if(isAway){
                 // Red crosshair for away objects (persistent mode)
@@ -2392,7 +2428,7 @@ export function render(ctx){
                 g += `<line x1="${px+14}" y1="${py}" x2="${px+27}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
                 g += `<line x1="${px}" y1="${py-27}" x2="${px}" y2="${py-14}" stroke="#ef4444" stroke-width="1.5"/>`;
                 g += `<line x1="${px}" y1="${py+14}" x2="${px}" y2="${py+27}" stroke="#ef4444" stroke-width="1.5"/>`;
-                if(objLabel) g += `<text x="${px}" y="${py+38+labelDy}" text-anchor="middle" fill="#fca5a5" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
+                if(objLabel) g += `<text x="${px}" y="${py+38+labelDy}" ${_isoHalo} text-anchor="middle" fill="#fca5a5" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
                 return g + `</g>`;
               }
               // Teal dot for active objects (persistent mode) — certainty ring, signal
@@ -2403,7 +2439,7 @@ export function render(ctx){
               g += `<circle cx="${px}" cy="${py}" r="9" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="${(0.95*_recF).toFixed(2)}"/>`;
               g += `<circle cx="${px}" cy="${py}" r="2.5" fill="#071008" opacity="0.7"/>`;
               if(!minimal) g += _isoSigBars(px, py, 9, "#5eead4", (typeof obj.rssi === "number" ? obj.rssi : null));
-              if(objLabel) g += `<text x="${px}" y="${py+22+labelDy}" text-anchor="middle" fill="#5eead4" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
+              if(objLabel) g += `<text x="${px}" y="${py+22+labelDy}" ${_isoHalo} text-anchor="middle" fill="#5eead4" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
               return g + `</g>`;
             }
             // Non-persistent: small dim amber dot for unlabeled objects (recency fade only).
@@ -2808,29 +2844,28 @@ export function render(ctx){
     const ctrlRow = document.createElement("div");
     ctrlRow.style.cssText = "display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px";
     const floorLbl = document.createElement("span");
-    floorLbl.style.cssText = "color:#94a3b8";
+    floorLbl.className = "psha-slider-label";
     floorLbl.textContent = "Floor:";
-    ctrlRow.appendChild(floorLbl);
     focusSlider.style.cssText = "width:90px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
-    focusLbl.style.cssText = "color:#94a3b8;min-width:60px;display:inline-block";
-    ctrlRow.appendChild(focusSlider);
-    ctrlRow.appendChild(focusLbl);
+    focusLbl.className = "psha-val-chip";
+    focusLbl.style.cssText = "font-size:12px";
+    ctrlRow.appendChild(_grp("psha-slider-group", [floorLbl, focusSlider, focusLbl]));
     // Spacing
     const ovSpacingLbl = document.createElement("span");
-    ovSpacingLbl.style.cssText = "color:#94a3b8;margin-left:4px";
+    ovSpacingLbl.className = "psha-slider-label";
     ovSpacingLbl.textContent = "Gap:";
-    ctrlRow.appendChild(ovSpacingLbl);
     ovGapSlider.style.cssText = "width:70px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
-    ctrlRow.appendChild(ovGapSlider);
-    ctrlRow.appendChild(ovGapLbl);
+    ovGapLbl.className = "psha-val-chip";
+    ovGapLbl.style.cssText = "font-size:12px";
+    ctrlRow.appendChild(_grp("psha-slider-group", [ovSpacingLbl, ovGapSlider, ovGapLbl]));
     // L/R
     const ovLRLbl = document.createElement("span");
-    ovLRLbl.style.cssText = "color:#94a3b8;margin-left:4px";
+    ovLRLbl.className = "psha-slider-label";
     ovLRLbl.textContent = "L/R:";
-    ctrlRow.appendChild(ovLRLbl);
     ovHorizSlider.style.cssText = "width:70px;accent-color:#52b788;vertical-align:middle;cursor:pointer";
-    ctrlRow.appendChild(ovHorizSlider);
-    ctrlRow.appendChild(ovHorizLbl);
+    ovHorizLbl.className = "psha-val-chip";
+    ovHorizLbl.style.cssText = "font-size:12px";
+    ctrlRow.appendChild(_grp("psha-slider-group", [ovLRLbl, ovHorizSlider, ovHorizLbl]));
     // Save button — persists all three slider values to settings store
     const ovSaveLbl = document.createElement("span");
     ovSaveLbl.style.cssText = "color:#94a3b8;min-width:40px";
@@ -2874,10 +2909,10 @@ export function render(ctx){
       }catch(e){ ovSaveLbl.textContent = "Error"; }
       ovResetBtn.disabled = false;
     });
-    ctrlRow.appendChild(ovSaveBtn);
-    ctrlRow.appendChild(ovResetBtn);
-    ctrlRow.appendChild(ovSaveLbl);
-    ctrlRow.appendChild(roomToggleBtn);
+    ctrlRow.appendChild(_grp("psha-btn-row", [ovSaveBtn, ovResetBtn, ovSaveLbl]));
+
+    // Toggle pills grouped so they wrap into a touch-friendly grid on narrow panels.
+    const pillGrid = _grp("psha-pill-grid", [roomToggleBtn]);
 
     // View-mode toggle — flip to the top-down overhead (2D) map.
     const ovTo2d = document.createElement("button");
@@ -2886,7 +2921,7 @@ export function render(ctx){
     ovTo2d.textContent = "▣ Overhead";
     ovTo2d.title = "Switch to the large top-down overhead map";
     ovTo2d.addEventListener("click", () => _switchViewMode(ovTo2d, true));
-    ctrlRow.appendChild(ovTo2d);
+    pillGrid.appendChild(ovTo2d);
 
     const ovPersistentBtn = document.createElement("button");
     ovPersistentBtn.className = "btn inline";
@@ -2901,7 +2936,7 @@ export function render(ctx){
       // Persist to settings so it survives reboots
       ctx.actions.settingsSet({ overview_persistent_pins: ctx.state._overviewPersistentPins });
     });
-    ctrlRow.appendChild(ovPersistentBtn);
+    pillGrid.appendChild(ovPersistentBtn);
 
     const ovWallsBtn = document.createElement("button");
     ovWallsBtn.className = "btn inline";
@@ -2915,7 +2950,7 @@ export function render(ctx){
       _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx));
       ctx.actions.settingsSet({ overview_show_walls: ctx.state._overviewShowWalls });
     });
-    ctrlRow.appendChild(ovWallsBtn);
+    pillGrid.appendChild(ovWallsBtn);
 
     // ── Radio Map + Distortion toggles (mutually exclusive) ────────────────
     const _heatStyle = (on) => `padding:1px 6px;font-size:10px;${on ? "background:#2d1b4e;border-color:#a855f7;color:#d8b4fe;font-weight:700" : "color:#94a3b8"}`;
@@ -2950,7 +2985,7 @@ export function render(ctx){
         if (ctx.state._overviewShowHeatmap) ctx.state._overviewShowDistortion = false; // mutual exclusion
         _syncOverlayBtns();
       });
-      ctrlRow.appendChild(_ovHeatBtn);
+      pillGrid.appendChild(_ovHeatBtn);
     }
 
     const _isoDistortionOn = !!(ctx.state.settings && ctx.state.settings.distortion_map_enabled);
@@ -2964,9 +2999,10 @@ export function render(ctx){
         if (ctx.state._overviewShowDistortion) ctx.state._overviewShowHeatmap = false; // mutual exclusion
         _syncOverlayBtns();
       });
-      ctrlRow.appendChild(_ovDistBtn);
+      pillGrid.appendChild(_ovDistBtn);
     }
-    ctrlRow.appendChild(helpBtn("overview_3d_controls"));
+    pillGrid.appendChild(helpBtn("overview_3d_controls"));
+    ctrlRow.appendChild(pillGrid);
 
     outer.appendChild(ctrlRow);
 
@@ -3078,7 +3114,13 @@ export function render(ctx){
       d.sl.addEventListener("input", _isoOverlayUpdate);
       src.sl.addEventListener("input", _isoOverlayUpdate);
 
-      isoOverlayCtrl.append(g.lbl, g.sl, c.lbl, c.sl, d.lbl, d.sl, src.lbl, src.sl, progressBar, statusLbl, iSaveBtn);
+      isoOverlayCtrl.append(
+        _grp("psha-slider-group", [g.lbl, g.sl]),
+        _grp("psha-slider-group", [c.lbl, c.sl]),
+        _grp("psha-slider-group", [d.lbl, d.sl]),
+        _grp("psha-slider-group", [src.lbl, src.sl]),
+        progressBar, statusLbl, iSaveBtn,
+      );
       outer.appendChild(isoOverlayCtrl);
     }
 
@@ -3090,6 +3132,7 @@ export function render(ctx){
     // with the progress bar visible.
     requestAnimationFrame(() => _rebuildIso(_getFocusZ(ctx.state._overviewIsoFocusIdx)));
 
+    _installResponsiveBars(outer);
     return outer;
   }
   // ---------- Room + radio grid (auto-generated from live HA data) ----------
@@ -3798,6 +3841,25 @@ export function render(ctx){
       ]),
       el("div",{style:"margin-top:8px;color:#94a3b8;font-size:12px"}, dataMode==="live" ? "Live snapshot" : "Sample data — switch to Live to see your real devices")
     ]),
+    // Ghost Report: identities expired by the retention window. Data ships in
+    // the snapshot summary (ghosts_purged_total / _cycle / unidentified_ttl_s).
+    (() => {
+      if (!objSummary || typeof objSummary.ghosts_purged_total !== "number") return null;
+      const ttlS = objSummary.unidentified_ttl_s || 3600;
+      const ttlH = ttlS / 3600;
+      const ttlTxt = ttlH >= 1 ? `${+ttlH.toFixed(1)}h` : `${Math.round(ttlS/60)}m`;
+      const cyc = objSummary.ghosts_purged_cycle || 0;
+      return el("div",{class:"card"},[
+        el("div",{class:"kpi"},[
+          el("div",{class:"k"}, "Ghosts purged"),
+          el("div",{class:"v"}, liveLoading ? "--" : String(objSummary.ghosts_purged_total)),
+        ]),
+        el("div",{style:"margin-top:8px;color:#94a3b8;font-size:12px"},
+          `Untagged identities expired by the ${ttlTxt} retention window since restart` +
+          (cyc ? ` (${cyc} this cycle)` : "") +
+          ". Adjust in Settings, Unidentified History Retention."),
+      ]);
+    })(),
     // Calibration status card
     (() => {
       const cs = liveSnap?.calibration_status;
