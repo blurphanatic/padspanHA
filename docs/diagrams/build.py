@@ -263,6 +263,8 @@ def build_hero():
     e.append(grad_bar(58, 54, 150))
     e.append(text(56, 108, "PadSpan HA", 38, TEXT, 800))
     tw = est_w("PadSpan HA", 38, 800)
+    # Trademark symbol, superscript-sized against the wordmark
+    e.append(text(56 + tw + 6, 86, "™", 15, MUTED, 600))
     e.append(pill(56 + tw + 62, 96, "RESILIENCE FORK", AMBER, 10.5, 12))
     e.append(text(56, 140, "Room-level BLE presence for Home Assistant: a hardened fork that keeps", 13.5, BODY))
     e.append(text(56, 160, "the floor plan painted and the event bus alive.", 13.5, BODY))

@@ -1,4 +1,4 @@
-# PadSpan HA
+# PadSpan™ HA
 
 BLE room presence for Home Assistant. It tells you which room every Bluetooth device is in, refreshed every 5 seconds, with floor plans, 3D multi-floor views, a calibration system, and 22 panel views.
 
