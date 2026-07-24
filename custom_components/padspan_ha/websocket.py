@@ -2446,6 +2446,16 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             if not is_identified and stale_s > _HISTORY_TTL:
                 del _cache[key]
                 continue
+            # Heal pre-cap poisoned address histories in place: cache entries
+            # persisted before _ALL_ADDR_CAP existed can carry tens of
+            # thousands of addresses, and resurrection shipped them uncapped —
+            # re-bloating the snapshot the cap was added to shrink.
+            _aa = cached_obj.get("all_addresses")
+            if isinstance(_aa, list) and len(_aa) > _ALL_ADDR_CAP:
+                cached_obj["all_addresses"] = [
+                    a for a in _aa
+                    if isinstance(a, str) and len(a) == 17 and a.count(":") == 5
+                ][:_ALL_ADDR_CAP]
             # Bring it back — compute age_s = original age + time since last seen
             obj_copy = dict(cached_obj)
             base_age = cached_obj.get("_cache_age_s") or 0
