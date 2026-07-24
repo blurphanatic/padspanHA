@@ -246,6 +246,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._kalman_p: dict[str, dict[str, float]] = {}
         # {addr: {source: consecutive_miss_count}} — silence grace tracking
         self._silence_miss: dict[str, dict[str, int]] = {}
+        # (key, old_room, new_room) tuples accumulated during a poll cycle;
+        # reset at the top of _async_update_data, but initialised here too so
+        # _smooth_room is safe to call before the first poll.
+        self._pending_room_changes: list[tuple[str, str | None, str]] = []
 
         # ── Room-vote state (keyed by object key) ────────────────────────────
         # {key: deque of recent candidate rooms}
@@ -692,6 +696,22 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             self._known_objs[key] = dict(obj)
 
+            # ── Fast path: cache-resurrected objects with no live signal ────
+            # Objects resurrected from the multi-day history cache (_stale)
+            # with no live advertisements gain nothing from the Kalman/k-NN
+            # pipeline, yet running it for every device-ever-seen made
+            # per-poll CPU scale with history size instead of live devices.
+            # Short-circuit them straight to the away/no-signal presentation
+            # the full pipeline would produce anyway.
+            if _obj_no_signal and obj.get("_stale") and key not in _pinned:
+                obj = dict(obj)
+                obj["room"] = None
+                obj["room_confidence"] = 0.0
+                obj["_no_signal"] = True
+                self._known_objs[key] = dict(obj)
+                result[key] = obj
+                continue
+
             # ── Per-object smoothing pipeline ──────────────────────────────
             # Only BLE and iBeacon objects go through our Kalman + Gaussian +
             # vote pipeline.  Entity-based trackers (e.g. Bermuda) arrive
@@ -1018,10 +1038,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Count scanners per floor (for isolated scanner detection)
         _scanners_per_floor: dict[str, int] = {}
-        for _src2 in source_to_area:
-            _fl2 = source_to_floor.get(_src2, "")
-            if _fl2:
-                _scanners_per_floor[_fl2] = _scanners_per_floor.get(_fl2, 0) + 1
+        if source_to_floor:
+            for _src2 in source_to_area:
+                _fl2 = source_to_floor.get(_src2, "")
+                if _fl2:
+                    _scanners_per_floor[_fl2] = _scanners_per_floor.get(_fl2, 0) + 1
 
         live_srcs = addr_src_rssi.get(addr, {})
 
@@ -1089,6 +1110,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     del ema[src]
                     kp.pop(src, None)
                     _miss.pop(src, None)
+        # Once every source is pruned, drop the empty per-address outer dicts
+        # too — they otherwise accumulate one permanent entry per MAC.
+        if not ema:
+            self._ema_rssi.pop(addr, None)
+            self._kalman_p.pop(addr, None)
+            self._silence_miss.pop(addr, None)
 
         # ── Stage 1.5 prep: read path-loss model parameters ────────────────
         # ref_power: RSSI at 1 meter (typically -59 to -65 dBm)
@@ -1800,6 +1827,15 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._ema_rssi.pop(key, None)
         self._kalman_p.pop(key, None)
         self._silence_miss.pop(key, None)
+        # Kalman/silence state for plain ble objects is keyed by the bare
+        # uppercase MAC, not the "ble:"-prefixed object key — popping only the
+        # key above was a silent no-op for them, leaving one entry per MAC
+        # ever seen (neighbours' devices included) for the process lifetime.
+        if key.startswith("ble:"):
+            _addr = key.split(":", 1)[1].upper()
+            self._ema_rssi.pop(_addr, None)
+            self._kalman_p.pop(_addr, None)
+            self._silence_miss.pop(_addr, None)
 
     def clear_object_state(self, key: str) -> None:
         """Public API: clear all coordinator state for an object.
@@ -1832,23 +1868,31 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if isinstance(entry, dict) and entry.get("label"):
                     _key_labels[str(k)] = entry["label"]
 
-        # ── Fire HA events for every arrive/depart ───────────────────────
-        # These events can be used as triggers in HA automations.
+        # ── Fire HA events for labelled arrive/depart ────────────────────
+        # These events can be used as triggers in HA automations.  Only
+        # labelled (user-tagged) devices fire: every rotating-MAC rotation in
+        # a busy BLE environment registers as a "new" unlabelled arrival, and
+        # firing those flooded the event bus until subscribers hit HA's
+        # 4096-pending-message limit and were disconnected.  PadSpan's own
+        # automation rules below match on the raw arrived/departed sets, so
+        # rules keyed to an unlabelled device still run.
         for key in arrived:
             label = _key_labels.get(key, "")
+            if not label:
+                continue
             room = (result.get(key) or {}).get("room", "")
             self.hass.bus.async_fire("padspan_device_arrived", {
                 "device_key": key, "label": label, "room": room,
             })
-            if label:
-                _LOGGER.info("Device arrived: %s (%s) in %s", label, key[:30], room)
+            _LOGGER.info("Device arrived: %s (%s) in %s", label, key[:30], room)
         for key in departed:
             label = _key_labels.get(key, "")
+            if not label:
+                continue
             self.hass.bus.async_fire("padspan_device_departed", {
                 "device_key": key, "label": label,
             })
-            if label:
-                _LOGGER.info("Device departed: %s (%s)", label, key[:30])
+            _LOGGER.info("Device departed: %s (%s)", label, key[:30])
 
         # ── Execute PadSpan automation rules ─────────────────────────────
         try:

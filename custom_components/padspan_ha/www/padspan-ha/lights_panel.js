@@ -724,4 +724,8 @@ class PadSpanLightsApp extends HTMLElement {
   }
 }
 
-customElements.define("padspan-lights-app", PadSpanLightsApp);
+// Guard against duplicate definition when a stale module lingers alongside a
+// freshly-registered one after an integration reload (see panel.js for detail).
+if (!customElements.get("padspan-lights-app")) {
+  customElements.define("padspan-lights-app", PadSpanLightsApp);
+}

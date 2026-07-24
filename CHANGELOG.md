@@ -4,6 +4,36 @@ All notable changes to PadSpan HA are documented here.
 
 ---
 
+## 0.20.72 — Stability & Performance Overhaul (2026-07-24)
+
+The floor-plan-blank-on-first-entry bug is fixed, along with the event storm, two memory leaks, and a per-poll CPU cost that grew with every device ever seen.
+
+### Fixed
+- **Blank floor plan on first panel entry** — three compounding causes closed:
+  - A rotating-MAC phone accumulated 42,000 addresses in `all_addresses`; copying that list onto every advertisement ballooned the live snapshot to ~300MB, which killed the websocket connection and took the map-geometry fetch down with it. Address history is now capped at 96 per object (8 per advertisement xref), and old poisoned cache entries are scrubbed in place at resurrection.
+  - The panel fetched map geometry in the same batch as the heavyweight snapshot, and nothing ever re-fetched it after a failure. `maps_list` + `model` now load first and awaited, `maps_list` gets a retry and never clobbers a good list, and the poll tick heals missing geometry.
+  - Live polling never started on first boot (the data-mode check raced the settings fetch); it now starts after the first refresh resolves.
+- **Event storm** — `padspan_device_arrived`/`departed` fired for every rotating-MAC rotation, flooding the HA event bus until subscribers were force-disconnected at 4096 pending messages (hourly on a busy network). Bus events now fire only for labelled devices; in-panel automation rules still match unlabelled keys.
+- **Panel died after integration reload** — a duplicate `customElements.define` threw and aborted init (dead buttons, watchdog loop). Both panels now define once.
+- **Kalman state leak** — eviction popped the `ble:`-prefixed key but state was keyed by bare MAC, so every device that ever passed by left permanent entries in three dicts. Also drops emptied per-address dicts after silence decay.
+- **Per-poll CPU scaled with history, not live devices** — every object in the 7-day cache re-ran the full Kalman/k-NN pipeline each poll. Cache-resurrected objects are marked `_stale` again (the flag was read but never set — dormant since an earlier refactor) and no-signal stale objects skip the pipeline. Re-entry vote reset works again as a result.
+- **HA froze for seconds on large map extend/revert** — the pure-Python PNG pixel work now runs off the event loop.
+- **Two crashes caught by the revived test suite** — a `None` deref in scanners-per-floor counting and `_pending_room_changes` missing before the first poll.
+- **Renamed Bermuda trackers** (`device_tracker.<name>_bermuda_tracker`) now fold into their phone's `irk:` object by resolved-MAC match instead of floating as standalone objects.
+- **Devices search box lost focus every keystroke** — search now filters in place without re-rendering.
+- **Maps store normalization was never persisted** (the re-save check compared an object against itself).
+
+### Added
+- **3D iso map parity** — recency fade, signal bars, and certainty presentation now match the 2D map.
+- **Explicit "Away (no signal)" state** — grey dot + away badge on both maps instead of an ambiguous fade.
+- **Reachable rotation** — the 3D map reserves margins for the rotated bounding box so corners stay scrollable.
+
+### Internal
+- Test suite revived: 58 failures → 0 (179 passing); coordinator tests now construct via the real `__init__` so they can't drift stale; `requirements_test.txt` restored.
+- Single-pass snapshot summary counts; silent excepts around ad enrichment and room assignment now log; dead code removed.
+
+---
+
 ## 0.19.0 — Stable Release (2026-03-24)
 
 Consolidates all v0.18.x fixes into a clean stable release.

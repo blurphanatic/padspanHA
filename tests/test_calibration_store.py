@@ -150,9 +150,9 @@ class TestStd:
         assert _std([5.0, 5.0, 5.0, 5.0]) == pytest.approx(0.0)
 
     def test_known_std(self) -> None:
-        """Population std of [2, 4, 4, 4, 5, 5, 7, 9] is 2.0."""
+        """Sample std (N-1) of [2, 4, 4, 4, 5, 5, 7, 9] is sqrt(32/7)."""
         vals = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]
-        assert _std(vals) == pytest.approx(2.0)
+        assert _std(vals) == pytest.approx(math.sqrt(32.0 / 7.0))
 
 
 # ---------------------------------------------------------------------------

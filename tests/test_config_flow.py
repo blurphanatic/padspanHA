@@ -44,10 +44,10 @@ def test_clamp_maximum_boundary() -> None:
 
 
 def test_clamp_below_minimum() -> None:
-    """Values below 5 are clamped up to 5."""
-    assert _clamp_interval(1) == 5
-    assert _clamp_interval(0) == 5
-    assert _clamp_interval(-100) == 5
+    """Values below 1 are clamped up to 1 (min lowered from 5 to allow 1s polls)."""
+    assert _clamp_interval(1) == 1
+    assert _clamp_interval(0) == 1
+    assert _clamp_interval(-100) == 1
 
 
 def test_clamp_above_maximum() -> None:
