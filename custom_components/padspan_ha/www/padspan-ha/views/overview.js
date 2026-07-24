@@ -2160,7 +2160,7 @@ export function render(ctx){
         const isAway = _noSig || (isGhost && (o.rssi == null) && (ageS > _awayTimeoutS2));
         const _recF = _objRecF(o);
         const DOT_CLR = _noSig ? "#94a3b8" : BEACON_CLR;
-        const lbl = (o.user_label||o.private_ble_name||o.name||"?").substring(0,14);
+        const lbl = _dotLabel(o);
         let bx, by;
         let posConf = 0;  // confidence for dashed circle
 
@@ -2279,10 +2279,7 @@ export function render(ctx){
           const isAway = _noSig || (typeof obj.age_s === "number" && obj.age_s > _awayThresh);
           const _recF = _objRecF(obj);
           const _conf = _objConf(obj);
-          // Falls back to the entity-id tail so spiderfied helper entities
-          // (e.g. sensor.david_s_iphone_area) never render as unlabeled dots.
-          const objLabel = obj.user_label || obj.private_ble_name || obj.name
-            || String(obj.entity_id || oKey || "").split(":").pop().split(".").pop().slice(0, 18) || "";
+          const objLabel = _dotLabel(obj);
 
           // Position: server k-NN first, then high-confidence fingerprint, then room centroid + stagger
           let px, py;
