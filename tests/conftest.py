@@ -100,8 +100,18 @@ class _SubscriptableBase:
 
 
 class _FakeDataUpdateCoordinator(_SubscriptableBase):
-    """Stand-in for DataUpdateCoordinator that is subscriptable."""
-    pass
+    """Stand-in for DataUpdateCoordinator that is subscriptable.
+
+    Accepts the real DataUpdateCoordinator __init__ signature so subclasses
+    can be constructed via their genuine __init__ (no manual state
+    replication in tests, which drifted every time __init__ gained state).
+    """
+    def __init__(self, hass: Any = None, logger: Any = None, *,
+                 name: str = "", update_interval: Any = None, **kwargs: Any) -> None:
+        self.hass = hass
+        self.logger = logger
+        self.name = name
+        self.update_interval = update_interval
 
 
 class _FakeCoordinatorEntity(_SubscriptableBase):

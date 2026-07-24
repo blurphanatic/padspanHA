@@ -55,28 +55,11 @@ def _make_coordinator(
 
     hass.data = {DOMAIN: domain_data}
 
-    # Bypass DataUpdateCoordinator.__init__ entirely: the stub base class
-    # provided by conftest.py is just _FakeDataUpdateCoordinator (plain object),
-    # so we can skip super().__init__ and manually call PresenceCoordinator.__init__'s
-    # body by constructing via __new__ + manual init.
-    coord = PresenceCoordinator.__new__(PresenceCoordinator)
-    coord.hass = hass
-
-    # Replicate the __init__ state setup
-    coord._last_seen = {}
-    coord._known_objs = {}
-    coord._away_miss = {}
-    coord._ema_rssi = {}
-    coord._kalman_p = {}
-    coord._room_votes = {}
-    coord._confirmed_room = {}
-    coord._room_confidence = {}
-    coord._rssi_margin_confidence = {}
-    coord._knn_position = {}
-    coord._alert_last_sent = {}
-    coord._pending_room_changes = []
-
-    return coord
+    # Construct via the real __init__ — the conftest stub base accepts the
+    # DataUpdateCoordinator signature, so every attribute the coordinator
+    # gains in future is initialised here automatically (the previous manual
+    # replication broke whenever __init__ grew new state).
+    return PresenceCoordinator(hass)
 
 
 def _gaussian_score(rssi: float, ref: float, n_exp: float, sigma: float) -> float:
@@ -172,39 +155,65 @@ class TestKalmanUpdate:
 class TestKalmanDecay:
     """Tests for silent-source decay and pruning."""
 
-    def test_silent_source_decays_toward_minus_100(self) -> None:
-        """A source that stops reporting should decay toward _EMA_SILENCE_DBM."""
+    def test_silent_source_decays_after_grace(self) -> None:
+        """A silent source holds through the grace period, then decays.
+
+        _SILENCE_GRACE = 2: the first missed poll holds RSSI steady (single
+        missed BLE advertisements are normal jitter); decay starts on the
+        second consecutive miss.
+        """
         coord = _make_coordinator()
         src_area = {"scanner1": "Room"}
 
         # Seed at -60
         coord._smooth_room("dev1", "AA:BB", {"AA:BB": {"scanner1": -60.0}}, src_area)
 
-        # Two polls with no data for scanner1
+        # Miss 1: grace period — held steady
         coord._smooth_room("dev1", "AA:BB", {"AA:BB": {}}, src_area)
         after_one_miss = coord._ema_rssi["AA:BB"]["scanner1"]
+        assert after_one_miss == pytest.approx(-60.0)
 
+        # Miss 2 and 3: decaying toward the silence target
         coord._smooth_room("dev1", "AA:BB", {"AA:BB": {}}, src_area)
         after_two_miss = coord._ema_rssi["AA:BB"]["scanner1"]
-
-        # Should be decaying: each poll moves closer to -100
-        assert after_one_miss < -60.0
-        assert after_two_miss < after_one_miss
+        coord._smooth_room("dev1", "AA:BB", {"AA:BB": {}}, src_area)
+        after_three_miss = coord._ema_rssi["AA:BB"]["scanner1"]
+        assert after_two_miss < -60.0
+        assert after_three_miss < after_two_miss
 
     def test_silent_source_eventually_pruned(self) -> None:
-        """After enough silent polls, the source should be pruned below _EMA_PRUNE_DBM."""
+        """A source silent while OTHERS report decays to -100 and is pruned.
+
+        Partial silence targets -100 dBm (below the prune threshold), so the
+        source is eventually dropped. Total silence targets -95 dBm and is
+        deliberately never pruned (see test below).
+        """
         coord = _make_coordinator()
-        src_area = {"scanner1": "Room"}
+        src_area = {"scanner1": "Room", "scanner2": "Room2"}
 
-        # Seed at -60
-        coord._smooth_room("dev1", "AA:BB", {"AA:BB": {"scanner1": -60.0}}, src_area)
+        # Seed both scanners
+        coord._smooth_room("dev1", "AA:BB", {"AA:BB": {"scanner1": -60.0, "scanner2": -70.0}}, src_area)
 
-        # Hammer with empty data until pruned (should take ~7-8 polls for -98 threshold)
-        for _ in range(20):
-            coord._smooth_room("dev1", "AA:BB", {"AA:BB": {}}, src_area)
+        # scanner2 keeps reporting; scanner1 goes silent
+        for _ in range(30):
+            coord._smooth_room("dev1", "AA:BB", {"AA:BB": {"scanner2": -70.0}}, src_area)
 
         # scanner1 should be pruned from the Kalman cache
         assert "scanner1" not in coord._ema_rssi.get("AA:BB", {})
+
+    def test_totally_silent_device_never_pruned(self) -> None:
+        """Under TOTAL silence the decay target is -95 dBm, above the prune
+        threshold — sources asymptote there and are retained (away handling
+        is done elsewhere; keeping the state avoids re-seeding churn)."""
+        coord = _make_coordinator()
+        src_area = {"scanner1": "Room"}
+
+        coord._smooth_room("dev1", "AA:BB", {"AA:BB": {"scanner1": -60.0}}, src_area)
+        for _ in range(30):
+            coord._smooth_room("dev1", "AA:BB", {"AA:BB": {}}, src_area)
+
+        assert "scanner1" in coord._ema_rssi.get("AA:BB", {})
+        assert coord._ema_rssi["AA:BB"]["scanner1"] == pytest.approx(-95.0, abs=1.5)
 
     def test_active_sources_not_decayed(self) -> None:
         """Sources that keep reporting should not be decayed."""

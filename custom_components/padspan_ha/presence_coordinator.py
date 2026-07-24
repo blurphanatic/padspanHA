@@ -246,6 +246,10 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._kalman_p: dict[str, dict[str, float]] = {}
         # {addr: {source: consecutive_miss_count}} — silence grace tracking
         self._silence_miss: dict[str, dict[str, int]] = {}
+        # (key, old_room, new_room) tuples accumulated during a poll cycle;
+        # reset at the top of _async_update_data, but initialised here too so
+        # _smooth_room is safe to call before the first poll.
+        self._pending_room_changes: list[tuple[str, str | None, str]] = []
 
         # ── Room-vote state (keyed by object key) ────────────────────────────
         # {key: deque of recent candidate rooms}
@@ -1018,10 +1022,11 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Count scanners per floor (for isolated scanner detection)
         _scanners_per_floor: dict[str, int] = {}
-        for _src2 in source_to_area:
-            _fl2 = source_to_floor.get(_src2, "")
-            if _fl2:
-                _scanners_per_floor[_fl2] = _scanners_per_floor.get(_fl2, 0) + 1
+        if source_to_floor:
+            for _src2 in source_to_area:
+                _fl2 = source_to_floor.get(_src2, "")
+                if _fl2:
+                    _scanners_per_floor[_fl2] = _scanners_per_floor.get(_fl2, 0) + 1
 
         live_srcs = addr_src_rssi.get(addr, {})
 
