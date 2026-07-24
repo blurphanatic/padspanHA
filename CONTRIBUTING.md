@@ -42,7 +42,7 @@ template. Describe your use case so we understand *why* the feature matters.
 
 ## How This Project Is Built
 
-PadSpan HA is built by [Garry Broeckling](https://github.com/gbroeckling) — a
+PadSpan HA is built by [Garry Broeckling](https://github.com/gbroeckling): a
 30+ year veteran of coding and scripting who has never claimed to be a fast
 typist. All architecture, product decisions, testing, and releases are
 human-directed. Implementation is AI-assisted using
@@ -50,7 +50,7 @@ human-directed. Implementation is AI-assisted using
 write-test-ship cycle considerably.
 
 If you contribute a PR, there is no requirement to use (or not use) AI tools.
-Write code however you are most productive — what matters is that it works,
+Write code however you are most productive: what matters is that it works,
 follows the existing patterns, and passes review.
 
 ## Code of Conduct

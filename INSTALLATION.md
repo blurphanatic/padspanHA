@@ -1,13 +1,13 @@
 # Installation / Update (IMPORTANT)
 
-## Option A — Recommended: extract into `/config` (HA OS)
+## Option A: Recommended: extract into `/config` (HA OS)
 1. Download the ZIP
 2. Extract it into your Home Assistant `/config` folder (NOT `/config/custom_components`)
    - The ZIP contains `custom_components/padspan_ha/...`
 3. Restart Home Assistant
 4. Hard-refresh the browser (Ctrl+Shift+R)
 
-## Option B — Manual copy
+## Option B: Manual copy
 Copy this folder:
 `custom_components/padspan_ha`
 to:

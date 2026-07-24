@@ -1,8 +1,6 @@
-# PadSpan™ HA
+# PadSpan HA
 
-### The most comprehensive BLE room-presence system for Home Assistant
-
-PadSpan™ HA goes far beyond "home or away." It tells you **which room** every Bluetooth device is in — updated every 5 seconds — with interactive floor plans, 3D multi-floor visualizations, a full calibration system, and 22 dedicated views. No other Home Assistant BLE integration comes close.
+BLE room presence for Home Assistant. It tells you which room every Bluetooth device is in, refreshed every 5 seconds, with floor plans, 3D multi-floor views, a calibration system, and 22 panel views.
 
 ![3D multi-floor tracking with live RSSI heatmap overlay](images/overview-3d-multifloor.jpg)
 
@@ -10,182 +8,180 @@ PadSpan™ HA goes far beyond "home or away." It tells you **which room** every 
 
 ## Why PadSpan?
 
-Most BLE presence integrations give you a config flow and a sensor. PadSpan gives you a **complete tracking workstation** — floor plan editor, room boundary polygons, 3D isometric maps, walk-around calibration, follow mode with email alerts, a training hub, and a full sample/demo mode so you can explore every feature before plugging in hardware.
+Most BLE presence integrations give you a config flow and a sensor. PadSpan gives you a floor plan editor, room boundary polygons, 3D isometric maps, walk-around calibration, follow mode with email alerts, a training hub, and a sample mode so you can explore every feature before plugging in hardware.
 
 It works with your existing BLE scanners (ESPresense, Bermuda proxies, or any HA Bluetooth proxy). No custom firmware. No cloud dependency. Everything runs locally.
 
 ---
 
-## About This Fork
+## About this fork
 
-![PadSpan HA resilience fork](docs/diagrams/hero.png)
+![PadSpan HA resilience fork](docs/diagrams/hero.svg)
 
-This repository is a hardened fork of [gbroeckling/padspanHA](https://github.com/gbroeckling/padspanHA). It tracks upstream (the 0.21.0 WLS multilateration accuracy overhaul is merged) and sends its fixes back as pull requests. What it adds on top is resilience: the panel's first paint cannot go blank, the HA event bus cannot be flooded, presence is honest about silence, and per-poll CPU scales with live devices instead of every device ever seen (untagged history retention is configurable, default one hour; tagged devices are kept forever).
+This repository is a fork of [gbroeckling/padspanHA](https://github.com/gbroeckling/padspanHA) with reliability fixes. It tracks upstream (the 0.21.0 WLS multilateration accuracy overhaul is merged) and sends fixes back as pull requests. The fork fixes the first panel render, event-bus volume, away-device display, and per-poll CPU cost. Untagged history retention is configurable and defaults to one hour. Tagged devices are kept forever.
 
-![Pipeline from BLE advertisement to floor plan, with fork changes marked in amber](docs/diagrams/architecture.png)
+![Pipeline from BLE advertisement to floor plan, with fork changes marked in amber](docs/diagrams/architecture.svg)
 
-**First-load resilience.** Map geometry (`maps_list` + `model_get`) is fetched small-and-first, awaited, and retried; a failed fetch never clobbers a good list, and the live poll starts on first boot and re-fetches missing geometry on every tick. Snapshot payloads are capped (address history is limited to 96 per object) after one rotating-MAC phone accumulated 42,000 addresses and produced ~300MB snapshots that killed the websocket, which is what blanked the floor plan.
+The floor plan used to go blank on first entry. One rotating-MAC phone accumulated 42,000 addresses. Each advertisement carried a copy of that list, which grew snapshots to nearly 300MB. The oversized payload closed the websocket connection and the pending map geometry request failed with it. There was no retry, so the panel stayed blank. The fork caps address history at 96 per object, fetches and awaits map geometry before the large snapshot, retries a failed geometry fetch without replacing a valid list, and requests missing geometry from the poll loop.
 
-![First-load sequence before and after the fix](docs/diagrams/first-load.png)
+![First-load sequence before and after the fix](docs/diagrams/first-load.svg)
 
-**Event hygiene.** `padspan_device_arrived` / `padspan_device_departed` fire for labelled devices only. Previously every rotating-MAC rotation fired a bus event, flooding Home Assistant's event bus until subscribers were force-disconnected at 4096 pending messages. In-panel automation rules still match unlabelled keys.
+Arrive and depart events fire for labelled devices only. Previously each rotating MAC from each passing phone fired a bus event, and Home Assistant force-disconnected subscribers once 4096 messages were pending. Automation rules inside the panel still match unlabelled devices.
 
-**Presence honesty.** A device that stops advertising becomes explicitly "Away (no signal)": a grey dot with an away badge on both the 2D and 3D maps, instead of a stale dot claiming confident room presence. Objects resurrected from the history cache come back marked stale and skip the heavy Kalman/k-NN pipeline until fresh signal arrives.
+A device that stops advertising shows as "Away (no signal)", a grey dot with an away badge on both maps. Its room confidence is cleared instead of reused. Objects restored from the history cache are marked stale and skip the Kalman and k-NN pipeline until a fresh signal arrives.
 
-![Presence lifecycle: live, silence, away, resurrection](docs/diagrams/lifecycle.png)
+![Presence lifecycle: live, silence, away, resurrection](docs/diagrams/lifecycle.svg)
 
-The full fix list is in the [CHANGELOG](CHANGELOG.md) (0.20.72). The diagrams above are generated by [`docs/diagrams/build.py`](docs/diagrams/build.py); SVG sources live alongside the rendered PNGs.
+The full fix list is in the [CHANGELOG](CHANGELOG.md). The diagrams are generated by [`docs/diagrams/build.py`](docs/diagrams/build.py).
 
 ---
 
 ## Screenshots
 
-| 3D Multi-Floor Tracking | 3D Heatmap + Signal Overlay |
+| 3D multi-floor tracking | 3D heatmap and signal overlay |
 |:-:|:-:|
 | ![Live multi-floor isometric view with tracked devices across 3 floors](images/overview-3d-multifloor.jpg) | ![3D overview with RSSI heatmap crosshatch and device positions](images/overview-3d-heatmap.jpg) |
 
-| Maps Library | Scanner-to-Device Graph |
+| Maps library | Scanner-to-device graph |
 |:-:|:-:|
 | ![9 uploaded floor plans organized by floor](images/maps-library-live.jpg) | ![Bipartite graph showing scanner-device BLE connections with RSSI](images/bluetooth-scanner-graph.jpg) |
 
-| Traceback Playback + Distance Traveled | Beacon Tune Calibration |
+| Traceback playback with distance traveled | Beacon tune calibration |
 |:-:|:-:|
 | ![NVR-style playback timeline with per-device distance and reliability](images/traceback-distance.jpg) | ![3D beacon tune with floor stack, auto-cal, and live device positions](images/beacon-tune-calibration.jpg) |
 
-| Pure Live — Immersive Dashboard | Traceback — Movement Playback |
+| Pure Live immersive dashboard | Traceback movement playback |
 |:-:|:-:|
 | ![Full-screen 3D map with pan/zoom, floating stats, scanner sonar, and tracked device strip](images/purelive-immersive.png) | ![NVR-style replay with 3D map, timeline scrubber, and distance travelled per device](images/traceback-playback-3d.png) |
 
-| Sandbox Developer Tools | Floor Plan Editor |
+| Sandbox developer tools | Floor plan editor |
 |:-:|:-:|
-| ![Experimental playground — state inspector, floor towers, live signal bars, raw snapshot](images/sandbox-developer.png) | ![Room boundaries on architectural blueprint](images/floor-plan-edit.png) |
+| ![Experimental playground: state inspector, floor towers, live signal bars, raw snapshot](images/sandbox-developer.png) | ![Room boundaries on architectural blueprint](images/floor-plan-edit.png) |
 
 ---
 
-## Feature Highlights
+## Features
 
-### Presence Tracking
-- Room-level BLE device tracking (5-second refresh)
-- **Follow mode** — animated room map + movement timeline for any tracked device
-- Multi-device simultaneous tracking with per-device email alerts (60 s rate limit)
-- Kalman-filtered RSSI smoothing (replaces simple moving averages)
+### Presence tracking
+- Room-level BLE device tracking with a 5-second refresh
+- Follow mode: an animated room map and movement timeline for any tracked device
+- Multi-device tracking with per-device email alerts (60 second rate limit)
+- Kalman-filtered RSSI smoothing instead of simple moving averages
 - Home/away detection with HA binary sensor entities
-- **Phone & watch tracking** — guided setup wizard with [irk-capture](https://github.com/DerekSeaman/irk-capture) integration, HA Companion App iBeacon for Android, and IRK resolution for Apple devices
-- Private BLE address resolution (iBeacon UUID + IRK support)
-- **Occupancy estimation** — hybrid people counting combining BLE devices, HA person entities, occupancy/motion sensors, and WiFi client counts with a trainable multiplier and RSSI co-location clustering
+- Phone and watch tracking through a guided setup wizard, with [irk-capture](https://github.com/DerekSeaman/irk-capture) integration, HA Companion App iBeacon for Android, and IRK resolution for Apple devices
+- Private BLE address resolution (iBeacon UUID and IRK)
+- Occupancy estimation that combines BLE devices, HA person entities, occupancy and motion sensors, and WiFi client counts, with a trainable multiplier and RSSI co-location clustering
 
-### Device Identity
-- **Stable device identity (padspan_id)** — every physical device gets an immutable ID that survives MAC rotation, iBeacon UUID changes, and firmware updates
+### Device identity
+- Stable device identity (padspan_id): every physical device gets an immutable ID that survives MAC rotation, iBeacon UUID changes, and firmware updates
 - O(1) identity resolution from any volatile key (MAC, iBeacon, canonical_id)
-- Automatic migration from older object/tag systems
+- Automatic migration from older object and tag systems
 - Interactive device registry: merge duplicates, add identities, relabel, delete
 
-### Floor Plans & Maps
+### Floor plans and maps
 - Upload architectural floor plans (PNG/JPG) with auto-scaling
-- **Two-point measure tool** for precise real-world scale calibration with aspect ratio validation
+- Two-point measure tool for real-world scale calibration with aspect ratio validation
 - Draw room boundary polygons directly over blueprints
-- Multi-floor **3D isometric visualization** with live object positions
-- **2D flat map mode** with zoom/pan and toggle filters (scanners, tagged, unknown, rooms)
+- Multi-floor 3D isometric visualization with live object positions
+- 2D flat map mode with zoom, pan, and toggle filters (scanners, tagged, unknown, rooms)
 - Drag-and-place scanner markers with 3-digit radio IDs
-- Auto-detect stale or missing radios on your map
+- Auto-detection of stale or missing radios on the map
 - Master map alignment for multi-floor coordinate consistency
 
 ### Calibration
-- Walk-around fingerprint collection with a **standalone phone-friendly panel**
-- k-NN fingerprint matching + OLS path-loss model fitting per scanner
+- Walk-around fingerprint collection with a standalone phone-friendly panel
+- k-NN fingerprint matching and OLS path-loss model fitting per scanner
 - Coverage heatmap with guided "walk here next" target suggestions
 - Leave-one-out cross-validation for model quality scoring
 - 3D isometric tune view with draggable receiver markers
 
-### Multi-Floor Intelligence
-- **Floor-transition learning** — adaptive dwell-based velocity gate prevents phantom floor changes
+### Multi-floor intelligence
+- Floor-transition learning: an adaptive dwell-based velocity gate prevents phantom floor changes
 - Learned cross-floor RSSI attenuation
-- Outdoor penalties (0.30× Gaussian damping) for exterior boundary rooms
+- Outdoor penalties (0.30x Gaussian damping) for exterior boundary rooms
 
-### Phone & Watch Tracking
+### Phone and watch tracking
 
-Tracking phones is the hardest problem in BLE presence — they rotate their Bluetooth address every ~15 minutes specifically to prevent tracking. PadSpan offers multiple paths depending on your device:
+Phones rotate their Bluetooth address every 15 minutes or so, specifically to prevent tracking. PadSpan offers several paths depending on the device:
 
-| Device | Easiest Method | What You Need |
+| Device | Easiest method | What you need |
 |--------|---------------|---------------|
-| **Android phone** | HA Companion App iBeacon | Install app, enable BLE Transmitter. Done. |
-| **iPhone / iPad** | IRK via [irk-capture](https://github.com/DerekSeaman/irk-capture) | Spare ESP32, flash irk-capture, pair once, paste IRK |
-| **Apple Watch** | IRK via irk-capture | Same as iPhone — pair watch to irk-capture ESP32 |
-| **Tile / Chipolo** | Automatic (iBeacon) | Stable UUID — just works, tag once and the name sticks across rotations |
-| **AirTag** | Probabilistic (experimental) | Enable **Apple Device Classification** + **MAC Rotation Bridging** in Settings → Features. AirTags rotate both MAC and Find My key every ~15 min and expose no stable identifier, so bridging links rotations by advertisement pattern — works while in continuous range, may mis-link in crowded RF environments |
-| **SmartTag** (Samsung) | Probabilistic | Same as AirTag — no stable identifier in the air, relies on MAC Rotation Bridging |
-| **AirPods** | Apple auto-classification | Detected and labeled automatically when feature enabled (display only — does not solve identity) |
+| Android phone | HA Companion App iBeacon | Install the app and enable BLE Transmitter |
+| iPhone / iPad | IRK via [irk-capture](https://github.com/DerekSeaman/irk-capture) | A spare ESP32: flash irk-capture, pair once, paste the IRK |
+| Apple Watch | IRK via irk-capture | Same as iPhone; pair the watch to the irk-capture ESP32 |
+| Tile / Chipolo | Automatic (iBeacon) | Nothing. The UUID is stable, so tag once and the name sticks across rotations |
+| AirTag | Probabilistic (experimental) | Enable Apple Device Classification and MAC Rotation Bridging in Settings, Features. AirTags rotate both MAC and Find My key and expose no stable identifier, so bridging links rotations by advertisement pattern. It works while the tag stays in range and can mis-link in crowded RF environments |
+| SmartTag (Samsung) | Probabilistic | Same as AirTag: no stable identifier in the air, relies on MAC Rotation Bridging |
+| AirPods | Apple auto-classification | Detected and labeled automatically when the feature is enabled. Display only; it does not solve identity |
 
-The **Phone Setup Wizard** (experimental) guides you through each path with step-by-step instructions. If you have an irk-capture ESP32 on your network, PadSpan auto-detects captured IRKs — no manual hex pasting.
+The Phone Setup Wizard (experimental) walks through each path. If an irk-capture ESP32 is on your network, PadSpan detects captured IRKs so you do not paste hex by hand.
 
-For devices where you can't get an IRK, the experimental **MAC Rotation Bridging** feature matches advertisement patterns across address rotations to maintain tracking continuity.
+The IRK extraction workflow is built on [Derek Seaman's irk-capture](https://github.com/DerekSeaman/irk-capture), an ESP32 tool that emulates BLE peripherals to extract Identity Resolving Keys during pairing. It makes phone tracking in Home Assistant practical without rooting devices or owning a Mac.
 
-> **Acknowledgement:** The IRK extraction workflow is built on [Derek Seaman's irk-capture](https://github.com/DerekSeaman/irk-capture) — an ingenious ESP32 tool that emulates BLE peripherals to extract Identity Resolving Keys during pairing. It's what makes practical phone tracking in Home Assistant possible without rooting devices or owning a Mac.
-
-### Scanner Hardware & Management
-- **Tested with 20+ ESP32 boards** — the antenna matters more than the chip. Boards with full-size external antennas consistently outperform chip/PCB antennas for room-level accuracy
-- Top picks: ESP32-S3 with Ethernet + antenna, ESP32-S3 with WiFi + antenna, ESP32-C3 with antenna
-- Auto-discover BLE scanners from Home Assistant integrations
+### Scanner hardware and management
+- Tested with more than 20 ESP32 boards. The antenna matters more than the chip: boards with full-size external antennas consistently beat chip and PCB antennas for room-level accuracy
+- Recommended: ESP32-S3 with Ethernet and an external antenna, ESP32-S3 with WiFi and an antenna, or ESP32-C3 with an antenna
+- Auto-discovery of BLE scanners from Home Assistant integrations
 - Per-scanner signal quality metrics and coverage analysis
 - WiFi SSID, IP address, and connection type display
-- Assign scanners to floors and rooms on the map
+- Scanner assignment to floors and rooms on the map
 
-### Alerts & Automation
-- Email alerts on room change (per device, 60-second rate limit)
-- HA entities: **area sensors**, **distance sensors**, **device trackers**, **binary sensors**
-- Full WebSocket API for custom dashboards and automation
+### Alerts and automation
+- Email alerts on room change (per device, 60 second rate limit)
+- HA entities: area sensors, distance sensors, device trackers, binary sensors
+- A full WebSocket API for custom dashboards and automation
 
-### UI & Experience
-- **Pure Live mode** — immersive full-screen 3D dashboard with pan/zoom, floating glass overlays, and collapsible info panels
-- **22 dedicated views** with Basic and Advanced modes
-- **5-step onboarding wizard** with auto-detection and progress tracking
-- Dark forest-green theme designed for always-on displays
-- Built-in **Training Hub** with 14 animated walkthroughs + full manual
-- **Sample mode** — fully functional demo with synthetic data, no hardware needed
-- **11 languages**: English, Spanish, French, German, Italian, Portuguese, Dutch, Chinese, Japanese, Korean, Russian
-- Standalone calibration panel optimized for phone use during walk-around collection
-- **NVR-style movement playback** — replay tracked device movement on the 3D map
+### UI
+- Pure Live mode: a full-screen 3D dashboard with pan, zoom, floating overlays, and collapsible info panels
+- 22 views with Basic and Advanced modes
+- A 5-step onboarding wizard with auto-detection and progress tracking
+- Dark forest-green theme for always-on displays
+- A built-in Training Hub with 14 animated walkthroughs and a full manual
+- Sample mode: a working demo with synthetic data, no hardware needed
+- 11 languages: English, Spanish, French, German, Italian, Portuguese, Dutch, Chinese, Japanese, Korean, Russian
+- A standalone calibration panel sized for phone use during walk-around collection
+- NVR-style movement playback on the 3D map
 
-### Experimental Features (Settings → Features)
-- **Phone Setup Wizard** — guided flow for tracking phones and watches. Auto-detects [irk-capture](https://github.com/DerekSeaman/irk-capture) ESP32 devices on your network and walks through IRK extraction step by step. Also shows the easy Android path (HA Companion App iBeacon) and Apple IRK options. Credit to [Derek Seaman](https://github.com/DerekSeaman) for the excellent irk-capture tool that makes IRK extraction practical for everyone.
-- **MAC Rotation Bridging** — when a phone's Bluetooth address rotates (every ~15 min), PadSpan matches advertisement characteristics (company ID, services, signal pattern) to tentatively link old and new addresses. Bridges the tracking gap without requiring an IRK. Probabilistic — may occasionally link wrong devices.
-- **Apple Device Classification** — automatically labels Apple devices as iPhone, iPad, Apple Watch, AirPods, or AirTag by decoding Bluetooth Continuity protocol messages. Display-only — does not affect tracking or identity.
-- **Radio Map** — RSSI heatmap overlay using inverse distance weighting
-- **Distortion Map** — k-NN prediction vs reality mismatch visualization
-- **Trackability Rating** — per-device Easy/Medium/Hard scoring
-- **Walk-to-Identify** — discover unknown devices by correlating walking motion
-- **Compass Ring Calibration** — structured 360° RSSI collection
-- **Replay Timeline** — enhanced playback with scoring explainability
+### Experimental features (Settings, Features)
+- Phone Setup Wizard: guided flow for tracking phones and watches, with irk-capture auto-detection
+- MAC Rotation Bridging: when a phone's address rotates, PadSpan matches advertisement characteristics (company ID, services, signal pattern) to tentatively link old and new addresses. Probabilistic; it can occasionally link the wrong devices
+- Apple Device Classification: labels Apple devices as iPhone, iPad, Apple Watch, AirPods, or AirTag by decoding Bluetooth Continuity messages. Display only
+- Radio Map: RSSI heatmap overlay using inverse distance weighting
+- Distortion Map: k-NN prediction versus reality mismatch visualization
+- Trackability Rating: per-device Easy/Medium/Hard scoring
+- Walk-to-Identify: discover unknown devices by correlating walking motion
+- Compass Ring Calibration: structured 360-degree RSSI collection
+- Replay Timeline: playback with scoring explainability
 
 ---
 
-## How It Compares
+## How it compares
 
 | Feature | PadSpan HA | Bermuda | Room Assistant | ESPresense |
 |:--------|:----------:|:-------:|:--------------:|:----------:|
-| Room-level tracking | ✅ | ✅ | ✅ | ✅ |
-| Phone tracking wizard | ✅ | — | — | — |
-| IRK capture integration | ✅ | — | — | ✅ |
-| MAC rotation bridging | ✅ | — | — | — |
-| Apple device auto-classify | ✅ | — | — | ✅ |
-| Visual floor plans | ✅ | — | — | — |
-| 3D multi-floor maps | ✅ | — | — | — |
-| 2D flat map + zoom/pan | ✅ | — | — | — |
-| Room boundary editor | ✅ | — | — | — |
-| Fingerprint calibration | ✅ | — | — | — |
-| Hybrid occupancy counting | ✅ | — | — | — |
-| Stable device identity | ✅ | — | — | — |
-| Training hub (14 walkthroughs) | ✅ | — | — | — |
-| Follow mode + email alerts | ✅ | — | — | — |
-| Onboarding wizard | ✅ | — | — | — |
-| Movement history playback | ✅ | — | — | — |
-| Sample/demo mode | ✅ | — | — | — |
-| Multi-language (11) | ✅ | — | — | — |
-| Dedicated UI views | 22 | Config flow | MQTT config | Web UI |
-| HA sensor entities | ✅ | ✅ | ✅ | ✅ |
-| Distance estimation | ✅ | ✅ | — | ✅ |
-| Kalman RSSI filtering | ✅ | — | — | — |
-| Works with ESPHome proxies | ✅ | ✅ | — | ✗ (own firmware) |
+| Room-level tracking | yes | yes | yes | yes |
+| Phone tracking wizard | yes | no | no | no |
+| IRK capture integration | yes | no | no | yes |
+| MAC rotation bridging | yes | no | no | no |
+| Apple device auto-classify | yes | no | no | yes |
+| Visual floor plans | yes | no | no | no |
+| 3D multi-floor maps | yes | no | no | no |
+| 2D flat map with zoom/pan | yes | no | no | no |
+| Room boundary editor | yes | no | no | no |
+| Fingerprint calibration | yes | no | no | no |
+| Hybrid occupancy counting | yes | no | no | no |
+| Stable device identity | yes | no | no | no |
+| Training hub (14 walkthroughs) | yes | no | no | no |
+| Follow mode with email alerts | yes | no | no | no |
+| Onboarding wizard | yes | no | no | no |
+| Movement history playback | yes | no | no | no |
+| Sample/demo mode | yes | no | no | no |
+| Multi-language (11) | yes | no | no | no |
+| Dedicated UI views | 22 | config flow | MQTT config | web UI |
+| HA sensor entities | yes | yes | yes | yes |
+| Distance estimation | yes | yes | no | yes |
+| Kalman RSSI filtering | yes | no | no | no |
+| Works with ESPHome proxies | yes | yes | no | no (own firmware) |
 
 ---
 
@@ -194,36 +190,36 @@ For devices where you can't get an IRK, the experimental **MAC Rotation Bridging
 ### Via HACS (recommended)
 
 1. Open HACS in your Home Assistant instance
-2. Add this repository as a **custom repository** (Integration type)
-3. Search for and install **PadSpan HA**
-4. **Restart Home Assistant completely** (Settings → System → Restart)
-5. Add the integration: Settings → Devices & Services → Add Integration → PadSpan HA
+2. Add this repository as a custom repository (Integration type)
+3. Search for and install PadSpan HA
+4. Restart Home Assistant completely (Settings, System, Restart)
+5. Add the integration: Settings, Devices & Services, Add Integration, PadSpan HA
 
 ### Manual
 
-1. Download the [latest release](https://github.com/gbroeckling/padspanHA/releases/latest)
+1. Download the [latest release](https://github.com/blurphanatic/padspanHA/releases/latest)
 2. Extract `custom_components/padspan_ha/` into your HA `custom_components/` directory
 3. Restart Home Assistant
-4. Add the integration: Settings → Devices & Services → Add Integration → PadSpan HA
+4. Add the integration: Settings, Devices & Services, Add Integration, PadSpan HA
 
 ---
 
 ## Requirements
 
-- Home Assistant **2024.1** or newer
+- Home Assistant 2024.1 or newer
 - At least one BLE scanner (ESPresense, Bermuda proxy, or HA Bluetooth proxy)
-- HACS (recommended for easy installation and updates)
+- HACS, if you want easy installation and updates
 
 ---
 
-## Quick Start
+## Quick start
 
 1. Install via HACS and restart HA
 2. Add the PadSpan HA integration
-3. Open the **PadSpan HA** panel in the sidebar
-4. The **onboarding wizard** guides you through 5 steps: upload a map, set scale, draw rooms, place scanners, calibrate
-5. Try **Sample mode** (top-right toggle) to explore every feature with demo data
-6. Switch to **Live mode** when ready — your BLE scanners are auto-discovered
+3. Open the PadSpan HA panel in the sidebar
+4. The onboarding wizard covers the 5 setup steps: upload a map, set scale, draw rooms, place scanners, calibrate
+5. Try Sample mode (top-right toggle) to explore with demo data
+6. Switch to Live mode when ready; your BLE scanners are auto-discovered
 7. Tag your devices, upload a floor plan, and start tracking
 
 ---
@@ -239,21 +235,19 @@ For devices where you can't get an IRK, the experimental **MAC Rotation Bridging
 | [WebSocket API](docs/02_WEBSOCKET_API.md) | API reference for custom integrations |
 | [Changelog](CHANGELOG.md) | Full version history |
 
-The **Training Hub** inside PadSpan has 14 animated walkthroughs covering every feature — from BLE basics to Private BLE/IRK setup.
+The Training Hub inside PadSpan has 14 animated walkthroughs, from BLE basics to Private BLE and IRK setup.
 
 ---
 
 ## Development
 
-PadSpan HA is built by [Garry Broeckling](https://github.com/gbroeckling) — a 30+ year veteran of coding and scripting who has never claimed to be a fast typist. All architecture, product decisions, testing, and releases are human-directed. Implementation is AI-assisted using [Claude](https://claude.ai) by Anthropic, which accelerates the write–test–ship cycle considerably. Think of it as one developer with strong opinions and a very patient pair-programming partner.
-
-The result: a solo project that ships features at a pace that would normally require a team — without compromising on quality, security, or code review.
+Upstream PadSpan HA is built by [Garry Broeckling](https://github.com/gbroeckling). This fork is maintained by Michael Coletta. See [NOTICE](NOTICE.md) for the copyright and trademark details.
 
 ---
 
 ## Donate
 
-If this project saved you time (or you just like knowing which room your cat is in), you can buy me a coffee:
+If the upstream project saved you time, you can buy Garry a coffee:
 
 [![Donate with PayPal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/donate/?hosted_button_id=W489P2RXBMXKW)
 
@@ -261,6 +255,6 @@ If this project saved you time (or you just like knowing which room your cat is 
 
 ## License
 
-Copyright (C) 2026 Garry Broeckling. Licensed under the [GNU General Public License v3.0](LICENSE).
+Copyright (C) 2026 Garry Broeckling. Fork modifications Copyright (C) 2026 Michael Coletta. Licensed under the [GNU General Public License v3.0](LICENSE).
 
-PadSpan is a trademark of Garry Broeckling.
+PadSpan is a trademark of Garry Broeckling. This fork is not endorsed by the trademark owner. See [NOTICE](NOTICE.md).

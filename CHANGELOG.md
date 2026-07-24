@@ -4,52 +4,52 @@ All notable changes to PadSpan HA are documented here.
 
 ---
 
-## 0.20.72 — Stability & Performance Overhaul (2026-07-24)
+## 0.20.72 (2026-07-24)
 
-The floor-plan-blank-on-first-entry bug is fixed, along with the event storm, two memory leaks, and a per-poll CPU cost that grew with every device ever seen.
+Fixes the blank floor plan on first panel entry, the event storm, two memory leaks, and a per-poll CPU cost that grew with every device ever seen.
 
 ### Fixed
-- **Blank floor plan on first panel entry** — three compounding causes closed:
-  - A rotating-MAC phone accumulated 42,000 addresses in `all_addresses`; copying that list onto every advertisement ballooned the live snapshot to ~300MB, which killed the websocket connection and took the map-geometry fetch down with it. Address history is now capped at 96 per object (8 per advertisement xref), and old poisoned cache entries are scrubbed in place at resurrection.
-  - The panel fetched map geometry in the same batch as the heavyweight snapshot, and nothing ever re-fetched it after a failure. `maps_list` + `model` now load first and awaited, `maps_list` gets a retry and never clobbers a good list, and the poll tick heals missing geometry.
-  - Live polling never started on first boot (the data-mode check raced the settings fetch); it now starts after the first refresh resolves.
-- **Event storm** — `padspan_device_arrived`/`departed` fired for every rotating-MAC rotation, flooding the HA event bus until subscribers were force-disconnected at 4096 pending messages (hourly on a busy network). Bus events now fire only for labelled devices; in-panel automation rules still match unlabelled keys.
-- **Panel died after integration reload** — a duplicate `customElements.define` threw and aborted init (dead buttons, watchdog loop). Both panels now define once.
-- **Kalman state leak** — eviction popped the `ble:`-prefixed key but state was keyed by bare MAC, so every device that ever passed by left permanent entries in three dicts. Also drops emptied per-address dicts after silence decay.
-- **Per-poll CPU scaled with history, not live devices** — every object in the 7-day cache re-ran the full Kalman/k-NN pipeline each poll. Cache-resurrected objects are marked `_stale` again (the flag was read but never set — dormant since an earlier refactor) and no-signal stale objects skip the pipeline. Re-entry vote reset works again as a result.
-- **HA froze for seconds on large map extend/revert** — the pure-Python PNG pixel work now runs off the event loop.
-- **Two crashes caught by the revived test suite** — a `None` deref in scanners-per-floor counting and `_pending_room_changes` missing before the first poll.
-- **Renamed Bermuda trackers** (`device_tracker.<name>_bermuda_tracker`) now fold into their phone's `irk:` object by resolved-MAC match instead of floating as standalone objects.
-- **Devices search box lost focus every keystroke** — search now filters in place without re-rendering.
-- **Maps store normalization was never persisted** (the re-save check compared an object against itself).
+- Blank floor plan on first panel entry. Three causes, all closed:
+  - A rotating-MAC phone accumulated 42,000 addresses in `all_addresses`. Copying that list onto every advertisement grew the live snapshot to roughly 300MB, which killed the websocket connection, and the map-geometry fetch died with it. Address history is now capped at 96 per object and 8 per advertisement xref, and oversized cache entries are scrubbed in place at resurrection.
+  - The panel fetched map geometry in the same batch as the heavyweight snapshot, and nothing re-fetched it after a failure. `maps_list` and `model` now load first and awaited, `maps_list` retries once and never clobbers a good list, and the poll tick re-fetches missing geometry.
+  - Live polling never started on first boot because the data-mode check raced the settings fetch. It now starts after the first refresh resolves.
+- Event storm: `padspan_device_arrived` and `padspan_device_departed` fired for every rotating-MAC rotation. This flooded the HA event bus, and subscribers were force-disconnected at 4096 pending messages. Bus events now fire only for labelled devices. Automation rules in the panel still match unlabelled keys.
+- Panel died after an integration reload: a duplicate `customElements.define` threw and aborted init, leaving dead buttons and a watchdog loop. Both panels now define once.
+- Kalman state leak: eviction popped the `ble:`-prefixed key, but the state was keyed by bare MAC, so every device that ever passed by left permanent entries in three dicts. Emptied per-address dicts are also dropped after silence decay.
+- Per-poll CPU scaled with history instead of live devices: every object in the history cache re-ran the full Kalman and k-NN pipeline on each poll. Cache-resurrected objects are marked `_stale` again (the flag was read in two places but set nowhere) and no-signal stale objects skip the pipeline. The re-entry vote reset works again as a result.
+- HA froze for seconds on large map extend and revert. The pure-Python PNG pixel work now runs off the event loop.
+- Two crashes caught by the revived test suite: a `None` dereference in scanners-per-floor counting, and `_pending_room_changes` missing before the first poll.
+- Renamed Bermuda trackers (`device_tracker.<name>_bermuda_tracker`) now fold into their phone's `irk:` object by resolved-MAC match instead of appearing as standalone objects.
+- The devices search box lost focus on every keystroke. Search now filters in place without re-rendering.
+- Maps store normalization was never persisted: the re-save check compared an object against itself.
 
 ### Added
-- **3D iso map parity** — recency fade, signal bars, and certainty presentation now match the 2D map.
-- **Explicit "Away (no signal)" state** — grey dot + away badge on both maps instead of an ambiguous fade.
-- **Reachable rotation** — the 3D map reserves margins for the rotated bounding box so corners stay scrollable.
+- The 3D iso map now shows the same recency fade, signal bars, and certainty presentation as the 2D map.
+- An explicit "Away (no signal)" state: a grey dot with an away badge on both maps, instead of an ambiguous fade.
+- The 3D map reserves margins for the rotated bounding box, so corners stay reachable by scrolling after rotation.
 
 ### Internal
-- Test suite revived: 58 failures → 0 (179 passing); coordinator tests now construct via the real `__init__` so they can't drift stale; `requirements_test.txt` restored.
-- Single-pass snapshot summary counts; silent excepts around ad enrichment and room assignment now log; dead code removed.
+- Test suite revived, from 58 failures to 179 passing. Coordinator tests now construct via the real `__init__` so they cannot drift stale. `requirements_test.txt` restored.
+- Single-pass snapshot summary counts. The silent excepts around ad enrichment and room assignment now log. Dead code removed.
 
 ---
 
-## 0.19.0 — Stable Release (2026-03-24)
+## 0.19.0: Stable Release (2026-03-24)
 
 Consolidates all v0.18.x fixes into a clean stable release.
 
 ### Fixed
-- **Version display corrected** — APP_VERSION in panel.js and lights_panel.js was hardcoded at 0.17.1 and never updated. Now all 5 version sources (const.py, build_info.py, manifest.json, panel.js, lights_panel.js) are aligned.
-- **UI freeze from wizard crash** — wizard auto-complete and Skip button called `this.actions.settingsSave` before actions was initialized, crashing `_renderCurrentView` and freezing the entire UI. All `this.actions` references now use optional chaining.
-- **Wizard only shows on Overview** — no longer blocks navigation to other tabs.
-- **Wizard recognizes Beacon Tune calibration** — checks fabric scanner positions, not just Pin & Listen points.
-- **k-NN logging flood** — 652 per-cycle warnings downgraded to DEBUG. Was choking the HA event loop and degrading WebSocket responsiveness.
-- **Indoor devices misplaced outdoors** — outdoor room score damping now applies to all devices unless already confirmed outdoor.
-- **Hidden floors hide objects in 3D overview** — objects on disabled floors no longer render.
+- **Version display corrected**: APP_VERSION in panel.js and lights_panel.js was hardcoded at 0.17.1 and never updated. Now all 5 version sources (const.py, build_info.py, manifest.json, panel.js, lights_panel.js) are aligned.
+- **UI freeze from wizard crash**: wizard auto-complete and Skip button called `this.actions.settingsSave` before actions was initialized, crashing `_renderCurrentView` and freezing the entire UI. All `this.actions` references now use optional chaining.
+- **Wizard only shows on Overview**: no longer blocks navigation to other tabs.
+- **Wizard recognizes Beacon Tune calibration**: checks fabric scanner positions, not just Pin & Listen points.
+- **k-NN logging flood**: 652 per-cycle warnings downgraded to DEBUG. Was choking the HA event loop and degrading WebSocket responsiveness.
+- **Indoor devices misplaced outdoors**: outdoor room score damping now applies to all devices unless already confirmed outdoor.
+- **Hidden floors hide objects in 3D overview**: objects on disabled floors no longer render.
 - **Private BLE friendly names** on map, follow, and devices views.
 - **Map scale save crash** fixed.
 - **Occupancy training save crash** fixed.
-- **HACS ZIP structure** — verified flat layout matching v0.17.1.
+- **HACS ZIP structure**: verified flat layout matching v0.17.1.
 
 ### Documentation
 - README rewritten for v0.17+ features
@@ -58,7 +58,7 @@ Consolidates all v0.18.x fixes into a clean stable release.
 
 ---
 
-## 0.18.2 — Stable Release (2026-03-24)
+## 0.18.2: Stable Release (2026-03-24)
 
 Consolidates all v0.17.2–v0.18.1 fixes into a clean stable release. Version string now consistent across all three sources (const.py, manifest.json, build_info.py).
 
@@ -72,21 +72,21 @@ Consolidates all v0.17.2–v0.18.1 fixes into a clean stable release. Version st
 
 ---
 
-## 0.18.1 — Onboarding Wizard Fix (2026-03-24)
+## 0.18.1: Onboarding Wizard Fix (2026-03-24)
 
 ### Fixed
-- **Wizard step order** — reordered to logical sequence: Upload → Set Scale → Draw Rooms → Place Scanners → Calibrate. All map setup steps now run consecutively before calibration, eliminating unnecessary context-switching between views.
-- **Sub-tab routing** — clicking a wizard step now navigates directly to the correct sub-tab (e.g., "Upload Floor Plan" goes to Maps → Upload tab, "Calibrate" goes to Calibration → Pin & Listen tab). Previously all steps landed on the default tab.
-- **Basic mode calibration crash** — clicking "Place Scanners" or "Calibrate" in Basic mode now auto-promotes to Advanced mode so the Calibration view is visible. Previously these steps navigated to an invisible view.
+- **Wizard step order**: reordered to logical sequence: Upload → Set Scale → Draw Rooms → Place Scanners → Calibrate. All map setup steps now run consecutively before calibration, eliminating unnecessary context-switching between views.
+- **Sub-tab routing**: clicking a wizard step now navigates directly to the correct sub-tab (e.g., "Upload Floor Plan" goes to Maps → Upload tab, "Calibrate" goes to Calibration → Pin & Listen tab). Previously all steps landed on the default tab.
+- **Basic mode calibration crash**: clicking "Place Scanners" or "Calibrate" in Basic mode now auto-promotes to Advanced mode so the Calibration view is visible. Previously these steps navigated to an invisible view.
 
 ---
 
-## 0.18.0 — Stable Release (2026-03-24)
+## 0.18.0: Stable Release (2026-03-24)
 
 ### Documentation
 - **README rewritten** for v0.17+ features: Device Registry, positioning fabric, occupancy estimation, onboarding wizard, 2D map mode, measure tool, multi-floor intelligence, experimental features, movement playback, comparison table updated (22 views)
-- **Getting Started guide updated** — onboarding wizard steps, Apple device tracking (Private BLE/IRK), occupancy estimation, movement history, troubleshooting for v0.17 fixes
-- **Floor Plan Setup guide updated** — measure tool instructions, master map concept, 2D flat map mode, multi-floor alignment workflow
+- **Getting Started guide updated**: onboarding wizard steps, Apple device tracking (Private BLE/IRK), occupancy estimation, movement history, troubleshooting for v0.17 fixes
+- **Floor Plan Setup guide updated**: measure tool instructions, master map concept, 2D flat map mode, multi-floor alignment workflow
 - **Documentation index** added to README linking all guides
 
 ### Fixed (from v0.17.2–v0.17.3)
@@ -98,92 +98,92 @@ Consolidates all v0.17.2–v0.18.1 fixes into a clean stable release. Version st
 
 ---
 
-## 0.17.3 — Bug Fix (2026-03-24)
+## 0.17.3: Bug Fix (2026-03-24)
 
 ### Fixed
-- **Private BLE devices show friendly name instead of MAC** — map, follow, and devices views now use the resolved `private_ble_name` (e.g., "Adam's iPhone") when no user label is set, instead of displaying the raw rotating MAC address. Affects overview (2D, 3D, room chips, ISO stack), follow view, and devices list.
+- **Private BLE devices show friendly name instead of MAC**: map, follow, and devices views now use the resolved `private_ble_name` (e.g., "Adam's iPhone") when no user label is set, instead of displaying the raw rotating MAC address. Affects overview (2D, 3D, room chips, ISO stack), follow view, and devices list.
 
 ---
 
-## 0.17.2 — Bug Fix (2026-03-24)
+## 0.17.2: Bug Fix (2026-03-24)
 
 ### Fixed
-- **Map scale save crash** — "Save Scale" button referenced `scale_x_m` / `scale_y_m` before they were defined, causing `ReferenceError` and preventing scale saves (maps.js:1944)
-- **Occupancy training save crash** — `ws_occupancy_train` called `_st.async_save()` which doesn't exist on `SettingsStore`; corrected to `_st.store.async_save(_st.data)` (websocket.py:8374)
-- **Blocking `scandir` in event loop** — factory reset's map-file cleanup used synchronous `iterdir()` / `is_dir()` inside an async handler, triggering HA's blocking-call detector; wrapped in `asyncio.to_thread` (websocket.py:7508)
-- **Onboarding step click crash** — `this.actions.renderRooms()` could fail with `TypeError` if `actions` was undefined during panel init; added optional chaining with fallback (panel.js:2414)
+- **Map scale save crash**: "Save Scale" button referenced `scale_x_m` / `scale_y_m` before they were defined, causing `ReferenceError` and preventing scale saves (maps.js:1944)
+- **Occupancy training save crash**: `ws_occupancy_train` called `_st.async_save()` which doesn't exist on `SettingsStore`; corrected to `_st.store.async_save(_st.data)` (websocket.py:8374)
+- **Blocking `scandir` in event loop**: factory reset's map-file cleanup used synchronous `iterdir()` / `is_dir()` inside an async handler, triggering HA's blocking-call detector; wrapped in `asyncio.to_thread` (websocket.py:7508)
+- **Onboarding step click crash**: `this.actions.renderRooms()` could fail with `TypeError` if `actions` was undefined during panel init; added optional chaining with fallback (panel.js:2414)
 
 ---
 
-## 0.17.0 — Stable Release (2026-03-23)
+## 0.17.0: Stable Release (2026-03-23)
 
 Major release with 78 commits since last stable (v0.15.25). Introduces the Device Registry identity system, positioning fabric decoupling, multi-floor accuracy learning, occupancy estimation, and an onboarding wizard.
 
 ### Device Registry (NEW)
-- **Stable device identity** — every physical device gets an immutable `padspan_id` (format: `ps_<12 hex chars>`) that survives MAC rotation, iBeacon UUID changes, and firmware updates
-- **Identity resolution** — O(1) lookup from any volatile key (MAC, iBeacon, canonical_id) to stable padspan_id
-- **Automatic migration** — existing labeled objects in ObjectStore are auto-migrated to DeviceRegistry on first startup
-- **Label pipeline** — DeviceRegistry is now the primary label source; ObjectStore is a thin fallback
-- **HA entity identity** — sensor and device_tracker entities use padspan_id for stable HA device identity
-- **Frontend management** — Devices view has interactive registry: merge duplicates, add identities, relabel, delete, view identity chains
-- **7 WS commands** — list, migrate, merge, resolve, label_set, add_identity, delete
-- **Health checks** — Device Registry status, Label Pipeline health, dependent store migration progress
+- **Stable device identity**: every physical device gets an immutable `padspan_id` (format: `ps_<12 hex chars>`) that survives MAC rotation, iBeacon UUID changes, and firmware updates
+- **Identity resolution**: O(1) lookup from any volatile key (MAC, iBeacon, canonical_id) to stable padspan_id
+- **Automatic migration**: existing labeled objects in ObjectStore are auto-migrated to DeviceRegistry on first startup
+- **Label pipeline**: DeviceRegistry is now the primary label source; ObjectStore is a thin fallback
+- **HA entity identity**: sensor and device_tracker entities use padspan_id for stable HA device identity
+- **Frontend management**: Devices view has interactive registry: merge duplicates, add identities, relabel, delete, view identity chains
+- **7 WS commands**: list, migrate, merge, resolve, label_set, add_identity, delete
+- **Health checks**: Device Registry status, Label Pipeline health, dependent store migration progress
 
 ### Positioning Fabric (decoupling from maps)
-- **Fabric is the authority** — all spatial data (scanner positions, room geometry, RF barriers, beacon positions) stored in real-world metres in the positioning fabric
-- **Maps are setup tools only** — floor plan images no longer own positioning data, overview map toggle defaults to off
-- **Metre-space coordinates** — all stores use real-world metres with floor_id references
-- **Map transforms** — affine transforms convert between map fracs and metres
-- **Measure tool** — two-point reference distance calibration with aspect ratio validation
+- **Fabric is the authority**: all spatial data (scanner positions, room geometry, RF barriers, beacon positions) stored in real-world metres in the positioning fabric
+- **Maps are setup tools only**: floor plan images no longer own positioning data, overview map toggle defaults to off
+- **Metre-space coordinates**: all stores use real-world metres with floor_id references
+- **Map transforms**: affine transforms convert between map fracs and metres
+- **Measure tool**: two-point reference distance calibration with aspect ratio validation
 
 ### Multi-Floor Accuracy
-- **Floor-transition learning** — adaptive store records floor-to-floor transitions with Welford stats on dwell time
-- **Dwell-based velocity gate** — short dwell (<30s) requires unanimous vote; medium dwell (30-120s) needs supermajority for cross-floor; long dwell (>120s) uses normal threshold
-- **Learned cross-floor attenuation** — Gaussian scorer applies learned RSSI corrections to cross-floor scanners when adaptive floor detection is enabled
-- **Outdoor penalties** — outdoor scanners get 0.30x Gaussian damping; indoor-outdoor transitions require 4x floor stickiness
+- **Floor-transition learning**: adaptive store records floor-to-floor transitions with Welford stats on dwell time
+- **Dwell-based velocity gate**: short dwell (<30s) requires unanimous vote; medium dwell (30-120s) needs supermajority for cross-floor; long dwell (>120s) uses normal threshold
+- **Learned cross-floor attenuation**: Gaussian scorer applies learned RSSI corrections to cross-floor scanners when adaptive floor detection is enabled
+- **Outdoor penalties**: outdoor scanners get 0.30x Gaussian damping; indoor-outdoor transitions require 4x floor stickiness
 
 ### Occupancy Estimation
-- **Dedicated Occupancy dashboard** — new sidebar view with building summary, per-room breakdown, training controls, and training history
-- **Hybrid counting** — identified devices count 1:1, unidentified BLE with dwell >5min count with configurable multiplier (default 1.5x)
-- **Training** — enter actual headcount to adjust the multiplier via EMA learning
+- **Dedicated Occupancy dashboard**: new sidebar view with building summary, per-room breakdown, training controls, and training history
+- **Hybrid counting**: identified devices count 1:1, unidentified BLE with dwell >5min count with configurable multiplier (default 1.5x)
+- **Training**: enter actual headcount to adjust the multiplier via EMA learning
 
 ### Onboarding Wizard
-- **Guided first-run setup** — persistent progress bar detects 5 steps: upload floor plan, set scale, place scanners, draw rooms, calibrate
-- **Auto-detection** — each step auto-completes when its data is detected
-- **Click-to-navigate** — each step links directly to the right view
-- **Skip option** — dismisses permanently via settings
+- **Guided first-run setup**: persistent progress bar detects 5 steps: upload floor plan, set scale, place scanners, draw rooms, calibrate
+- **Auto-detection**: each step auto-completes when its data is detected
+- **Click-to-navigate**: each step links directly to the right view
+- **Skip option**: dismisses permanently via settings
 
 ### Calibration & Beacon Tune Fixes
-- **Room polygons no longer block dragging** — `pointer-events: none` on room polygons in both Tune and Beacon Tune
-- **Save-pulse animation** — save button pulses green when there are unsaved changes (dynamically updated after drags)
-- **Beacon sync to maps** — fabric beacons are now synced back to maps store for consistent rendering
-- **Unique beacon IDs** — prevents drag handler from matching wrong beacon when multiple have empty IDs
-- **SVG not rebuilt mid-drag** — `_refreshSVG()` checks `_dragging` flag
-- **Watchdog fix** — no longer force-renders on non-live views (was disrupting calibration mid-drag)
-- **Out-of-bounds beacons filtered** — beacons outside map coordinate range are skipped instead of clamped to edges
+- **Room polygons no longer block dragging**: `pointer-events: none` on room polygons in both Tune and Beacon Tune
+- **Save-pulse animation**: save button pulses green when there are unsaved changes (dynamically updated after drags)
+- **Beacon sync to maps**: fabric beacons are now synced back to maps store for consistent rendering
+- **Unique beacon IDs**: prevents drag handler from matching wrong beacon when multiple have empty IDs
+- **SVG not rebuilt mid-drag**: `_refreshSVG()` checks `_dragging` flag
+- **Watchdog fix**: no longer force-renders on non-live views (was disrupting calibration mid-drag)
+- **Out-of-bounds beacons filtered**: beacons outside map coordinate range are skipped instead of clamped to edges
 
 ### Distance Traveled
-- **Fixed data reading** — was reading `frame.objects` instead of `frame.o` (compact format), producing zero distance for everything
-- **Jitter filtering** — steps <0.5m ignored, same-room capped at 3m, time-gap scaling for downsampled views
-- **Reliability score** — shows what % of position steps passed the jitter filter
-- **Investigate button** — popup showing total steps, good steps, jitter filtered, max step
-- **Stationary references** — mark known-fixed devices as references; their phantom distance becomes a BLE accuracy diagnostic
-- **BLE Accuracy rating** — Excellent/Good/Fair/Poor based on total phantom distance from reference devices
+- **Fixed data reading**: was reading `frame.objects` instead of `frame.o` (compact format), producing zero distance for everything
+- **Jitter filtering**: steps <0.5m ignored, same-room capped at 3m, time-gap scaling for downsampled views
+- **Reliability score**: shows what % of position steps passed the jitter filter
+- **Investigate button**: popup showing total steps, good steps, jitter filtered, max step
+- **Stationary references**: mark known-fixed devices as references; their phantom distance becomes a BLE accuracy diagnostic
+- **BLE Accuracy rating**: Excellent/Good/Fair/Poor based on total phantom distance from reference devices
 
 ### Other
 - **Donate button** added to README (PayPal)
-- **Traceback** — padspan_id recorded on each frame object for stable history
-- **Movement history** — padspan_id on room transition records
-- **Follow alerts** — padspan_id auto-backfilled on startup
-- **`padspan_id` in HA entity attributes** — visible in developer tools on area sensors and device trackers
+- **Traceback**: padspan_id recorded on each frame object for stable history
+- **Movement history**: padspan_id on room transition records
+- **Follow alerts**: padspan_id auto-backfilled on startup
+- **`padspan_id` in HA entity attributes**: visible in developer tools on area sensors and device trackers
 
 ---
 
-## 0.5.91 — Hardware Guide & Cleanup (2026-03-01)
+## 0.5.91: Hardware Guide & Cleanup (2026-03-01)
 
 ### Added
-- **Scanner Hardware walkthrough** — New Training Hub walkthrough with animated SVGs covering antenna comparison, board recommendations, and why room-level tracking demands better hardware than home/away
-- **Scanner Hardware manual section** — Detailed reference in Training Hub manual with tested board recommendations (ESP32-S3 + Ethernet, ESP32-S3 + WiFi, ESP32-C3 — all with external antennas)
+- **Scanner Hardware walkthrough**: New Training Hub walkthrough with animated SVGs covering antenna comparison, board recommendations, and why room-level tracking demands better hardware than home/away
+- **Scanner Hardware manual section**: Detailed reference in Training Hub manual with tested board recommendations (ESP32-S3 + Ethernet, ESP32-S3 + WiFi, ESP32-C3: all with external antennas)
 - Hardware guidance added to Getting Started guide and README
 - `.gitignore` updated to exclude dev artifacts
 
@@ -196,45 +196,45 @@ Major release with 78 commits since last stable (v0.15.25). Introduces the Devic
 
 ---
 
-## 0.5.88 — Beta Launch Prep (2026-02-28)
+## 0.5.88: Beta Launch Prep (2026-02-28)
 
 ### Added
-- **BLE data enrichment** — Objects now show decoded company names (Apple, Samsung, Google, Xiaomi, etc.), device types (Find My, AirPods, Nearby Info), and GATT service names (Battery, Tile, Device Information) as color-coded badges. Search by company or device type in the Objects tab.
-- **QA Radio Analysis card** — Per-radio health scoring with activity metrics, cross-scanner overlap comparison, and network info (IP, SSID, WiFi signal)
-- **Development disclosure** — README, CONTRIBUTING, and repo topics transparently describe AI-assisted development process
-- CI tests — 36 automated tests for maps store, object store, config flow
+- **BLE data enrichment**: Objects now show decoded company names (Apple, Samsung, Google, Xiaomi, etc.), device types (Find My, AirPods, Nearby Info), and GATT service names (Battery, Tile, Device Information) as color-coded badges. Search by company or device type in the Objects tab.
+- **QA Radio Analysis card**: Per-radio health scoring with activity metrics, cross-scanner overlap comparison, and network info (IP, SSID, WiFi signal)
+- **Development disclosure**: README, CONTRIBUTING, and repo topics transparently describe AI-assisted development process
+- CI tests: 36 automated tests for maps store, object store, config flow
 - GitHub issue templates (bug report + feature request)
 - CONTRIBUTING.md with development setup guide
 - `connectable` flag captured per BLE advertisement
 
 ### Fixed
-- **Security** — Escaped all user-controlled strings in overview, maps, and settings SVG innerHTML (XSS prevention)
-- **Security** — Admin-only gating on destructive WebSocket handlers (maps delete, area delete, entity delete, calibration clear, integration reload)
-- **Security** — Map upload 20MB size limit + path traversal protection on file operations
-- **Mobile** — Tooltip overflow on small screens, input minWidth overflow, toolbar wrapping
-- **Performance** — Visibility handler and modal ESC listener now properly cleaned up on disconnect (prevents memory leak in long sessions)
+- **Security**: Escaped all user-controlled strings in overview, maps, and settings SVG innerHTML (XSS prevention)
+- **Security**: Admin-only gating on destructive WebSocket handlers (maps delete, area delete, entity delete, calibration clear, integration reload)
+- **Security**: Map upload 20MB size limit + path traversal protection on file operations
+- **Mobile**: Tooltip overflow on small screens, input minWidth overflow, toolbar wrapping
+- **Performance**: Visibility handler and modal ESC listener now properly cleaned up on disconnect (prevents memory leak in long sessions)
 - `esc is not defined` error in maps.js 3D Stack view
 - Radio Analysis identity section words running together
 - Network info only showing for one radio (backend now tries source slug)
 
 ### Changed
-- Radio health scoring only flags provable issues — "Unhealthy" for hard failures, "Fair" for ambiguous, "Healthy" otherwise
+- Radio health scoring only flags provable issues: "Unhealthy" for hard failures, "Fair" for ambiguous, "Healthy" otherwise
 - `binary_sensor.py` proper `async_setup_entry` stub (was causing silent platform failure)
 - Config flow exception handling narrowed from `Exception` to `(ValueError, TypeError)`
 
 ---
 
-## 0.5.79 — Training Hub & Documentation (2026-02-27)
+## 0.5.79: Training Hub & Documentation (2026-02-27)
 
 ### Added
-- **Training Hub** — Guided walkthroughs for Overview, Follow, Objects, Maps, Settings, and Calibration
+- **Training Hub**: Guided walkthroughs for Overview, Follow, Objects, Maps, Settings, and Calibration
 - 9 new Manual sections covering all remaining views
 - Calibration walkthrough with 4-step animated guide
 - Marketing screenshots and launch documentation
 
 ---
 
-## 0.5.77 — HACS & Hassfest Validation (2026-02-27)
+## 0.5.77: HACS & Hassfest Validation (2026-02-27)
 
 ### Added
 - HACS validation CI workflow
@@ -248,26 +248,26 @@ Major release with 78 commits since last stable (v0.15.25). Introduces the Devic
 
 ---
 
-## 0.5.75 — Major Feature Release (2026-02-27)
+## 0.5.75: Major Feature Release (2026-02-27)
 
 ### Presence & Tracking
-- **Follow mode** — animated room map, movement timeline, multi-device simultaneous tracking
+- **Follow mode**: animated room map, movement timeline, multi-device simultaneous tracking
 - **Email alerts** on room change (per-device, 60s rate limit, persistent config)
 - **Kalman-filtered RSSI smoothing** replacing simple EMA for smoother room transitions
-- **Private BLE address resolution** — iBeacon UUID parsing + IRK support for rotating addresses
-- **HA entities** — area sensors, distance sensors, device trackers, binary sensors per tracked device
-- **Home/away persistence** — binary sensors survive HA restarts
-- **Distance estimation** — log-distance path-loss model with configurable reference power and exponent
+- **Private BLE address resolution**: iBeacon UUID parsing + IRK support for rotating addresses
+- **HA entities**: area sensors, distance sensors, device trackers, binary sensors per tracked device
+- **Home/away persistence**: binary sensors survive HA restarts
+- **Distance estimation**: log-distance path-loss model with configurable reference power and exponent
 
 ### Floor Plans & Maps
-- **Floor plan editor** — upload PNG/JPG, draw room boundary polygons over blueprints
+- **Floor plan editor**: upload PNG/JPG, draw room boundary polygons over blueprints
 - **3D isometric multi-floor visualization** with live object positions and room labels
-- **Scanner markers** — drag-and-place with 3-digit radio short IDs
-- **Stale radio detection** — auto-detect and flag radios no longer in your BLE network
-- **Scanner network info** — WiFi SSID, IP address, connection type
+- **Scanner markers**: drag-and-place with 3-digit radio short IDs
+- **Stale radio detection**: auto-detect and flag radios no longer in your BLE network
+- **Scanner network info**: WiFi SSID, IP address, connection type
 
 ### Calibration
-- **Full calibration system** — walk-around fingerprint collection with standalone phone panel
+- **Full calibration system**: walk-around fingerprint collection with standalone phone panel
 - **k-NN fingerprint matching** + **OLS path-loss model** fitting per scanner
 - **Coverage heatmap** with guided next-target suggestions
 - **Leave-one-out cross-validation** for model quality scoring
@@ -276,10 +276,10 @@ Major release with 78 commits since last stable (v0.15.25). Introduces the Devic
 ### UI & Experience
 - **21 dedicated views** across Basic and Advanced modes
 - **Training Hub** with guided walkthroughs
-- **Sample mode** — fully functional demo with synthetic data
-- **11 languages** — EN, ES, FR, DE, IT, PT, NL, ZH, JA, KO, RU
+- **Sample mode**: fully functional demo with synthetic data
+- **11 languages**: EN, ES, FR, DE, IT, PT, NL, ZH, JA, KO, RU
 - **Dark forest-green theme** designed for ambient displays
-- **Object tagging** — label BLE devices with friendly names, OUI vendor lookup
+- **Object tagging**: label BLE devices with friendly names, OUI vendor lookup
 
 ### Backend
 - **DataUpdateCoordinator** polling live BLE snapshot every 10s
@@ -288,7 +288,7 @@ Major release with 78 commits since last stable (v0.15.25). Introduces the Devic
 
 ---
 
-## 0.4.x — Foundation (2026-02)
+## 0.4.x: Foundation (2026-02)
 
 ### Added
 - Initial integration scaffold with config flow
