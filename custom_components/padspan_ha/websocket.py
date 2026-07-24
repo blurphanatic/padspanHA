@@ -493,11 +493,13 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
 
     # --- Bluetooth (scanners + advertisements) ---
     # Fetched FIRST because downstream sections (objects, room assignment) depend on it.
+    # Max age is user-configurable (Settings → Presence), clamped to [60s, 4h].
+    # Defined outside the try so the ESPresense merge below can share it even
+    # when the bluetooth_live branch bails early.
+    _ble_age = 14400
     try:
         bl = get_bluetooth_live(hass)
         if bl is not None:
-            # Max age is user-configurable (Settings → Presence).  Clamped to [60s, 4h].
-            _ble_age = 14400
             try:
                 _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
                 _v = ((_st.data if _st else {}).get("ble_max_age_s"))
@@ -516,7 +518,7 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     try:
         esp_mqtt = hass.data.get(DOMAIN, {}).get(DATA_ESPRESENSE_MQTT)
         if esp_mqtt is not None:
-            esp_snap = esp_mqtt.get_snapshot(max_age_s=_ble_age if "_ble_age" in dir() else 900)
+            esp_snap = esp_mqtt.get_snapshot(max_age_s=_ble_age)
             ble = snapshot.setdefault("ble", {"radios": [], "advertisements": [], "diag": {}})
             ble["radios"].extend(esp_snap.get("radios", []))
             ble["advertisements"].extend(esp_snap.get("advertisements", []))
@@ -1503,6 +1505,15 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                         if _cid.startswith("irk:") and _cid[4:].lower().startswith(_hx):
                             canonical_id = _cid
                             break
+            # A renamed Bermuda tracker (device_tracker.<name>_bermuda_tracker)
+            # carries no private_ble_device_ hex in its entity_id, but its
+            # resolved MAC is one of the phone's current rotating addresses —
+            # fold by address membership too.
+            if not canonical_id and addr:
+                for _cid2, _pg2 in _private_groups.items():
+                    if any(str(_a).upper() == addr for _a in (_pg2.get("addrs") or ())):
+                        canonical_id = _cid2
+                        break
             if canonical_id and canonical_id in _private_groups:
                 _al = _private_groups[canonical_id].get("all_linked")
                 if isinstance(_al, set):
@@ -1845,13 +1856,12 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     target_uuids = target_ib.setdefault("service_uuids", [])
                     if _u not in target_uuids:
                         target_uuids.append(_u)
-                # Merge MAC addresses
+                # Merge MAC addresses (sort once after the loop, not per-MAC)
+                existing_addrs = list(target_ib.get("all_addresses") or [])
                 for _ma in (obj.get("all_addresses") or [obj.get("address")]):
-                    if _ma:
-                        existing_addrs = list(target_ib.get("all_addresses") or [])
-                        if _ma not in existing_addrs:
-                            existing_addrs.append(_ma)
-                        target_ib["all_addresses"] = sorted(existing_addrs)
+                    if _ma and _ma not in existing_addrs:
+                        existing_addrs.append(_ma)
+                target_ib["all_addresses"] = sorted(existing_addrs)
                 # Merge linked entities
                 for _le in (obj.get("linked_entities") or []):
                     existing_le = target_ib.setdefault("linked_entities", [])
@@ -2442,10 +2452,24 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
             if not is_identified and stale_s > _HISTORY_TTL:
                 del _cache[key]
                 continue
+            # Heal pre-cap poisoned address histories in place: cache entries
+            # persisted before _ALL_ADDR_CAP existed can carry tens of
+            # thousands of addresses, and resurrection shipped them uncapped —
+            # re-bloating the snapshot the cap was added to shrink.
+            _aa = cached_obj.get("all_addresses")
+            if isinstance(_aa, list) and len(_aa) > _ALL_ADDR_CAP:
+                cached_obj["all_addresses"] = [
+                    a for a in _aa
+                    if isinstance(a, str) and len(a) == 17 and a.count(":") == 5
+                ][:_ALL_ADDR_CAP]
             # Bring it back — compute age_s = original age + time since last seen
             obj_copy = dict(cached_obj)
             base_age = cached_obj.get("_cache_age_s") or 0
             obj_copy["age_s"] = base_age + stale_s
+            # Mark as resurrected: the coordinator short-circuits no-signal
+            # _stale objects past the smoothing pipeline, and its re-entry
+            # detection uses the flag to reset votes when a device returns.
+            obj_copy["_stale"] = True
             # Update per-source age_s values too (they were frozen at cache time)
             if obj_copy.get("sources"):
                 obj_copy["sources"] = [
@@ -2581,20 +2605,35 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         # shouldn't appear in the object list.  Followed devices are tracked
         # via alerts/history, not by faking their presence on the map.
 
-        unidentified = [o for o in objects if o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified")]
-        identified = [o for o in objects if not (o.get("kind") in ("ble", "private_ble", "ibeacon") and not o.get("identified"))]
+        # Single counting pass — the object list can run to thousands of
+        # entries once history is folded in, so per-metric list comprehensions
+        # added up.
+        _n_unident = _n_entity = _n_ble = _n_pble = _n_ib = 0
+        for o in objects:
+            _kind = o.get("kind")
+            if _kind == "entity":
+                _n_entity += 1
+            elif _kind == "private_ble":
+                _n_pble += 1
+                _n_ble += 1
+            elif _kind == "ble":
+                _n_ble += 1
+            elif _kind == "ibeacon":
+                _n_ib += 1
+            if _kind in ("ble", "private_ble", "ibeacon") and not o.get("identified"):
+                _n_unident += 1
         common_prefixes = {p: c for p, c in prefix_counts.items() if c >= 3}
 
         snapshot["objects"] = {
             "list": objects,
             "summary": {
                 "total": len(objects),
-                "identified": len(identified),
-                "unidentified": len(unidentified),
-                "entities": len([o for o in objects if o.get("kind") == "entity"]),
-                "ble": len([o for o in objects if o.get("kind") in ("ble", "private_ble")]),
-                "private_ble": len([o for o in objects if o.get("kind") == "private_ble"]),
-                "ibeacon": len([o for o in objects if o.get("kind") == "ibeacon"]),
+                "identified": len(objects) - _n_unident,
+                "unidentified": _n_unident,
+                "entities": _n_entity,
+                "ble": _n_ble,
+                "private_ble": _n_pble,
+                "ibeacon": _n_ib,
                 "common_prefixes": common_prefixes,  # prefix -> count (>=3)
                 "resolver": _resolver_diag,
                 "cached_objects": _cached_added,
@@ -2677,8 +2716,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     _ad["_xref"]["entity_id"] = _xobj["entity_id"]
             else:
                 _ad["_xref"] = None
-    except Exception:
-        pass
+    except Exception as _enrich_err:
+        # Non-fatal, but a regression here silently drops per-ad enrichment
+        # (names/xrefs) from the whole snapshot — leave a trace.
+        _LOGGER.debug("Advertisement enrichment failed: %s", _enrich_err, exc_info=True)
 
     snapshot["bermuda_devices"] = snapshot.get("receivers") or []
 
@@ -2776,8 +2817,10 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                             best_area = area
                     if best_area:
                         obj["room"] = best_area
-    except Exception:
-        pass
+    except Exception as _room_err:
+        # Non-fatal, but a regression here silently strips room assignment
+        # from every raw BLE object — leave a trace.
+        _LOGGER.debug("BLE room assignment failed: %s", _room_err, exc_info=True)
 
     # ── Traceback recording moved to ws_live_snapshot (after k-NN overlay) ──
 

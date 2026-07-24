@@ -58,6 +58,9 @@ export function render(ctx){
   })();
 
   const objSummary = (liveSnap && liveSnap.objects && liveSnap.objects.summary) ? liveSnap.objects.summary : null;
+  // An object with no current signal (room resolved to null / 0 confidence) is "Away".
+  // Both maps render these as an explicit grey away-state rather than a faded live dot.
+  const _isAway = (o) => !!(o && o._no_signal === true);
   const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   const objectsTotal = objSummary ? (_quietMode ? objSummary.identified : objSummary.total) : tagsCount;
   const unidentifiedCount = objSummary ? objSummary.unidentified : 0;
@@ -892,6 +895,7 @@ export function render(ctx){
 
         // ── Signal / certainty / recency encoding ──────────────────────────
         // recency → opacity fade; certainty → dashed ring; signal → 3-bar glyph.
+        const _noSig = _isAway(o);
         const _ageS = (typeof o.age_s === "number") ? o.age_s : null;
         const _recF = _ageS == null ? 1 : (_ageS <= 15 ? 1 : _ageS >= 180 ? 0.3 : 1 - 0.7 * (_ageS - 15) / 165);
         const _conf = (typeof o.room_confidence === "number") ? o.room_confidence
@@ -907,7 +911,8 @@ export function render(ctx){
         // ── Rich hover tip (pipe-delimited lines, matching iso _objTip format) ──
         const _tipParts = [];
         _tipParts.push(o.user_label || o.private_ble_name || o.name || o.key || "Unknown");
-        if (o.room) _tipParts.push(`Room: ${o.room}`);
+        if (_noSig) _tipParts.push("Room: Away (no signal)");
+        else if (o.room) _tipParts.push(`Room: ${o.room}`);
         if (_rssi != null) _tipParts.push(`Signal: ${_rssi} dBm`);
         if (_conf != null) _tipParts.push(`Certainty: ${Math.round(_conf * 100)}%`);
         if (_ageTxt) _tipParts.push(`Seen: ${_ageTxt}`);
@@ -930,6 +935,14 @@ export function render(ctx){
           return `<rect x="${_f(bX)}" y="${_f(bY)}" width="${_f(bW)}" height="${_f(bH)}" rx="${_f(bH*0.3)}" fill="#071008" opacity="0.82"/>` +
                  `<text x="${_f(cx)}" y="${_f(bY + bH*0.78)}" text-anchor="middle" fill="${_confColor}" font-size="${_f(_dotR*0.65)}" font-weight="700">${_esc(_confLabel)}</text>`;
         };
+        // Away badge (grey) replaces the confidence badge when the device has no signal.
+        const _awayBadge = (cx, cy) => {
+          const bW = _dotR * (4 * 0.55 + 0.8);   // "away" = 4 chars
+          const bH = _dotR * 1.0;
+          const bY = cy + _dotR * 1.5;
+          return `<rect x="${_f(cx - bW/2)}" y="${_f(bY)}" width="${_f(bW)}" height="${_f(bH)}" rx="${_f(bH*0.3)}" fill="#071008" opacity="0.82"/>` +
+                 `<text x="${_f(cx)}" y="${_f(bY + bH*0.78)}" text-anchor="middle" fill="#94a3b8" font-size="${_f(_dotR*0.65)}" font-weight="700">away</text>`;
+        };
 
         const _confRing = (cx, cy, baseR, color) => {
           if (_conf == null) return "";
@@ -950,7 +963,14 @@ export function render(ctx){
           return g;
         };
 
-        if (isFollowed) {
+        if (_noSig) {
+          // Away: grey, reduced opacity, away badge (still clickable). No signal/ring/bars.
+          s += `<g data-obj-key="${_oKey}" data-tip="${_tipStr}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
+          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#94a3b8" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${(0.5*_recF).toFixed(2)}"/>`;
+          s += _awayBadge(px, py);
+          if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8)}" text-anchor="middle" fill="#94a3b8" font-size="${_fsObj}" font-weight="600" opacity="${(0.7*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
+          s += `</g>`;
+        } else if (isFollowed) {
           s += `<g data-obj-key="${_oKey}" data-tip="${_tipStr}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
           s += _confRing(px, py, _dotR, "#fbbf24");
           s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*2}" fill="#fbbf24" fill-opacity="${(0.15*_recF).toFixed(2)}"/>`;
@@ -1963,6 +1983,41 @@ export function render(ctx){
         if(o.sources && o.sources.length) parts.push(`Scanners: ${o.sources.map(s => typeof s === "object" ? (s.source || "") : String(s)).join(", ")}`);
         if(!o.user_label) parts.push("Click to tag / view details");
         return parts.join("|");  // pipe-delimited for data attribute, rendered as lines
+      };
+
+      // ── Signal / certainty / recency encoding (px-space port of the 2D helpers) ──
+      // Iso dots use absolute px radii, not the 2D map's fractional _dotR, so these
+      // take an explicit base radius and emit px geometry. Kept parallel to the 2D
+      // versions so the two maps read identically.
+      const _objRecF = (o) => {                       // recency → opacity fade
+        const a = (typeof o.age_s === "number") ? o.age_s : null;
+        return a == null ? 1 : (a <= 15 ? 1 : a >= 180 ? 0.3 : 1 - 0.7 * (a - 15) / 165);
+      };
+      const _objConf = (o) => (typeof o.room_confidence === "number") ? o.room_confidence
+                     : (typeof o.knn_confidence === "number") ? o.knn_confidence
+                     : (typeof o.rssi_margin_confidence === "number") ? o.rssi_margin_confidence : null;
+      const _isoConfRing = (cx, cy, baseR, color, conf) => {   // certainty → dashed ring (tighter = surer)
+        if (conf == null) return "";
+        const rr = baseR * 1.6 + (1 - conf) * baseR * 2.4;
+        const op = (0.22 + conf * 0.5).toFixed(2);
+        return `<circle cx="${Math.round(cx)}" cy="${Math.round(cy)}" r="${Math.round(rr)}" fill="none" stroke="${color}" stroke-width="1.5" stroke-dasharray="${Math.round(baseR*0.55)},${Math.round(baseR*0.4)}" opacity="${op}"/>`;
+      };
+      const _isoSigBars = (cx, cy, baseR, color, rssi) => {    // signal → 3-bar glyph
+        if (rssi == null) return "";
+        const lvl = rssi >= -60 ? 3 : rssi >= -75 ? 2 : rssi >= -90 ? 1 : 0;
+        const bw = baseR * 0.34, gap = baseR * 0.16;
+        const bx = cx + baseR * 1.3, by = cy + baseR * 0.7;
+        let g = "";
+        for (let i = 0; i < 3; i++) {
+          const h = baseR * (0.45 + i * 0.42);
+          g += `<rect x="${Math.round(bx + i*(bw+gap))}" y="${Math.round(by - h)}" width="${Math.round(bw)}" height="${Math.round(h)}" rx="${Math.round(bw*0.2)}" fill="${color}" opacity="${i < lvl ? 0.95 : 0.18}"/>`;
+        }
+        return g;
+      };
+      const _isoAwayBadge = (cx, cy) => {                       // grey "away" pill below the dot
+        const bw = 40;
+        return `<rect x="${Math.round(cx)-bw/2}" y="${Math.round(cy)+18}" width="${bw}" height="13" rx="3" fill="#071008" opacity="0.8"/>` +
+               `<text x="${Math.round(cx)}" y="${Math.round(cy)+28}" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="600">away</text>`;
       };
 
       s += `<!-- ISO_OBJECTS_START -->`;

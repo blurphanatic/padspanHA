@@ -696,6 +696,22 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             self._known_objs[key] = dict(obj)
 
+            # ── Fast path: cache-resurrected objects with no live signal ────
+            # Objects resurrected from the multi-day history cache (_stale)
+            # with no live advertisements gain nothing from the Kalman/k-NN
+            # pipeline, yet running it for every device-ever-seen made
+            # per-poll CPU scale with history size instead of live devices.
+            # Short-circuit them straight to the away/no-signal presentation
+            # the full pipeline would produce anyway.
+            if _obj_no_signal and obj.get("_stale") and key not in _pinned:
+                obj = dict(obj)
+                obj["room"] = None
+                obj["room_confidence"] = 0.0
+                obj["_no_signal"] = True
+                self._known_objs[key] = dict(obj)
+                result[key] = obj
+                continue
+
             # ── Per-object smoothing pipeline ──────────────────────────────
             # Only BLE and iBeacon objects go through our Kalman + Gaussian +
             # vote pipeline.  Entity-based trackers (e.g. Bermuda) arrive
@@ -1094,6 +1110,12 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     del ema[src]
                     kp.pop(src, None)
                     _miss.pop(src, None)
+        # Once every source is pruned, drop the empty per-address outer dicts
+        # too — they otherwise accumulate one permanent entry per MAC.
+        if not ema:
+            self._ema_rssi.pop(addr, None)
+            self._kalman_p.pop(addr, None)
+            self._silence_miss.pop(addr, None)
 
         # ── Stage 1.5 prep: read path-loss model parameters ────────────────
         # ref_power: RSSI at 1 meter (typically -59 to -65 dBm)
@@ -1805,6 +1827,15 @@ class PresenceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._ema_rssi.pop(key, None)
         self._kalman_p.pop(key, None)
         self._silence_miss.pop(key, None)
+        # Kalman/silence state for plain ble objects is keyed by the bare
+        # uppercase MAC, not the "ble:"-prefixed object key — popping only the
+        # key above was a silent no-op for them, leaving one entry per MAC
+        # ever seen (neighbours' devices included) for the process lifetime.
+        if key.startswith("ble:"):
+            _addr = key.split(":", 1)[1].upper()
+            self._ema_rssi.pop(_addr, None)
+            self._kalman_p.pop(_addr, None)
+            self._silence_miss.pop(_addr, None)
 
     def clear_object_state(self, key: str) -> None:
         """Public API: clear all coordinator state for an object.

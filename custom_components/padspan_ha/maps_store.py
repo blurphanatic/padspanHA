@@ -90,6 +90,10 @@ class MapsStore:
             self.data = loaded
         else:
             self.data = {"maps": []}
+        # Snapshot BEFORE normalisation so the re-save check below can tell
+        # whether normalisation actually added anything.
+        import json
+        _pre_normalise = json.dumps(self.data, sort_keys=True) if loaded else None
 
         # Normalise existing maps — fill in fields added in later versions
         for m in self.data.get("maps", []):
@@ -110,9 +114,10 @@ class MapsStore:
             m.setdefault("created", _now_iso())
             m.setdefault("updated", m.get("created", _now_iso()))
 
-        # Only re-save if normalization added missing fields
-        import json
-        if json.dumps(self.data, sort_keys=True) != json.dumps(loaded, sort_keys=True) if loaded else True:
+        # Only re-save if normalisation added missing fields.  (The previous
+        # check compared self.data against loaded — the same object — so it
+        # never fired and normalised fields were never persisted.)
+        if _pre_normalise is None or json.dumps(self.data, sort_keys=True) != _pre_normalise:
             await self.store.async_save(self.data)
 
     def list_maps(self) -> list[dict[str, Any]]:
@@ -617,8 +622,12 @@ class MapsStore:
             raise ValueError("Image file not found")
         old_png = await asyncio.to_thread(fp.read_bytes)
 
-        # Extend the PNG using Canvas-style compositing
-        new_png = _extend_png(old_png, old_w, old_h, new_w, new_h, add_l, add_t)
+        # Extend the PNG using Canvas-style compositing.  The pure-Python
+        # per-pixel decode/encode takes seconds on a large map — keep it off
+        # the event loop.
+        new_png = await asyncio.to_thread(
+            _extend_png, old_png, old_w, old_h, new_w, new_h, add_l, add_t
+        )
         await asyncio.to_thread(fp.write_bytes, new_png)
 
         # Save pre-extend snapshot for undo
@@ -696,7 +705,10 @@ class MapsStore:
             fp = (self.maps_dir / str(fn)).resolve()
             if str(fp).startswith(str(self.maps_dir.resolve())) and fp.exists():
                 cur_png = await asyncio.to_thread(fp.read_bytes)
-                orig_png = _crop_png(cur_png, new_w, new_h, add_l, add_t, old_w, old_h)
+                # Per-pixel Python work — off the event loop (see extend above)
+                orig_png = await asyncio.to_thread(
+                    _crop_png, cur_png, new_w, new_h, add_l, add_t, old_w, old_h
+                )
                 if orig_png:
                     await asyncio.to_thread(fp.write_bytes, orig_png)
                     m["image"]["size_bytes"] = len(orig_png)
