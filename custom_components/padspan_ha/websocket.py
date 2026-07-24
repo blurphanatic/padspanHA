@@ -498,15 +498,15 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     # when the bluetooth_live branch bails early.
     _ble_age = 14400
     try:
+        _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+        _v = ((_st.data if _st else {}).get("ble_max_age_s"))
+        if _v is not None:
+            _ble_age = max(60, min(14400, int(_v)))
+    except Exception:
+        pass
+    try:
         bl = get_bluetooth_live(hass)
         if bl is not None:
-            try:
-                _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
-                _v = ((_st.data if _st else {}).get("ble_max_age_s"))
-                if _v is not None:
-                    _ble_age = max(60, min(14400, int(_v)))
-            except Exception:
-                pass
             snapshot["ble"] = bl.get_snapshot(max_ads=5000, max_age_s=_ble_age)
         else:
             snapshot["ble"] = {"radios": [], "advertisements": [], "diag": {"ok": False, "errors": ["no_bluetooth_live"]}}
