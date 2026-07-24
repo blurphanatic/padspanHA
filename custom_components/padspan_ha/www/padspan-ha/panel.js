@@ -2614,4 +2614,13 @@ class PadSpanHaApp extends HTMLElement {
 // ── Register Custom Element ──────────────────────────────────────────────────
 // HA discovers this via the panel config in __init__.py. Once defined,
 // HA creates an instance and drives it through connectedCallback + set hass().
-customElements.define("padspan-ha-app", PadSpanHaApp);
+// Guard against a duplicate definition: on an integration reload/update the
+// panel re-registers with a fresh BUILD_ID module_url, so a browser that still
+// has the previous module imported will load BOTH copies. An unguarded define()
+// throws "name 'padspan-ha-app' has already been used", which aborts panel
+// init mid-way and leaves the UI half-rendered (dead buttons, broken search,
+// watchdog "no successful render" loop). Defining once and no-opping the
+// duplicate keeps the panel functional until the next full refresh.
+if (!customElements.get("padspan-ha-app")) {
+  customElements.define("padspan-ha-app", PadSpanHaApp);
+}
