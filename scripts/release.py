@@ -97,7 +97,7 @@ ROOT = pathlib.Path(__file__).parent.parent
 INTEGRATION = ROOT / "custom_components" / "padspan_ha"
 PANEL_JS  = INTEGRATION / "www" / "padspan-ha" / "panel.js"
 ZIP_PATH = ROOT / "dist" / "padspan_ha.zip"
-REPO = "gbroeckling/padspanHA"
+REPO = "blurphanatic/padspanHA"
 
 # ── Files that must ALWAYS be committed alongside integration code ──
 # If you add a new root-level config file that HACS or GitHub needs,
