@@ -22,7 +22,7 @@ If UI changes don't show:
 // BUILD_ID (YYYYMMDDTHHMMSSZ) is appended to all JS import URLs as a cache-buster
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
-const APP_VERSION = "0.20.72";
+const APP_VERSION = "0.21.0";
 const BUILD_ID = "20260724T121058Z";
 const CHANNEL = "stable";
 
@@ -2496,8 +2496,8 @@ class PadSpanHaApp extends HTMLElement {
       const _allDone = _completedCount === _steps.length;
 
       // Auto-mark completed when all steps done
-      if (_allDone && !_onboardingDone && this.state.settings && this.actions?.settingsSave) {
-        try { this.actions.settingsSave({ onboarding_completed: true }).catch(() => {}); } catch(e) {}
+      if (_allDone && !_onboardingDone && this.state.settings && this.actions?.settingsSet) {
+        try { this.actions.settingsSet({ onboarding_completed: true }).catch(() => {}); } catch(e) {}
       }
 
       if (!_onboardingDone && !_allDone && !this.state._onboardingDismissed && this.state.view === "overview") {
@@ -2510,7 +2510,7 @@ class PadSpanHaApp extends HTMLElement {
           this.state._onboardingDismissed = true;
           if (this.state.settings) this.state.settings.onboarding_completed = true;
           bar.remove();
-          try { this.actions?.settingsSave?.({ onboarding_completed: true })?.catch?.(() => {}); } catch(e) {}
+          try { this.actions?.settingsSet?.({ onboarding_completed: true })?.catch?.(() => {}); } catch(e) {}
           this._scheduleRender();
         });
         hdr.appendChild(skipBtn);
@@ -2655,6 +2655,7 @@ class PadSpanHaApp extends HTMLElement {
 // ── Register Custom Element ──────────────────────────────────────────────────
 // HA discovers this via the panel config in __init__.py. Once defined,
 // HA creates an instance and drives it through connectedCallback + set hass().
+//
 // Guard against a duplicate definition: on an integration reload/update the
 // panel re-registers with a fresh BUILD_ID module_url, so a browser that still
 // has the previous module imported will load BOTH copies. An unguarded define()

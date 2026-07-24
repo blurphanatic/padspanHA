@@ -96,6 +96,7 @@ class MapsStore:
         _pre_normalise = json.dumps(self.data, sort_keys=True) if loaded else None
 
         # Normalise existing maps — fill in fields added in later versions
+        _migrated_open_barriers = False
         for m in self.data.get("maps", []):
             m.setdefault("receivers", [])
             m.setdefault("beacons", [])
@@ -113,11 +114,27 @@ class MapsStore:
             m.setdefault("stack", {"z_level": 0, "x_offset": 0.0, "y_offset": 0.0, "scale": 1.0, "ceiling_height_m": 2.4})
             m.setdefault("created", _now_iso())
             m.setdefault("updated", m.get("created", _now_iso()))
+            # One-time migration (P0-11.3): a frontend falsy-zero bug
+            # (`_matAtten[mat] || 6`) saved "open" (no wall) barriers with
+            # attenuation_dbm 6 instead of 0. Material is stored, so reset.
+            for bar in m.get("rf_barriers") or []:
+                if (
+                    isinstance(bar, dict)
+                    and bar.get("material") == "open"
+                    and bar.get("attenuation_dbm") not in (0, 0.0)
+                ):
+                    bar["attenuation_dbm"] = 0.0
+                    _migrated_open_barriers = True
 
-        # Only re-save if normalisation added missing fields.  (The previous
-        # check compared self.data against loaded — the same object — so it
-        # never fired and normalised fields were never persisted.)
-        if _pre_normalise is None or json.dumps(self.data, sort_keys=True) != _pre_normalise:
+        # Only re-save if normalisation added missing fields (compared against
+        # the pre-normalisation snapshot — the previous check compared self.data
+        # against loaded, the same object, so it never fired) or the one-time
+        # open-barrier migration above actually changed something.
+        if (
+            _pre_normalise is None
+            or json.dumps(self.data, sort_keys=True) != _pre_normalise
+            or _migrated_open_barriers
+        ):
             await self.store.async_save(self.data)
 
     def list_maps(self) -> list[dict[str, Any]]:

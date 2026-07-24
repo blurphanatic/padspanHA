@@ -1669,7 +1669,7 @@ function _edit(ctx, map, allMaps){
         ctx.state.maps._draftBarriers.push({
           name: "Barrier " + (ctx.state.maps._draftBarriers.length + 1),
           material: mat,
-          attenuation_dbm: _matAtten[mat] || 6,
+          attenuation_dbm: _matAtten[mat] ?? 6,
           points: d.points.map(p=>[clamp01(p[0]), clamp01(p[1])]),
         });
         ctx.state.maps._selectedBarrierIdx = ctx.state.maps._draftBarriers.length - 1;
@@ -2098,7 +2098,7 @@ function _edit(ctx, map, allMaps){
         ctx.state.maps._draftBarriers.push({
           name: "Barrier " + (ctx.state.maps._draftBarriers.length + 1),
           material: mat,
-          attenuation_dbm: _matAtten[mat] || 6,
+          attenuation_dbm: _matAtten[mat] ?? 6,
           points: d.points.map(p=>[clamp01(p[0]), clamp01(p[1])]),
         });
         ctx.state.maps._selectedBarrierIdx = ctx.state.maps._draftBarriers.length - 1;

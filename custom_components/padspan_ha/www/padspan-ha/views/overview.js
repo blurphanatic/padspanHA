@@ -4092,14 +4092,14 @@ export function render(ctx){
         trainBtn.textContent = "\ud83d\udcbe Train";
         trainBtn.addEventListener("click", async () => {
           const v = parseInt(trainInput.value);
-          if (v == null || v < 0) { ctx.actions.toast("Enter a valid count"); return; }
+          if (v == null || v < 0) { ctx.toast("Enter a valid count"); return; }
           trainBtn.disabled = true; trainBtn.textContent = "Saving\u2026"; trainBtn.classList.remove("save-pulse");
           try {
             const tr = await ctx.actions.callWS({type:"padspan_ha/occupancy_train",actual_count:v});
-            ctx.actions.toast(`Trained: actual=${v}, computed multiplier=${tr.observation.computed_multiplier}x (${tr.total_observations} total observations)`);
+            ctx.toast(`Trained: actual=${v}, computed multiplier=${tr.observation.computed_multiplier}x (${tr.total_observations} total observations)`);
             trainBtn.textContent = "\u2714 Saved";
           } catch(e) {
-            ctx.actions.toast("Train failed: "+(e.message||e));
+            ctx.toast("Train failed: "+(e.message||e));
             trainBtn.disabled=false; trainBtn.textContent="Train"; trainBtn.classList.add("save-pulse");
           }
         });
@@ -4108,7 +4108,7 @@ export function render(ctx){
 
         ctx.actions.openModal("Occupancy Estimate", body, "Experimental");
       } catch(e) {
-        ctx.actions.toast("Failed to load occupancy: "+(e.message||e));
+        ctx.toast("Failed to load occupancy: "+(e.message||e));
       }
     });
   }

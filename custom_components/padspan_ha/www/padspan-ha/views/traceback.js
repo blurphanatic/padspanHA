@@ -2001,7 +2001,7 @@ export function render(ctx) {
                   updated = [...new Set([...existing, key])];
                   ctx.toast(`${od.label || key} marked as stationary reference`);
                 }
-                await ctx.actions.settingsSave({ distance_stationary_devices: updated });
+                await ctx.actions.settingsSet({ distance_stationary_devices: updated });
                 _loadDist();
               } catch(e) { ctx.toast("Failed: " + (e.message||e), true); }
             });

@@ -194,6 +194,28 @@ def preflight_checks():
     print("  All checks passed.")
 
 
+def run_tests():
+    """
+    Run the unit test suite.  A failing suite ABORTS the release before
+    any files are modified, committed, or pushed.
+    """
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    print(f"  $ {sys.executable} -m pytest tests -q --no-header")
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests", "-q", "--no-header"],
+        cwd=ROOT, env=env, text=True, capture_output=True,
+    )
+    # Print the tail of pytest's output (summary + failures) indented
+    lines = (result.stdout or "").strip().splitlines()
+    for line in lines[-15:]:
+        print(f"    {line}")
+    if result.returncode != 0:
+        print("\n  TESTS FAILED — release aborted.")
+        print("  Fix the failures (python -m pytest tests -q), then re-run the release.")
+        sys.exit(1)
+    print("  Test suite green.")
+
+
 # ───────────────────────── Version bumping ───────────────────────────
 
 def update_version_files(version, build_id, channel):
@@ -462,6 +484,9 @@ def main():
 
     print("Pre-flight checks...")
     preflight_checks()
+
+    print("\nRunning tests...")
+    run_tests()
 
     print("\nUpdating source files...")
     update_version_files(version, build_id, channel)

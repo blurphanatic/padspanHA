@@ -24,7 +24,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, DATA_SETTINGS
+from .const import DOMAIN, DATA_SETTINGS, DATA_DEVICE_REGISTRY
 from .presence_coordinator import PresenceCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -138,6 +138,33 @@ def _device_uid(obj: dict[str, Any]) -> str:
     return obj.get("address") or obj.get("entity_id") or obj.get("key", "")
 
 
+def _stable_uid_key(hass: HomeAssistant, key: str, obj: dict[str, Any]) -> str:
+    """Return the identity string used to build entity unique_ids.
+
+    irk:/ibeacon:/entity: keys are already stable — keep the key-based scheme
+    so entities registered under it are not orphaned.  Plain ble:/MAC keys
+    rotate across restarts (labelled phones without a registered IRK,
+    random-static MACs, degraded-mode IRK devices), minting _2/_3 orphan
+    entities — for those, prefer the persistent padspan_id from the
+    DeviceRegistry, then canonical_id, falling back to the key itself.
+    """
+    if key.startswith(("irk:", "ibeacon:", "entity:")):
+        return key
+    dev_reg = hass.data.get(DOMAIN, {}).get(DATA_DEVICE_REGISTRY)
+    if dev_reg:
+        # Only trust persistent registry entries — ephemeral padspan_ids are
+        # regenerated every restart and would fragment unique_ids further.
+        pid = obj.get("padspan_id")
+        if pid and dev_reg.get(pid):
+            return str(pid)
+        rpid = dev_reg.resolve(key)
+        if rpid and dev_reg.get(rpid):
+            return str(rpid)
+    if obj.get("canonical_id"):
+        return str(obj["canonical_id"])
+    return key
+
+
 class PadSpanDeviceTracker(CoordinatorEntity["PresenceCoordinator"], TrackerEntity):  # type: ignore[misc]
     """Device tracker whose location_name is the current room for a labelled BLE device."""
 
@@ -152,6 +179,8 @@ class PadSpanDeviceTracker(CoordinatorEntity["PresenceCoordinator"], TrackerEnti
         obj = (coordinator.data or {}).get(key, {})
         self._init_label = str(obj.get("user_label") or obj.get("name") or key)
         self._init_uid = _device_uid(obj) or key
+        # Snapshot at creation: unique_id must never follow _key migrations
+        self._uid_key = _stable_uid_key(coordinator.hass, key, obj)
 
     # ── internal helpers ─────────────────────────────────────────────────────
 
@@ -167,7 +196,7 @@ class PadSpanDeviceTracker(CoordinatorEntity["PresenceCoordinator"], TrackerEnti
 
     @property
     def unique_id(self) -> str:
-        safe = self._key.replace(":", "_").replace(" ", "_").replace("/", "_")
+        safe = self._uid_key.replace(":", "_").replace(" ", "_").replace("/", "_")
         return f"padspan_ha__{safe}__tracker"
 
     # name=None with has_entity_name=True → entity IS the device's main feature.
