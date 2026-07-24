@@ -67,6 +67,48 @@ export function render(ctx){
     try { await ctx.actions.settingsSet({ overview_2d_mode: to2d }); }
     catch(e){ btn.disabled = false; if(ctx.toast) ctx.toast("Failed to switch view", true); }
   };
+
+  // ── Collision-aware declutter (shared by both maps) ─────────────────────────
+  // Spatial-hash clustering: bucket entries by a collision radius (O(n) expected),
+  // then union entries closer than the radius by scanning only the 3x3 neighbour
+  // cells. Returns an array of groups, each an array of indices into `entries`.
+  // `entries` are {x, y, ...}; runs per render over up to a few hundred dots.
+  const _clusterEntries = (entries, radius) => {
+    const cell = radius > 0 ? radius : 1;
+    const buckets = new Map();
+    const bk = (cx, cy) => cx + "," + cy;
+    entries.forEach((e, i) => {
+      const b = bk(Math.floor(e.x / cell), Math.floor(e.y / cell));
+      (buckets.get(b) || buckets.set(b, []).get(b)).push(i);
+    });
+    const parent = entries.map((_, i) => i);
+    const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+    const r2 = radius * radius;
+    entries.forEach((e, i) => {
+      const cx = Math.floor(e.x / cell), cy = Math.floor(e.y / cell);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        const nb = buckets.get(bk(cx + dx, cy + dy));
+        if (!nb) continue;
+        for (const j of nb) {
+          if (j <= i) continue;
+          const ddx = e.x - entries[j].x, ddy = e.y - entries[j].y;
+          if (ddx * ddx + ddy * ddy <= r2) { const a = find(i), b = find(j); if (a !== b) parent[a] = b; }
+        }
+      }
+    });
+    const groups = new Map();
+    entries.forEach((_, i) => { const r = find(i); (groups.get(r) || groups.set(r, []).get(r)).push(i); });
+    return [...groups.values()];
+  };
+  // Stable cluster identity (survives the 5s poll re-render as long as the member
+  // set is unchanged) and its hover-tip text (up to 8 names, then "+N more").
+  const _clusterKey = (members) => "cluster:" + members.map(m => m.key).sort().join(",");
+  const _clusterTip = (members) => {
+    const names = members.map(m => m.name || "Unknown");
+    const lines = [`${members.length} devices here`].concat(names.slice(0, 8));
+    if (names.length > 8) lines.push(`+${names.length - 8} more`);
+    return lines.join("|");
+  };
   const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   const objectsTotal = objSummary ? (_quietMode ? objSummary.identified : objSummary.total) : tagsCount;
   const unidentifiedCount = objSummary ? objSummary.unidentified : 0;
@@ -872,6 +914,8 @@ export function render(ctx){
       }
 
       const _roomObjIdx = {};
+      // Collect positioned dots first, then declutter (see cluster pass below).
+      const _entries2d = [];
       for (const o of objects) {
         const isTagged = !!(o.user_label || o.identified);
         const isFollowed = ctx.actions.followedHas && (ctx.actions.followedHas(o.address || "") || ctx.actions.followedHas(o.key || ""));
@@ -969,34 +1013,73 @@ export function render(ctx){
           return g;
         };
 
-        if (_noSig) {
-          // Away: grey, reduced opacity, away badge (still clickable). No signal/ring/bars.
-          s += `<g data-obj-key="${_oKey}" data-tip="${_tipStr}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
-          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#94a3b8" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${(0.5*_recF).toFixed(2)}"/>`;
-          s += _awayBadge(px, py);
-          if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8)}" text-anchor="middle" fill="#94a3b8" font-size="${_fsObj}" font-weight="600" opacity="${(0.7*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
-          s += `</g>`;
-        } else if (isFollowed) {
-          s += `<g data-obj-key="${_oKey}" data-tip="${_tipStr}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
-          s += _confRing(px, py, _dotR, "#fbbf24");
-          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*2}" fill="#fbbf24" fill-opacity="${(0.15*_recF).toFixed(2)}"/>`;
-          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#fbbf24" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${_recF.toFixed(2)}"/>`;
-          s += _sigBars(px, py, "#fbbf24");
-          s += _confBadge(px, py);
-          if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*2)}" text-anchor="middle" fill="#fbbf24" font-size="${_fsObj}" font-weight="600" opacity="${_recF.toFixed(2)}">${_esc(lbl)}</text>`;
-          s += `</g>`;
-        } else if (isTagged) {
-          s += `<g data-obj-key="${_oKey}" data-tip="${_tipStr}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
-          s += _confRing(px, py, _dotR, "#5eead4");
-          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#5eead4" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${(0.9*_recF).toFixed(2)}"/>`;
-          s += _sigBars(px, py, "#5eead4");
-          s += _confBadge(px, py);
-          if (lbl) s += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8)}" text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="${(0.85*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
-          s += `</g>`;
+        // Render closure — draws this dot at (px,py). `minimal` suppresses the
+        // confidence badge/ring and signal bars (used for 2-object pairs); `labelDy`
+        // nudges the label so paired labels don't overlap. Called once per object by
+        // the cluster pass, or repeated at spread positions when a cluster expands.
+        const draw = (px, py, minimal, labelDy) => {
+          labelDy = labelDy || 0;
+          let g = `<g data-obj-key="${_oKey}" data-tip="${_tipStr}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
+          if (_noSig) {
+            g += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#94a3b8" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${(0.5*_recF).toFixed(2)}"/>`;
+            if (!minimal) g += _awayBadge(px, py);
+            if (lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8 + labelDy)}" text-anchor="middle" fill="#94a3b8" font-size="${_fsObj}" font-weight="600" opacity="${(0.7*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
+          } else if (isFollowed) {
+            if (!minimal) g += _confRing(px, py, _dotR, "#fbbf24");
+            g += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*2}" fill="#fbbf24" fill-opacity="${(0.15*_recF).toFixed(2)}"/>`;
+            g += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#fbbf24" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${_recF.toFixed(2)}"/>`;
+            if (!minimal) { g += _sigBars(px, py, "#fbbf24"); g += _confBadge(px, py); }
+            if (lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*2 + labelDy)}" text-anchor="middle" fill="#fbbf24" font-size="${_fsObj}" font-weight="600" opacity="${_recF.toFixed(2)}">${_esc(lbl)}</text>`;
+          } else if (isTagged) {
+            if (!minimal) g += _confRing(px, py, _dotR, "#5eead4");
+            g += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR}" fill="#5eead4" stroke="#071008" stroke-width="${_sw*0.5}" opacity="${(0.9*_recF).toFixed(2)}"/>`;
+            if (!minimal) { g += _sigBars(px, py, "#5eead4"); g += _confBadge(px, py); }
+            if (lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8 + labelDy)}" text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="${(0.85*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
+          } else {
+            g += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*0.7}" fill="#f59e0b" stroke="#071008" stroke-width="${_sw*0.3}" opacity="${(0.5*_recF).toFixed(2)}"/>`;
+          }
+          return g + `</g>`;
+        };
+        _entries2d.push({
+          x: px, y: py, away: _noSig, draw,
+          name: o.user_label || o.private_ble_name || o.name || o.key || "Unknown",
+          key: o.key || o.address || o.entity_id || "",
+        });
+      }
+
+      // ── Declutter pass: cluster overlapping dots, render 1 / 2 / cluster glyph ──
+      const _CLUSTER_R = _dotR * 2.5;
+      for (const grp of _clusterEntries(_entries2d, _CLUSTER_R)) {
+        if (grp.length === 1) {
+          const e = _entries2d[grp[0]];
+          s += e.draw(e.x, e.y, false, 0);
+        } else if (grp.length === 2) {
+          // Keep both dots but drop badges/bars and stack the two labels apart.
+          const a = _entries2d[grp[0]], b = _entries2d[grp[1]];
+          s += a.draw(a.x, a.y, true, -_dotR * 1.4);
+          s += b.draw(b.x, b.y, true, _dotR * 2.6);
         } else {
-          s += `<g data-obj-key="${_oKey}" data-tip="${_tipStr}" style="cursor:pointer"><title>${_esc(_ttl)}</title>`;
-          s += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*0.7}" fill="#f59e0b" stroke="#071008" stroke-width="${_sw*0.3}" opacity="${(0.5*_recF).toFixed(2)}"/>`;
-          s += `</g>`;
+          const members = grp.map(i => _entries2d[i]);
+          let cx = 0, cy = 0; for (const m of members) { cx += m.x; cy += m.y; } cx /= members.length; cy /= members.length;
+          const _cKey = _clusterKey(members);
+          if (ctx.state._expandedCluster === _cKey) {
+            // Spiderfied: spread members on a ring with leader lines (sticky via state).
+            const R = _dotR * 3.4;
+            members.forEach((m, i) => {
+              const ang = (i / members.length) * 2 * Math.PI - Math.PI / 2;
+              const sx = cx + Math.cos(ang) * R, sy = cy + Math.sin(ang) * R;
+              s += `<line x1="${_f(cx)}" y1="${_f(cy)}" x2="${_f(sx)}" y2="${_f(sy)}" stroke="#94a3b8" stroke-width="${_sw*0.3}" opacity="0.4"/>`;
+              s += m.draw(sx, sy, false, 0);
+            });
+          } else {
+            const clr = members.every(m => m.away) ? "#94a3b8" : "#5eead4";
+            const cr = _dotR * 1.7;
+            s += `<g data-cluster-key="${_esc(_cKey)}" data-tip="${_esc(_clusterTip(members))}" style="cursor:pointer">`;
+            s += `<circle cx="${_f(cx)}" cy="${_f(cy)}" r="${_f(cr*1.55)}" fill="${clr}" fill-opacity="0.15"/>`;
+            s += `<circle cx="${_f(cx)}" cy="${_f(cy)}" r="${_f(cr)}" fill="${clr}" stroke="#071008" stroke-width="${_sw*0.5}"/>`;
+            s += `<text x="${_f(cx)}" y="${_f(cy + cr*0.55)}" text-anchor="middle" fill="#071008" font-size="${_f(cr*1.1)}" font-weight="700">${members.length}</text>`;
+            s += `</g>`;
+          }
         }
       }
 
@@ -1385,8 +1468,16 @@ export function render(ctx){
     zoomHint.textContent = "Hold ⌘ / Ctrl to zoom · drag to pan";
     zoomHint.style.cssText = "position:absolute;bottom:8px;left:50%;transform:translateX(-50%);z-index:3;font-size:11px;padding:3px 9px;border-radius:6px;background:#071008ee;color:#cbd5e1;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap";
 
-    // Click handler for 2D SVG: scanners and objects
+    // Click handler for 2D SVG: clusters, scanners and objects
     svgDiv.addEventListener("click", (e) => {
+      // Cluster glyph click — toggle spiderfy expansion (sticky across polls).
+      const cg = e.target.closest("[data-cluster-key]");
+      if (cg) {
+        const ck = cg.getAttribute("data-cluster-key");
+        ctx.state._expandedCluster = (ctx.state._expandedCluster === ck) ? null : ck;
+        svgDiv.innerHTML = buildSVG();
+        return;
+      }
       // Scanner click
       const sg = e.target.closest("[data-scanner-src]");
       if (sg) {
@@ -1405,6 +1496,12 @@ export function render(ctx){
             (o.key||"") === objKey || (o.address||"") === objKey || (o.entity_id||"") === objKey);
           if (obj) ctx.actions.showObjectDetail(obj);
         }
+        return;
+      }
+      // Click on empty space collapses any expanded cluster.
+      if (ctx.state._expandedCluster) {
+        ctx.state._expandedCluster = null;
+        svgDiv.innerHTML = buildSVG();
       }
     });
 
@@ -2026,6 +2123,8 @@ export function render(ctx){
       s += `<!-- ISO_OBJECTS_START -->`;
       // Track which object keys are rendered (to avoid duplicate dots for unlabeled layer)
       const _renderedObjKeys = new Set();
+      // Collect positioned dots from both passes below, then declutter (cluster pass).
+      const _isoEntries = [];
 
       // Followed beacons — positioned using server k-NN first (same as calibration
       // beacon tune), with client-side fingerprint as high-confidence enhancement only.
@@ -2077,13 +2176,6 @@ export function render(ctx){
         // No position = not on the map
         if(bx == null) continue;
 
-        // Confidence circle (only when we have a real positioned match)
-        if(posConf > 0){
-          const cr = Math.round(10 + (1-posConf)*24);
-          const op = (0.3 + posConf*0.55).toFixed(2);
-          s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
-        }
-
         // Confidence badge — always visible, color-coded by quality
         const hasKnn = typeof o.x_frac === "number" && typeof o.y_frac === "number";
         const confPct = hasKnn ? Math.round((o.knn_confidence || 0) * 100) : 0;
@@ -2096,30 +2188,45 @@ export function render(ctx){
         const dotOp = (isAway ? 0.35 : 0.97 * _recF).toFixed(2);
         const glowOp = (isAway ? 0.08 : 0.18 * _recF).toFixed(2);
         const lblColor = isAway ? (_noSig ? "#94a3b8" : "#a0845c") : BEACON_CLR;
-        s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(o))}" style="cursor:pointer">`;
-        if(isAway){
-          // Explicit away badge in place of the confidence badge.
-          s += _isoAwayBadge(bx, by);
-        } else {
-          // Confidence badge below the dot
-          const cW = Math.min(confLabel.length * 6.5 + 8, 65);
-          s += `<rect x="${Math.round(bx)-cW/2}" y="${Math.round(by)+18}" width="${cW}" height="13" rx="3" fill="#071008" opacity="0.8"/>`;
-          s += `<text x="${Math.round(bx)}" y="${Math.round(by)+28}" text-anchor="middle" fill="${confColor}" font-size="9" font-weight="600">${_esc(confLabel)}</text>`;
-          // Red warning ring only when truly bad (< 30% or no data)
-          if(confPct < 30){
-            s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="20" fill="none" stroke="${confColor}" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.5"/>`;
+        // Render closure — `minimal` drops the confidence circle/badge/ring and
+        // signal bars for 2-object pairs; `labelDy` nudges the label box vertically.
+        const draw = (bx, by, minimal, labelDy) => {
+          labelDy = labelDy || 0;
+          let g = "";
+          // Confidence circle (only when we have a real positioned match)
+          if(!minimal && posConf > 0){
+            const cr = Math.round(10 + (1-posConf)*24);
+            const op = (0.3 + posConf*0.55).toFixed(2);
+            g += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="${cr}" fill="none" stroke="${BEACON_CLR}" stroke-width="1.5" stroke-dasharray="5,3" opacity="${op}"/>`;
           }
-        }
-        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="16" fill="${DOT_CLR}" opacity="${glowOp}"/>`;
-        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="11" fill="${DOT_CLR}" stroke="#071008" stroke-width="1.5" opacity="${dotOp}"/>`;
-        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="3.5" fill="#071008" opacity="0.7"/>`;
-        if(!isAway) s += _isoSigBars(bx, by, 11, DOT_CLR, o.rssi);
-        const awayTag = isAway ? (_noSig ? " (away)" : " (Away)") : "";
-        const fullLbl = lbl + awayTag;
-        const lblW = Math.min(fullLbl.length * 7 + 10, 140);
-        s += `<rect x="${Math.round(bx)-lblW/2}" y="${Math.round(by)-32}" width="${lblW}" height="16" rx="3" fill="#071008" opacity="0.7"/>`;
-        s += `<text x="${Math.round(bx)}" y="${Math.round(by)-20}" text-anchor="middle" fill="${lblColor}" font-size="12" font-weight="700">${_esc(fullLbl)}</text>`;
-        s += `</g>`;
+          g += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(o))}" style="cursor:pointer">`;
+          if(!minimal){
+            if(isAway){
+              g += _isoAwayBadge(bx, by);
+            } else {
+              const cW = Math.min(confLabel.length * 6.5 + 8, 65);
+              g += `<rect x="${Math.round(bx)-cW/2}" y="${Math.round(by)+18}" width="${cW}" height="13" rx="3" fill="#071008" opacity="0.8"/>`;
+              g += `<text x="${Math.round(bx)}" y="${Math.round(by)+28}" text-anchor="middle" fill="${confColor}" font-size="9" font-weight="600">${_esc(confLabel)}</text>`;
+              if(confPct < 30){
+                g += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="20" fill="none" stroke="${confColor}" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.5"/>`;
+              }
+            }
+          }
+          g += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="16" fill="${DOT_CLR}" opacity="${glowOp}"/>`;
+          g += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="11" fill="${DOT_CLR}" stroke="#071008" stroke-width="1.5" opacity="${dotOp}"/>`;
+          g += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="3.5" fill="#071008" opacity="0.7"/>`;
+          if(!minimal && !isAway) g += _isoSigBars(bx, by, 11, DOT_CLR, o.rssi);
+          const fullLbl = lbl + (isAway ? (_noSig ? " (away)" : " (Away)") : "");
+          const lblW = Math.min(fullLbl.length * 7 + 10, 140);
+          g += `<rect x="${Math.round(bx)-lblW/2}" y="${Math.round(by)-32+labelDy}" width="${lblW}" height="16" rx="3" fill="#071008" opacity="0.7"/>`;
+          g += `<text x="${Math.round(bx)}" y="${Math.round(by)-20+labelDy}" text-anchor="middle" fill="${lblColor}" font-size="12" font-weight="700">${_esc(fullLbl)}</text>`;
+          return g + `</g>`;
+        };
+        _isoEntries.push({
+          x: bx, y: by, away: _noSig, draw,
+          name: o.user_label||o.private_ble_name||o.name||o.address||o.entity_id||"Unknown",
+          key: o.key||o.address||o.entity_id||"",
+        });
       }
 
       // Persistent pins + unlabeled objects with known room positions.
@@ -2189,42 +2296,87 @@ export function render(ctx){
           // Skip if no position could be determined
           if(px == null || py == null) continue;
 
-          if(ctx.state._overviewPersistentPins){
-            if(_noSig){
-              // Away (no signal): grey dot, reduced opacity, away badge — still clickable.
-              s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.6">`;
-              s += `<circle cx="${px}" cy="${py}" r="9" fill="#94a3b8" stroke="#071008" stroke-width="1.5" opacity="0.7"/>`;
-              s += _isoAwayBadge(px, py);
-              if(objLabel) s += `<text x="${px}" y="${py+22}" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
-              s += `</g>`;
-            } else if(isAway){
-              // Red crosshair for away objects (persistent mode)
-              s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.92">`;
-              s += `<circle cx="${px}" cy="${py}" r="22" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
-              s += `<circle cx="${px}" cy="${py}" r="12" fill="none" stroke="#ef4444" stroke-width="2"/>`;
-              s += `<circle cx="${px}" cy="${py}" r="4.5" fill="#ef4444"/>`;
-              s += `<line x1="${px-27}" y1="${py}" x2="${px-14}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
-              s += `<line x1="${px+14}" y1="${py}" x2="${px+27}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
-              s += `<line x1="${px}" y1="${py-27}" x2="${px}" y2="${py-14}" stroke="#ef4444" stroke-width="1.5"/>`;
-              s += `<line x1="${px}" y1="${py+14}" x2="${px}" y2="${py+27}" stroke="#ef4444" stroke-width="1.5"/>`;
-              if(objLabel) s += `<text x="${px}" y="${py+38}" text-anchor="middle" fill="#fca5a5" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
-              s += `</g>`;
-            } else {
-              // Teal dot for active objects (persistent mode) — with certainty ring,
-              // signal bars, and recency fade to match the followed-beacon encoding.
-              s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.88">`;
-              s += _isoConfRing(px, py, 9, "#5eead4", _conf);
-              s += `<circle cx="${px}" cy="${py}" r="13" fill="#5eead4" opacity="${(0.15*_recF).toFixed(2)}"/>`;
-              s += `<circle cx="${px}" cy="${py}" r="9" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="${(0.95*_recF).toFixed(2)}"/>`;
-              s += `<circle cx="${px}" cy="${py}" r="2.5" fill="#071008" opacity="0.7"/>`;
-              s += _isoSigBars(px, py, 9, "#5eead4", (typeof obj.rssi === "number" ? obj.rssi : null));
-              if(objLabel) s += `<text x="${px}" y="${py+22}" text-anchor="middle" fill="#5eead4" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
-              s += `</g>`;
+          // Persistent mode renders every object; otherwise only unlabeled dots show.
+          const _persistent = !!ctx.state._overviewPersistentPins;
+          if(!_persistent && obj.user_label) continue;  // nothing to draw for this object
+          // Render closure — `minimal` drops the certainty ring/signal bars for pairs;
+          // `labelDy` nudges the label vertically so paired labels don't overlap.
+          const draw = (px, py, minimal, labelDy) => {
+            labelDy = labelDy || 0;
+            if(_persistent){
+              if(_noSig){
+                // Away (no signal): grey dot, reduced opacity, away badge — still clickable.
+                let g = `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.6">`;
+                g += `<circle cx="${px}" cy="${py}" r="9" fill="#94a3b8" stroke="#071008" stroke-width="1.5" opacity="0.7"/>`;
+                if(!minimal) g += _isoAwayBadge(px, py);
+                if(objLabel) g += `<text x="${px}" y="${py+22+labelDy}" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
+                return g + `</g>`;
+              } else if(isAway){
+                // Red crosshair for away objects (persistent mode)
+                let g = `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.92">`;
+                g += `<circle cx="${px}" cy="${py}" r="22" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
+                g += `<circle cx="${px}" cy="${py}" r="12" fill="none" stroke="#ef4444" stroke-width="2"/>`;
+                g += `<circle cx="${px}" cy="${py}" r="4.5" fill="#ef4444"/>`;
+                g += `<line x1="${px-27}" y1="${py}" x2="${px-14}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
+                g += `<line x1="${px+14}" y1="${py}" x2="${px+27}" y2="${py}" stroke="#ef4444" stroke-width="1.5"/>`;
+                g += `<line x1="${px}" y1="${py-27}" x2="${px}" y2="${py-14}" stroke="#ef4444" stroke-width="1.5"/>`;
+                g += `<line x1="${px}" y1="${py+14}" x2="${px}" y2="${py+27}" stroke="#ef4444" stroke-width="1.5"/>`;
+                if(objLabel) g += `<text x="${px}" y="${py+38+labelDy}" text-anchor="middle" fill="#fca5a5" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
+                return g + `</g>`;
+              }
+              // Teal dot for active objects (persistent mode) — certainty ring, signal
+              // bars, and recency fade to match the followed-beacon encoding.
+              let g = `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.88">`;
+              if(!minimal) g += _isoConfRing(px, py, 9, "#5eead4", _conf);
+              g += `<circle cx="${px}" cy="${py}" r="13" fill="#5eead4" opacity="${(0.15*_recF).toFixed(2)}"/>`;
+              g += `<circle cx="${px}" cy="${py}" r="9" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="${(0.95*_recF).toFixed(2)}"/>`;
+              g += `<circle cx="${px}" cy="${py}" r="2.5" fill="#071008" opacity="0.7"/>`;
+              if(!minimal) g += _isoSigBars(px, py, 9, "#5eead4", (typeof obj.rssi === "number" ? obj.rssi : null));
+              if(objLabel) g += `<text x="${px}" y="${py+22+labelDy}" text-anchor="middle" fill="#5eead4" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
+              return g + `</g>`;
             }
-          } else if(!obj.user_label){
-            // Small dim amber dot for unlabeled objects — recency fade only (no clutter).
-            s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="${(0.6*_recF).toFixed(2)}">`;
-            s += `<circle cx="${px}" cy="${py}" r="6" fill="#f59e0b" stroke="#071008" stroke-width="1" opacity="0.7"/>`;
+            // Non-persistent: small dim amber dot for unlabeled objects (recency fade only).
+            return `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="${(0.6*_recF).toFixed(2)}">` +
+                   `<circle cx="${px}" cy="${py}" r="6" fill="#f59e0b" stroke="#071008" stroke-width="1" opacity="0.7"/></g>`;
+          };
+          _isoEntries.push({
+            x: px, y: py, away: _noSig, draw,
+            name: objLabel || obj.address || oKey || "Unknown",
+            key: oKey,
+          });
+        }
+      }
+
+      // ── Declutter pass: cluster overlapping iso dots, render 1 / 2 / cluster glyph ──
+      const _ISO_CLUSTER_R = 30;  // ~2.5x the followed-dot radius (11px)
+      for (const grp of _clusterEntries(_isoEntries, _ISO_CLUSTER_R)) {
+        if (grp.length === 1) {
+          const e = _isoEntries[grp[0]];
+          s += e.draw(e.x, e.y, false, 0);
+        } else if (grp.length === 2) {
+          // Keep both dots but drop badges/bars and stack the two labels apart.
+          const a = _isoEntries[grp[0]], b = _isoEntries[grp[1]];
+          s += a.draw(a.x, a.y, true, -16);
+          s += b.draw(b.x, b.y, true, 20);
+        } else {
+          const members = grp.map(i => _isoEntries[i]);
+          let cx = 0, cy = 0; for (const m of members) { cx += m.x; cy += m.y; } cx = Math.round(cx/members.length); cy = Math.round(cy/members.length);
+          const _cKey = _clusterKey(members);
+          if (ctx.state._expandedCluster === _cKey) {
+            // Spiderfied: spread members on a ring with leader lines (sticky via state).
+            const R = Math.max(44, members.length * 11);
+            members.forEach((m, i) => {
+              const ang = (i / members.length) * 2 * Math.PI - Math.PI / 2;
+              const sx = Math.round(cx + Math.cos(ang) * R), sy = Math.round(cy + Math.sin(ang) * R);
+              s += `<line x1="${cx}" y1="${cy}" x2="${sx}" y2="${sy}" stroke="#94a3b8" stroke-width="1" opacity="0.4"/>`;
+              s += m.draw(sx, sy, false, 0);
+            });
+          } else {
+            const clr = members.every(m => m.away) ? "#94a3b8" : BEACON_CLR;
+            s += `<g data-cluster-key="${_esc(_cKey)}" data-tip="${_esc(_clusterTip(members))}" style="cursor:pointer">`;
+            s += `<circle cx="${cx}" cy="${cy}" r="26" fill="${clr}" opacity="0.15"/>`;
+            s += `<circle cx="${cx}" cy="${cy}" r="17" fill="${clr}" stroke="#071008" stroke-width="1.5"/>`;
+            s += `<text x="${cx}" y="${cy+6}" text-anchor="middle" fill="#071008" font-size="17" font-weight="700">${members.length}</text>`;
             s += `</g>`;
           }
         }
@@ -2422,7 +2574,15 @@ export function render(ctx){
         isoTipEl.style.display = "none";
     });
     isoDiv.addEventListener("click", (e) => {
-      // Check for scanner click first
+      // Cluster glyph click — toggle spiderfy expansion (sticky across polls).
+      const cg = e.target.closest("[data-cluster-key]");
+      if (cg) {
+        const ck = cg.getAttribute("data-cluster-key");
+        ctx.state._expandedCluster = (ctx.state._expandedCluster === ck) ? null : ck;
+        _updateIsoObjects();
+        return;
+      }
+      // Check for scanner click
       const sg = e.target.closest("[data-scanner-src]");
       if (sg) {
         const src = sg.getAttribute("data-scanner-src");
@@ -2433,12 +2593,20 @@ export function render(ctx){
       }
       // Then check for object click
       const g = e.target.closest("[data-obj-key]");
-      if(!g) return;
-      const objKey = g.getAttribute("data-obj-key");
-      if(!objKey) return;
-      const obj = allObjects.find(o =>
-        (o.key||"") === objKey || (o.address||"") === objKey || (o.entity_id||"") === objKey);
-      if(obj) ctx.actions.showObjectDetail(obj);
+      if(g){
+        const objKey = g.getAttribute("data-obj-key");
+        if(objKey){
+          const obj = allObjects.find(o =>
+            (o.key||"") === objKey || (o.address||"") === objKey || (o.entity_id||"") === objKey);
+          if(obj) ctx.actions.showObjectDetail(obj);
+        }
+        return;
+      }
+      // Click on empty space collapses any expanded cluster.
+      if (ctx.state._expandedCluster) {
+        ctx.state._expandedCluster = null;
+        _updateIsoObjects();
+      }
     });
 
     const haFloors2 = ctx.state.model?.floors || [];
