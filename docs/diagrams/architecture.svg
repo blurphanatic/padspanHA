@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" font-family="Inter, 'Helvetica Neue', Arial, sans-serif">
+<defs><linearGradient id="padspan" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#52b788"/><stop offset="0.5" stop-color="#5eead4"/><stop offset="1" stop-color="#f59e0b"/></linearGradient><marker id="aTxt" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#e2e8f0"/></marker><marker id="aGrn" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#52b788"/></marker><marker id="aTeal" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#5eead4"/></marker><marker id="aAmb" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#f59e0b"/></marker><marker id="aRed" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#f87171"/></marker><marker id="aMut" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#94a3b8"/></marker></defs>
+<rect width="1200" height="640" fill="#0a150e"/><rect x="0.5" y="0.5" width="1199" height="639" fill="none" stroke="#1b3526" stroke-width="1"/>
+<text x="56" y="52" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10.5" font-weight="600" fill="#5eead4" text-anchor="start" letter-spacing="2.2">PADSPAN HA · RESILIENCE FORK</text>
+<text x="56" y="86" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="26" font-weight="700" fill="#e2e8f0" text-anchor="start">From advertisement to floor plan</text>
+<text x="56" y="112" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="12.5" font-weight="400" fill="#94a3b8" text-anchor="start">The live pipeline, with every place the fork caps, gates, or short-circuits it marked in amber.</text>
+<rect x="56" y="126" width="220" height="3" rx="1.5" fill="url(#padspan)"/>
+<rect x="56" y="220" width="204" height="228" rx="8" ry="8" fill="#0f1a12" stroke="#2d6a4f" stroke-width="1"/>
+<text x="72" y="248" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#e2e8f0" text-anchor="start" letter-spacing="1.0">BLE ADVERTISEMENTS</text>
+<line x1="72" y1="260" x2="244" y2="260" stroke="#1b3526" stroke-width="1"/>
+<circle cx="86" cy="288" r="4" fill="#5eead4" stroke="#071008" stroke-width="1.2"/><path d="M93.2,280.6 A9,9 0 0 1 93.2,295.4" fill="none" stroke="#5eead4" stroke-width="1.3" opacity="0.9"/><path d="M97.2,274.9 A16,16 0 0 1 97.2,301.1" fill="none" stroke="#5eead4" stroke-width="1.3" opacity="0.65"/><path d="M101.2,269.2 A23,23 0 0 1 101.2,306.8" fill="none" stroke="#5eead4" stroke-width="1.3" opacity="0.4"/>
+<text x="114" y="286" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="500" fill="#e2e8f0" text-anchor="start">ESPresense</text>
+<text x="114" y="301" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="start">espresense_mqtt.py</text>
+<circle cx="86" cy="340" r="4" fill="#5eead4" stroke="#071008" stroke-width="1.2"/><path d="M93.2,332.6 A9,9 0 0 1 93.2,347.4" fill="none" stroke="#5eead4" stroke-width="1.3" opacity="0.9"/><path d="M97.2,326.9 A16,16 0 0 1 97.2,353.1" fill="none" stroke="#5eead4" stroke-width="1.3" opacity="0.65"/><path d="M101.2,321.2 A23,23 0 0 1 101.2,358.8" fill="none" stroke="#5eead4" stroke-width="1.3" opacity="0.4"/>
+<text x="114" y="338" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="500" fill="#e2e8f0" text-anchor="start">HA Bluetooth proxy</text>
+<text x="114" y="353" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="start">bluetooth_live.py</text>
+<circle cx="86" cy="392" r="4" fill="#5eead4" stroke="#071008" stroke-width="1.2"/><path d="M93.2,384.6 A9,9 0 0 1 93.2,399.4" fill="none" stroke="#5eead4" stroke-width="1.3" opacity="0.9"/><path d="M97.2,378.9 A16,16 0 0 1 97.2,405.1" fill="none" stroke="#5eead4" stroke-width="1.3" opacity="0.65"/><path d="M101.2,373.2 A23,23 0 0 1 101.2,410.8" fill="none" stroke="#5eead4" stroke-width="1.3" opacity="0.4"/>
+<text x="114" y="390" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="500" fill="#e2e8f0" text-anchor="start">Bermuda trackers</text>
+<text x="114" y="405" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="start">resolved-MAC match</text>
+<text x="72" y="434" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="start">rotating MACs, IRKs, iBeacons</text>
+<line x1="266" y1="334" x2="294" y2="334" stroke="#5eead4" stroke-width="1.5" marker-end="url(#aTeal)"/>
+<rect x="294" y="196" width="252" height="276" rx="8" ry="8" fill="#0f1a12" stroke="#2d6a4f" stroke-width="1"/>
+<text x="310" y="224" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#e2e8f0" text-anchor="start" letter-spacing="1.0">LIVE SNAPSHOT</text>
+<text x="530" y="224" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9.5" font-weight="500" fill="#5eead4" text-anchor="end">websocket.py</text>
+<line x1="310" y1="236" x2="530" y2="236" stroke="#1b3526" stroke-width="1"/>
+<text x="310" y="258" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="400" fill="#cbd5e1" text-anchor="start">adverts enriched, xref'd, and</text>
+<text x="310" y="274" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="400" fill="#cbd5e1" text-anchor="start">serialized for the panel poll</text>
+<rect x="308" y="292" width="224" height="104" rx="8" ry="8" fill="#26250e" stroke="#f59e0b" stroke-width="1.2"/>
+<rect x="320" y="303" width="39.2" height="15" rx="3" ry="3" fill="#f59e0b"/><text x="339.6" y="314.5" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9" font-weight="700" fill="#071008" text-anchor="middle" letter-spacing="1.2">FORK</text>
+<text x="320" y="334" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10.5" font-weight="500" fill="#e2e8f0" text-anchor="start">address history capped at</text>
+<text x="320" y="349" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10.5" font-weight="700" fill="#f59e0b" text-anchor="start">96 per object</text>
+<text x="320" y="368" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="start">one rotating-MAC phone hit 42k</text>
+<text x="320" y="382" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="start">addresses → ~300MB snapshots</text>
+<text x="310" y="440" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10" font-weight="400" fill="#cbd5e1" text-anchor="start">poisoned cache entries scrubbed</text>
+<text x="310" y="455" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10" font-weight="400" fill="#cbd5e1" text-anchor="start">in place at resurrection</text>
+<line x1="552" y1="334" x2="580" y2="334" stroke="#5eead4" stroke-width="1.5" marker-end="url(#aTeal)"/>
+<rect x="580" y="196" width="252" height="276" rx="8" ry="8" fill="#0f1a12" stroke="#2d6a4f" stroke-width="1"/>
+<text x="596" y="224" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#e2e8f0" text-anchor="start" letter-spacing="1.0">PRESENCE COORDINATOR</text>
+<text x="816" y="224" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9.5" font-weight="500" fill="#94a3b8" text-anchor="end">5s poll</text>
+<line x1="596" y1="236" x2="816" y2="236" stroke="#1b3526" stroke-width="1"/>
+<text x="596" y="260" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="500" fill="#cbd5e1" text-anchor="start">Kalman RSSI smoothing</text>
+<text x="596" y="279" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="500" fill="#cbd5e1" text-anchor="start">k-NN room scoring</text>
+<text x="596" y="298" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="500" fill="#5eead4" text-anchor="start">WLS multilateration</text>
+<text x="596" y="317" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="start">upstream 0.21.0, merged</text>
+<rect x="594" y="344" width="224" height="96" rx="8" ry="8" fill="#26250e" stroke="#f59e0b" stroke-width="1.2"/>
+<rect x="606" y="355" width="39.2" height="15" rx="3" ry="3" fill="#f59e0b"/><text x="625.6" y="366.5" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9" font-weight="700" fill="#071008" text-anchor="middle" letter-spacing="1.2">FORK</text>
+<text x="606" y="386" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10.5" font-weight="500" fill="#e2e8f0" text-anchor="start">cache-resurrected objects skip</text>
+<text x="606" y="401" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10.5" font-weight="500" fill="#e2e8f0" text-anchor="start">the heavy pipeline while stale:</text>
+<text x="606" y="418" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="600" fill="#f59e0b" text-anchor="start">CPU scales with live devices,</text>
+<text x="606" y="431" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="600" fill="#f59e0b" text-anchor="start">not devices-ever-seen</text>
+<text x="596" y="458" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10" font-weight="400" fill="#cbd5e1" text-anchor="start">no-signal objects: no ghost rooms</text>
+<path d="M838,334 H854 V236 H866" fill="none" stroke="#5eead4" stroke-width="1.5" marker-end="url(#aTeal)"/>
+<path d="M854,334 V424 H866" fill="none" stroke="#5eead4" stroke-width="1.5" marker-end="url(#aTeal)"/>
+<rect x="872" y="160" width="272" height="152" rx="8" ry="8" fill="#0f1a12" stroke="#2d6a4f" stroke-width="1"/>
+<text x="888" y="188" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#e2e8f0" text-anchor="start" letter-spacing="1.0">HOME ASSISTANT SURFACE</text>
+<line x1="888" y1="200" x2="1128" y2="200" stroke="#1b3526" stroke-width="1"/>
+<text x="888" y="222" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#cbd5e1" text-anchor="start">sensors · device_trackers · events</text>
+<rect x="886" y="236" width="244" height="62" rx="8" ry="8" fill="#26250e" stroke="#f59e0b" stroke-width="1.2"/>
+<rect x="898" y="245" width="39.2" height="15" rx="3" ry="3" fill="#f59e0b"/><text x="917.6" y="256.5" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9" font-weight="700" fill="#071008" text-anchor="middle" letter-spacing="1.2">FORK</text>
+<text x="898" y="274" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10.5" font-weight="500" fill="#e2e8f0" text-anchor="start">arrive/depart fire for labelled</text>
+<text x="898" y="289" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10.5" font-weight="500" fill="#e2e8f0" text-anchor="start">devices only; bus stays under 4096</text>
+<rect x="872" y="348" width="272" height="152" rx="8" ry="8" fill="#0f1a12" stroke="#2d6a4f" stroke-width="1"/>
+<text x="888" y="376" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#e2e8f0" text-anchor="start" letter-spacing="1.0">PANEL · 2D MAP + 3D ISO</text>
+<line x1="888" y1="388" x2="1128" y2="388" stroke="#1b3526" stroke-width="1"/>
+<circle cx="902" cy="414" r="6" fill="#52b788" stroke="#071008" stroke-width="1.6" opacity="1.0"/>
+<circle cx="924" cy="414" r="6" fill="#f59e0b" stroke="#071008" stroke-width="1.6" opacity="1.0"/>
+<circle cx="946" cy="414" r="6" fill="#94a3b8" stroke="#071008" stroke-width="1.6" opacity="0.6"/>
+<text x="964" y="418" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10" font-weight="400" fill="#cbd5e1" text-anchor="start">confidence-colored · explicit away</text>
+<rect x="886" y="432" width="244" height="54" rx="8" ry="8" fill="#26250e" stroke="#f59e0b" stroke-width="1.2"/>
+<rect x="898" y="441" width="39.2" height="15" rx="3" ry="3" fill="#f59e0b"/><text x="917.6" y="452.5" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9" font-weight="700" fill="#071008" text-anchor="middle" letter-spacing="1.2">FORK</text>
+<text x="898" y="468" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10" font-weight="500" fill="#e2e8f0" text-anchor="start">map geometry loads first, retries,</text>
+<text x="898" y="481" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10" font-weight="500" fill="#e2e8f0" text-anchor="start">and self-heals on every poll tick</text>
+<line x1="56" y1="524" x2="1144" y2="524" stroke="#1b3526" stroke-width="1"/>
+<rect x="56" y="540" width="12" height="12" rx="3" ry="3" fill="#f59e0b"/>
+<text x="76" y="550" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="400" fill="#cbd5e1" text-anchor="start">fork change (this repo)</text>
+<rect x="266" y="540" width="12" height="12" rx="3" ry="3" fill="#5eead4"/>
+<text x="286" y="550" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="400" fill="#cbd5e1" text-anchor="start">upstream flow · 0.21.0 merged and tracked</text>
+<text x="1144" y="550" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="400" fill="#94a3b8" text-anchor="end">fixes are PR'd back upstream</text>
+</svg>

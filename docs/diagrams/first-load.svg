@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" font-family="Inter, 'Helvetica Neue', Arial, sans-serif">
+<defs><linearGradient id="padspan" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#52b788"/><stop offset="0.5" stop-color="#5eead4"/><stop offset="1" stop-color="#f59e0b"/></linearGradient><marker id="aTxt" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#e2e8f0"/></marker><marker id="aGrn" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#52b788"/></marker><marker id="aTeal" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#5eead4"/></marker><marker id="aAmb" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#f59e0b"/></marker><marker id="aRed" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#f87171"/></marker><marker id="aMut" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#94a3b8"/></marker></defs>
+<rect width="1200" height="620" fill="#0a150e"/><rect x="0.5" y="0.5" width="1199" height="619" fill="none" stroke="#1b3526" stroke-width="1"/>
+<text x="56" y="52" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10.5" font-weight="600" fill="#5eead4" text-anchor="start" letter-spacing="2.2">FIRST-LOAD RESILIENCE</text>
+<text x="56" y="86" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="26" font-weight="700" fill="#e2e8f0" text-anchor="start">Why the floor plan went blank, and why it can't now</text>
+<text x="56" y="112" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="12.5" font-weight="400" fill="#94a3b8" text-anchor="start">Geometry is small; the snapshot is not. The fork fetches small-and-first, retries, and self-heals.</text>
+<rect x="56" y="126" width="220" height="3" rx="1.5" fill="url(#padspan)"/>
+<rect x="56" y="168" width="1088" height="176" rx="8" ry="8" fill="#161a13" stroke="#f87171" stroke-width="1.2"/>
+<rect x="62.0" y="185.0" width="140.0" height="18" rx="9.0" ry="9.0" fill="#f87171"/><text x="132" y="197.6" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10" font-weight="700" fill="#071008" text-anchor="middle" letter-spacing="0.5">BEFORE · UPSTREAM</text>
+<rect x="88" y="234" width="128" height="60" rx="8" ry="8" fill="#0f1a12" stroke="#2d6a4f" stroke-width="1.1"/>
+<text x="152.0" y="268" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#e2e8f0" text-anchor="middle">panel entry</text>
+<line x1="220" y1="264" x2="246" y2="264" stroke="#f87171" stroke-width="1.4" marker-end="url(#aRed)"/>
+<rect x="250" y="234" width="196" height="60" rx="8" ry="8" fill="#0f1a12" stroke="#2d6a4f" stroke-width="1.1"/>
+<text x="348.0" y="260" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#e2e8f0" text-anchor="middle">one batched fetch</text>
+<text x="348.0" y="279" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">snapshot + maps_list + model_get</text>
+<line x1="450" y1="264" x2="476" y2="264" stroke="#f87171" stroke-width="1.4" marker-end="url(#aRed)"/>
+<rect x="480" y="234" width="196" height="60" rx="8" ry="8" fill="#221e18" stroke="#f87171" stroke-width="1.1"/>
+<text x="578.0" y="260" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#f87171" text-anchor="middle">~300MB snapshot</text>
+<text x="578.0" y="279" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">42,000 addresses on one phone</text>
+<line x1="680" y1="264" x2="706" y2="264" stroke="#f87171" stroke-width="1.4" marker-end="url(#aRed)"/>
+<rect x="710" y="234" width="168" height="60" rx="8" ry="8" fill="#221e18" stroke="#f87171" stroke-width="1.1"/>
+<text x="794.0" y="260" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#f87171" text-anchor="middle">websocket killed</text>
+<text x="794.0" y="279" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">maps never arrive</text>
+<line x1="882" y1="264" x2="908" y2="264" stroke="#f87171" stroke-width="1.4" marker-end="url(#aRed)"/>
+<line x1="882" y1="264" x2="908" y2="264" stroke="#f87171" stroke-width="1.4" marker-end="url(#aRed)"/>
+<rect x="912" y="220" width="178" height="88" rx="8" ry="8" fill="#071008" stroke="#f87171" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="1001" y="254" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="700" fill="#f87171" text-anchor="middle" letter-spacing="0.5">BLANK FLOOR PLAN</text>
+<text x="1001" y="272" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="middle">nothing re-fetches,</text>
+<text x="1001" y="286" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="middle">live poll never starts</text>
+<rect x="56" y="376" width="1088" height="196" rx="8" ry="8" fill="#0e1d14" stroke="#52b788" stroke-width="1.2"/>
+<rect x="69.5" y="393.0" width="105.0" height="18" rx="9.0" ry="9.0" fill="#52b788"/><text x="122" y="405.6" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10" font-weight="700" fill="#071008" text-anchor="middle" letter-spacing="0.5">AFTER · FORK</text>
+<rect x="88" y="448" width="128" height="68" rx="8" ry="8" fill="#0f1a12" stroke="#2d6a4f" stroke-width="1.1"/>
+<text x="152" y="486" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#e2e8f0" text-anchor="middle">panel entry</text>
+<line x1="220" y1="482" x2="246" y2="482" stroke="#52b788" stroke-width="1.4" marker-end="url(#aGrn)"/>
+<rect x="250" y="438" width="232" height="88" rx="8" ry="8" fill="#142c1f" stroke="#52b788" stroke-width="1.3"/>
+<circle cx="272" cy="458" r="9" fill="none" stroke="#52b788" stroke-width="1.5"/><text x="272" y="461.8" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="700" fill="#52b788" text-anchor="middle">1</text>
+<text x="288" y="462" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#e2e8f0" text-anchor="start">geometry first, awaited</text>
+<text x="266" y="483" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10" font-weight="600" fill="#52b788" text-anchor="start">maps_list + model_get</text>
+<text x="266" y="500" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="start">small · retried · never clobbers</text>
+<text x="266" y="514" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="start">a good list with a failure</text>
+<line x1="486" y1="482" x2="512" y2="482" stroke="#52b788" stroke-width="1.4" marker-end="url(#aGrn)"/>
+<rect x="516" y="438" width="158" height="88" rx="8" ry="8" fill="#0f1a12" stroke="#52b788" stroke-width="1.3"/>
+<text x="595.0" y="460" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="700" fill="#52b788" text-anchor="middle">floor plan paints</text>
+<rect x="550" y="474" width="90" height="40" rx="3" fill="#11251a" stroke="#2d6a4f" stroke-width="1"/>
+<line x1="590" y1="474" x2="590" y2="514" stroke="#2d6a4f" stroke-width="1"/>
+<line x1="590" y1="496" x2="640" y2="496" stroke="#2d6a4f" stroke-width="1"/>
+<circle cx="571" cy="494" r="5" fill="#52b788" stroke="#071008" stroke-width="1.6" opacity="1.0"/>
+<line x1="678" y1="482" x2="704" y2="482" stroke="#52b788" stroke-width="1.4" marker-end="url(#aGrn)"/>
+<rect x="708" y="438" width="210" height="88" rx="8" ry="8" fill="#0f1a12" stroke="#2d6a4f" stroke-width="1.1"/>
+<circle cx="730" cy="458" r="9" fill="none" stroke="#52b788" stroke-width="1.5"/><text x="730" y="461.8" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="700" fill="#52b788" text-anchor="middle">2</text>
+<text x="746" y="462" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#e2e8f0" text-anchor="start">snapshot follows</text>
+<text x="724" y="483" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10" font-weight="600" fill="#f59e0b" text-anchor="start">capped: 96 addresses/object</text>
+<text x="724" y="500" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="start">heavyweight payload can no</text>
+<text x="724" y="514" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#94a3b8" text-anchor="start">longer take the socket down</text>
+<line x1="922" y1="482" x2="948" y2="482" stroke="#52b788" stroke-width="1.4" marker-end="url(#aGrn)"/>
+<rect x="952" y="438" width="206" height="88" rx="8" ry="8" fill="#0f1a12" stroke="#2d6a4f" stroke-width="1.1"/>
+<circle cx="974" cy="458" r="9" fill="none" stroke="#52b788" stroke-width="1.5"/><text x="974" y="461.8" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="700" fill="#52b788" text-anchor="middle">3</text>
+<text x="990" y="462" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#e2e8f0" text-anchor="start">live poll starts</text>
+<text x="968" y="483" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#cbd5e1" text-anchor="start">after the first refresh resolves</text>
+<text x="968" y="500" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#cbd5e1" text-anchor="start">every tick re-fetches geometry</text>
+<text x="968" y="514" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="9.5" font-weight="400" fill="#cbd5e1" text-anchor="start">if it is still missing</text>
+<text x="56" y="598" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="400" fill="#94a3b8" text-anchor="start">Three compounding causes, three fixes: payload caps, geometry-first ordering, and a poll that starts on first boot and heals what a failed fetch left behind.</text>
+</svg>
