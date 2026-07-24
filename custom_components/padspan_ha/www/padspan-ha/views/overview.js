@@ -61,6 +61,12 @@ export function render(ctx){
   // An object with no current signal (room resolved to null / 0 confidence) is "Away".
   // Both maps render these as an explicit grey away-state rather than a faded live dot.
   const _isAway = (o) => !!(o && o._no_signal === true);
+  // Shared handler for the 2D↔3D view-mode toggle buttons (one on each map).
+  const _switchViewMode = async (btn, to2d) => {
+    btn.disabled = true;
+    try { await ctx.actions.settingsSet({ overview_2d_mode: to2d }); }
+    catch(e){ btn.disabled = false; if(ctx.toast) ctx.toast("Failed to switch view", true); }
+  };
   const _quietMode = !!(ctx.state.settings && ctx.state.settings.quiet_mode);
   const objectsTotal = objSummary ? (_quietMode ? objSummary.identified : objSummary.total) : tagsCount;
   const unidentifiedCount = objSummary ? objSummary.unidentified : 0;
@@ -1039,11 +1045,7 @@ export function render(ctx){
     viewTo3d.style.cssText = "font-size:11px;padding:2px 8px;color:#94a3b8;border-color:#334155";
     viewTo3d.textContent = "◈ 3D view";
     viewTo3d.title = "Switch to the 3D stacked-floor view";
-    viewTo3d.addEventListener("click", async () => {
-      viewTo3d.disabled = true;
-      try { await ctx.actions.settingsSet({ overview_2d_mode: false }); }
-      catch(e){ viewTo3d.disabled = false; if(ctx.toast) ctx.toast("Failed to switch view", true); }
-    });
+    viewTo3d.addEventListener("click", () => _switchViewMode(viewTo3d, false));
     filterBar.appendChild(viewTo3d);
     const sepView = document.createElement("span");
     sepView.style.cssText = "width:1px;height:16px;background:#334155;margin:0 2px";
@@ -1973,7 +1975,8 @@ export function render(ctx){
         parts.push(n);
         if(o.kind) parts.push(`Kind: ${o.kind}`);
         if(o.address && o.address !== n) parts.push(`Addr: ${o.address}`);
-        if(o.room) parts.push(`Room: ${o.room}`);
+        if(_isAway(o)) parts.push("Room: Away (no signal)");
+        else if(o.room) parts.push(`Room: ${o.room}`);
         if(o.knn_confidence > 0) parts.push(`Calibrated: ${Math.round(o.knn_confidence * 100)}%`);
         if(o.rssi != null) parts.push(`RSSI: ${o.rssi} dBm`);
         if(o.age_s != null){
@@ -2037,7 +2040,10 @@ export function render(ctx){
         _renderedObjKeys.add(o.key || o.address || o.entity_id || "");
         const isGhost = o._ghost || o._stale;
         const ageS = typeof o.age_s === "number" ? o.age_s : 0;
-        const isAway = isGhost && (o.rssi == null) && (ageS > _awayTimeoutS2);
+        const _noSig = _isAway(o);
+        const isAway = _noSig || (isGhost && (o.rssi == null) && (ageS > _awayTimeoutS2));
+        const _recF = _objRecF(o);
+        const DOT_CLR = _noSig ? "#94a3b8" : BEACON_CLR;
         const lbl = (o.user_label||o.private_ble_name||o.name||"?").substring(0,14);
         let bx, by;
         let posConf = 0;  // confidence for dashed circle
@@ -2086,13 +2092,16 @@ export function render(ctx){
         const confLabel = !hasKnn ? "Room only" : confPct + "%";
 
         const _ok = _esc(o.key||o.address||o.entity_id||"");
-        // Dim away/ghost objects
-        const dotOp = isAway ? "0.35" : "0.97";
-        const glowOp = isAway ? "0.08" : "0.18";
-        const lblColor = isAway ? "#a0845c" : BEACON_CLR;
+        // Dim away/ghost objects, then recency-fade the live ones by age.
+        const dotOp = (isAway ? 0.35 : 0.97 * _recF).toFixed(2);
+        const glowOp = (isAway ? 0.08 : 0.18 * _recF).toFixed(2);
+        const lblColor = isAway ? (_noSig ? "#94a3b8" : "#a0845c") : BEACON_CLR;
         s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(o))}" style="cursor:pointer">`;
-        // Confidence badge below the dot (skip for away)
-        if(!isAway){
+        if(isAway){
+          // Explicit away badge in place of the confidence badge.
+          s += _isoAwayBadge(bx, by);
+        } else {
+          // Confidence badge below the dot
           const cW = Math.min(confLabel.length * 6.5 + 8, 65);
           s += `<rect x="${Math.round(bx)-cW/2}" y="${Math.round(by)+18}" width="${cW}" height="13" rx="3" fill="#071008" opacity="0.8"/>`;
           s += `<text x="${Math.round(bx)}" y="${Math.round(by)+28}" text-anchor="middle" fill="${confColor}" font-size="9" font-weight="600">${_esc(confLabel)}</text>`;
@@ -2101,10 +2110,11 @@ export function render(ctx){
             s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="20" fill="none" stroke="${confColor}" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.5"/>`;
           }
         }
-        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="16" fill="${BEACON_CLR}" opacity="${glowOp}"/>`;
-        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="11" fill="${BEACON_CLR}" stroke="#071008" stroke-width="1.5" opacity="${dotOp}"/>`;
+        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="16" fill="${DOT_CLR}" opacity="${glowOp}"/>`;
+        s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="11" fill="${DOT_CLR}" stroke="#071008" stroke-width="1.5" opacity="${dotOp}"/>`;
         s += `<circle cx="${Math.round(bx)}" cy="${Math.round(by)}" r="3.5" fill="#071008" opacity="0.7"/>`;
-        const awayTag = isAway ? " (Away)" : "";
+        if(!isAway) s += _isoSigBars(bx, by, 11, DOT_CLR, o.rssi);
+        const awayTag = isAway ? (_noSig ? " (away)" : " (Away)") : "";
         const fullLbl = lbl + awayTag;
         const lblW = Math.min(fullLbl.length * 7 + 10, 140);
         s += `<rect x="${Math.round(bx)-lblW/2}" y="${Math.round(by)-32}" width="${lblW}" height="16" rx="3" fill="#071008" opacity="0.7"/>`;
@@ -2141,7 +2151,10 @@ export function render(ctx){
           const _ok = _esc(oKey);
           const _awayThresh = ((ctx.state.settings && ctx.state.settings.away_timeout_m != null)
             ? Number(ctx.state.settings.away_timeout_m) : 5) * 60;
-          const isAway = typeof obj.age_s === "number" && obj.age_s > _awayThresh;
+          const _noSig = _isAway(obj);
+          const isAway = _noSig || (typeof obj.age_s === "number" && obj.age_s > _awayThresh);
+          const _recF = _objRecF(obj);
+          const _conf = _objConf(obj);
           const objLabel = obj.user_label || obj.private_ble_name || obj.name || "";
 
           // Position: server k-NN first, then high-confidence fingerprint, then room centroid + stagger
@@ -2177,7 +2190,14 @@ export function render(ctx){
           if(px == null || py == null) continue;
 
           if(ctx.state._overviewPersistentPins){
-            if(isAway){
+            if(_noSig){
+              // Away (no signal): grey dot, reduced opacity, away badge — still clickable.
+              s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.6">`;
+              s += `<circle cx="${px}" cy="${py}" r="9" fill="#94a3b8" stroke="#071008" stroke-width="1.5" opacity="0.7"/>`;
+              s += _isoAwayBadge(px, py);
+              if(objLabel) s += `<text x="${px}" y="${py+22}" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
+              s += `</g>`;
+            } else if(isAway){
               // Red crosshair for away objects (persistent mode)
               s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.92">`;
               s += `<circle cx="${px}" cy="${py}" r="22" fill="none" stroke="#ef4444" stroke-width="1.5"/>`;
@@ -2190,17 +2210,20 @@ export function render(ctx){
               if(objLabel) s += `<text x="${px}" y="${py+38}" text-anchor="middle" fill="#fca5a5" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
               s += `</g>`;
             } else {
-              // Teal dot for active objects (persistent mode)
+              // Teal dot for active objects (persistent mode) — with certainty ring,
+              // signal bars, and recency fade to match the followed-beacon encoding.
               s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.88">`;
-              s += `<circle cx="${px}" cy="${py}" r="13" fill="#5eead4" opacity="0.15"/>`;
-              s += `<circle cx="${px}" cy="${py}" r="9" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="0.95"/>`;
+              s += _isoConfRing(px, py, 9, "#5eead4", _conf);
+              s += `<circle cx="${px}" cy="${py}" r="13" fill="#5eead4" opacity="${(0.15*_recF).toFixed(2)}"/>`;
+              s += `<circle cx="${px}" cy="${py}" r="9" fill="#5eead4" stroke="#071008" stroke-width="1.5" opacity="${(0.95*_recF).toFixed(2)}"/>`;
               s += `<circle cx="${px}" cy="${py}" r="2.5" fill="#071008" opacity="0.7"/>`;
+              s += _isoSigBars(px, py, 9, "#5eead4", (typeof obj.rssi === "number" ? obj.rssi : null));
               if(objLabel) s += `<text x="${px}" y="${py+22}" text-anchor="middle" fill="#5eead4" font-size="10" font-weight="600">${_esc(objLabel)}</text>`;
               s += `</g>`;
             }
           } else if(!obj.user_label){
-            // Small dim amber dot for unlabeled objects
-            s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="0.6">`;
+            // Small dim amber dot for unlabeled objects — recency fade only (no clutter).
+            s += `<g data-obj-key="${_ok}" data-tip="${_esc(_objTip(obj))}" style="cursor:pointer" opacity="${(0.6*_recF).toFixed(2)}">`;
             s += `<circle cx="${px}" cy="${py}" r="6" fill="#f59e0b" stroke="#071008" stroke-width="1" opacity="0.7"/>`;
             s += `</g>`;
           }
@@ -2277,20 +2300,31 @@ export function render(ctx){
     const _applyIsoTransform = () => {
       const _sv = isoDiv.querySelector("svg");
       if (!_sv) return;
+      const z = ctx.state._isoZoom, deg = ctx.state._isoRot;
       _sv.style.transformOrigin = "center center";
       _sv.style.transition = "transform 0.12s ease";
-      _sv.style.transform = `scale(${ctx.state._isoZoom}) rotate(${ctx.state._isoRot}deg)`;
+      _sv.style.transform = `scale(${z}) rotate(${deg}deg)`;
+      // A CSS transform doesn't enlarge the container's scrollable region, so after a
+      // rotate/zoom the swung-out corners can land in non-scrollable negative space and
+      // become unreachable. Reserve symmetric margins equal to the transformed bbox's
+      // overhang past the layout box (computed analytically so it's immune to the
+      // transition timing), then recenter the scroll so every corner stays reachable.
+      const w = _sv.offsetWidth, h = _sv.offsetHeight;
+      if (w && h) {
+        const rad = Math.abs(deg) * Math.PI / 180;
+        const c = Math.abs(Math.cos(rad)), sn = Math.abs(Math.sin(rad));
+        const bw = z * (w * c + h * sn), bh = z * (w * sn + h * c);
+        const mx = Math.ceil(Math.max(0, (bw - w) / 2)), my = Math.ceil(Math.max(0, (bh - h) / 2));
+        _sv.style.margin = `${my}px ${mx}px`;
+        requestAnimationFrame(() => {
+          isoDiv.scrollLeft = (isoDiv.scrollWidth  - isoDiv.clientWidth)  / 2;
+          isoDiv.scrollTop  = (isoDiv.scrollHeight - isoDiv.clientHeight) / 2;
+        });
+      }
     };
 
-    // ── 3D map loading indicator ────────────────────────────────────────
-    const _isoProgressFill = { style: {} }; // stub — no visual progress bar
-
-    /** Rebuild the 3D SVG with a progress indicator. */
     /** Full rebuild: replaces entire SVG (expensive — used for initial load + control changes) */
     function _rebuildIso(focusZ) {
-      _isoProgressFill.style.transition = "none";
-      _isoProgressFill.style.width = "40%";
-      _isoProgressFill.style.background = "#a855f7";
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           isoDiv.innerHTML = buildIsoSVG(focusZ);
@@ -2308,10 +2342,6 @@ export function render(ctx){
             }
           }
           _applyIsoTransform();  // re-apply zoom/rotate after a full rebuild
-          _isoProgressFill.style.transition = "width 0.2s";
-          _isoProgressFill.style.width = "100%";
-          _isoProgressFill.style.background = "#52b788";
-          setTimeout(() => { _isoProgressFill.style.width = "0"; }, 600);
         });
       });
     }
@@ -2346,9 +2376,6 @@ export function render(ctx){
     // Set a flag so the 5s poll doesn't clobber us before the first build finishes
     ctx.state._isoBuildPending = true;
     isoDiv.innerHTML = `<div style="text-align:center;padding:60px 0;color:#52b788;font-size:13px">Building 3D map\u2026</div>`;
-    _isoProgressFill.style.transition = "none";
-    _isoProgressFill.style.width = "40%";
-    _isoProgressFill.style.background = "#a855f7";
 
     // Hover info overlay — upper-left corner of the map
     const isoTipEl = document.createElement("div");
@@ -2616,11 +2643,7 @@ export function render(ctx){
     ovTo2d.style.cssText = "padding:1px 6px;font-size:10px;color:#94a3b8";
     ovTo2d.textContent = "▣ Overhead";
     ovTo2d.title = "Switch to the large top-down overhead map";
-    ovTo2d.addEventListener("click", async ()=>{
-      ovTo2d.disabled = true;
-      try { await ctx.actions.settingsSet({ overview_2d_mode: true }); }
-      catch(e){ ovTo2d.disabled = false; if(ctx.toast) ctx.toast("Failed to switch view", true); }
-    });
+    ovTo2d.addEventListener("click", () => _switchViewMode(ovTo2d, true));
     ctrlRow.appendChild(ovTo2d);
 
     const ovPersistentBtn = document.createElement("button");
