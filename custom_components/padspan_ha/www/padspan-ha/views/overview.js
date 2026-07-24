@@ -67,11 +67,12 @@ export function render(ctx){
   // named. Truncated to keep the label box in bounds; full name is in the hover tip.
   const _dotLabel = (o) => {
     const eid = o.entity_id || (String(o.key || "").startsWith("entity:") ? String(o.key).slice(7) : "");
-    return (
-      o.user_label || o.private_ble_name || o.name
+    const full = o.user_label || o.private_ble_name || o.name
       || (eid ? eid.split(".").pop() : "")
-      || o.address || ""
-    ).slice(0, 18);
+      || o.address || "";
+    // Middle-truncate so sibling helper entities stay distinguishable:
+    // head-only truncation made ..._area and ..._area_last_seen identical.
+    return full.length <= 18 ? full : full.slice(0, 9) + "…" + full.slice(-8);
   };
   // Shared handler for the 2D↔3D view-mode toggle buttons (one on each map).
   const _switchViewMode = async (btn, to2d) => {
@@ -652,7 +653,6 @@ export function render(ctx){
     const activeMap = visible[Math.min(focusIdx, visible.length - 1)];
 
     // ── Floor stitching: collect all maps on the same floor ──────────────
-    const haFloors2d = (ctx.state.model && Array.isArray(ctx.state.model.floors)) ? ctx.state.model.floors : [];
     const activeFloorId = activeMap.stack?.floor_id || activeMap.floor_id || "";
     const floorMaps = visible.filter(m => {
       const fid = m.stack?.floor_id || m.floor_id || "";
@@ -687,6 +687,50 @@ export function render(ctx){
       }
     }
 
+    // ── Multi-floor side-by-side slots ──────────────────────────────────
+    // The 2D overhead has no vertical stacking, so when renderMaps spans more than
+    // one floor (grouped by the same floor_id + z_level identity the iso view uses)
+    // the plans overlap in world space. Shift each floor into its own horizontal
+    // slot so plans, labels, scanners, dots, overlays and the cluster pass all lay
+    // out side by side. Slot order follows z_level, matching the iso stack order.
+    const _floorKeyOf = m => (m.stack?.floor_id || m.floor_id || "") + "#" + (m.stack?.z_level ?? 0);
+    const _renderFloorKeys = [...new Set(renderMaps.map(_floorKeyOf))].sort((a, b) => {
+      const za = Number(a.split("#").pop()), zb = Number(b.split("#").pop());
+      return za !== zb ? za - zb : a.localeCompare(b);
+    });
+    const _multiFloorSlots = _renderFloorKeys.length > 1;
+    const _floorSlots = [];  // {name, wMinX, wMaxX} in slotted world coords (for labels)
+    if (_multiFloorSlots) {
+      const _SLOT_GAP = 0.18;  // world-space gap between floor slots (plan width ~1.0)
+      let _cursor = 0;
+      for (const fk of _renderFloorKeys) {
+        const fMaps = renderMaps.filter(m => _floorKeyOf(m) === fk);
+        let minX = Infinity, maxX = -Infinity;
+        for (const m of fMaps) {
+          const base = _mapPts[m.id];
+          if (!base) continue;
+          for (const [cx, cy] of [[0,0],[1,0],[1,1],[0,1]]) {
+            const wx = base(cx, cy)[0];
+            minX = Math.min(minX, wx); maxX = Math.max(maxX, wx);
+          }
+        }
+        if (!isFinite(minX)) { minX = 0; maxX = 1; }
+        const shift = _cursor - minX;  // left-align this floor's slot at _cursor
+        for (const m of fMaps) {
+          const base = _mapPts[m.id];
+          _mapPts[m.id] = (px, py) => { const w = base(px, py); return [w[0] + shift, w[1]]; };
+        }
+        _floorSlots.push({
+          // Name the slot by its map name(s), exactly like the iso legend
+          // (byLevel...map(m=>m.name||m.id)). Resolving via floor_id collapses to a
+          // shared name here because these maps' floor_id is empty/identical.
+          name: fMaps.map(m => m.name || m.id).join("+"),
+          wMinX: _cursor, wMaxX: _cursor + (maxX - minX),
+        });
+        _cursor += (maxX - minX) + _SLOT_GAP;
+      }
+    }
+
     // ── Compute world bounding box of all floor maps ─────────────────────
     let wBB = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
     for (const m of renderMaps) {
@@ -706,8 +750,10 @@ export function render(ctx){
     wBB.minX -= wPad; wBB.minY -= wPad; wBB.maxX += wPad; wBB.maxY += wPad;
     const wW = wBB.maxX - wBB.minX;
     const wH = wBB.maxY - wBB.minY;
-    // World → view normalized (0-1)
-    const w2v = (wx, wy) => [(wx - wBB.minX) / wW, (wy - wBB.minY) / wH];
+    // World → view. X always spans [0,1]. For side-by-side floors the layout is much
+    // wider than tall, so normalize Y by wW too (aspect-preserving into y∈[0,wH/wW])
+    // to match the viewBox height; single/stitched-single-floor keeps the prior /wH.
+    const w2v = (wx, wy) => [(wx - wBB.minX) / wW, (wy - wBB.minY) / (_multiFloorSlots ? wW : wH)];
     // Is this a stitched multi-map view?
     const isStitched = renderMaps.length > 1;
 
@@ -1097,6 +1143,14 @@ export function render(ctx){
             s += `<text x="${_f(cx)}" y="${_f(cy + cr*0.55)}" text-anchor="middle" fill="#071008" font-size="${_f(cr*1.1)}" font-weight="700">${members.length}</text>`;
             s += `</g>`;
           }
+        }
+      }
+
+      // ── Floor-name labels, one per side-by-side slot ────────────────────
+      if (_multiFloorSlots) {
+        for (const fs of _floorSlots) {
+          const [lx] = w2v((fs.wMinX + fs.wMaxX) / 2, wBB.minY);
+          s += `<text x="${_f(lx)}" y="0.028" text-anchor="middle" fill="#94a3b8" font-size="0.03" font-weight="700" opacity="0.9">${_esc(fs.name)}</text>`;
         }
       }
 
@@ -2358,7 +2412,7 @@ export function render(ctx){
           };
           _isoEntries.push({
             x: px, y: py, away: _noSig, draw,
-            name: objLabel || obj.address || oKey || "Unknown",
+            name: obj.user_label || obj.private_ble_name || obj.name || obj.entity_id || obj.address || oKey || "Unknown",
             key: oKey,
           });
         }

@@ -2,24 +2,30 @@
 <defs><linearGradient id="padspan" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#52b788"/><stop offset="0.5" stop-color="#5eead4"/><stop offset="1" stop-color="#f59e0b"/></linearGradient><marker id="aTxt" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#e2e8f0"/></marker><marker id="aGrn" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#52b788"/></marker><marker id="aTeal" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#5eead4"/></marker><marker id="aAmb" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#f59e0b"/></marker><marker id="aRed" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#f87171"/></marker><marker id="aMut" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#94a3b8"/></marker></defs>
 <rect width="1200" height="300" fill="#0a150e"/><rect x="0.5" y="0.5" width="1199" height="299" fill="none" stroke="#1b3526" stroke-width="1"/>
 <circle cx="960" cy="150" r="220" fill="#0e2018"/>
-<rect x="58" y="54" width="150" height="4" rx="2.0" fill="url(#padspan)"/>
-<text x="56" y="108" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="38" font-weight="800" fill="#e2e8f0" text-anchor="start">PadSpan HA</text>
-<text x="305.20000000000005" y="86" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="15" font-weight="600" fill="#94a3b8" text-anchor="start">™</text>
-<rect x="294.6" y="86.75" width="133.2" height="18.5" rx="9.25" ry="9.25" fill="#f59e0b"/><text x="361.20000000000005" y="99.78" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="10.5" font-weight="700" fill="#071008" text-anchor="middle" letter-spacing="0.5">RESILIENCE FORK</text>
-<text x="56" y="140" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="13.5" font-weight="400" fill="#cbd5e1" text-anchor="start">Room-level BLE presence for Home Assistant: a hardened fork that keeps</text>
-<text x="56" y="160" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="13.5" font-weight="400" fill="#cbd5e1" text-anchor="start">the floor plan painted and the event bus alive.</text>
-<rect x="56" y="186" width="226.64" height="26" rx="13" ry="13" fill="#11251a" stroke="#2a5e45" stroke-width="1"/>
-<circle cx="69" cy="199" r="3" fill="#52b788"/>
-<text x="78" y="203" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="500" fill="#e2e8f0" text-anchor="start">first paint that cannot go blank</text>
-<rect x="292.64" y="186" width="189.01999999999998" height="26" rx="13" ry="13" fill="#122a22" stroke="#307567" stroke-width="1"/>
-<circle cx="305.64" cy="199" r="3" fill="#5eead4"/>
-<text x="314.64" y="203" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="500" fill="#e2e8f0" text-anchor="start">an event bus that stays up</text>
-<rect x="491.65999999999997" y="186" width="138.85999999999999" height="26" rx="13" ry="13" fill="#18231f" stroke="#48555a" stroke-width="1"/>
-<circle cx="504.65999999999997" cy="199" r="3" fill="#94a3b8"/>
-<text x="513.66" y="203" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="500" fill="#e2e8f0" text-anchor="start">honest away states</text>
-<text x="56" y="242" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="400" fill="#94a3b8" text-anchor="start">Fork of</text>
-<text x="106.62" y="242" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11.5" font-weight="600" fill="#5eead4" text-anchor="start">gbroeckling/padspanHA</text>
-<text x="264.35" y="242" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="400" fill="#94a3b8" text-anchor="start">· tracks upstream (0.21.0 WLS accuracy overhaul merged) · fixes PR'd back</text>
+<rect x="58" y="40" width="190" height="4" rx="2.0" fill="url(#padspan)"/>
+<text x="56" y="66" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="12.5" font-weight="600" fill="#5eead4" text-anchor="start" letter-spacing="2.4">A PADSPAN™ HA BUILD FROM WESTBOURNE</text>
+<text x="53" y="130" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="64" font-weight="800" fill="#f59e0b" letter-spacing="1">GHOSTHUNTER<tspan font-size="24" font-weight="700" dy="-28" fill="#e2e8f0">™</tspan></text>
+<circle cx="606.8" cy="106" r="22" fill="none" stroke="#f59e0b" stroke-width="2"/>
+<line x1="588" y1="106" x2="577" y2="106" stroke="#f59e0b" stroke-width="2"/>
+<line x1="626" y1="106" x2="637" y2="106" stroke="#f59e0b" stroke-width="2"/>
+<line x1="607" y1="87" x2="607" y2="76" stroke="#f59e0b" stroke-width="2"/>
+<line x1="607" y1="125" x2="607" y2="136" stroke="#f59e0b" stroke-width="2"/>
+<circle cx="606.8" cy="106" r="8" fill="#94a3b8" opacity="0.75"/>
+<circle cx="606.8" cy="106" r="2.5" fill="#071008"/>
+<text x="56" y="168" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="17.5" font-weight="400" fill="#cbd5e1" text-anchor="start">Room-level BLE presence that hunts ghosts for sport:</text>
+<text x="56" y="192" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="17.5" font-weight="400" fill="#cbd5e1" text-anchor="start">19,000 phantom devices purged, floor plans instant, event bus untouchable.</text>
+<rect x="56" y="214" width="216.67999999999998" height="32" rx="16" ry="16" fill="#11251a" stroke="#2a5e45" stroke-width="1"/>
+<circle cx="72" cy="230" r="3.5" fill="#52b788"/>
+<text x="83" y="235" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="13.5" font-weight="500" fill="#e2e8f0" text-anchor="start">phantoms purged on sight</text>
+<rect x="284.67999999999995" y="214" width="208.98499999999999" height="32" rx="16" ry="16" fill="#122a22" stroke="#307567" stroke-width="1"/>
+<circle cx="300.67999999999995" cy="230" r="3.5" fill="#5eead4"/>
+<text x="311.67999999999995" y="235" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="13.5" font-weight="500" fill="#e2e8f0" text-anchor="start">first paint, every time</text>
+<rect x="505.66499999999996" y="214" width="147.425" height="32" rx="16" ry="16" fill="#18231f" stroke="#48555a" stroke-width="1"/>
+<circle cx="521.665" cy="230" r="3.5" fill="#94a3b8"/>
+<text x="532.665" y="235" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="13.5" font-weight="500" fill="#e2e8f0" text-anchor="start">away means away</text>
+<text x="56" y="276" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="13.5" font-weight="400" fill="#94a3b8" text-anchor="start">Fork of</text>
+<text x="115.38" y="276" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="13.5" font-weight="600" fill="#5eead4" text-anchor="start">gbroeckling/padspanHA</text>
+<text x="301.15" y="276" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="13.5" font-weight="400" fill="#94a3b8" text-anchor="start">· tracks upstream (0.21.0 WLS merged) · fixes PR'd back</text>
 <polygon points="990.0,140.0 1159.3,237.8 1063.7,292.9 894.4,195.2" fill="#0f221a" stroke="#2d6a4f" stroke-width="1.3" stroke-linejoin="round"/><line x1="938.2" y1="169.9" x2="1037.8" y2="227.4" stroke="#2d6a4f" stroke-width="1" opacity="0.8"/><line x1="1089.6" y1="197.5" x2="994.0" y2="252.7" stroke="#2d6a4f" stroke-width="1" opacity="0.8"/>
 <polygon points="990.0,76.0 1159.3,173.8 1063.7,228.9 894.4,131.2" fill="#0f2017" stroke="#2d6a4f" stroke-width="1.3" stroke-linejoin="round"/><line x1="938.2" y1="105.9" x2="1037.8" y2="163.4" stroke="#2d6a4f" stroke-width="1" opacity="0.8"/><line x1="1089.6" y1="133.5" x2="994.0" y2="188.7" stroke="#2d6a4f" stroke-width="1" opacity="0.8"/>
 <line x1="990.0" y1="76.0" x2="990.0" y2="140.0" stroke="#2d6a4f" stroke-width="1" opacity="0.5"/>

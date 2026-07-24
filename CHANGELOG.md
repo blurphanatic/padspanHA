@@ -6,7 +6,7 @@ All notable changes to PadSpan HA are documented here.
 
 ## 0.30.0 (2026-07-24)
 
-First release on the fork's own version line (see NOTICE.md). Contains upstream 0.21.0 in full, plus the fork's performance and usability work on top.
+First Ghosthunter Edition release, on its own version line (see NOTICE.md). Contains upstream 0.21.0 in full, plus Ghosthunter's performance and usability work on top.
 
 ### Merged from upstream 0.21.0
 - WLS multilateration, per-receiver path-loss fits, TX-invariant fingerprints, stale-data gates, median-of-N sampling, and adaptive observation quality gates.

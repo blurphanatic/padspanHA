@@ -259,32 +259,43 @@ def build_hero():
     # ambient glow behind the iso plan
     e.append(f'<circle cx="960" cy="150" r="220" fill="{blend(TEAL, BG, 0.05)}"/>')
 
-    # left: wordmark + fork identity
-    e.append(grad_bar(58, 54, 150))
-    e.append(text(56, 108, "PadSpan HA", 38, TEXT, 800))
-    tw = est_w("PadSpan HA", 38, 800)
-    # Trademark symbol, superscript-sized against the wordmark
-    e.append(text(56 + tw + 6, 86, "™", 15, MUTED, 600))
-    e.append(pill(56 + tw + 62, 96, "RESILIENCE FORK", AMBER, 10.5, 12))
-    e.append(text(56, 140, "Room-level BLE presence for Home Assistant: a hardened fork that keeps", 13.5, BODY))
-    e.append(text(56, 160, "the floor plan painted and the event bus alive.", 13.5, BODY))
+    # left: the fork's own brand carries the masthead; the base project gets
+    # the kicker credit line. Both marks keep their ™ (PadSpan is Garry's,
+    # Ghosthunter is the fork's).
+    e.append(grad_bar(58, 40, 190))
+    e.append(text(56, 66, "A PADSPAN™ HA BUILD FROM WESTBOURNE", 12.5, TEAL, 600, ls=2.4))
+    e.append(
+        f'<text x="53" y="130" font-family="Inter, \'Helvetica Neue\', Arial, sans-serif" '
+        f'font-size="64" font-weight="800" fill="{AMBER}" letter-spacing="1">GHOSTHUNTER'
+        f'<tspan font-size="24" font-weight="700" dy="-28" fill="{TEXT}">™</tspan></text>'
+    )
+    # scope glyph: an away-grey ghost dot caught in an amber crosshair
+    gx = 56 + est_w("GHOSTHUNTER", 64, 800) + 58
+    e.append(f'<circle cx="{gx}" cy="106" r="22" fill="none" stroke="{AMBER}" stroke-width="2"/>')
+    for dx, dy in ((-30, 0), (30, 0), (0, -30), (0, 30)):
+        e.append(f'<line x1="{gx + dx*0.63:.0f}" y1="{106 + dy*0.63:.0f}" x2="{gx + dx:.0f}" '
+                 f'y2="{106 + dy:.0f}" stroke="{AMBER}" stroke-width="2"/>')
+    e.append(f'<circle cx="{gx}" cy="106" r="8" fill="{MUTED}" opacity="0.75"/>')
+    e.append(f'<circle cx="{gx}" cy="106" r="2.5" fill="{INKBG}"/>')
+    e.append(text(56, 168, "Room-level BLE presence that hunts ghosts for sport:", 17.5, BODY))
+    e.append(text(56, 192, "19,000 phantom devices purged, floor plans instant, event bus untouchable.", 17.5, BODY))
 
-    chips = [("first paint that cannot go blank", GREEN),
-             ("an event bus that stays up", TEAL),
-             ("honest away states", MUTED)]
+    chips = [("phantoms purged on sight", GREEN),
+             ("first paint, every time", TEAL),
+             ("away means away", MUTED)]
     cx0 = 56
     for s, c in chips:
-        cw = est_w(s, 11, 500) + 26
-        e.append(rect(cx0, 186, cw, 26, blend(c, BG, 0.10), blend(c, BG, 0.45), 1, r=13))
-        e.append(f'<circle cx="{cx0 + 13}" cy="199" r="3" fill="{c}"/>')
-        e.append(text(cx0 + 22, 203, s, 11, TEXT, 500))
-        cx0 += cw + 10
-    e.append(text(56, 242, "Fork of", 11.5, MUTED))
-    rx0 = 56 + est_w("Fork of", 11.5) + 6
-    e.append(text(rx0, 242, "gbroeckling/padspanHA", 11.5, TEAL, 600, font=MONO))
-    e.append(text(rx0 + est_mono("gbroeckling/padspanHA", 11.5) + 8, 242,
-                  "· tracks upstream (0.21.0 WLS accuracy overhaul merged) · fixes PR'd back",
-                  11.5, MUTED))
+        cw = est_w(s, 13.5, 500) + 32
+        e.append(rect(cx0, 214, cw, 32, blend(c, BG, 0.10), blend(c, BG, 0.45), 1, r=16))
+        e.append(f'<circle cx="{cx0 + 16}" cy="230" r="3.5" fill="{c}"/>')
+        e.append(text(cx0 + 27, 235, s, 13.5, TEXT, 500))
+        cx0 += cw + 12
+    e.append(text(56, 276, "Fork of", 13.5, MUTED))
+    rx0 = 56 + est_w("Fork of", 13.5) + 7
+    e.append(text(rx0, 276, "gbroeckling/padspanHA", 13.5, TEAL, 600, font=MONO))
+    e.append(text(rx0 + est_mono("gbroeckling/padspanHA", 13.5) + 10, 276,
+                  "· tracks upstream (0.21.0 WLS merged) · fixes PR'd back",
+                  13.5, MUTED))
 
     # right: two-floor isometric plan with scanners, arcs, and device dots
     s = 1.15
