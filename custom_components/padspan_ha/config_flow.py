@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 """
-Config flow + options flow for PadSpan HA.
+Config flow for PadSpan HA.
 
-Important for HA Core >= 2025.12:
-- OptionsFlow now provides self.config_entry automatically.
-- Do NOT set self.config_entry manually; do NOT pass config_entry into __init__.
+There is deliberately no options flow: the only option it ever exposed
+(CONF_SCAN_INTERVAL) was a no-op — the real polling cadence is the
+``presence_poll_interval_s`` setting managed from the panel — and saving it
+triggered a config-entry reload that tore down the BLE live feeds.
 """
 
 import logging
@@ -17,7 +18,6 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.core import callback
 
 from .const import (
     DOMAIN,
@@ -74,33 +74,4 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(title=NAME, data=data)
         except Exception as err:
             _LOGGER.exception("ConfigFlow user crashed (v%s): %s", VERSION, err)
-            return self.async_abort(reason="unknown")
-
-    @staticmethod
-    @callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry):
-        """Return options flow handler."""
-        return OptionsFlowHandler()
-
-class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
-    """Options flow (gear icon). Reload integration after saving."""
-
-    async def async_step_init(self, user_input: dict[str, Any] | None = None):
-        try:
-            if user_input is not None:
-                interval = _clamp_interval(user_input.get(CONF_SCAN_INTERVAL))
-                return self.async_create_entry(data={CONF_SCAN_INTERVAL: interval})
-
-            # Suggested values from current options/data
-            current = _clamp_interval(
-                self.config_entry.options.get(
-                    CONF_SCAN_INTERVAL,
-                    self.config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                )
-            )
-            base = _schema(current)
-            schema = self.add_suggested_values_to_schema(base, self.config_entry.options)
-            return self.async_show_form(step_id="init", data_schema=schema)
-        except Exception as err:
-            _LOGGER.exception("OptionsFlow crashed (v%s): %s", VERSION, err)
             return self.async_abort(reason="unknown")

@@ -652,6 +652,7 @@ function _startCollection(ctx, cs, _snap, _mapData) {
   cs.collecting  = true;
   cs.stopFlag    = false;
   cs.readings    = {};
+  cs._lastSample = {};   // per-radio {rssi, age_s} from previous tick (stale-ad dedup)
   cs._pollCount  = 0;
   // Resolve TX power for distance estimates during/after collection
   const _csObj = (_snap?.objects?.list || []).find(o =>
@@ -676,7 +677,7 @@ function _startCollection(ctx, cs, _snap, _mapData) {
     // The real per-radio RSSI also lives in snap.ble.advertisements, one entry per {device,radio}.
     const { perRadio } = _findBeaconAds(snap, cs.deviceId);
     for (const [src, info] of Object.entries(perRadio)) {
-      if (typeof info.rssi !== "number") continue;
+      if (!_acceptCalSample(cs._lastSample, src, info)) continue;
       if (!cs.readings[src]) {
         cs.readings[src] = { name: info.name || src, samples: [] };
       } else if (info.name && info.name !== src) {
@@ -1379,12 +1380,17 @@ function _findBeaconAds(snap, deviceId) {
     return false;
   });
 
-  // Build per-radio map — keep strongest/most recent reading per radio
+  // Build per-radio map — keep the FRESHEST reading per radio (lowest age_s),
+  // falling back to strongest only when ages are equal/unknown. A stale cached
+  // ad can be stronger than the live one and would otherwise mask it.
   const perRadio = {};
   for (const ad of myAds) {
     const src = String(ad.source || "");
     if (!src) continue;
-    if (!perRadio[src] || (ad.rssi || -200) > (perRadio[src].rssi || -200)) {
+    const cur = perRadio[src];
+    const adAge = (typeof ad.age_s === "number") ? ad.age_s : Infinity;
+    const curAge = cur && (typeof cur.age_s === "number") ? cur.age_s : Infinity;
+    if (!cur || adAge < curAge || (adAge === curAge && (ad.rssi || -200) > (cur.rssi || -200))) {
       perRadio[src] = {
         name: radioNameMap[src] || src,
         rssi: ad.rssi,
@@ -1393,6 +1399,30 @@ function _findBeaconAds(snap, deviceId) {
     }
   }
   return { myAds, perRadio, targetAddr };
+}
+
+// ── Calibration sample quality gate (P0-11.1) ────────────────────────────────
+// Collection loops poll the snapshot once per second, but a scanner that last
+// heard the beacon minutes ago keeps serving the same cached advertisement —
+// without a gate it contributes 15-60 identical stale samples per point.
+const _CAL_MAX_AGE_S = 10;
+
+// Decide whether info ({rssi, age_s}) is a NEW usable sample for radio `src`.
+// lastMap tracks the previously accepted/seen {rssi, age_s} per radio.
+// Rejects: non-numeric rssi; readings older than _CAL_MAX_AGE_S; and repeats
+// of the same cached ad (rssi identical while age_s only grows between polls).
+function _acceptCalSample(lastMap, src, info) {
+  if (typeof info.rssi !== "number") return false;
+  const age = (typeof info.age_s === "number") ? info.age_s : null;
+  if (age != null && age > _CAL_MAX_AGE_S) return false;
+  const prev = lastMap[src];
+  lastMap[src] = { rssi: info.rssi, age_s: age };
+  if (prev && prev.rssi === info.rssi &&
+      age != null && prev.age_s != null && age >= prev.age_s) {
+    // Same rssi and age did not reset since last tick → same cached ad.
+    return false;
+  }
+  return true;
 }
 
 function _totalSamples(cs) {
@@ -1580,6 +1610,9 @@ function _tuneTab(ctx, el, cs, calData) {
   };
 
   // Per-map forward+inverse transforms
+  // NOTE: duplicated from maps.js _mapToWorld/_worldToMap (incl. the raw-affine
+  // `_m` branch used by Point-Align-solved maps) — P2-5 tracks extracting a
+  // shared transform module to end this duplication.
   const mapXforms = {};
   for (const m of sorted) {
     const stk = m.stack || {}, z = stk.z_level || 0, ox = stk.x_offset || 0, oy_ = stk.y_offset || 0, sc = stk.scale || 1.0;
@@ -1587,14 +1620,27 @@ function _tuneTab(ctx, el, cs, calData) {
     const arRef = stk.ref_ar || ar, sxAdj = stk.scale_x_adj || 1.0;
     const rotRad = (stk.rotation || 0) * Math.PI / 180;
     const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
+    const _m = (stk._m && stk._m.length === 4) ? stk._m : null;
+    const mAr = stk._m_ar || stk.ref_ar || 1;
+    const mDet = _m ? (_m[0] * _m[3] - _m[1] * _m[2]) : 1;
     mapXforms[m.id] = {
       z, ox, oy_, sc, arRef, sxAdj, cosR, sinR,
       mapPt: (px, py) => {
+        if (_m) {
+          const u = px - 0.5, v = py - 0.5;
+          return [_m[0] * u + _m[1] * v + 0.5 + ox, mAr * (_m[2] * u + _m[3] * v + 0.5 + oy_)];
+        }
         const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef;
         const rx = dx * cosR - dy * sinR, ry = dx * sinR + dy * cosR;
         return [(0.5 + ox) + rx, arRef * (0.5 + oy_) + ry];
       },
       invMapPt: (wx, wy) => {
+        if (_m) {
+          if (Math.abs(mDet) < 1e-12) return [0.5, 0.5];
+          const rx0 = wx - 0.5 - ox;
+          const ry0 = wy / mAr - 0.5 - oy_;
+          return [(_m[3] * rx0 - _m[1] * ry0) / mDet + 0.5, (-_m[2] * rx0 + _m[0] * ry0) / mDet + 0.5];
+        }
         const rx = wx - (0.5 + ox);
         const ry = wy - arRef * (0.5 + oy_);
         const dx =  rx * cosR + ry * sinR;
@@ -2845,6 +2891,9 @@ function _beaconTuneTab(ctx, el, cs, calData) {
   };
 
   // Per-map forward+inverse transforms
+  // NOTE: duplicated from maps.js _mapToWorld/_worldToMap (incl. the raw-affine
+  // `_m` branch used by Point-Align-solved maps) — P2-5 tracks extracting a
+  // shared transform module to end this duplication.
   const mapXforms = {};
   for (const m of sorted) {
     const stk = m.stack || {}, z = stk.z_level || 0, ox = stk.x_offset || 0, oy_ = stk.y_offset || 0, sc = stk.scale || 1.0;
@@ -2852,14 +2901,27 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     const arRef = stk.ref_ar || ar, sxAdj = stk.scale_x_adj || 1.0;
     const rotRad = (stk.rotation || 0) * Math.PI / 180;
     const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
+    const _m = (stk._m && stk._m.length === 4) ? stk._m : null;
+    const mAr = stk._m_ar || stk.ref_ar || 1;
+    const mDet = _m ? (_m[0] * _m[3] - _m[1] * _m[2]) : 1;
     mapXforms[m.id] = {
       z, ox, oy_, sc, arRef, sxAdj, cosR, sinR,
       mapPt: (px, py) => {
+        if (_m) {
+          const u = px - 0.5, v = py - 0.5;
+          return [_m[0] * u + _m[1] * v + 0.5 + ox, mAr * (_m[2] * u + _m[3] * v + 0.5 + oy_)];
+        }
         const dx = (px - 0.5) * sc * sxAdj, dy = (py - 0.5) * sc * arRef;
         const rx = dx * cosR - dy * sinR, ry = dx * sinR + dy * cosR;
         return [(0.5 + ox) + rx, arRef * (0.5 + oy_) + ry];
       },
       invMapPt: (wx, wy) => {
+        if (_m) {
+          if (Math.abs(mDet) < 1e-12) return [0.5, 0.5];
+          const rx0 = wx - 0.5 - ox;
+          const ry0 = wy / mAr - 0.5 - oy_;
+          return [(_m[3] * rx0 - _m[1] * ry0) / mDet + 0.5, (-_m[2] * rx0 + _m[0] * ry0) / mDet + 0.5];
+        }
         const rx = wx - (0.5 + ox);
         const ry = wy - arRef * (0.5 + oy_);
         const dx =  rx * cosR + ry * sinR;
@@ -3855,14 +3917,19 @@ function _beaconTuneTab(ctx, el, cs, calData) {
             const src = String(ad.source || "");
             if (!src || typeof ad.rssi !== "number") continue;
             if (entry._allAddrs.has(adAddr) || (entry._canonical && ad._xref && ad._xref.canonical_id === entry._canonical)) {
-              if (!perRadio[src] || ad.rssi > (perRadio[src].rssi || -200)) {
-                perRadio[src] = { name: perRadio[src]?.name || src, rssi: ad.rssi, age_s: ad.age_s };
+              // Prefer freshest ad per radio (lowest age_s), not strongest
+              const cur = perRadio[src];
+              const adAge = (typeof ad.age_s === "number") ? ad.age_s : Infinity;
+              const curAge = cur && (typeof cur.age_s === "number") ? cur.age_s : Infinity;
+              if (!cur || adAge < curAge || (adAge === curAge && ad.rssi > (cur.rssi || -200))) {
+                perRadio[src] = { name: cur?.name || src, rssi: ad.rssi, age_s: ad.age_s };
               }
             }
           }
         }
+        const _last = entry._lastSample || (entry._lastSample = {});
         for (const [src, info] of Object.entries(perRadio)) {
-          if (typeof info.rssi !== "number") continue;
+          if (!_acceptCalSample(_last, src, info)) continue;
           if (!entry.readings[src]) {
             entry.readings[src] = { name: info.name || src, samples: [] };
           } else if (info.name && info.name !== src) {
@@ -5102,6 +5169,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
     bs._guideCapturing = true;
     bs._guideReadings = {};
+    bs._guideLastSample = {};  // per-radio {rssi, age_s} from previous tick (stale-ad dedup)
     bs._guideEndTime = Date.now() + 60000;
     bs._guideResolvedAddr = addr;
     bs._guideAllAddrs = allAddrs;
@@ -5117,6 +5185,9 @@ function _beaconTuneTab(ctx, el, cs, calData) {
         await ctx.actions.refreshSnapshotQuiet();
         const snap2 = ctx.state.live?.snapshot;
         const ads = snap2?.ble?.advertisements || [];
+        // Pick the freshest matching ad per radio (lowest age_s), then gate
+        // through the age filter + stale-ad dedup before recording a sample.
+        const perRadio = {};
         for (const ad of ads) {
           const adAddr = String(ad.address || "").toUpperCase();
           const src = String(ad.source || "");
@@ -5127,11 +5198,20 @@ function _beaconTuneTab(ctx, el, cs, calData) {
           if (!match && canonical && ad.canonical_id === canonical) match = true;
           if (!match && ad.key === bkKey) match = true;
           if (!match) continue;
+          const cur = perRadio[src];
+          const adAge = (typeof ad.age_s === "number") ? ad.age_s : Infinity;
+          const curAge = cur && (typeof cur.age_s === "number") ? cur.age_s : Infinity;
+          if (!cur || adAge < curAge || (adAge === curAge && (ad.rssi || -200) > (cur.rssi || -200))) {
+            perRadio[src] = { rssi: ad.rssi, age_s: ad.age_s };
+          }
+        }
+        for (const [src, info] of Object.entries(perRadio)) {
+          if (!_acceptCalSample(bs._guideLastSample, src, info)) continue;
           if (!bs._guideReadings[src]) {
             const radioName = (snap2?.ble?.radios || []).find(r => r.source === src)?.name || src;
             bs._guideReadings[src] = { name: radioName, samples: [] };
           }
-          bs._guideReadings[src].samples.push(ad.rssi);
+          bs._guideReadings[src].samples.push(info.rssi);
         }
       } catch (e) { /* ignore poll errors */ }
       _refreshGuideCard();
@@ -5231,6 +5311,190 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
   _refreshGuideCard();
 
+  // ── 1 m Reference Calibration (P0-7c) — per-scanner RSSI offsets ──────────
+  // Hold a known tag 1 m from each positioned receiver in turn, sample ~15 s,
+  // write offset = ref_power - median via padspan_ha/scanner_offset_set.
+  const refCard = document.createElement("div");
+  refCard.className = "card";
+  refCard.style.cssText = "border-color:#f59e0b;background:rgba(245,158,11,.05)";
+  if (!bs._refCal) bs._refCal = {
+    active: false, bkKey: null, idx: 0, receivers: [], results: {},
+    sampling: false, samples: [], lastSample: {}, endTime: 0,
+    pollId: null, timerId: null, done: false, status: "",
+  };
+  const rc = bs._refCal;
+
+  function _refReceivers() {
+    const radios = snap?.ble?.radios || [];
+    const seen = new Set(); const out = [];
+    for (const m of maps_list) for (const r of (m.receivers || [])) {
+      const src = r.source || "";
+      if (!src || seen.has(src)) continue;
+      seen.add(src);
+      out.push({ source: src, name: (radios.find(x => x.source === src)?.name) || r.label || src });
+    }
+    return out;
+  }
+
+  function _refStopSampling() {
+    if (rc.pollId) { clearTimeout(rc.pollId); rc.pollId = null; }
+    if (rc.timerId) { clearTimeout(rc.timerId); rc.timerId = null; }
+    rc.sampling = false;
+  }
+
+  async function _refFinish() {
+    rc.done = true;
+    const refPower = ctx.state.settings?.ref_power != null ? Number(ctx.state.settings.ref_power) : -59;
+    const lines = [];
+    for (const r of rc.receivers) {
+      const med = rc.results[r.source];
+      if (med == null) { lines.push(`${r.name}: skipped (no usable samples)`); continue; }
+      const off = Math.round((refPower - med) * 10) / 10;
+      try {
+        await ctx.actions.scannerOffsetSet(r.source, off);
+        lines.push(`${r.name}: median ${med} dBm → offset ${off > 0 ? "+" : ""}${off} dB saved`);
+      } catch (e) {
+        lines.push(`${r.name}: SAVE FAILED (${(e && e.message) || e})`);
+      }
+    }
+    rc.status = lines.join("\n") || "No receivers.";
+    _refreshRefCard();
+  }
+
+  function _refAdvance(median) {
+    rc.results[rc.receivers[rc.idx].source] = median; // null = skipped / no signal
+    rc.idx++;
+    if (rc.idx >= rc.receivers.length) { _refFinish(); return; }
+    _refreshRefCard();
+  }
+
+  function _refStartSample() {
+    const bkObj = (snap?.objects?.list || []).find(o => o.key === rc.bkKey);
+    if (!bkObj) return;
+    const allAddrs = new Set();
+    if (bkObj.address) allAddrs.add(bkObj.address.toUpperCase());
+    for (const a of (bkObj.all_addresses || [])) if (a) allAddrs.add(String(a).toUpperCase());
+    const canonical = bkObj.canonical_id || null;
+    const src = rc.receivers[rc.idx].source;
+    rc.sampling = true; rc.samples = []; rc.lastSample = {}; rc.endTime = Date.now() + 15000;
+    async function _poll() {
+      if (!rc.sampling) return;
+      try {
+        await ctx.actions.refreshSnapshotQuiet();
+        const ads = ctx.state.live?.snapshot?.ble?.advertisements || [];
+        // Freshest matching ad from THIS receiver (lowest age_s), then gate
+        // through the age filter + stale-ad dedup (same as guide capture).
+        let best = null;
+        for (const ad of ads) {
+          if (String(ad.source || "") !== src) continue;
+          const adAddr = String(ad.address || "").toUpperCase();
+          if (!(allAddrs.has(adAddr) || (canonical && ad.canonical_id === canonical) || ad.key === rc.bkKey)) continue;
+          const adAge = (typeof ad.age_s === "number") ? ad.age_s : Infinity;
+          const bestAge = best && (typeof best.age_s === "number") ? best.age_s : Infinity;
+          if (!best || adAge < bestAge || (adAge === bestAge && (ad.rssi || -200) > (best.rssi || -200))) {
+            best = { rssi: ad.rssi, age_s: ad.age_s };
+          }
+        }
+        if (best && _acceptCalSample(rc.lastSample, src, best)) rc.samples.push(best.rssi);
+      } catch (e) { /* ignore poll errors */ }
+      _refreshRefCard();
+      if (rc.sampling) rc.pollId = setTimeout(_poll, 1000);
+    }
+    rc.pollId = setTimeout(_poll, 500);
+    rc.timerId = setTimeout(() => {
+      _refStopSampling();
+      let median = null;
+      if (rc.samples.length) {
+        const s2 = [...rc.samples].sort((a, b) => a - b);
+        median = s2[Math.floor(s2.length / 2)];
+      }
+      _refAdvance(median);
+    }, 15000);
+    _refreshRefCard();
+  }
+
+  function _refreshRefCard() {
+    refCard.innerHTML = "";
+    const mkBtn = (txt, css, fn) => {
+      const b = document.createElement("button");
+      b.className = "btn inline"; b.style.cssText = css; b.textContent = txt;
+      b.addEventListener("click", fn); return b;
+    };
+    if (!rc.active) {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:8px";
+      row.innerHTML = `<span style="font-size:14px">📏</span>`
+        + `<span style="font-weight:700;font-size:13px;color:#f59e0b">1 m Reference</span>`
+        + `<span style="font-size:11px;color:#94a3b8;flex:1">Hold a known tag 1 m from each scanner to auto-set per-scanner RSSI offsets.</span>`;
+      row.appendChild(mkBtn("Start", "color:#f59e0b;border-color:#f59e0b;font-weight:700;font-size:12px;padding:3px 12px", () => {
+        Object.assign(rc, { active: true, idx: 0, receivers: _refReceivers(), results: {}, sampling: false, samples: [], done: false, status: "" });
+        _refreshRefCard();
+      }));
+      refCard.appendChild(row);
+      return;
+    }
+    const hdr = document.createElement("div");
+    hdr.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px";
+    hdr.innerHTML = `<span style="font-size:14px">📏</span><span style="font-weight:700;font-size:13px;color:#f59e0b;white-space:nowrap">1 m Reference</span>`;
+    // Tag selector — same tracked-beacon picker as the guide
+    const sel = document.createElement("select");
+    sel.style.cssText = "max-width:25%;min-width:100px;background:#071008;color:#e2e8f0;border:1px solid #92600a;border-radius:4px;padding:2px 6px;font-size:11px";
+    sel.disabled = rc.sampling || rc.idx > 0 || rc.done;
+    const allBks2 = [];
+    const seenK2 = new Set();
+    for (const bks of Object.values(bs.draftBeacons)) for (const bk of bks) {
+      if (seenK2.has(bk.key)) continue; seenK2.add(bk.key); allBks2.push(bk);
+    }
+    const ph3 = document.createElement("option");
+    ph3.value = ""; ph3.textContent = allBks2.length ? "— select tag —" : "— no tags placed —";
+    sel.appendChild(ph3);
+    for (const bk of allBks2) {
+      const opt = document.createElement("option");
+      opt.value = bk.key; opt.textContent = bk.label || bk.key;
+      if (rc.bkKey === bk.key) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener("change", () => { rc.bkKey = sel.value || null; _refreshRefCard(); });
+    hdr.appendChild(sel);
+    hdr.appendChild(mkBtn("Close", "margin-left:auto;font-size:10px;color:#94a3b8;padding:2px 8px", () => {
+      _refStopSampling();
+      Object.assign(rc, { active: false, idx: 0, results: {}, done: false, status: "" });
+      _refreshRefCard();
+    }));
+    refCard.appendChild(hdr);
+    const body = document.createElement("div");
+    body.style.cssText = "font-size:11px;line-height:1.5";
+    if (rc.done) {
+      body.innerHTML = `<span style="color:#52b788;font-weight:700">&#10003; Done</span><br>`
+        + rc.status.split("\n").map(l => `<span style="color:${l.includes("FAILED") ? "#f87171" : "#e2e8f0"}">${_esc(l)}</span>`).join("<br>");
+    } else if (!rc.bkKey) {
+      body.innerHTML = `<span style="color:#64748b">Select a known tag to begin.</span>`;
+    } else if (!rc.receivers.length) {
+      body.innerHTML = `<span style="color:#f59e0b">No positioned receivers found — place scanners in the Tune tab first.</span>`;
+    } else {
+      const r = rc.receivers[rc.idx];
+      body.innerHTML = `<span style="color:#94a3b8">Step ${rc.idx + 1}/${rc.receivers.length}:</span> `
+        + `hold the tag <b style="color:#fef3c7">1 m</b> from <b style="color:#5eead4">${_esc(r.name)}</b>`;
+      if (rc.sampling) {
+        const rem = Math.max(0, Math.ceil((rc.endTime - Date.now()) / 1000));
+        body.innerHTML += `<br><span style="color:#f59e0b;font-weight:700">Sampling… ${rem}s • ${rc.samples.length} sample${rc.samples.length !== 1 ? "s" : ""}</span>`;
+      }
+      const bRow = document.createElement("div");
+      bRow.style.cssText = "display:flex;gap:6px;margin-top:6px";
+      if (rc.sampling) {
+        bRow.appendChild(mkBtn("Cancel Sample", "color:#f87171;border-color:#f87171;font-size:11px;padding:2px 10px", () => {
+          _refStopSampling(); _refreshRefCard();
+        }));
+      } else {
+        bRow.appendChild(mkBtn("Sample (15 s)", "background:#3a2a0a;border-color:#f59e0b;color:#fbbf24;font-weight:700;font-size:12px;padding:3px 12px", () => _refStartSample()));
+        bRow.appendChild(mkBtn("Skip →", "color:#94a3b8;font-size:11px;padding:3px 10px", () => _refAdvance(null)));
+      }
+      body.appendChild(bRow);
+    }
+    refCard.appendChild(body);
+  }
+  _refreshRefCard();
+
   // ── Add blue spiral to SVG when guide target is active ───────────────────
   const _origBuildBeaconSVG = buildBeaconSVG;
   const buildBeaconSVGWrapped = (focusZ) => {
@@ -5280,6 +5544,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
 
   // Patch _refreshSVG to use wrapped builder
   function _refreshSVGPatched() {
+    if (bs._dragging) return; // Don't rebuild SVG mid-drag (matches original)
     const scrollTop = isoDiv.scrollTop, scrollLeft = isoDiv.scrollLeft;
     isoDiv.innerHTML = buildBeaconSVGWrapped(_getFocusZ(bs.focusIdx));
     isoDiv.scrollTop = scrollTop;
@@ -5293,14 +5558,17 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       });
     }
   }
-  // Replace original _refreshSVG references used by assemble
-  const _origRefreshSVG = _refreshSVG;
+  // Reassign the binding so every _refreshSVG() call site (function declarations
+  // are mutable bindings) uses the wrapped builder — otherwise the guide's
+  // "PLACE HERE" spiral and countdown ring vanish on the next refresh (P1-11).
+  _refreshSVG = _refreshSVGPatched;
 
   // ── Assemble ──────────────────────────────────────────────────────────────
   wrap.appendChild(ctrlRow);
   wrap.appendChild(isoWrap);
   wrap.appendChild(placeBanner);
   wrap.appendChild(guideCard);
+  wrap.appendChild(refCard);
   wrap.appendChild(infoCard);
   wrap.appendChild(availCard);
   wrap.appendChild(beaconListCard);

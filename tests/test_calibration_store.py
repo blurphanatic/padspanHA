@@ -16,6 +16,7 @@ from custom_components.padspan_ha.calibration_store import (
     _mean,
     _std,
 )
+from custom_components.padspan_ha.random_forest import RandomForestLocator
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +33,8 @@ def _make_store(points: list[dict] | None = None) -> CalibrationStore:
     store.store.async_load = AsyncMock(return_value=None)
     store.store.async_save = AsyncMock()
     store.data = {"points": list(points or []), "model": {}}
+    store._rf = RandomForestLocator()
+    store._model = None
     return store
 
 
@@ -135,7 +138,7 @@ class TestMean:
 
 
 class TestStd:
-    """Tests for the _std() (population std-dev) helper."""
+    """Tests for the _std() (sample std-dev, N-1) helper."""
 
     def test_empty_returns_zero(self) -> None:
         """Std of empty list is 0.0."""
@@ -356,6 +359,106 @@ class TestKnnLocate:
 
 
 # ---------------------------------------------------------------------------
+# Tests: knn_locate TX-invariance (per-point mean-centering)
+# ---------------------------------------------------------------------------
+
+
+class TestKnnTxInvariance:
+    """The k-NN metric must be invariant to a constant per-device TX offset."""
+
+    def test_constant_offset_query_matches_point(self) -> None:
+        """A query identical to a stored point but offset -12 dB on every
+        scanner (different tag TX power) must match that point with high
+        confidence."""
+        pts = [
+            _make_point(x_frac=0.2, y_frac=0.3, room="kitchen",
+                        readings={"s1": -50.0, "s2": -60.0, "s3": -70.0, "s4": -55.0}),
+            _make_point(x_frac=0.8, y_frac=0.7, room="bedroom",
+                        readings={"s1": -75.0, "s2": -45.0, "s3": -58.0, "s4": -68.0}),
+        ]
+        store = _make_store(points=pts)
+        # Kitchen fingerprint shifted by a constant -12 dB everywhere
+        query = {"s1": -62.0, "s2": -72.0, "s3": -82.0, "s4": -67.0}
+        result = store.knn_locate(query)
+
+        assert result is not None
+        assert result["nearest_room"] == "kitchen"
+        assert result["x_frac"] == pytest.approx(0.2, abs=0.05)
+        assert result["y_frac"] == pytest.approx(0.3, abs=0.05)
+        assert result["confidence"] >= 0.9
+
+    def test_shape_still_distinguishes_points(self) -> None:
+        """Two points with the same mean RSSI but different SHAPE (which
+        scanner is strong vs weak) must still be distinguished after
+        mean-centering."""
+        pts = [
+            _make_point(x_frac=0.2, y_frac=0.2, room="kitchen",
+                        readings={"s1": -50.0, "s2": -70.0}),
+            _make_point(x_frac=0.8, y_frac=0.8, room="bedroom",
+                        readings={"s1": -70.0, "s2": -50.0}),
+        ]
+        store = _make_store(points=pts)
+        # Both fingerprints have mean -60; only shape differs. Query has
+        # kitchen's shape (strong s1, weak s2), offset -8 dB.
+        result = store.knn_locate({"s1": -58.0, "s2": -78.0})
+
+        assert result is not None
+        assert result["nearest_room"] == "kitchen"
+        assert result["x_frac"] == pytest.approx(0.2, abs=0.05)
+
+    def test_missing_scanner_penalty_stays_absolute(self) -> None:
+        """A 1-shared-scanner point always has centered distance 0 — the
+        absolute missing-scanner penalty must keep it from beating a
+        full-coverage match."""
+        pts = [
+            _make_point(x_frac=0.1, y_frac=0.1, room="garage",
+                        readings={"s1": -50.0}),
+            _make_point(x_frac=0.7, y_frac=0.7, room="office",
+                        readings={"s1": -52.0, "s2": -63.0, "s3": -71.0}),
+        ]
+        store = _make_store(points=pts)
+        result = store.knn_locate({"s1": -52.0, "s2": -63.0, "s3": -71.0})
+
+        assert result is not None
+        assert result["nearest_room"] == "office"
+
+
+# ---------------------------------------------------------------------------
+# Tests: async_clear_map dirty-check (detached points must persist)
+# ---------------------------------------------------------------------------
+
+
+class TestClearMap:
+    """Tests for CalibrationStore.async_clear_map()."""
+
+    async def test_detached_points_are_persisted(self) -> None:
+        """When every point on the map has metres (detach, not delete), the
+        map_id='' mutation must still be saved and coverage invalidated."""
+        pt = _make_point(map_id="mapA", readings={"s1": -50.0})
+        pt["x_m"] = 3.0
+        pt["y_m"] = 4.0
+        store = _make_store(points=[pt])
+        store.data["model"] = {"coverage_by_map": {"mapA": {"grid": []}}}
+
+        removed = await store.async_clear_map("mapA")
+
+        assert removed == 0  # detached, not deleted
+        assert store.data["points"][0]["map_id"] == ""
+        store.store.async_save.assert_awaited_once()
+        assert "mapA" not in store.data["model"]["coverage_by_map"]
+
+    async def test_untouched_map_does_not_save(self) -> None:
+        """Clearing a map with no points must not persist or retrain."""
+        pt = _make_point(map_id="mapA", readings={"s1": -50.0})
+        store = _make_store(points=[pt])
+
+        removed = await store.async_clear_map("mapZ")
+
+        assert removed == 0
+        store.store.async_save.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # Tests: loo_accuracy
 # ---------------------------------------------------------------------------
 
@@ -416,3 +519,58 @@ class TestLooAccuracy:
 
         assert result_a is not None
         assert result_b is None  # only 1 point on mapB, not enough
+
+
+# ---------------------------------------------------------------------------
+# Tests: loo_accuracy algorithm awareness (RF out-of-bag validation)
+# ---------------------------------------------------------------------------
+
+
+def _grid_points() -> list[dict]:
+    """8 fraction-space points on a 2-scanner gradient for RF training."""
+    pts = []
+    for i in range(8):
+        f = i / 7.0
+        pts.append(_make_point(
+            x_frac=round(f, 3),
+            y_frac=round(f, 3),
+            room="kitchen" if f < 0.5 else "bedroom",
+            readings={"s1": -40.0 - 40.0 * f, "s2": -80.0 + 40.0 * f},
+        ))
+    return pts
+
+
+class TestLooAlgorithm:
+    """Tests for loo_accuracy(algorithm=...)."""
+
+    def test_rf_untrained_returns_none(self) -> None:
+        """RF validation with no trained forest returns None."""
+        store = _make_store(points=_grid_points())
+        result = store.loo_accuracy(algorithm="rf")
+        assert result is None
+
+    def test_rf_oob_returns_metrics(self) -> None:
+        """RF validation uses out-of-bag trees and reports the same shape."""
+        pts = _grid_points()
+        store = _make_store(points=pts)
+        rf = RandomForestLocator()
+        rf.train(pts, use_metres=False)
+        assert rf.is_trained
+        store._rf = rf
+
+        result = store.loo_accuracy(algorithm="rf")
+
+        assert result is not None
+        assert result["algorithm"] == "rf"
+        assert result["validation"] == "oob"
+        assert result["point_count"] >= 1
+        assert result["mean_error_frac"] >= 0.0
+        assert result["max_error_frac"] >= result["median_error_frac"]
+        assert "mean_error_m_est" in result
+
+    def test_default_algorithm_is_knn(self) -> None:
+        """Default call reports the k-NN metric (backward compatible)."""
+        store = _make_store(points=_grid_points())
+        result = store.loo_accuracy()
+        assert result is not None
+        assert result["algorithm"] == "knn"

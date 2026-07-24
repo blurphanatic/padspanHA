@@ -30,13 +30,21 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from .const import CALIBRATION_STORE_KEY
+from .const import CALIBRATION_STORE_KEY, DATA_SETTINGS, DOMAIN
 from .safe_store import wrap_store
-from .random_forest import RandomForestLocator
+from .random_forest import MISSING_RSSI, RandomForestLocator
 
 GRID_N = 10           # 10×10 coverage grid per floor map
 SIGMA_CELLS = 1.8     # Gaussian sigma in grid-cell units (~20% of map width)
 KNN_K = 3             # k for k-NN fingerprint matching
+MIN_SCANNER_SAMPLES = 3   # scanner readings below this are dropped from a stored point
+HIGH_STD_DBM = 8.0        # per-scanner std above this is flagged (not rejected)
+# Absolute squared-dB discrepancy assigned per scanner that hears the query
+# but is absent from a candidate fingerprint. Must stay absolute (not
+# mean-centered): a scanner hearing the query but not the point is still
+# evidence against the point, and a multiplicative penalty would vanish
+# whenever the centered distance is 0 (e.g. every 1-shared-scanner point).
+MISSING_SCANNER_PENALTY_DB = 12.0
 
 
 def _now_iso() -> str:
@@ -49,6 +57,16 @@ def _gaussian(dist: float, sigma: float) -> float:
 
 def _mean(vals: list[float]) -> float:
     return sum(vals) / len(vals) if vals else 0.0
+
+
+def _median(vals: list[float]) -> float:
+    if not vals:
+        return 0.0
+    s = sorted(vals)
+    mid = len(s) // 2
+    if len(s) % 2:
+        return s[mid]
+    return (s[mid - 1] + s[mid]) / 2.0
 
 
 def _std(vals: list[float]) -> float:
@@ -127,16 +145,35 @@ class CalibrationStore:
             ]
             if not samples:
                 continue
-            m = _mean(samples)
+            # Median, not mean — BLE noise is heavy-tailed (multipath fades
+            # drop 15-20 dB). Key kept as mean_rssi for downstream compat.
+            m = _median(samples)
             s = _std(samples)
-            clean_readings.append({
+            reading: dict[str, Any] = {
                 "source": str(r.get("source") or "")[:200],
                 "name": str(r.get("name") or r.get("source") or "")[:120],
                 "rssi_samples": samples[:200],
                 "mean_rssi": round(m, 2),
                 "std_rssi": round(s, 2),
                 "sample_count": len(samples),
-            })
+            }
+            if s > HIGH_STD_DBM:
+                reading["quality"] = "high_std"
+            clean_readings.append(reading)
+
+        # Quality gate: require MIN_SCANNER_SAMPLES per scanner. Never reject a
+        # point the user explicitly saved — if no scanner qualifies, keep the
+        # best-sampled one and flag the point as undersampled.
+        point_quality = ""
+        qualified = [
+            r for r in clean_readings if r["sample_count"] >= MIN_SCANNER_SAMPLES
+        ]
+        if qualified:
+            clean_readings = qualified
+        elif clean_readings:
+            best = max(clean_readings, key=lambda r: r["sample_count"])
+            clean_readings = [best]
+            point_quality = "undersampled"
 
         clean: dict[str, Any] = {
             "id": point_id,
@@ -152,6 +189,8 @@ class CalibrationStore:
             "weight": max(0.1, min(10.0, float(point.get("weight") or 1.0))),
             "scanner_readings": clean_readings,
         }
+        if point_quality:
+            clean["quality"] = point_quality
         # Phase 3: compute real-world metre coordinates
         if point.get("x_m") is not None and point.get("y_m") is not None:
             # Caller provided explicit metres (standalone/mapless calibration)
@@ -194,17 +233,19 @@ class CalibrationStore:
         points = self.data.get("points", [])
         before = len(points)
         surviving: list[dict[str, Any]] = []
+        detached = 0
         for p in points:
             if p.get("map_id") != map_id:
                 surviving.append(p)
             elif p.get("x_m") is not None:
                 # Phase 3: detach from map but keep (spatially anchored)
                 p["map_id"] = ""
+                detached += 1
                 surviving.append(p)
             # else: map-only point without metres → deleted
         self.data["points"] = surviving
         removed = before - len(surviving)
-        if removed or before != len(points):
+        if removed or detached:
             # Invalidate coverage cache for this map
             cov = (self.data.get("model") or {}).get("coverage_by_map")
             if isinstance(cov, dict):
@@ -392,25 +433,57 @@ class CalibrationStore:
     ) -> dict[str, Any] | None:
         """
         OLS fit of RSSI = RSSI_1m - 10*n*log10(d) for one scanner.
-        Uses map-fraction distances (accurate enough for comparative purposes).
+
+        Phase 3: fits in metre distances when the scanner position converts
+        to metres and points carry x_m/y_m — rssi_1m is then a physical
+        dBm@1m reference (units="m"). Otherwise falls back to map-fraction
+        distances (comparative/display only, units="frac").
         Requires ≥3 data points.
         """
         data: list[tuple[float, float]] = []
         pts = self.data.get("points", [])
-        if map_id:
-            pts = [p for p in pts if p.get("map_id") == map_id]
+        units = "frac"
 
-        for pt in pts:
-            for reading in pt.get("scanner_readings", []):
-                if reading.get("source") != scanner_source:
-                    continue
-                dx = pt["x_frac"] - scanner_x_frac
-                dy = pt["y_frac"] - scanner_y_frac
-                d = math.sqrt(dx ** 2 + dy ** 2)
-                if d < 0.02:   # too close — likely at scanner position itself
-                    continue
-                log_d = math.log10(d)
-                data.append((log_d, reading["mean_rssi"]))
+        # Metre-space fit: same gate style as knn_locate — points with metre
+        # coords available, plus a convertible scanner position.
+        metre_pts = [p for p in pts if p.get("x_m") is not None and p.get("y_m") is not None]
+        scanner_m = None
+        if metre_pts and map_id and self._model is not None:
+            scanner_m = self._model.map_frac_to_metres(scanner_x_frac, scanner_y_frac, map_id)
+        if scanner_m:
+            sx_m, sy_m = scanner_m
+            # Metres are map-independent — use all metre points, cross-map.
+            for pt in metre_pts:
+                for reading in pt.get("scanner_readings", []):
+                    if reading.get("source") != scanner_source:
+                        continue
+                    d = math.sqrt(
+                        (float(pt["x_m"]) - sx_m) ** 2 + (float(pt["y_m"]) - sy_m) ** 2
+                    )
+                    if d < 0.3:   # too close — likely at scanner position itself
+                        continue
+                    data.append((math.log10(d), reading["mean_rssi"]))
+            if len(data) >= 3:
+                units = "m"
+            else:
+                data = []
+
+        if not data:
+            # Legacy map-fraction fit
+            frac_pts = pts
+            if map_id:
+                frac_pts = [p for p in pts if p.get("map_id") == map_id]
+            for pt in frac_pts:
+                for reading in pt.get("scanner_readings", []):
+                    if reading.get("source") != scanner_source:
+                        continue
+                    dx = pt["x_frac"] - scanner_x_frac
+                    dy = pt["y_frac"] - scanner_y_frac
+                    d = math.sqrt(dx ** 2 + dy ** 2)
+                    if d < 0.02:   # too close — likely at scanner position itself
+                        continue
+                    log_d = math.log10(d)
+                    data.append((log_d, reading["mean_rssi"]))
 
         if len(data) < 3:
             return None
@@ -441,7 +514,37 @@ class CalibrationStore:
             "rssi_1m": round(a, 1),
             "r_squared": round(max(0.0, r_sq), 3),
             "point_count": n_pts,
+            "units": units,
         }
+
+    def path_loss_by_source(self) -> dict[str, dict]:
+        """Physical per-scanner path-loss parameters from metre-space fits.
+
+        Reads the fits stored per source by compute_model() and returns
+        {source: {"rssi_1m": float, "n": float, "points": int}} for
+        metre-unit fits with >= 5 points and sane values
+        (rssi_1m in [-90, -30] dBm, n in [1.5, 4.5]).
+        Consumed by the presence coordinator for distance conversion.
+        """
+        out: dict[str, dict] = {}
+        path_loss = (self.data.get("model") or {}).get("path_loss") or {}
+        for src, fit in path_loss.items():
+            if not isinstance(fit, dict) or fit.get("units") != "m":
+                continue
+            try:
+                rssi_1m = float(fit["rssi_1m"])
+                n = float(fit["n"])
+                points = int(fit.get("point_count", 0))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if points < 5:
+                continue
+            if not (-90.0 <= rssi_1m <= -30.0):
+                continue
+            if not (1.5 <= n <= 4.5):
+                continue
+            out[src] = {"rssi_1m": rssi_1m, "n": n, "points": points}
+        return out
 
     # ── k-NN fingerprint matching ──────────────────────────────────────────────
 
@@ -456,7 +559,8 @@ class CalibrationStore:
 
         query_rssi: {source: mean_rssi} for the device being located.
         Returns weighted centroid of top-k nearest calibration points.
-        Euclidean distance in RSSI-space (only shared scanners counted).
+        Distance is a mean-centered (TX-invariant) per-scanner MSE over the
+        shared scanner set, plus an absolute penalty per missing scanner.
 
         Phase 3: when enough points have x_m/y_m, operates in metre space
         (no map_id filtering needed — metres are map-independent).
@@ -485,10 +589,25 @@ class CalibrationStore:
             shared = set(query_rssi.keys()) & set(fp.keys())
             if not shared:
                 continue
-            dist_sq = sum((query_rssi[s] - fp[s]) ** 2 for s in shared)
-            # Penalise points with fewer shared scanners
-            penalty = 1.0 + 0.3 * max(0, len(query_rssi) - len(shared))
-            scored.append((dist_sq * penalty, len(shared), pt))
+            # TX-invariance: mean-centre both vectors over THIS point's shared
+            # scanner set before comparing. A tag whose TX power differs from
+            # the calibration device is offset by a near-constant on every
+            # scanner; centering removes that offset and compares RSSI *shape*.
+            # Centering must be per-point over its own shared set — a global
+            # mean would be corrupted by scanners missing from the point.
+            q_mean = sum(query_rssi[s] for s in shared) / len(shared)
+            p_mean = sum(fp[s] for s in shared) / len(shared)
+            sq_sum = sum(
+                ((query_rssi[s] - q_mean) - (fp[s] - p_mean)) ** 2 for s in shared
+            )
+            # Missing-scanner penalty stays ABSOLUTE (see constant docstring);
+            # normalising over shared+missing keeps this a per-scanner mean
+            # squared error, so sparse fingerprints can't beat well-observed ones.
+            missing = max(0, len(query_rssi) - len(shared))
+            dist_sq = (sq_sum + missing * MISSING_SCANNER_PENALTY_DB ** 2) / (
+                len(shared) + missing
+            )
+            scored.append((dist_sq, len(shared), pt))
 
         if not scored:
             return None
@@ -577,15 +696,11 @@ class CalibrationStore:
             rx_m, ry_m = None, None  # type: ignore[assignment]
             best_floor = ""
 
-        # Confidence (shared between both paths — computed from RSSI space)
-        _best_dist_sq = scored[0][0]
-        _topk_sources: set[str] = set()
-        for _d, _ns, _pt in top_k:
-            for _r in _pt.get("scanner_readings", []):
-                _topk_sources.add(_r.get("source", ""))
-        _shared_total = len(set(query_rssi.keys()) & _topk_sources)
-        _shared_total = max(_shared_total, 1)
-        _mean_sq = _best_dist_sq / _shared_total
+        # Confidence (shared between both paths — computed from RSSI space).
+        # scored[0][0] is already the per-scanner mean squared error; coverage
+        # counts the best point's OWN shared scanners, not the top-k union.
+        _mean_sq = scored[0][0]
+        _shared_total = max(scored[0][1], 1)
         _REF_VARIANCE = 25.0
         _conf_rssi = 1.0 / (1.0 + _mean_sq / _REF_VARIANCE)
         _conf_coverage = min(_shared_total, 4) / 4.0
@@ -647,11 +762,21 @@ class CalibrationStore:
 
     # ── Leave-one-out accuracy estimate ───────────────────────────────────────
 
-    def loo_accuracy(self, map_id: str | None = None) -> dict[str, Any] | None:
+    def loo_accuracy(
+        self, map_id: str | None = None, algorithm: str = "knn"
+    ) -> dict[str, Any] | None:
         """
-        Leave-one-out cross-validation accuracy.
+        Leave-one-out cross-validation accuracy for the given algorithm.
+
+        algorithm="knn" (default): true LOO against the k-NN metric.
+        algorithm="rf": out-of-bag validation against the trained forest
+        (see _rf_oob_accuracy) — retraining per held-out point would be
+        O(n) full forest trains.
         Phase 3: computes in metres when points have x_m/y_m, otherwise map fractions.
         """
+        if algorithm == "rf":
+            return self._rf_oob_accuracy(map_id)
+
         pts = self.data.get("points", [])
         if map_id:
             pts = [p for p in pts if p.get("map_id") == map_id]
@@ -678,9 +803,19 @@ class CalibrationStore:
                 shared = set(query.keys()) & set(fp.keys())
                 if not shared:
                     continue
-                dist_sq = sum((query[s] - fp[s]) ** 2 for s in shared)
-                penalty = 1.0 + 0.3 * max(0, len(query) - len(shared))
-                scored.append((dist_sq * penalty, p2))
+                # Same metric as knn_locate: per-point mean-centered
+                # (TX-invariant) MSE + absolute missing-scanner penalty,
+                # so validation measures the deployed estimator.
+                q_mean = sum(query[s] for s in shared) / len(shared)
+                p_mean = sum(fp[s] for s in shared) / len(shared)
+                sq_sum = sum(
+                    ((query[s] - q_mean) - (fp[s] - p_mean)) ** 2 for s in shared
+                )
+                missing = max(0, len(query) - len(shared))
+                dist_sq = (sq_sum + missing * MISSING_SCANNER_PENALTY_DB ** 2) / (
+                    len(shared) + missing
+                )
+                scored.append((dist_sq, p2))
 
             if not scored:
                 continue
@@ -717,6 +852,7 @@ class CalibrationStore:
         mean_err = _mean(errors)
         median_err = errors[len(errors) // 2]
         result: dict[str, Any] = {
+            "algorithm": "knn",
             "mean_error_frac": round(mean_err, 4),
             "median_error_frac": round(median_err, 4),
             "max_error_frac": round(errors[-1], 4),
@@ -732,6 +868,105 @@ class CalibrationStore:
             result["mean_error_m_est"] = round(mean_err * 15, 2)
         return result
 
+    def _rf_oob_accuracy(self, map_id: str | None = None) -> dict[str, Any] | None:
+        """Out-of-bag validation accuracy for the trained Random Forest.
+
+        True LOO would retrain the whole forest once per held-out point —
+        O(n) full trains, far too slow for large calibration sets. Instead
+        each training point is predicted using only the trees whose bootstrap
+        sample (tree.sample_idx) excluded it: the standard OOB error estimate,
+        statistically close to LOO, at the cost of plain predictions only
+        (~45% of trees are out-of-bag per point at sample_frac=0.8).
+        Returns the same shape as the knn path (algorithm="rf",
+        validation="oob").
+        """
+        rf = self._rf
+        if not rf.is_trained or not rf._points:
+            return None
+        src_idx = {s: i for i, s in enumerate(rf._sources)}
+        n_feat = len(rf._sources)
+        if n_feat == 0:
+            return None
+        x_inbag = [set(t.sample_idx) for t in rf._x_trees]
+        y_inbag = [set(t.sample_idx) for t in rf._y_trees]
+        use_metres = rf._use_metres
+
+        errors: list[float] = []
+        errors_m: list[float] = []
+        for i, pt in enumerate(rf._points):
+            if map_id and pt.get("map_id") != map_id:
+                continue
+            row = [MISSING_RSSI] * n_feat
+            heard = False
+            for r in pt.get("scanner_readings", []):
+                s = r.get("source", "")
+                if s in src_idx:
+                    row[src_idx[s]] = float(r.get("mean_rssi", MISSING_RSSI))
+                    heard = True
+            if not heard:
+                continue
+            x_preds = [
+                t.predict(row)
+                for t, bag in zip(rf._x_trees, x_inbag)
+                if i not in bag
+            ]
+            y_preds = [
+                t.predict(row)
+                for t, bag in zip(rf._y_trees, y_inbag)
+                if i not in bag
+            ]
+            if len(x_preds) < 3 or len(y_preds) < 3:
+                continue  # in-bag for nearly every tree — no honest estimate
+            pred_x = sum(x_preds) / len(x_preds)
+            pred_y = sum(y_preds) / len(y_preds)
+            if use_metres:
+                err_m = math.sqrt(
+                    (pred_x - float(pt["x_m"])) ** 2
+                    + (pred_y - float(pt["y_m"])) ** 2
+                )
+                errors_m.append(err_m)
+                # Rough frac equivalent (map width ≈ 15 m) for shape compat
+                errors.append(err_m / 15.0)
+            else:
+                errors.append(
+                    math.sqrt(
+                        (pred_x - float(pt["x_frac"])) ** 2
+                        + (pred_y - float(pt["y_frac"])) ** 2
+                    )
+                )
+
+        if not errors:
+            return None
+        errors.sort()
+        result: dict[str, Any] = {
+            "algorithm": "rf",
+            "validation": "oob",
+            "mean_error_frac": round(_mean(errors), 4),
+            "median_error_frac": round(errors[len(errors) // 2], 4),
+            "max_error_frac": round(errors[-1], 4),
+            "point_count": len(errors),
+        }
+        if errors_m:
+            errors_m.sort()
+            result["mean_error_m"] = round(_mean(errors_m), 3)
+            result["median_error_m"] = round(errors_m[len(errors_m) // 2], 3)
+            result["max_error_m"] = round(errors_m[-1], 3)
+        else:
+            result["mean_error_m_est"] = round(_mean(errors) * 15, 2)
+        return result
+
+    def _active_algorithm(self) -> str:
+        """Active positioning algorithm from settings ('knn' | 'rf')."""
+        try:
+            settings = (self.hass.data.get(DOMAIN) or {}).get(DATA_SETTINGS)
+            algo = str(
+                (getattr(settings, "data", None) or {}).get("positioning_algorithm")
+                or "knn"
+            )
+        except Exception:
+            return "knn"
+        return algo if algo in ("knn", "rf") else "knn"
+
     # ── Full model computation ────────────────────────────────────────────────
 
     def compute_model(
@@ -746,12 +981,16 @@ class CalibrationStore:
         """
         pts = self.data.get("points", [])
         map_ids = list({p["map_id"] for p in pts if p.get("map_id")})
+        # Validate the algorithm actually in use (P0-12.4) — the UI reads
+        # loo_accuracy from this model, so it must not report k-NN accuracy
+        # while positioning_algorithm='rf'.
+        algo = self._active_algorithm()
 
         # Per-map coverage
         coverage_by_map: dict[str, Any] = {}
         for mid in map_ids:
             cov = self.compute_coverage(mid)
-            loo = self.loo_accuracy(mid)
+            loo = self.loo_accuracy(mid, algorithm=algo)
             coverage_by_map[mid] = {**cov, "loo_accuracy": loo}
 
         # Aggregate scanner stats
@@ -794,8 +1033,8 @@ class CalibrationStore:
                             if fit:
                                 path_loss[src] = {**fit, "map_id": mid, "scanner_name": label}
 
-        # Global LOO accuracy
-        global_loo = self.loo_accuracy()
+        # Global LOO accuracy (for the active algorithm)
+        global_loo = self.loo_accuracy(algorithm=algo)
 
         model = {
             "point_count": len(pts),

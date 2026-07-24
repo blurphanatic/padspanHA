@@ -159,14 +159,14 @@ function _renderFabric(ctx, container, data) {
     const _mbtn = el("button",{class:"btn save-pulse",style:"width:auto;padding:6px 16px;font-size:12px;background:#92400e;border-color:#f59e0b;color:#fbbf24;font-weight:700"},"\ud83d\udcbe Migrate to Fabric");
     _mbtn.addEventListener("click", async () => {
       const w = parseFloat(_mi.value);
-      if (!w || w < 1) { ctx.actions.toast("Enter a valid floor width"); return; }
+      if (!w || w < 1) { ctx.toast("Enter a valid floor width"); return; }
       _mbtn.disabled = true; _mbtn.textContent = "Migrating\u2026"; _mbtn.classList.remove("save-pulse");
       try {
         const res = await ctx.actions.callWS({type:"padspan_ha/fabric_migrate_from_maps", default_floor_width_m: w});
         try { await ctx.actions.callWS({type:"padspan_ha/calibration_retrain_rf"}); } catch(e){}
-        ctx.actions.toast(`Migrated: ${res.transforms_computed} transforms, ${res.scanners_migrated} scanners, ${res.rooms_migrated} rooms`);
+        ctx.toast(`Migrated: ${res.transforms_computed} transforms, ${res.scanners_migrated} scanners, ${res.rooms_migrated} rooms`);
         _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container);
-      } catch(e) { ctx.actions.toast("Failed: "+(e.message||e)); _mbtn.disabled=false; _mbtn.textContent="Migrate to Fabric"; _mbtn.classList.add("save-pulse"); }
+      } catch(e) { ctx.toast("Failed: "+(e.message||e)); _mbtn.disabled=false; _mbtn.textContent="Migrate to Fabric"; _mbtn.classList.add("save-pulse"); }
     });
     _mr.appendChild(_mbtn);
     _mb.appendChild(_mr);
@@ -314,9 +314,9 @@ function _renderFabric(ctx, container, data) {
         rfBtn.disabled = true; rfBtn.textContent = "Retraining\u2026";
         try {
           const r = await ctx.actions.callWS({type:"padspan_ha/calibration_retrain_rf"});
-          ctx.actions.toast(`RF retrained: ${r.use_metres ? "metres" : "fractions"}, ${r.point_count} pts`);
+          ctx.toast(`RF retrained: ${r.use_metres ? "metres" : "fractions"}, ${r.point_count} pts`);
           _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container);
-        } catch(e) { ctx.actions.toast(`Failed: ${e.message||e}`); rfBtn.disabled = false; rfBtn.textContent = "Retrain RF"; }
+        } catch(e) { ctx.toast(`Failed: ${e.message||e}`); rfBtn.disabled = false; rfBtn.textContent = "Retrain RF"; }
       });
       actCard.appendChild(rfBtn);
     }
@@ -328,9 +328,9 @@ function _renderFabric(ctx, container, data) {
       resyncBtn.disabled = true; resyncBtn.textContent = "Resyncing\u2026";
       try {
         const r = await ctx.actions.callWS({type:"padspan_ha/fabric_resync"});
-        ctx.actions.toast(`Resync: removed ${r.removed}, added ${r.added}, pruned ${r.pruned} \u2192 ${r.final_count} scanners`);
+        ctx.toast(`Resync: removed ${r.removed}, added ${r.added}, pruned ${r.pruned} \u2192 ${r.final_count} scanners`);
         _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container);
-      } catch(e) { ctx.actions.toast(`Failed: ${e.message||e}`); resyncBtn.disabled = false; resyncBtn.textContent = "Resync Scanners"; }
+      } catch(e) { ctx.toast(`Failed: ${e.message||e}`); resyncBtn.disabled = false; resyncBtn.textContent = "Resync Scanners"; }
     });
     actCard.appendChild(resyncBtn);
 
@@ -342,9 +342,9 @@ function _renderFabric(ctx, container, data) {
       resetBtn.disabled = true; resetBtn.textContent = "Resetting\u2026";
       try {
         const r = await ctx.actions.callWS({type:"padspan_ha/fabric_reset_spatial"});
-        ctx.actions.toast(`Reset: ${r.transforms} transforms, ${r.scanners} positions, ${r.rooms} rooms, ${r.cal_backfilled} cal pts rebuilt`);
+        ctx.toast(`Reset: ${r.transforms} transforms, ${r.scanners} positions, ${r.rooms} rooms, ${r.cal_backfilled} cal pts rebuilt`);
         _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container);
-      } catch(e) { ctx.actions.toast(`Failed: ${e.message||e}`); resetBtn.disabled = false; resetBtn.textContent = "Reset Spatial Model"; }
+      } catch(e) { ctx.toast(`Failed: ${e.message||e}`); resetBtn.disabled = false; resetBtn.textContent = "Reset Spatial Model"; }
     });
     actCard.appendChild(resetBtn);
 
@@ -357,9 +357,9 @@ function _renderFabric(ctx, container, data) {
         idBtn.disabled = true; idBtn.textContent = "Migrating\u2026"; idBtn.classList.remove("save-pulse");
         try {
           const r = await ctx.actions.callWS({type:"padspan_ha/device_registry_migrate"});
-          ctx.actions.toast(`Identity: ${r.migrated} devices migrated, ${r.merged} merged \u2192 ${r.total_devices} total`);
+          ctx.toast(`Identity: ${r.migrated} devices migrated, ${r.merged} merged \u2192 ${r.total_devices} total`);
           _fabricCache = null; _fabricFetchTs = 0; _fetchAndRenderFabric(ctx, container);
-        } catch(e) { ctx.actions.toast(`Failed: ${e.message||e}`); idBtn.disabled=false; idBtn.textContent="\ud83d\udd11 Migrate Device Identity"; idBtn.classList.add("save-pulse"); }
+        } catch(e) { ctx.toast(`Failed: ${e.message||e}`); idBtn.disabled=false; idBtn.textContent="\ud83d\udd11 Migrate Device Identity"; idBtn.classList.add("save-pulse"); }
       });
       actCard.appendChild(idBtn);
     }
@@ -407,7 +407,7 @@ function _renderFabric(ctx, container, data) {
     const migrateBtn = el("button",{class:"btn",style:"width:auto;padding:4px 14px;font-size:11px;margin-left:8px"},"Migrate to Metres");
     migrateBtn.addEventListener("click", async () => {
       const w = parseFloat(input.value);
-      if (!w || w < 1) { ctx.actions.toast("Enter a valid floor width"); return; }
+      if (!w || w < 1) { ctx.toast("Enter a valid floor width"); return; }
       migrateBtn.disabled = true;
       migrateBtn.textContent = "Migrating\u2026";
       try {
@@ -417,11 +417,11 @@ function _renderFabric(ctx, container, data) {
         });
         // Also retrain RF to pick up metre-space data
         try { await ctx.actions.callWS({type:"padspan_ha/calibration_retrain_rf"}); } catch(e){}
-        ctx.actions.toast(`Migrated: ${res.transforms_computed} transforms, ${res.scanners_migrated} scanners, ${res.rooms_migrated} rooms, ${res.cal_points_backfilled || 0} cal points. RF retrained.`);
+        ctx.toast(`Migrated: ${res.transforms_computed} transforms, ${res.scanners_migrated} scanners, ${res.rooms_migrated} rooms, ${res.cal_points_backfilled || 0} cal points. RF retrained.`);
         _fabricCache = null; _fabricFetchTs = 0;
         _fetchAndRenderFabric(ctx, container);
       } catch (err) {
-        ctx.actions.toast(`Migration failed: ${err.message || err}`);
+        ctx.toast(`Migration failed: ${err.message || err}`);
         migrateBtn.disabled = false;
         migrateBtn.textContent = "Migrate to Metres";
       }

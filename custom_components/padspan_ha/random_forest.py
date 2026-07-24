@@ -56,6 +56,10 @@ class _DecisionTree:
         self._rng = rng or random.Random()
         self.root: _Node | None = None
         self.n_features: int = 0
+        # Maps bootstrap-sample positions back to original training indices.
+        # node.indices are positions within the bootstrap sample; callers must
+        # translate them via sample_idx before dereferencing training points.
+        self.sample_idx: list[int] = []
 
     def fit(self, X: list[list[float]], y: list[float]) -> None:
         n = len(X)
@@ -63,6 +67,7 @@ class _DecisionTree:
         # Bootstrap sample
         k = max(1, int(n * self.sample_frac))
         sample_idx = [self._rng.randrange(n) for _ in range(k)]
+        self.sample_idx = sample_idx
         Xs = [X[i] for i in sample_idx]
         ys = [y[i] for i in sample_idx]
         all_idx = list(range(len(Xs)))
@@ -284,6 +289,7 @@ class RandomForestLocator:
         Predict position from live RSSI readings.
         Returns same shape as knn_locate():
         {x_frac, y_frac, confidence, nearest_room, map_id, k_used, shared_scanners}
+        plus {x_m, y_m, floor_id} when the model was trained in metres.
         """
         if not self._trained or not query_rssi:
             return None
@@ -310,24 +316,46 @@ class RandomForestLocator:
         y_mean = sum(y_preds) / len(y_preds)
 
         # Determine room via leaf-node majority vote
-        # Collect training point indices from leaf nodes across all trees
-        room_votes: dict[str, int] = {}
-        map_votes: dict[str, int] = {}
+        # Collect training points from leaf nodes across all trees.
+        # node.indices are positions within each tree's bootstrap sample, so
+        # they must be mapped back to original training indices through the
+        # tree's sample_idx before dereferencing self._points.
+        vote_pts: list[dict] = []
         for tx, ty in zip(self._x_trees, self._y_trees):
             leaf_x = tx.predict_leaf(qvec)
             leaf_y = ty.predict_leaf(qvec)
-            # Combine unique indices from both x and y leaves
-            leaf_indices = set(leaf_x.indices if leaf_x else [])
-            leaf_indices.update(leaf_y.indices if leaf_y else [])
+            # Combine unique original indices from both x and y leaves
+            leaf_indices: set[int] = set()
+            if leaf_x:
+                leaf_indices.update(tx.sample_idx[i] for i in leaf_x.indices)
+            if leaf_y:
+                leaf_indices.update(ty.sample_idx[i] for i in leaf_y.indices)
             for idx in leaf_indices:
                 if idx < len(self._points):
-                    pt = self._points[idx]
-                    rm = pt.get("room", "")
-                    if rm:
-                        room_votes[rm] = room_votes.get(rm, 0) + 1
-                    mid = pt.get("map_id", "")
-                    if mid:
-                        map_votes[mid] = map_votes.get(mid, 0) + 1
+                    vote_pts.append(self._points[idx])
+
+        # Dominant floor among voting points (metre space only) — mirrors
+        # knn_locate's floor grouping so overlapping floors don't cross-vote.
+        best_floor = ""
+        if self._use_metres:
+            floor_votes: dict[str, int] = {}
+            for pt in vote_pts:
+                fl = pt.get("floor_id", "")
+                if fl:
+                    floor_votes[fl] = floor_votes.get(fl, 0) + 1
+            best_floor = max(floor_votes, key=lambda f: floor_votes[f]) if floor_votes else ""
+
+        room_votes: dict[str, int] = {}
+        map_votes: dict[str, int] = {}
+        for pt in vote_pts:
+            if best_floor and pt.get("floor_id", "") != best_floor:
+                continue
+            rm = pt.get("room", "")
+            if rm:
+                room_votes[rm] = room_votes.get(rm, 0) + 1
+            mid = pt.get("map_id", "")
+            if mid:
+                map_votes[mid] = map_votes.get(mid, 0) + 1
 
         best_room = max(room_votes, key=lambda r: room_votes[r]) if room_votes else ""
         best_map = max(map_votes, key=lambda m: map_votes[m]) if map_votes else ""
@@ -337,8 +365,13 @@ class RandomForestLocator:
         x_var = sum((xp - x_mean) ** 2 for xp in x_preds) / len(x_preds)
         y_var = sum((yp - y_mean) ** 2 for yp in y_preds) / len(y_preds)
         total_var = x_var + y_var
-        # Map variance to confidence: var=0 → 100%, var=0.01 → ~50%
-        _conf_agreement = 1.0 / (1.0 + total_var / 0.01)
+        # Map variance to confidence: var=0 → 100%, var=ref → 50%.
+        # Reference variance depends on the coordinate space the model was
+        # trained in (recorded at fit time): 0.01 for 0-1 map fractions,
+        # 1.0 m² for metres (a tight ±0.5 m tree spread stays high-confidence,
+        # a ±3 m spread collapses toward zero).
+        _ref_var = 1.0 if self._use_metres else 0.01
+        _conf_agreement = 1.0 / (1.0 + total_var / _ref_var)
         # Scanner coverage penalty (same as k-NN)
         _conf_coverage = min(shared, 4) / 4.0
         confidence = round(_conf_agreement * _conf_coverage, 3)
@@ -353,6 +386,7 @@ class RandomForestLocator:
         if self._use_metres:
             result["x_m"] = round(x_mean, 3)
             result["y_m"] = round(y_mean, 3)
+            result["floor_id"] = best_floor
             # Derive fracs for UI (caller should provide inverse transform)
             result["x_frac"] = round(x_mean, 4)  # placeholder — caller remaps
             result["y_frac"] = round(y_mean, 4)  # placeholder — caller remaps

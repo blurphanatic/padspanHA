@@ -950,11 +950,16 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
     except Exception:
         pass
 
-    # Mark radios flagged as "lost" or "disabled" in PadSpan settings
+    # Mark radios flagged as "lost" or "disabled" in PadSpan settings.
+    # These sources are excluded from location math downstream (per-object
+    # per-scanner RSSI maps + strongest-scanner fallback room assignment),
+    # but stay in the radios list so the UI can show them as lost/disabled.
+    _excluded_radio_srcs: set[str] = set()
     try:
         _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS, None)
         lost_set     = (_st.data.get("lost_radios",     {}) if _st else {})
         disabled_set = (_st.data.get("disabled_radios", {}) if _st else {})
+        _excluded_radio_srcs = {str(s) for s in lost_set} | {str(s) for s in disabled_set}
         for radio in ((snapshot.get("ble") or {}).get("radios") or []):
             src = str(radio.get("source") or "")
             if src in lost_set:
@@ -1043,7 +1048,9 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                 ble_by_addr[addr] = rec
 
             src = a.get("source")
-            if src:
+            # Scanners marked lost/disabled don't contribute to per-scanner
+            # RSSI maps (excluded from location math; radios list unaffected).
+            if src and str(src) not in _excluded_radio_srcs:
                 src_key = str(src)
                 a_rssi = a.get("rssi")
                 a_age = a.get("age_s")
@@ -1181,6 +1188,36 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                                 "ts": _now_ts,
                             }
 
+                # Also seed from identified/labelled rotating devices WITHOUT an
+                # IRK (AirTag/SmartTag-class trackers).  These rotate their MAC
+                # too but never appear in canonical_by_addr, so without this
+                # they could never be bridged.  Canonical id = the labelled MAC
+                # itself: the label re-apply pass looks objects up in the
+                # ObjectStore by canonical_id, so a bridged rotation keeps its
+                # user label.
+                _obj_store_br = hass.data.get(DOMAIN, {}).get(DATA_OBJECTS)
+                for addr, rec in ble_by_addr.items():
+                    if addr in canonical_by_addr:
+                        continue  # IRK-resolved — seeded above
+                    if not _is_rpa_addr(addr):
+                        continue  # static MAC — nothing to bridge
+                    if not (
+                        addr in addr_to_device
+                        or addr in addr_to_entities
+                        or (_obj_store_br and _obj_store_br.get_label(addr))
+                    ):
+                        continue  # unidentified — no stable identity to carry over
+                    _seed_age = rec.get("age_s")
+                    if isinstance(_seed_age, (int, float)) and _seed_age > _BRIDGE_STALE_S:
+                        continue  # long silent — outside the bridge window
+                    fp = _build_bridge_fingerprint(rec)
+                    if not fp:
+                        continue
+                    _existing = _bridge_cache.get(fp)
+                    if _existing and _existing.get("canonical") != addr:
+                        continue  # entry belongs to another device or a fired bridge
+                    _bridge_cache[fp] = {"canonical": addr, "addr": addr, "ts": _now_ts}
+
                 # Try to bridge unresolved RPAs
                 for addr, rec in ble_by_addr.items():
                     if addr in canonical_by_addr:
@@ -1194,7 +1231,15 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
                     if not cached_entry:
                         continue
                     if cached_entry["addr"] == addr:
-                        continue  # same address, not a rotation
+                        # Same address seen again — refresh ts so the entry
+                        # doesn't purge as stale after _BRIDGE_STALE_S while
+                        # the device is still advertising.
+                        cached_entry["ts"] = _now_ts
+                        if cached_entry["canonical"] == addr:
+                            continue  # self-seeded entry — no rotation yet
+                        # Previously-fired bridge: fall through and re-apply
+                        # the canonical mapping (canonical_by_addr is rebuilt
+                        # from scratch every snapshot).
                     # Sources is a dict {source_name: {rssi, age_s}} at this point
                     # Bridge if fingerprint matches (RSSI overlap is best-effort)
                     canonical_by_addr[addr] = {
@@ -2739,19 +2784,29 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         for r in radios:
             src = r.get("source")
             area = r.get("area_name") or r.get("area")
-            if src and area:
+            # Lost/disabled scanners are excluded from location math
+            if src and area and str(src) not in _excluded_radio_srcs:
                 source_to_area[str(src)] = str(area)
 
         if source_to_area:
             ads_raw = (snapshot.get("ble") or {}).get("advertisements") or []
-            # Build {addr: {source: rssi}} from raw advertisements
+            # Build {addr: {source: rssi}} from raw advertisements.
+            # Skip readings older than 60s so a scanner that heard the device
+            # long ago can't win (same recency cutoff as the iBeacon merge),
+            # and skip scanners marked lost/disabled.
             addr_src_rssi: dict[str, dict[str, float]] = {}
             for ad in ads_raw:
                 addr = str(ad.get("address") or "").upper()
                 src  = ad.get("source")
                 rssi = ad.get("rssi")
-                if addr and src and rssi is not None:
-                    addr_src_rssi.setdefault(addr, {})[str(src)] = float(rssi)
+                if not (addr and src and rssi is not None):
+                    continue
+                if str(src) in _excluded_radio_srcs:
+                    continue
+                _age = ad.get("age_s")
+                if isinstance(_age, (int, float)) and _age > 60:
+                    continue
+                addr_src_rssi.setdefault(addr, {})[str(src)] = float(rssi)
 
             # Apply per-scanner RSSI offsets (corrects scanners that read consistently high/low)
             _scanner_offsets: dict[str, float] = {}
@@ -2846,7 +2901,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command(
     {
         "type": "padspan_ha/settings_set",
-        "data_mode": str,
+        vol.Optional("data_mode"): str,
         vol.Optional("vendor_lookup_enabled"): bool,
         vol.Optional("room_change_delay_s"): vol.Coerce(float),
         vol.Optional("away_timeout_m"): vol.Coerce(float),
@@ -2903,6 +2958,11 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("phone_wizard_enabled"): bool,
         vol.Optional("mac_rotation_bridging"): bool,
         vol.Optional("apple_auto_classify"): bool,
+        vol.Optional("ble_max_age_s"): vol.Coerce(int),
+        vol.Optional("occupancy_hybrid_enabled"): bool,
+        vol.Optional("occupancy_cluster_threshold"): vol.Coerce(float),
+        vol.Optional("distance_stationary_devices"): list,
+        vol.Optional("onboarding_completed"): bool,
         # Radio map visualization parameters (clamped in handler below)
         vol.Optional("heatmap_gain"): vol.Coerce(int),        # -20 to +20 dB
         vol.Optional("heatmap_contrast"): vol.Coerce(int),    # -15 to +15
@@ -2920,12 +2980,17 @@ async def ws_settings_set(hass: HomeAssistant, connection, msg) -> None:
     being written to the SettingsStore.  After saving, entity toggles in the
     HA registry are updated to reflect enabled/disabled preferences.
     """
-    mode = (msg.get("data_mode") or "sample").strip().lower()
-    if mode not in ("sample", "live"):
-        mode = "sample"
     st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
     if st:
-        payload: dict[str, Any] = {"data_mode": mode}
+        payload: dict[str, Any] = {}
+        # Only touch data_mode when the message actually carries it.  Callers
+        # that omit it (e.g. the lights panel hiding a light) must not flip
+        # the integration back to "sample" mode as a side effect.
+        if "data_mode" in msg:
+            mode = (msg.get("data_mode") or "sample").strip().lower()
+            if mode not in ("sample", "live"):
+                mode = "sample"
+            payload["data_mode"] = mode
         if "vendor_lookup_enabled" in msg:
             payload["vendor_lookup_enabled"] = bool(msg.get("vendor_lookup_enabled"))
         if "room_change_delay_s" in msg:
@@ -4892,6 +4957,17 @@ async def ws_room_tag_purge_missing(hass: HomeAssistant, connection, msg) -> Non
         if valid:
             new_map[room] = valid
     coord.room_tag_map = new_map
+    # Persist the purge so phantom entries don't reappear on restart.  The
+    # set_room_tag_map service saves room_tag_map to SettingsStore and
+    # async_setup_entry restores it; without saving here the restored map would
+    # re-add the very entries we just removed.  Only write when something changed.
+    if removed:
+        try:
+            _settings = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            if _settings:
+                await _settings.async_set(room_tag_map=new_map)
+        except Exception as err:
+            _LOGGER.exception("Failed to persist purged room_tag_map: %s", err)
     connection.send_result(msg["id"], {"removed": removed, "rooms": len(new_map)})
 
 
@@ -8880,7 +8956,10 @@ async def compute_occupancy_estimate(hass: HomeAssistant) -> dict:
 
     # Phase 1: Collect unique devices with room assignments
     import time as _time
-    now_mono = _time.monotonic()
+    now_wall = _time.time()
+    # First-seen lookup for dwell computation — the 7-day object history
+    # cache (same keys as the coordinator data) tracks _first_seen per object.
+    _hist_cache: dict = hass.data.get(DOMAIN, {}).get(DATA_OBJECT_HISTORY) or {}
     devices: dict[str, dict] = {}  # addr → {room, floor, kind, label, first_seen_s, is_identified, rssi_var}
 
     # ── Phone detection helper ─────────────────────────────────────────
@@ -8949,11 +9028,29 @@ async def compute_occupancy_estimate(hass: HomeAssistant) -> dict:
         if is_iot and not has_label:
             continue
 
+        # Dwell = time since FIRST seen, not age_s (time since last
+        # advertisement).  Using age_s inverted the filter: actively-
+        # advertising phones (age≈0) were excluded as "dwell too short"
+        # while only long-silent devices were counted.
+        _fs = None
+        _hist_ent = _hist_cache.get(key)
+        if isinstance(_hist_ent, dict):
+            _fs = _hist_ent.get("_first_seen")
+        if not isinstance(_fs, (int, float)):
+            _fs_iso = obj.get("first_seen")
+            if _fs_iso:
+                try:
+                    from datetime import datetime as _dt
+                    _fs = _dt.fromisoformat(str(_fs_iso)).timestamp()
+                except Exception:
+                    _fs = None
+        _dev_dwell = max(0.0, now_wall - float(_fs)) if isinstance(_fs, (int, float)) else 0.0
+
         devices[addr_upper] = {
             "room": room, "floor": source_to_floor.get(room, ""),
             "kind": kind, "label": obj.get("user_label") or obj.get("name") or "",
             "is_identified": is_identified,
-            "dwell_s": float(age_s) if age_s is not None else 0,
+            "dwell_s": _dev_dwell,
             "excluded": False,
         }
 

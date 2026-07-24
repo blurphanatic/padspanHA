@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -187,6 +189,9 @@ class BluetoothLive:
         # Previously keyed only by address, which caused the second scanner callback to
         # overwrite the first — meaning only one radio's RSSI ever appeared per device.
         self._seen_by_source: Dict[str, Dict[str, _Adv]] = {}
+        # {addr: {source: deque[(seen_dt, rssi)]}} — recent raw samples from
+        # REAL callbacks (never the reseed path) for median-of-N filtering.
+        self._rssi_samples: Dict[str, Dict[str, Any]] = {}
         self._unsubs: List[Any] = []
         # Per-radio "last heard" timestamp — updated on every callback, independent of filtering.
         # Used by the frontend to show a radio as "listening" even when its ads are old/filtered.
@@ -206,6 +211,7 @@ class BluetoothLive:
                 pass
         self._unsubs.clear()
         self._seen_by_source.clear()
+        self._rssi_samples.clear()
 
     @callback
     def _on_adv(self, service_info: Any, change: Any = None) -> None:
@@ -220,6 +226,13 @@ class BluetoothLive:
             if addr not in self._seen_by_source:
                 self._seen_by_source[addr] = {}
             self._seen_by_source[addr][src] = _Adv(record=rec, seen=seen)
+            # Sample history for median-of-N (real callbacks only — the
+            # reseed path replays cached readings and must not multiply them)
+            _rs = rec.get("rssi")
+            if _rs is not None:
+                self._rssi_samples.setdefault(addr, {}).setdefault(
+                    src, deque(maxlen=32)
+                ).append((seen, float(_rs)))
             # Track when each radio last sent us anything (independent of age filtering)
             if src != "_unknown":
                 self._radio_last_heard[src] = seen
@@ -249,6 +262,7 @@ class BluetoothLive:
                 manager = _get_bt_manager()
                 if manager:
                     seen = _now()
+                    _mono_now = time.monotonic()
                     scanners_list = list(manager.async_current_scanners())
                     _scanner_count = len(scanners_list)
                     for scanner in scanners_list:
@@ -258,17 +272,38 @@ class BluetoothLive:
                         dev_adv = getattr(scanner, "discovered_devices_and_advertisement_data", None)
                         if dev_adv is None:
                             continue
+                        # Per-device timestamps of when the scanner ACTUALLY
+                        # last heard each device (monotonic, Bermuda-style).
+                        # Without them, reseeding would stamp every cached
+                        # entry as heard-now, laundering stale readings as
+                        # fresh every 30 s for as long as the cache holds them.
+                        _stamps = getattr(scanner, "discovered_device_timestamps", None) or {}
                         for ble_device, adv_data in dev_adv.values():
                             addr = getattr(ble_device, "address", None)
                             if not addr:
                                 continue
                             rssi = getattr(adv_data, "rssi", None)
+                            _stamp = _stamps.get(addr)
+                            if _stamp is not None:
+                                # Stamps are monotonic; > 1e9 means a unix-epoch
+                                # implementation — handle both.
+                                if float(_stamp) > 1e9:
+                                    _age = max(0.0, time.time() - float(_stamp))
+                                else:
+                                    _age = max(0.0, _mono_now - float(_stamp))
+                                dev_seen = seen - dt.timedelta(seconds=_age)
+                            else:
+                                # No real timestamp for this device: keep the
+                                # existing record's age rather than refreshing
+                                # it; only brand-new entries get stamped now.
+                                _prev = self._seen_by_source.get(addr, {}).get(str(src))
+                                dev_seen = _prev.seen if _prev else seen
                             rec = _service_info_to_record_from_adv(
-                                addr, src, rssi, ble_device, adv_data, seen
+                                addr, src, rssi, ble_device, adv_data, dev_seen
                             )
                             if addr not in self._seen_by_source:
                                 self._seen_by_source[addr] = {}
-                            self._seen_by_source[addr][str(src)] = _Adv(record=rec, seen=seen)
+                            self._seen_by_source[addr][str(src)] = _Adv(record=rec, seen=dev_seen)
                             if str(src) != "_unknown":
                                 self._radio_last_heard[str(src)] = seen
                             _total_ads += 1
@@ -446,6 +481,7 @@ class BluetoothLive:
                     _prune_addrs.append(addr)
             for addr in _prune_addrs:
                 del self._seen_by_source[addr]
+                self._rssi_samples.pop(addr, None)
 
             # Collect per-address records, keeping ALL per-source readings for
             # each address.  The max_ads cap applies to unique *addresses* (not
@@ -460,6 +496,24 @@ class BluetoothLive:
                         continue
                     rec = dict(a.record)
                     rec["age_s"] = age_s
+                    # Median-of-N: a 1-2 Hz beacon emits many ads per poll
+                    # window but the cache keeps only the newest per source.
+                    # Report the median of the last 15 s of real samples —
+                    # BLE noise is heavy-tailed and the median rejects
+                    # multipath fade outliers the single latest ad can't.
+                    _sd = self._rssi_samples.get(addr, {}).get(src)
+                    if _sd:
+                        _fresh = sorted(
+                            r for (t, r) in _sd
+                            if (now - t).total_seconds() <= 15.0
+                        )
+                        if len(_fresh) >= 3:
+                            _m = len(_fresh) // 2
+                            rec["rssi"] = round(
+                                _fresh[_m] if len(_fresh) % 2
+                                else (_fresh[_m - 1] + _fresh[_m]) / 2.0,
+                                1,
+                            )
                     addr_records.setdefault(addr, []).append(rec)
                     prev = addr_best_age.get(addr)
                     if prev is None or age_s < prev:

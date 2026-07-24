@@ -206,14 +206,20 @@ async def _ensure_stores(hass: HomeAssistant, *, critical_only: bool = False) ->
         deferred.append(_init_traceback())
     if DATA_TAG_INTEGRATION not in hass.data[DOMAIN]:
         deferred.append(_init_tag())
-    if DATA_DEVICE_REGISTRY not in hass.data[DOMAIN]:
-        deferred.append(_init_device_registry())
 
     if deferred:
         results = await asyncio.gather(*deferred)
         for data_key, store, msg in results:
             hass.data[DOMAIN][data_key] = store
             _LOGGER.debug(msg)
+
+    # DeviceRegistry must initialise AFTER the gather results are stored:
+    # its ObjectStore→DeviceRegistry migration reads hass.data[DATA_OBJECTS],
+    # which is only populated once the batch above completes.
+    if DATA_DEVICE_REGISTRY not in hass.data[DOMAIN]:
+        data_key, store, msg = await _init_device_registry()
+        hass.data[DOMAIN][data_key] = store
+        _LOGGER.debug(msg)
 
     # Kick off deferred RF training in background (non-blocking)
     cal = hass.data[DOMAIN].get(DATA_CALIBRATION)
@@ -227,6 +233,53 @@ async def _ensure_deferred_stores(hass: HomeAssistant) -> None:
         await _ensure_stores(hass, critical_only=False)
     except Exception as err:
         _LOGGER.warning("Deferred store init error: %s", err)
+
+
+async def _async_start_live_feeds(hass: HomeAssistant) -> None:
+    """Start the live BLE feeds (bluetooth_live, TagIntegration, ESPresense MQTT).
+
+    Idempotent. Called from async_setup's _background_init on first boot and
+    from async_setup_entry after a config-entry reload (async_unload_entry
+    tears the feeds down; without this they would stay dead until HA restart).
+    The lock guards against double-creation if both paths run concurrently.
+    """
+    import asyncio
+
+    dom = hass.data.setdefault(DOMAIN, {})
+    lock = dom.setdefault("_live_feeds_lock", asyncio.Lock())
+    async with lock:
+        try:
+            from .bluetooth_live import async_setup_bluetooth_live, get_bluetooth_live
+            if get_bluetooth_live(hass) is None:
+                await async_setup_bluetooth_live(hass)
+        except Exception as err:
+            _LOGGER.debug("Bluetooth live setup skipped: %s", err)
+
+        try:
+            if DATA_TAG_INTEGRATION not in dom:
+                from .tag_integration import TagIntegration
+                tag_int = TagIntegration(hass)
+                await tag_int.async_setup()
+                dom[DATA_TAG_INTEGRATION] = tag_int
+                _LOGGER.debug("TagIntegration ready")
+        except Exception as err:
+            _LOGGER.debug("Tag integration setup skipped: %s", err)
+
+        # ESPresense MQTT ingestion (off by default)
+        try:
+            from .const import DATA_ESPRESENSE_MQTT
+            _st = dom.get(DATA_SETTINGS)
+            if (
+                _st
+                and _st.data.get("espresense_mqtt_enabled")
+                and DATA_ESPRESENSE_MQTT not in dom
+            ):
+                from .espresense_mqtt import async_setup_espresense_mqtt
+                _prefix = _st.data.get("espresense_topic_prefix", "espresense")
+                await async_setup_espresense_mqtt(hass, _prefix)
+                _LOGGER.info("ESPresense MQTT ingestion started (prefix: %s)", _prefix)
+        except Exception as err:
+            _LOGGER.debug("ESPresense MQTT setup skipped: %s", err)
 
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -324,22 +377,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         except Exception as err:
             _LOGGER.debug("Phase 4 alert backfill skipped: %s", err)
 
-        try:
-            from .bluetooth_live import async_setup_bluetooth_live
-            await async_setup_bluetooth_live(hass)
-        except Exception as err:
-            _LOGGER.debug("Bluetooth live setup skipped: %s", err)
-
-        # ESPresense MQTT ingestion (off by default)
-        try:
-            _st = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
-            if _st and _st.data.get("espresense_mqtt_enabled"):
-                from .espresense_mqtt import async_setup_espresense_mqtt
-                _prefix = _st.data.get("espresense_topic_prefix", "espresense")
-                await async_setup_espresense_mqtt(hass, _prefix)
-                _LOGGER.info("ESPresense MQTT ingestion started (prefix: %s)", _prefix)
-        except Exception as err:
-            _LOGGER.debug("ESPresense MQTT setup skipped: %s", err)
+        # Bluetooth live feed + TagIntegration + ESPresense MQTT (idempotent —
+        # TagIntegration was already created by _ensure_deferred_stores above).
+        await _async_start_live_feeds(hass)
 
     hass.async_create_task(_background_init())
 
@@ -433,6 +473,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _ensure_stores(hass, critical_only=True)
     except Exception as err:
         _LOGGER.exception("Store init failed during setup_entry: %s", err)
+
+    # Re-create the live feeds torn down by async_unload_entry (config-entry
+    # reload, e.g. after saving options).  On first HA boot the feeds are
+    # created exactly once by async_setup's _background_init — the flag is
+    # only set by async_unload_entry, so this never double-creates them.
+    if hass.data[DOMAIN].pop("_live_feeds_stopped", False):
+        hass.async_create_task(_async_start_live_feeds(hass))
 
     coord: PadSpanCoordinator | None = hass.data[DOMAIN].get("coordinator")
     if coord is None:
@@ -554,6 +601,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.get(DOMAIN, {}).pop(DATA_KEY, None)
     except Exception as err:
         _LOGGER.debug("BLE cleanup error: %s", err)
+
+    # Mark the live feeds as stopped so async_setup_entry re-creates them on
+    # reload — they are otherwise only created once per HA boot in async_setup.
+    hass.data.setdefault(DOMAIN, {})["_live_feeds_stopped"] = True
 
     # Flush object history to disk before shutdown
     try:

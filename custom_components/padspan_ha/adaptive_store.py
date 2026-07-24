@@ -42,6 +42,14 @@ _MAX_USEFUL_VARIANCE = 50.0
 # Exponential decay alpha for fingerprint EMA — effective window ~20 samples.
 # Higher = faster adaptation to changes, lower = smoother but slower to adapt.
 _EMA_DECAY_ALPHA = 0.05
+# Fingerprint schema version.  v2 = per-device normalized RSSI (each scanner
+# reading is stored relative to the device's mean across scanners), making
+# fingerprints comparable across devices with different TX power.  v1 raw-dBm
+# fingerprints are incompatible and are reset on load.
+_FP_VERSION = 2
+# Minimum scanners per observation/query — a single-scanner vector normalizes
+# to all-zero and carries no room information.
+_MIN_OBS_SCANNERS = 2
 
 
 def _now_iso() -> str:
@@ -50,6 +58,7 @@ def _now_iso() -> str:
 
 def _empty_data() -> dict[str, Any]:
     return {
+        "fp_version": _FP_VERSION,
         "room_fingerprints": {},
         "transition_counts": {},
         "floor_pairs": {},
@@ -79,6 +88,20 @@ class AdaptiveStore:
             self.data = loaded
         else:
             self.data = _empty_data()
+        # Fingerprint schema check — MUST run before the key backfill below,
+        # which would stamp the current version onto old data.  v1 raw-dBm
+        # fingerprints are incompatible with v2 normalized ones; reset them.
+        # transition_counts and floor_pairs survive (floor_pair deltas are
+        # already device-relative).
+        if self.data.get("fp_version") != _FP_VERSION:
+            if self.data.get("room_fingerprints"):
+                _LOGGER.info(
+                    "Adaptive room fingerprints reset (schema v%s → v%s: "
+                    "per-device RSSI normalization) — relearning from scratch",
+                    self.data.get("fp_version", 1), _FP_VERSION,
+                )
+                self.data["room_fingerprints"] = {}
+            self.data["fp_version"] = _FP_VERSION
         # Schema migration: ensure all keys exist (added in later versions)
         for key, default in _empty_data().items():
             if key not in self.data:
@@ -110,16 +133,22 @@ class AdaptiveStore:
         # Alpha controls decay rate: higher = faster adaptation, noisier.
         # 0.05 → effective window of ~20 observations.
         alpha = _EMA_DECAY_ALPHA
+        _ts = round(time.time(), 1)  # last-updated, for staleness gating
         if n <= 1:
             # First observation — seed directly
-            return {"mean": round(new_val, 3), "var": 0.0, "n": 1}
+            return {"mean": round(new_val, 3), "var": 0.0, "n": 1, "ts": _ts}
         # EMA mean
         new_mean = old_mean + alpha * (new_val - old_mean)
         # EMA variance (exponentially-weighted moving variance)
         # Standard EWMA variance: Var_new = (1-α) * Var_old + α * (x - μ_old)²
         diff = new_val - old_mean
         new_var = (1.0 - alpha) * old_var + alpha * diff * diff
-        return {"mean": round(new_mean, 3), "var": round(max(0.0, new_var), 3), "n": n}
+        return {
+            "mean": round(new_mean, 3),
+            "var": round(max(0.0, new_var), 3),
+            "n": n,
+            "ts": _ts,
+        }
 
     # ── Observation recording ────────────────────────────────────────────────
 
@@ -131,16 +160,24 @@ class AdaptiveStore:
         source_to_area: dict[str, str],
         source_to_floor: dict[str, str],
     ) -> None:
-        """Record one high-confidence observation for adaptive learning."""
-        if not room or not ema_rssi:
+        """Record one high-confidence observation for adaptive learning.
+
+        Fingerprints store per-device NORMALIZED RSSI: each scanner reading
+        relative to the device's mean across all scanners in this observation.
+        This makes fingerprints comparable across devices with different TX
+        power, which keeps per-pair variance low (and low variance is what
+        makes score_rooms discriminating).
+        """
+        if not room or not ema_rssi or len(ema_rssi) < _MIN_OBS_SCANNERS:
             return
 
         fps = self.data.setdefault("room_fingerprints", {})
         room_fp = fps.setdefault(room, {})
 
+        _dev_mean = sum(ema_rssi.values()) / len(ema_rssi)
         for src, rssi in ema_rssi.items():
             existing = room_fp.get(src, {})
-            room_fp[src] = self._welford_update(existing, rssi)
+            room_fp[src] = self._welford_update(existing, rssi - _dev_mean)
 
         # Cross-floor attenuation: record RSSI delta between same-floor and
         # cross-floor scanners.  We compare each scanner's RSSI to the
@@ -231,20 +268,34 @@ class AdaptiveStore:
         For each room with learned fingerprints, compute a Mahalanobis-like
         distance between the current per-scanner RSSI and the learned profile,
         then convert to a Gaussian score.
+
+        The query vector is normalized per-device (relative to its mean across
+        scanners) to match how observe() stores fingerprints.
         """
         fps = self.data.get("room_fingerprints", {})
-        if not fps or not ema_rssi:
+        if not fps or not ema_rssi or len(ema_rssi) < _MIN_OBS_SCANNERS:
             return {}
 
+        _dev_mean = sum(ema_rssi.values()) / len(ema_rssi)
+        _norm = {src: rssi - _dev_mean for src, rssi in ema_rssi.items()}
+
         scores: dict[str, float] = {}
+        _now_ts = time.time()
+        _MAX_PAIR_AGE_S = 30 * 86400  # ignore pairs not refreshed in 30 days
         for room, room_fp in fps.items():
-            shared = set(ema_rssi.keys()) & set(room_fp.keys())
-            # Only score if we have enough shared scanners with sufficient data
+            shared = set(_norm.keys()) & set(room_fp.keys())
+            # Only score if we have enough shared scanners with sufficient
+            # data — with normalized vectors a single shared scanner is
+            # uninformative (relative values need >= 2 points of reference).
+            # Lifetime n alone is not enough: the environment changes, so a
+            # pair must also have been refreshed recently (ts written by
+            # _welford_update; pairs without one are treated as fresh).
             usable = [
                 s for s in shared
                 if room_fp[s].get("n", 0) >= _MIN_PAIR_OBS
+                and (_now_ts - room_fp[s].get("ts", _now_ts)) < _MAX_PAIR_AGE_S
             ]
-            if not usable:
+            if len(usable) < 2:
                 continue
 
             # Gate: skip rooms where fingerprint variance is too high to be
@@ -258,8 +309,12 @@ class AdaptiveStore:
             dist_sq = 0.0
             for src in usable:
                 fp = room_fp[src]
-                diff = ema_rssi[src] - fp["mean"]
-                var = max(fp.get("var", 1.0), 1.0)  # floor at 1.0 to avoid /0
+                diff = _norm[src] - fp["mean"]
+                # Floor at 9.0 dBm² (3 dBm std): BLE RSSI at a fixed spot
+                # genuinely spreads that much, and a tighter learned variance
+                # is an artifact of the novelty-gated sampling, not physics —
+                # a 1.0 floor made small diffs look like strong evidence.
+                var = max(fp.get("var", 9.0), 9.0)
                 dist_sq += (diff ** 2) / var
 
             avg_dist = dist_sq / len(usable)
