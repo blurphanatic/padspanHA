@@ -5,7 +5,7 @@
 """Generated at build time. Used to prove what version is actually installed."""
 
 BUILD_VERSION = "0.31.1"
-BUILD_ID = "20260724T170323Z"
+BUILD_ID = "20260724T170351Z"
 CHANNEL = "stable"
 
 # Backwards/for convenience
