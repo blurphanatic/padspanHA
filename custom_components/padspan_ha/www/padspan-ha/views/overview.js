@@ -61,6 +61,18 @@ export function render(ctx){
   // An object with no current signal (room resolved to null / 0 confidence) is "Away".
   // Both maps render these as an explicit grey away-state rather than a faded live dot.
   const _isAway = (o) => !!(o && o._no_signal === true);
+  // Map-dot display label: identity chain, falling back to the entity-id tail so
+  // entity-only objects (sensors, trackers) never render as an unlabeled dot. Used
+  // by every dot branch on both maps so a decluttered/spiderfied member is always
+  // named. Truncated to keep the label box in bounds; full name is in the hover tip.
+  const _dotLabel = (o) => {
+    const eid = o.entity_id || (String(o.key || "").startsWith("entity:") ? String(o.key).slice(7) : "");
+    return (
+      o.user_label || o.private_ble_name || o.name
+      || (eid ? eid.split(".").pop() : "")
+      || o.address || ""
+    ).slice(0, 18);
+  };
   // Shared handler for the 2D↔3D view-mode toggle buttons (one on each map).
   const _switchViewMode = async (btn, to2d) => {
     btn.disabled = true;
@@ -940,7 +952,7 @@ export function render(ctx){
           continue;
         }
 
-        const lbl = (o.user_label || o.private_ble_name || o.name || "").substring(0, 14);
+        const lbl = _dotLabel(o);
         const _oKey = _esc(o.key || o.address || o.entity_id || "");
 
         // ── Signal / certainty / recency encoding ──────────────────────────
@@ -1037,6 +1049,9 @@ export function render(ctx){
             if (lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*1.8 + labelDy)}" text-anchor="middle" fill="#5eead4" font-size="${_fsObj}" font-weight="600" opacity="${(0.85*_recF).toFixed(2)}">${_esc(lbl)}</text>`;
           } else {
             g += `<circle cx="${_f(px)}" cy="${_f(py)}" r="${_dotR*0.7}" fill="#f59e0b" stroke="#071008" stroke-width="${_sw*0.3}" opacity="${(0.5*_recF).toFixed(2)}"/>`;
+            // Untagged dots are label-less by design in normal rendering, but a
+            // spiderfied/pair member without a label is an unusable mystery dot.
+            if (minimal && lbl) g += `<text x="${_f(px)}" y="${_f(py - _dotR*1.5 + labelDy)}" text-anchor="middle" fill="#f59e0b" font-size="${_fsObj}" font-weight="600" opacity="0.85">${_esc(lbl)}</text>`;
           }
           return g + `</g>`;
         };
@@ -1063,13 +1078,15 @@ export function render(ctx){
           let cx = 0, cy = 0; for (const m of members) { cx += m.x; cy += m.y; } cx /= members.length; cy /= members.length;
           const _cKey = _clusterKey(members);
           if (ctx.state._expandedCluster === _cKey) {
-            // Spiderfied: spread members on a ring with leader lines (sticky via state).
-            const R = _dotR * 3.4;
+            // Spiderfied: members on a ring with leader lines (sticky via state). Ring
+            // clears the origin marker (min radius) and biases larger for small counts;
+            // members render minimal (dot + label only) so badges don't tangle labels.
+            const R = Math.max(_dotR * 5, members.length * _dotR * 1.3);
             members.forEach((m, i) => {
               const ang = (i / members.length) * 2 * Math.PI - Math.PI / 2;
               const sx = cx + Math.cos(ang) * R, sy = cy + Math.sin(ang) * R;
               s += `<line x1="${_f(cx)}" y1="${_f(cy)}" x2="${_f(sx)}" y2="${_f(sy)}" stroke="#94a3b8" stroke-width="${_sw*0.3}" opacity="0.4"/>`;
-              s += m.draw(sx, sy, false, 0);
+              s += m.draw(sx, sy, true, 0);
             });
           } else {
             const clr = members.every(m => m.away) ? "#94a3b8" : "#5eead4";
@@ -2262,7 +2279,10 @@ export function render(ctx){
           const isAway = _noSig || (typeof obj.age_s === "number" && obj.age_s > _awayThresh);
           const _recF = _objRecF(obj);
           const _conf = _objConf(obj);
-          const objLabel = obj.user_label || obj.private_ble_name || obj.name || "";
+          // Falls back to the entity-id tail so spiderfied helper entities
+          // (e.g. sensor.david_s_iphone_area) never render as unlabeled dots.
+          const objLabel = obj.user_label || obj.private_ble_name || obj.name
+            || String(obj.entity_id || oKey || "").split(":").pop().split(".").pop().slice(0, 18) || "";
 
           // Position: server k-NN first, then high-confidence fingerprint, then room centroid + stagger
           let px, py;
@@ -2363,13 +2383,16 @@ export function render(ctx){
           let cx = 0, cy = 0; for (const m of members) { cx += m.x; cy += m.y; } cx = Math.round(cx/members.length); cy = Math.round(cy/members.length);
           const _cKey = _clusterKey(members);
           if (ctx.state._expandedCluster === _cKey) {
-            // Spiderfied: spread members on a ring with leader lines (sticky via state).
-            const R = Math.max(44, members.length * 11);
+            // Spiderfied: members on a ring with leader lines (sticky via state). Ring
+            // clears the origin marker (min radius) and biases larger for small counts;
+            // members render minimal (dot + label only) so badges don't tangle with the
+            // background room labels.
+            const R = Math.max(80, members.length * 15);
             members.forEach((m, i) => {
               const ang = (i / members.length) * 2 * Math.PI - Math.PI / 2;
               const sx = Math.round(cx + Math.cos(ang) * R), sy = Math.round(cy + Math.sin(ang) * R);
               s += `<line x1="${cx}" y1="${cy}" x2="${sx}" y2="${sy}" stroke="#94a3b8" stroke-width="1" opacity="0.4"/>`;
-              s += m.draw(sx, sy, false, 0);
+              s += m.draw(sx, sy, true, 0);
             });
           } else {
             const clr = members.every(m => m.away) ? "#94a3b8" : BEACON_CLR;
