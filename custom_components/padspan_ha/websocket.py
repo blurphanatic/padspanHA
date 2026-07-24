@@ -2368,7 +2368,20 @@ async def _live_snapshot(hass: HomeAssistant) -> dict:
         # Tagged/identified objects never expire; unidentified expire after 7 days.
         # The cache is loaded from disk on first access and saved every 15s.
         import time as _time
-        _HISTORY_TTL = 604800       # 7 days for unidentified objects
+        # Unidentified-object retention.  Every rotating MAC that ever drifts
+        # past becomes a cache entry; at 7 days one busy street accumulated
+        # ~19.6k ghosts, a 14MB snapshot, and a 17s poll pipeline (a full CPU
+        # core).  Unidentified objects now expire after a configurable window
+        # (default 1h — long enough to find-and-tag a new device); identified
+        # objects still never expire.
+        _HISTORY_TTL = 3600
+        try:
+            _st_ttl = hass.data.get(DOMAIN, {}).get(DATA_SETTINGS)
+            _ttl_v = ((_st_ttl.data if _st_ttl else {}) or {}).get("unidentified_history_ttl_s")
+            if _ttl_v is not None:
+                _HISTORY_TTL = max(300, min(604800, int(_ttl_v)))
+        except Exception:
+            pass
         _SAVE_INTERVAL = 15         # save to disk at most every 15 s
         _now_ts = _time.time()      # real wall-clock time (survives restarts)
 
@@ -2938,6 +2951,7 @@ async def ws_settings_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("aggressive_ble_reseed"): bool,
         vol.Optional("presence_poll_interval_s"): vol.Coerce(int),
         vol.Optional("ble_reseed_interval_s"): vol.Coerce(int),
+        vol.Optional("unidentified_history_ttl_s"): vol.Coerce(int),
         vol.Optional("lights_panel_enabled"): bool,
         vol.Optional("bermuda_ignore"): bool,
         vol.Optional("tags_room_events_enabled"): bool,

@@ -79,6 +79,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # HA's discovered-service-info API.  Essential for passive proxy scanners
     # (Shelly, etc.).  Overrides aggressive_ble_reseed when set.  Default 30s.
     "ble_reseed_interval_s": 30,
+    # How long unidentified (untagged) objects persist in history before the
+    # cache drops them (seconds; clamped 300..604800).  Identified objects
+    # never expire.  Keep this short: every passing rotating MAC is an entry.
+    "unidentified_history_ttl_s": 3600,
     # Lights sidebar panel (off by default — requires HA restart to take effect)
     "lights_panel_enabled": False,
     "ha_entity_occupancy_enabled": False,  # expose occupancy estimate sensors to HA

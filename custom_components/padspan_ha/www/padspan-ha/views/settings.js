@@ -853,6 +853,40 @@ function _settingsPresence(ctx, el){
     ),
   ]));
 
+  // ── Unidentified history retention ─────────────────────────────────────────
+  const currentUnidentH = (settings.unidentified_history_ttl_s != null
+    ? Number(settings.unidentified_history_ttl_s) : 3600) / 3600;
+  const unidentInp = el("input", {
+    type: "number", min: "0.1", max: "168", step: "0.5", value: String(+currentUnidentH.toFixed(1)), style: inpStyle,
+  });
+  const unidentSaveBtn = el("button", { class: "btn" }, "Save");
+  unidentSaveBtn.addEventListener("click", async () => {
+    const h = Math.max(0.1, Math.min(168, parseFloat(unidentInp.value) || 1));
+    const v = Math.round(h * 3600);
+    try {
+      await ctx.actions.settingsSet({ unidentified_history_ttl_s: v });
+      ctx.toast(`Unidentified history retention set to ${h}h`);
+    } catch(e) { ctx.toast("Failed to save setting", true); }
+  });
+  wrap.appendChild(el("div", { class: "card" }, [
+    el("div", { class: "h2" }, "Unidentified History Retention"),
+    el("div", { class: "muted", style: "font-size:12px;margin-bottom:14px" },
+      "How long untagged devices stay in history after they stop broadcasting. " +
+      "Every passing rotating MAC becomes a history entry, so long retention on a " +
+      "busy street means thousands of ghost objects, multi-megabyte snapshots, and " +
+      "high CPU. Tagged devices are never expired."
+    ),
+    el("div", { style: rowStyle }, [
+      el("div", { style: "font-size:13px;color:#a7f3d0;min-width:130px" }, "Retention"),
+      unidentInp,
+      el("div", { class: "muted", style: "font-size:12px" }, "hours"),
+      unidentSaveBtn,
+    ]),
+    el("div", { class: "muted", style: "font-size:11px;margin-top:8px" },
+      `Current: ${+currentUnidentH.toFixed(1)}h. Default: 1h. Range: 0.1–168h.`
+    ),
+  ]));
+
   // ── Away timeout ───────────────────────────────────────────────────────────
   const currentAwayM = (settings.away_timeout_m != null ? Number(settings.away_timeout_m) : 5);
   const awayInp = el("input", {
