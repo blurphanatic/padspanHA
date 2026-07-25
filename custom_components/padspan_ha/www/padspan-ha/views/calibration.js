@@ -13,6 +13,21 @@
 //   Roam        — guided coverage-maximising walk with live heatmap
 //   Model       — quality stats, path-loss fits, LOO accuracy, export
 
+// Resolve a map's stack.z_level to its HA floor object.
+// A map's z_level is a 0-based ISO stacking index and does NOT equal the HA
+// floor .level (e.g. a basement is HA level -1 but z_level 0), so match by the
+// map's floor_id first and only fall back to the numeric level match.
+function _floorForZ(ctx, z) {
+  const floors = ctx.state.model?.floors || [];
+  const maps = (ctx.state.maps && ctx.state.maps.list) ? ctx.state.maps.list : [];
+  const mp = maps.find(m => (m.stack?.z_level ?? 0) === z);
+  if (mp && mp.floor_id != null) {
+    const byId = floors.find(f => f.id === mp.floor_id);
+    if (byId) return byId;
+  }
+  return floors.find(f => f.level === z) || null;
+}
+
 const GRID_N    = 10;    // 10×10 coverage grid
 const SIGMA_C   = 1.8;   // Gaussian sigma in cell units
 const POLL_MS   = 1000;  // RSSI poll interval during collection (1s = ~60 samples in 60s)
@@ -1606,7 +1621,7 @@ function _tuneTab(ctx, el, cs, calData) {
     if (pos === null) return "All floors";
     const fl = ctx.state.model?.floors || [];
     const zArr = Array.isArray(pos) ? pos : [pos];
-    return zArr.map(z => { const f = fl.find(x => x.level === z); return f ? (f.name || `L${z}`) : `L${z}`; }).join(" + ");
+    return zArr.map(z => { const f = _floorForZ(ctx, z); return f ? (f.name || `L${z}`) : `L${z}`; }).join(" + ");
   };
 
   // Per-map forward+inverse transforms
@@ -2007,7 +2022,7 @@ function _tuneTab(ctx, el, cs, calData) {
     const floorZs = [...candByFloor.keys()].sort((a, b) => a - b);
     if (floorZs.length > 1 || (floorZs.length === 1 && candByFloor.get(floorZs[0]).length > 1)) {
       for (const z of floorZs) {
-        const floorObj = fl.find(f => f.level === z);
+        const floorObj = _floorForZ(ctx, z);
         const floorName = floorObj ? (floorObj.name || `Floor ${z}`) : `Floor ${z}`;
         const floorCands = candByFloor.get(z);
         const btn = document.createElement("button");
@@ -2037,7 +2052,7 @@ function _tuneTab(ctx, el, cs, calData) {
     }
 
     for (const c of candidates) {
-      const floorObj = fl.find(f => f.level === c.z);
+      const floorObj = _floorForZ(ctx, c.z);
       const floorName = floorObj ? (floorObj.name || `L${c.z}`) : `L${c.z}`;
       const btn = document.createElement("button");
       btn.className = "btn inline";
@@ -2887,7 +2902,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     if (pos === null) return "All floors";
     const fl = ctx.state.model?.floors || [];
     const zArr = Array.isArray(pos) ? pos : [pos];
-    return zArr.map(z => { const f = fl.find(x => x.level === z); return f ? (f.name || `L${z}`) : `L${z}`; }).join(" + ");
+    return zArr.map(z => { const f = _floorForZ(ctx, z); return f ? (f.name || `L${z}`) : `L${z}`; }).join(" + ");
   };
 
   // Per-map forward+inverse transforms
@@ -3779,7 +3794,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     const floorZs2 = [...candByFloor2.keys()].sort((a, b) => a - b);
     if (floorZs2.length > 1 || (floorZs2.length === 1 && candByFloor2.get(floorZs2[0]).length > 1)) {
       for (const z of floorZs2) {
-        const floorObj = fl2.find(f => f.level === z);
+        const floorObj = _floorForZ(ctx, z);
         const floorName = floorObj ? (floorObj.name || `Floor ${z}`) : `Floor ${z}`;
         const floorCands = candByFloor2.get(z);
         const btn = document.createElement("button");
@@ -3807,7 +3822,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     }
 
     for (const c of candidates) {
-      const floorObj = fl2.find(f => f.level === c.z);
+      const floorObj = _floorForZ(ctx, c.z);
       const floorName = floorObj ? (floorObj.name || `L${c.z}`) : `L${c.z}`;
       const btn = document.createElement("button");
       btn.className = "btn inline";
@@ -4280,7 +4295,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
       moveSel.appendChild(defOpt);
       for (const m of otherMaps) {
         const fl = ctx.state.model?.floors || [];
-        const floorObj = fl.find(f => f.level === (m.stack?.z_level ?? 0));
+        const floorObj = _floorForZ(ctx, (m.stack?.z_level ?? 0));
         const floorName = floorObj ? (floorObj.name || `L${m.stack?.z_level ?? 0}`) : "";
         const opt = document.createElement("option");
         opt.value = m.id;
@@ -5115,7 +5130,7 @@ function _beaconTuneTab(ctx, el, cs, calData) {
     const tgt = bs._guideTarget;
     const tgtMap = sorted.find(m => m.id === tgt.mapId);
     const fl = ctx.state.model?.floors || [];
-    const flObj = fl.find(f => f.level === (tgtMap?.stack?.z_level ?? 0));
+    const flObj = _floorForZ(ctx, (tgtMap?.stack?.z_level ?? 0));
     const flName = flObj ? (flObj.name || `Floor ${tgtMap?.stack?.z_level ?? 0}`) : "";
 
     const suggest = document.createElement("div");

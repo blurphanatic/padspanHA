@@ -23,7 +23,7 @@ If UI changes don't show:
 // so browsers always load the latest code after a release.
 // CHANNEL controls the sidebar badge and maps to GitHub release types (beta=pre-release).
 const APP_VERSION = "0.31.1";
-const BUILD_ID = "20260724T170351Z";
+const BUILD_ID = "20260725T225847Z";
 const CHANNEL = "stable";
 
 // ── Dynamic view imports ─────────────────────────────────────────────────────
@@ -290,7 +290,7 @@ class PadSpanHaApp extends HTMLElement {
       version: APP_VERSION,
       buildId: BUILD_ID,
       view: "overview",
-      dataMode: "sample",          // sample | live
+      dataMode: "live",            // live only (sample mode removed)
       complexity: "advanced",      // basic | advanced | development
       status: {},
       roomTagMap: {},
@@ -442,7 +442,7 @@ class PadSpanHaApp extends HTMLElement {
             <button class="mobile-topbar-btn" id="mobileBackBtn" title="Back to Home Assistant" style="font-size:18px;padding:4px 6px">&#x2190;</button>
             <button class="mobile-topbar-btn" id="mobileMenuBtn">&#9776;</button>
             <span class="mobile-topbar-title" id="mobileTitle">Overview</span>
-            <button class="mobile-topbar-pill" id="mobileDataPill">Sample</button>
+            <button class="mobile-topbar-pill" id="mobileDataPill" style="display:none">Sample</button>
             <button class="mobile-topbar-pill" id="mobileModePill">Advanced</button>
           </div>
           <div class="row desktop-topbar" style="margin-bottom:10px;align-items:center">
@@ -451,8 +451,8 @@ class PadSpanHaApp extends HTMLElement {
             <span class="pill" id="statusBadge">Status: —</span>
 
             <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
-              <span class="muted" style="font-size:12px">Data</span>
-              <button class="btn inline" id="dataModeToggle" title="Toggle sample vs live data">Sample</button>
+              <span class="muted" style="font-size:12px;display:none">Data</span>
+              <button class="btn inline" id="dataModeToggle" title="Toggle sample vs live data" style="display:none">Sample</button>
               <button class="btn inline" id="complexityToggle" title="Cycle between Basic, Advanced, and Development modes">Advanced</button>
             </span>
           </div>
@@ -977,7 +977,7 @@ class PadSpanHaApp extends HTMLElement {
       if(res?.settings){
         this.state.settings = res.settings;
         const mode = (res.settings.data_mode || "sample").toLowerCase();
-        this.state.dataMode = (mode === "live") ? "live" : "sample";
+        this.state.dataMode = "live";  // sample mode removed — always live
         // Load followed addrs from server ONCE on boot (not on every poll,
         // which would race with local toggles and revert user clicks)
         if(!this._followedLoadedFromServer && Array.isArray(res.settings.followed_addrs)){
