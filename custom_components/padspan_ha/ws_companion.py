@@ -22,7 +22,7 @@ from .const import (
 )
 from .bluetooth_live import get_bluetooth_live
 from .private_ble_resolver import PrivateBLEResolver, get_resolver as _get_ble_resolver
-from .util import ha_devices
+from .util import device_config_entry_ids, ha_devices
 from .ws_common import _get_settings, _is_rpa_addr
 
 _LOGGER = logging.getLogger(__name__)
@@ -557,7 +557,7 @@ async def ws_companion_discover(hass: HomeAssistant, connection, msg) -> None:
                     if any(h in name_lower for h in _phone_hints):
                         # Find which config entry this device belongs to
                         domains = []
-                        for ce_id in (device.config_entries or set()):
+                        for ce_id in device_config_entry_ids(device):
                             ce = hass.config_entries.async_get_entry(ce_id)
                             if ce:
                                 domains.append(ce.domain)

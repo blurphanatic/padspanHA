@@ -25,6 +25,7 @@ from .const import (
     DATA_ADAPTIVE,
 )
 from .bluetooth_live import get_bluetooth_live
+from .util import device_config_entry_ids
 from .ws_calibration import _get_cal_store
 from .ws_common import _invalidate_snapshot_cache, RadioDeviceIndex
 
@@ -354,7 +355,7 @@ async def ws_radio_audit(hass: HomeAssistant, connection, msg) -> None:
 
             # ESPHome config entry info
             esphome_entries: list[str] = []
-            for ce_id in (dev.config_entries or set()):
+            for ce_id in device_config_entry_ids(dev):
                 if ce_id in esphome_entry_ids:
                     ce = hass.config_entries.async_get_entry(ce_id)
                     if ce:

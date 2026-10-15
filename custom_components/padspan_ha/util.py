@@ -27,3 +27,30 @@ def ha_devices(dev_reg: Any) -> list[Any]:
     if isinstance(devices, Mapping):
         return list(devices.values())
     return list(devices)
+
+
+_NO_ENTRY_ID = object()
+
+
+def device_config_entry_ids(device: Any) -> set[str]:
+    """The config entry ids a DeviceEntry belongs to.
+
+    The one place PadSpan asks a device which config entries it belongs to,
+    because the answer moved. In HA 2026.10 a device belongs to exactly one
+    config entry, `device.config_entry_id`, and `device.config_entries` is a
+    deprecated shim: every read of it walks the call stack and every loaded
+    module to name the caller, which cost about 30% of HA's CPU on a 611-device
+    install, where the live snapshot read it for every device three times a
+    minute. In HA 2026.9 and earlier there is no `config_entry_id`, and
+    `config_entries` is the real set.
+
+    A restored composite device (what `async_get` synthesizes for a
+    pre-migration composite id) still spans several entries; its
+    `config_entries` is the union and does not report, so it is read as is.
+    """
+    if getattr(device, "is_composite_device", False):
+        return set(device.config_entries or ())
+    entry_id = getattr(device, "config_entry_id", _NO_ENTRY_ID)
+    if entry_id is _NO_ENTRY_ID:
+        return set(getattr(device, "config_entries", ()) or ())
+    return {entry_id} if entry_id else set()

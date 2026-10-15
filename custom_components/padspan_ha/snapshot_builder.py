@@ -53,7 +53,7 @@ _SETTLED_POLLS = 3
 from .ble_enrichment import enrich_object as _enrich_ble_object
 from .perf_sampler import record_duration
 from .presence_rules import away_timeout_s, is_away
-from .util import ha_devices
+from .util import device_config_entry_ids, ha_devices
 from .ws_common import (
     RadioDeviceIndex,
     _ALL_ADDR_CAP,
@@ -324,7 +324,7 @@ async def _build_live_snapshot(hass: HomeAssistant) -> dict:
         dr = device_registry.async_get(hass)
         receivers: list[dict[str, Any]] = []
         for dev in ha_devices(dr):
-            if bermuda_entry_ids and any(entry_id in bermuda_entry_ids for entry_id in dev.config_entries):
+            if bermuda_entry_ids and not bermuda_entry_ids.isdisjoint(device_config_entry_ids(dev)):
                 receivers.append(
                     {
                         "id": dev.id,

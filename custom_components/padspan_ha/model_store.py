@@ -703,7 +703,6 @@ class ModelStore:
                 continue
             # Check if this device is from a BLE-relevant integration
             _dev_domains = {c[0] for c in (dev.identifiers or set())}
-            _config_domains = {c for c in (dev.config_entries or set())}
             # Also check connections for MAC-based matching
             _has_ble_domain = bool(_dev_domains & _BLE_DOMAINS)
 
